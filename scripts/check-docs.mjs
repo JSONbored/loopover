@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -42,6 +42,12 @@ for (const file of files) {
 const siteIndex = readFileSync(join(root, "site/index.md"), "utf8");
 for (const phrase of ["Gittensor miners", "GitHub App", "MCP", "not a Gittensor frontend"]) {
   if (!siteIndex.includes(phrase)) failures.push(`site/index.md: missing required positioning phrase ${JSON.stringify(phrase)}`);
+}
+if (!siteIndex.includes("/images/gittensor-home-signal.webp")) {
+  failures.push("site/index.md: missing Gittensor context image reference");
+}
+if (!existsSync(join(root, "site/public/images/gittensor-home-signal.webp"))) {
+  failures.push("site/public/images/gittensor-home-signal.webp: missing Gittensor context image asset");
 }
 
 for (const required of ["SUPPORT.md", "site/security/privacy.md", "site/security/terms.md", "site/support.md"]) {

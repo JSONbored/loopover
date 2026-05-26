@@ -17,6 +17,11 @@ if (!existsSync(indexPath)) {
   const html = readFileSync(indexPath, "utf8");
   if (!html.includes("gtn-version-pill")) failures.push("built docs are missing the MCP version pill markup.");
   if (!html.includes("MCP")) failures.push("built docs are missing MCP version text.");
+  if (!html.includes("/images/gittensor-home-signal.webp")) failures.push("built docs are missing the Gittensor context image.");
+}
+
+if (!existsSync(join(dist, "images/gittensor-home-signal.webp"))) {
+  failures.push("built docs are missing the Gittensor context image asset.");
 }
 
 const builtFiles = existsSync(dist) ? collect(dist).filter((file) => /\.(html|js)$/.test(file)) : [];

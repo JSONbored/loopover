@@ -47,6 +47,8 @@
 
 - Add analytics and mcp version widget
 
+- Refresh Gittensor-aligned homepage
+
 
 
 ### Fixes

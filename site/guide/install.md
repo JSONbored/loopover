@@ -1,23 +1,53 @@
 # Install
 
-Gittensory has two install paths: public npm for normal use, and local checkout for development.
+Start here when you want Gittensory available from Codex, Claude Desktop, Cursor, or another stdio MCP client.
 
-## Public npm
-
-Use this for Codex, Claude Desktop, Cursor, or any other stdio MCP client:
+## 3-Step Quick Start
 
 ```sh
 npm install -g @jsonbored/gittensory-mcp
 gittensory-mcp login
-gittensory-mcp status
+gittensory-mcp doctor
+```
+
+Then run the server:
+
+```sh
 gittensory-mcp --stdio
 ```
 
-The login command uses GitHub Device Flow and stores a short-lived Gittensory session token in your local config directory.
+`login` uses GitHub Device Flow and stores a short-lived Gittensory session token locally. It does not store a user PAT.
 
-## Local checkout
+::: tip No source upload by default
+MCP v1 sends repository metadata, changed file paths, counts, linked issue refs, commit messages, and validation summaries. It does not upload source contents.
+:::
 
-Use this when developing Gittensory itself:
+## Configure A Client
+
+Print a client snippet without editing local config files:
+
+```sh
+gittensory-mcp init-client --print codex
+gittensory-mcp init-client --print claude
+gittensory-mcp init-client --print cursor
+```
+
+If a client cannot find `gittensory-mcp`, use an absolute command path in that client’s MCP config.
+
+## Verify In A Repo
+
+From any GitHub repository:
+
+```sh
+gittensory-mcp analyze-branch --login YOUR_GITHUB_LOGIN --json
+gittensory-mcp preflight --login YOUR_GITHUB_LOGIN --json
+```
+
+Use `doctor` when auth, PATH, API reachability, or git metadata looks wrong.
+
+## Local Development
+
+Use this only when working on Gittensory itself:
 
 ```sh
 git clone https://github.com/JSONbored/gittensory.git
@@ -25,30 +55,4 @@ cd gittensory
 npm install
 npm link --workspace @jsonbored/gittensory-mcp
 gittensory-mcp login
-gittensory-mcp --stdio
 ```
-
-## Verify The Install
-
-Run:
-
-```sh
-gittensory-mcp doctor
-gittensory-mcp whoami
-gittensory-mcp analyze-branch --login YOUR_GITHUB_LOGIN --json
-```
-
-`doctor` checks API health, auth state, source-upload defaults, local git metadata, and whether the binary is likely visible to MCP clients.
-
-## Privacy Defaults
-
-Gittensory MCP v1 sends structured metadata only:
-
-- repository full name
-- branch and base refs
-- changed file paths and counts
-- linked issue references
-- commit messages
-- validation command summaries
-
-It does not upload source contents. `GITTENSORY_UPLOAD_SOURCE=true` is rejected.

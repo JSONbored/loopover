@@ -1,52 +1,45 @@
 # For Maintainers
 
-Gittensory is meant to make Gittensor-driven contribution flow less noisy.
+Gittensory is designed to make Gittensor-driven contribution flow less noisy. It inspects PRs quietly first and only publishes public output when the author is an officially confirmed Gittensor miner.
 
-## GitHub App Surface
+## Default Public Behavior
 
-The GitHub App is designed to stay quiet unless a PR author is an officially confirmed Gittensor miner.
+- non-miner authors: no comment, no label, no check
+- bot authors: no public output
+- maintainer-associated authors: no public output unless explicitly enabled
+- confirmed miners: one sticky public-safe comment plus the configured label
 
-Default visible output for confirmed miner PRs:
+::: tip Public GitHub output is sanitized
+Comments and labels never include private reviewability scores, wallet data, hotkeys, raw trust scores, public score estimates, or public reward estimates.
+:::
 
-- one sticky public-safe PR comment
-- one maintainer-configured label, defaulting to `gittensor`
-- no public output for bots, non-miners, or maintainer-associated authors unless explicitly enabled
+## What Maintainers Get
 
-Private reviewability context, queue risk, score blockers, and reward/risk reasoning stay in the API/MCP. GitHub checks default to off; if a maintainer enables them later, they remain minimal and do not carry detailed findings.
+Private API/MCP surfaces can explain:
 
-## Reviewability Actions
+- contributor role context
+- repo-specific outcome history
+- linked issue and lane fit
+- duplicate or WIP collision risk
+- validation evidence
+- likely review action: review now, needs author, watch, redirect, or maintainer lane
 
-Gittensory maps PRs to maintainer-friendly actions:
+The GitHub App stays low-noise. It does not close, merge, rewrite, or publicly judge contributor work.
 
-- `review_now`
-- `needs_author`
-- `likely_duplicate`
-- `close_or_redirect`
-- `watch`
-- `maintainer_lane`
+## Intake Health
 
-The point is not to shame contributors. The point is to identify the lowest-friction next step.
+Repo owners can use Gittensory signals to inspect:
 
-## Public Comments
+- queue pressure
+- label readiness
+- config quality
+- maintainer-cut readiness
+- whether issue discovery is appropriate yet
+- whether the installed GitHub App has the permissions needed for comments and labels
 
-Confirmed miner comments can include:
+## When To Use Gittensory
 
-- contribution context
-- PR hygiene
-- duplicate or WIP risk
-- maintainer review notes
-- contributor next steps
-
-Comments must not include raw trust scores, wallet data, hotkeys, public reward estimates, or public score optimization language.
-
-## Repo Owner Signals
-
-Repo owners can use Gittensory to inspect:
-
-- repo lane clarity
-- label configuration
-- maintainer cut readiness
-- queue health
-- contributor intake health
-- GitHub App installation health
-- stale or degraded backfill state
+- when confirmed Gittensor miner PRs need triage context
+- when duplicate or broad PRs are increasing review load
+- when you want labels/comments without public check-run noise
+- before changing repo rules that affect contributor intake

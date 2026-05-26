@@ -1,39 +1,28 @@
 # For Miners
 
-Gittensory helps miners decide what to do next with evidence instead of guesswork.
+Gittensory helps miners choose work with evidence: lane fit, score blockers, queue pressure, local diff quality, and realistic scenario projections.
 
-## What It Answers
+## Branch Analysis Flow
 
-- Is this repo a direct-PR lane, issue-discovery lane, split lane, inactive lane, or unknown lane?
-- Am I in a normal contributor lane or a maintainer lane for this repo?
-- Does my current branch look reviewable?
-- What blocks scoreability right now?
-- Should I clean up open PRs before opening more work?
-- Is there duplicate or WIP collision risk?
-- What public-safe PR packet should I give a maintainer?
-
-## Branch Analysis
-
-Run from a Git repo:
+Run this before opening or updating a PR:
 
 ```sh
 gittensory-mcp analyze-branch --login YOUR_GITHUB_LOGIN --json
 ```
 
-The response includes:
+The response explains:
 
-- lane context
-- role context
-- preflight findings
-- private score blockers
-- current vs projected scoreability scenarios
-- reward/risk reasoning
-- base freshness warnings when the local diff may be inflated
-- maintainer-fit notes
-- public-safe PR packet
-- ranked next actions
+- repo lane and role context
+- current scoreability and blocker gates
+- open PR pressure and cleanup-first guidance
+- duplicate or WIP collision risk
+- stale-base warnings when the local diff looks inflated
+- validation evidence from changed test paths and command summaries
+- a public-safe PR packet for maintainers
 
-When the current score is blocked by temporary account/queue state, pass the assumptions explicitly:
+## Scenario Flags
+
+When approved PRs are expected to land soon, pass the assumption explicitly:
 
 ```sh
 gittensory-mcp analyze-branch --login YOUR_GITHUB_LOGIN \
@@ -44,7 +33,11 @@ gittensory-mcp analyze-branch --login YOUR_GITHUB_LOGIN \
   --json
 ```
 
-Gittensory labels that as a user-supplied scenario. It shows the current effective score, the underlying potential score, and what changes if the open-PR and credibility gates clear.
+Gittensory labels this as a user-supplied scenario. It separates the current effective score, the underlying potential score, and what changes if open-PR and credibility gates clear.
+
+::: tip No source upload by default
+Local branch analysis sends metadata only. File contents are not uploaded.
+:::
 
 ## Preflight
 
@@ -52,18 +45,13 @@ Gittensory labels that as a user-supplied scenario. It shows the current effecti
 gittensory-mcp preflight --login YOUR_GITHUB_LOGIN --json
 ```
 
-Use this before opening a PR. It is especially useful when you need to know whether a branch is missing tests, missing a linked issue, colliding with active work, or likely to increase maintainer burden.
+Use preflight when you need a quick answer on linked issues, tests, duplicate risk, lane fit, and maintainer review friction.
 
-## How This Helps
+## When To Use Gittensory
 
-Gittensory does not promise payouts. It explains scoreability and risk:
+- before opening a PR
+- after PR approvals but before rerunning score projections
+- when deciding whether to clean up existing PRs first
+- when choosing between direct PR work and issue-discovery flow
 
-- open PR pressure
-- credibility assumptions
-- lane eligibility
-- issue-discovery vs direct PR fit
-- duplicate clusters
-- stale work
-- review friction
-
-That makes recommendations actionable: land or withdraw blocked work, avoid direct PRs in issue-discovery-only repos, improve validation evidence, or pick a repo where your history and the lane actually fit.
+Gittensory does not promise payouts. It explains scoreability, risk, and what actions make the work more likely to be reviewable and scoreable.

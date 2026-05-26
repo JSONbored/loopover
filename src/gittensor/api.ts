@@ -1,4 +1,5 @@
 import type { ContributorRepoStatRecord } from "../types";
+import { errorMessage } from "../utils/json";
 
 const GITTENSOR_API_BASE = "https://api.gittensor.io";
 const GITTENSOR_MIRROR_API_BASE = "https://mirror.gittensor.io/api/v1";
@@ -31,6 +32,11 @@ type GittensorMinerSummaryResponse = {
   alphaPerDay?: number;
   taoPerDay?: number;
   usdPerDay?: number;
+};
+
+type ConfirmedGittensorMinerSummaryResponse = GittensorMinerSummaryResponse & {
+  githubId: string;
+  githubUsername: string;
 };
 
 type GittensorMinerDetailResponse = GittensorMinerSummaryResponse & {
@@ -165,9 +171,9 @@ export async function fetchOfficialGittensorMiner(login: string): Promise<Offici
     const normalizedLogin = login.toLowerCase();
     const miner = miners.find((candidate) => candidate.githubUsername?.toLowerCase() === normalizedLogin || candidate.githubId === login);
     if (!miner?.githubId || !miner.githubUsername) return { status: "not_found" };
-    return { status: "confirmed", snapshot: await buildGittensorContributorSnapshot(miner) };
+    return { status: "confirmed", snapshot: await buildGittensorContributorSnapshot({ ...miner, githubId: miner.githubId, githubUsername: miner.githubUsername }) };
   } catch (error) {
-    return { status: "unavailable", error: error instanceof Error ? error.message : "unknown Gittensor API error" };
+    return { status: "unavailable", error: errorMessage(error, "unknown Gittensor API error") };
   }
 }
 
@@ -187,11 +193,11 @@ export function contributorRepoStatsFromGittensor(snapshot: GittensorContributor
   }));
 }
 
-async function buildGittensorContributorSnapshot(miner: GittensorMinerSummaryResponse): Promise<GittensorContributorSnapshot> {
+async function buildGittensorContributorSnapshot(miner: ConfirmedGittensorMinerSummaryResponse): Promise<GittensorContributorSnapshot> {
   const [detailResult, pullRequestsResult, issuesResult] = await Promise.allSettled([
-    fetchJson<GittensorMinerDetailResponse>(`${GITTENSOR_API_BASE}/miners/${encodeURIComponent(miner.githubId ?? "")}`),
-    fetchJson<GittensorPullRequestResponse[]>(`${GITTENSOR_API_BASE}/miners/${encodeURIComponent(miner.githubId ?? "")}/prs`),
-    fetchJson<GittensorMinerIssuesResponse>(`${GITTENSOR_MIRROR_API_BASE}/miners/${encodeURIComponent(miner.githubId ?? "")}/issues`),
+    fetchJson<GittensorMinerDetailResponse>(`${GITTENSOR_API_BASE}/miners/${encodeURIComponent(miner.githubId)}`),
+    fetchJson<GittensorPullRequestResponse[]>(`${GITTENSOR_API_BASE}/miners/${encodeURIComponent(miner.githubId)}/prs`),
+    fetchJson<GittensorMinerIssuesResponse>(`${GITTENSOR_MIRROR_API_BASE}/miners/${encodeURIComponent(miner.githubId)}/issues`),
   ]);
   const detail = detailResult.status === "fulfilled" ? detailResult.value : {};
   const pullRequests = pullRequestsResult.status === "fulfilled" ? pullRequestsResult.value : [];
@@ -200,8 +206,8 @@ async function buildGittensorContributorSnapshot(miner: GittensorMinerSummaryRes
 
   return {
     source: "gittensor_api",
-    githubId: miner.githubId ?? "",
-    githubUsername: miner.githubUsername ?? "",
+    githubId: miner.githubId,
+    githubUsername: miner.githubUsername,
     uid: source.uid,
     hotkey: source.hotkey,
     failedReason: source.failedReason,

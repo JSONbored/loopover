@@ -192,4 +192,33 @@ describe("advisory rules", () => {
     expect(issueAdvisory.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["issue_not_open", "issue_discovery_not_configured"]));
     expect(formatCheckRunOutput({ ...uncachedPr, findings: [] }).text).toContain("No detailed findings are published");
   });
+
+  it("separates issue-discovery-only issues from clean split-lane issue advisories", () => {
+    const issue: IssueRecord = {
+      repoFullName: repo.fullName,
+      number: 33,
+      title: "Actionable issue",
+      state: "open",
+      authorLogin: "reporter",
+      labels: [],
+      linkedPrs: [],
+    };
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 1 },
+    };
+    const splitRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.5 },
+    };
+
+    const issueOnly = buildIssueAdvisory(issueDiscoveryRepo, issue);
+    const cleanSplit = buildIssueAdvisory(splitRepo, issue);
+
+    expect(issueOnly.findings.map((finding) => finding.code)).toContain("direct_pr_pool_disabled");
+    expect(issueOnly.findings.map((finding) => finding.code)).not.toContain("issue_discovery_not_configured");
+    expect(cleanSplit.findings).toEqual([]);
+    expect(cleanSplit.summary).toBe("Issue advisory generated.");
+    expect(cleanSplit.conclusion).toBe("success");
+  });
 });

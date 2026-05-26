@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../../src/gittensor/api";
+import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner } from "../../src/gittensor/api";
 
 describe("Gittensor API contributor snapshots", () => {
   afterEach(() => {
@@ -181,5 +181,84 @@ describe("Gittensor API contributor snapshots", () => {
   it("returns null when the miner list has no matching GitHub identity", async () => {
     vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "someone-else", githubId: "999" }]));
     await expect(fetchGittensorContributorSnapshot("jsonbored")).resolves.toBeNull();
+  });
+
+  it("classifies official miner detection without a complete identity and handles non-Error failures", async () => {
+    vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "jsonbored" }, { githubId: "49853598" }]));
+    await expect(fetchOfficialGittensorMiner("jsonbored")).resolves.toEqual({ status: "not_found" });
+    await expect(fetchOfficialGittensorMiner("49853598")).resolves.toEqual({ status: "not_found" });
+
+    vi.stubGlobal("fetch", async () => {
+      throw "network down";
+    });
+    await expect(fetchOfficialGittensorMiner("jsonbored")).resolves.toEqual({ status: "unavailable", error: "unknown Gittensor API error" });
+  });
+
+  it("maps optional Gittensor detail fields when present", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/miners")) {
+        return Response.json([
+          {
+            githubUsername: "jsonbored",
+            githubId: "49853598",
+            failedReason: null,
+            issueDiscoveryScore: "3",
+            issueTokenScore: "4",
+            isIssueEligible: true,
+            issueEligibleRepoCount: "2",
+            alphaPerDay: "1.25",
+            taoPerDay: "0.5",
+            usdPerDay: "100",
+          },
+        ]);
+      }
+      if (url.endsWith("/miners/49853598")) {
+        return Response.json({
+          uid: 29,
+          hotkey: "hotkey",
+          updatedAt: "2026-05-25T00:00:00.000Z",
+          repositories: [
+            {
+              repositoryFullName: "owner/issues",
+              totalPrs: 0,
+              totalOpenIssues: 1,
+              totalClosedIssues: 1,
+              totalSolvedIssues: 1,
+              totalValidSolvedIssues: 1,
+              isIssueEligible: true,
+              issueCredibility: "0.9",
+              baseTotalScore: "12.5",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/miners/49853598/prs")) {
+        return Response.json([{ repository: "owner/repo", pullRequestNumber: 9, pullRequestTitle: undefined, prState: undefined, mergedAt: null, label: "bug", tokenScore: "7" }]);
+      }
+      if (url.endsWith("/miners/49853598/issues")) {
+        return Response.json({ issues: [{ labels: undefined }, { labels: [{ name: "bug" }] }] });
+      }
+      return Response.json({});
+    });
+
+    const snapshot = await fetchGittensorContributorSnapshot("jsonbored");
+
+    expect(snapshot).toMatchObject({
+      uid: 29,
+      hotkey: "hotkey",
+      isIssueEligible: true,
+      issueEligibleRepoCount: 2,
+      alphaPerDay: 1.25,
+      taoPerDay: 0.5,
+      usdPerDay: 100,
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      repositories: [expect.objectContaining({ repoFullName: "owner/issues", openIssues: 1, closedIssues: 1, validSolvedIssues: 1, issueCredibility: 0.9 })],
+      pullRequests: [expect.objectContaining({ repoFullName: "owner/repo", number: 9, title: "", state: "UNKNOWN", label: "bug", tokenScore: 7 })],
+      issueLabels: ["bug"],
+    });
+    expect(contributorRepoStatsFromGittensor(snapshot)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ login: "jsonbored", repoFullName: "owner/issues", issues: 2, lastActivityAt: "2026-05-25T00:00:00.000Z" })]),
+    );
   });
 });

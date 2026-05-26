@@ -70,6 +70,7 @@ import {
   detectGittensorContributor,
 } from "../signals/engine";
 import type { ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue } from "../types";
+import { errorMessage } from "../utils/json";
 
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
   switch (message.type) {
@@ -448,7 +449,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
               deliveryId,
               repository: payload.repository?.full_name,
               pullNumber: pr.number,
-              error: error instanceof Error ? error.message : "unknown error",
+              error: errorMessage(error),
             }),
           );
         });
@@ -480,7 +481,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       repositoryFullName: payload.repository?.full_name,
       payloadHash: "processed",
       status: "error",
-      errorSummary: error instanceof Error ? error.message : "unknown error",
+      errorSummary: errorMessage(error),
     });
     throw error;
   }

@@ -2,7 +2,7 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { registrySnapshots, repositories, syncRuns } from "../db/schema";
 import type { RegistrySnapshot } from "../types";
-import { jsonString, nowIso, repoParts } from "../utils/json";
+import { errorMessage, jsonString, nowIso, repoParts } from "../utils/json";
 import { normalizeRegistryPayload } from "./normalize";
 
 const API_CANDIDATES = [
@@ -59,7 +59,7 @@ export async function refreshRegistry(env: Env): Promise<RegistrySnapshot> {
           .where(eq(syncRuns.id, syncId));
         return snapshot;
       } catch (error) {
-        warnings.push(`Registry probe failed: ${url} (${error instanceof Error ? error.message : "unknown error"})`);
+        warnings.push(`Registry probe failed: ${url} (${errorMessage(error)})`);
       }
     }
     throw new Error("No registry source returned usable data.");
@@ -69,7 +69,7 @@ export async function refreshRegistry(env: Env): Promise<RegistrySnapshot> {
       .set({
         status: "error",
         warningsJson: jsonString(warnings),
-        errorSummary: error instanceof Error ? error.message : "unknown error",
+        errorSummary: errorMessage(error),
         completedAt: nowIso(),
       })
       .where(eq(syncRuns.id, syncId));

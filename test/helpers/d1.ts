@@ -34,8 +34,8 @@ export class TestD1Database {
         return rows.map((row) => columns.map((column) => row[column])) as T[];
       },
       async run() {
-        statement.run(...bound);
-        return { success: true, meta: {}, results: [] };
+        const result = statement.run(...bound);
+        return { success: true, meta: { changes: Number(result.changes ?? 0) }, results: [] };
       },
     };
     return api;

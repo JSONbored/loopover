@@ -140,6 +140,69 @@ describe("local branch analysis", () => {
     expect(analysis.recommendedRerunCondition).toMatch(/git fetch origin/i);
   });
 
+  it("distinguishes fresh, merge-base-stale, and large unverified base states", () => {
+    const fresh = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        baseRef: "origin/main",
+        baseSha: "base",
+        remoteTrackingSha: "base",
+        branchName: "docs-polish",
+        body: "Fixes #7",
+        changedFiles: [{ path: "README.md", additions: 1, deletions: 0, status: "modified" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Docs polish", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+    expect(fresh.baseFreshness.status).toBe("fresh");
+    expect(fresh.recommendedRerunCondition).toBe("Rerun after any branch, base, or PR state changes before opening/submitting.");
+
+    const mergeBaseStale = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        baseRef: "origin/main",
+        baseSha: "base",
+        mergeBaseSha: "older-base",
+        remoteTrackingSha: "base",
+        changedFiles: [{ path: "src/cache.ts", additions: 2, deletions: 1, status: "modified" }],
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+    expect(mergeBaseStale.baseFreshness.status).toBe("stale");
+    expect(mergeBaseStale.baseFreshness.warnings.join(" ")).toMatch(/Merge-base does not match/i);
+
+    const largeUnverified = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: Array.from({ length: 50 }, (_, index) => ({ path: `src/file-${index}.ts`, additions: Number.NaN, deletions: undefined, status: "modified" as const })),
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+    expect(largeUnverified.baseFreshness.status).toBe("possibly_stale");
+    expect(largeUnverified.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "stale_base_ref" })]));
+    expect(largeUnverified.preflight.localDiff.changedLineCount).toBe(0);
+  });
+
   it("keeps unregistered gittensory work in product/maintainer context instead of miner target context", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
@@ -162,6 +225,39 @@ describe("local branch analysis", () => {
     expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "gittensory_not_registered" })]));
     expect(analysis.rewardRisk.rewardUpside.relevantLane).toBe("maintainer_lane");
     expect(analysis.rewardRisk.scoreBlockers).toEqual(expect.arrayContaining(["Maintainer-lane work is not normal outside-contributor reward evidence."]));
+  });
+
+  it("separates account maturity blockers from clean branch metadata when no pending scenario is supplied", () => {
+    const pressuredHistory: ContributorOutcomeHistory = {
+      ...outcomeHistory,
+      totals: { ...outcomeHistory.totals, openPullRequests: 4, credibility: 0.2 },
+      repoOutcomes: [{ ...outcomeHistory.repoOutcomes[0]!, openPullRequests: 4, credibility: 0.2, closedPullRequestRate: 0 }],
+    };
+
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [
+          { path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" },
+          { path: "src/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache edge", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory: pressuredHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.branchQualityBlockers).toEqual([]);
+    expect(analysis.accountStateBlockers.join(" ")).toMatch(/Open PR count|Credibility/i);
+    expect(analysis.recommendedRerunCondition).toBe("Rerun after account/queue maturity blockers clear.");
+    expect(analysis.nextActions[0]?.actionKind).not.toBe("land_existing_prs");
   });
 
   it("handles sparse metadata, failed validation, binary changes, and commit-title fallback", () => {

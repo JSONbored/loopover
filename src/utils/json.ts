@@ -15,6 +15,15 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+export function errorMessage(error: unknown, fallback = "unknown error"): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+export function strippedErrorMessage(error: unknown, fallback: string): string {
+  const message = errorMessage(error, "");
+  return message.replace(/^Error: /, "") || fallback;
+}
+
 export function normalizeRepoFullName(value: string): string {
   return value.trim();
 }

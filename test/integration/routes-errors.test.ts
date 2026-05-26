@@ -83,6 +83,34 @@ describe("api route guards and error branches", () => {
     expect(allowedRate.headers.get("x-ratelimit-reset")).toBe("2026-05-25T00:01:00.000Z");
   });
 
+  it("keeps auth route failures generic for non-Error provider failures", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" });
+    vi.stubGlobal("fetch", async () => {
+      throw "provider down";
+    });
+
+    const start = await app.request("/v1/auth/github/device/start", { method: "POST" }, env);
+    expect(start.status).toBe(502);
+    await expect(start.json()).resolves.toEqual({ error: "github_device_flow_start_failed" });
+
+    const poll = await app.request("/v1/auth/github/device/poll", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deviceCode: "device-code" }),
+    }, env);
+    expect(poll.status).toBe(502);
+    await expect(poll.json()).resolves.toEqual({ error: "github_device_flow_poll_failed" });
+
+    const session = await app.request("/v1/auth/github/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ githubToken: "token" }),
+    }, env);
+    expect(session.status).toBe(401);
+    await expect(session.json()).resolves.toEqual({ error: "github_session_create_failed" });
+  });
+
   it("exposes the GitHub device OAuth route flow without requiring a static token", async () => {
     const app = createApp();
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" });
@@ -233,6 +261,12 @@ describe("api route guards and error branches", () => {
       body: JSON.stringify({ mode: "full" }),
     }, env);
     expect(queuedFullBackfill.status).toBe(202);
+    const queuedResumeBackfill = await app.request("/v1/internal/jobs/backfill-registered-repos", {
+      method: "POST",
+      headers: internalHeaders(env),
+      body: JSON.stringify({ mode: "resume" }),
+    }, env);
+    expect(queuedResumeBackfill.status).toBe(202);
 
     const queuedSegment = await app.request("/v1/internal/jobs/backfill-repo-segment", {
       method: "POST",
@@ -266,6 +300,12 @@ describe("api route guards and error branches", () => {
       }, env);
       expect(response.status).toBe(202);
     }
+    const queuedFullSegment = await app.request("/v1/internal/jobs/backfill-repo-segment", {
+      method: "POST",
+      headers: internalHeaders(env),
+      body: JSON.stringify({ repoFullName: "infiniflow/ragflow", segment: "labels", mode: "full" }),
+    }, env);
+    expect(queuedFullSegment.status).toBe(202);
     const queuedDetails = await app.request("/v1/internal/jobs/backfill-pr-details", {
       method: "POST",
       headers: internalHeaders(env),

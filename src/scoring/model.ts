@@ -4,7 +4,7 @@ import {
 } from "../db/repositories";
 import { getLatestRegistrySnapshot } from "../registry/sync";
 import type { JsonValue, ScoringModelSnapshotRecord } from "../types";
-import { nowIso } from "../utils/json";
+import { errorMessage, nowIso } from "../utils/json";
 
 export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   OSS_EMISSION_SHARE: 0.9,
@@ -95,10 +95,10 @@ export function parsePythonNumberConstants(source: string): Record<string, numbe
   for (const line of source.split("\n")) {
     const match = line.match(/^([A-Z][A-Z0-9_]+)\s*=\s*([-+]?\d+(?:\.\d+)?)/);
     if (!match) continue;
-    const [, name, raw] = match;
-    if (!name || !raw || !SCORING_CONSTANT_NAMES.has(name)) continue;
-    const value = Number(raw);
-    if (Number.isFinite(value)) constants[name] = value;
+    const name = match[1]!;
+    const raw = match[2]!;
+    if (!SCORING_CONSTANT_NAMES.has(name)) continue;
+    constants[name] = Number(raw);
   }
   return constants;
 }
@@ -117,7 +117,7 @@ async function fetchText(url: string, token?: string): Promise<{ ok: true; value
     if (!response.ok) return { ok: false, error: `${response.status} ${response.statusText}` };
     return { ok: true, value: await response.text() };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "unknown error" };
+    return { ok: false, error: errorMessage(error) };
   }
 }
 
@@ -127,7 +127,7 @@ async function fetchJson(url: string, token?: string): Promise<{ ok: true; value
     if (!response.ok) return { ok: false, error: `${response.status} ${response.statusText}` };
     return { ok: true, value: (await response.json()) as Record<string, JsonValue> };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "unknown error" };
+    return { ok: false, error: errorMessage(error) };
   }
 }
 

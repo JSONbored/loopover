@@ -94,7 +94,7 @@ import { attachDataQuality, buildCoreSignalFidelity, buildRepoDataQuality, build
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis } from "../signals/local-branch";
 import type { ContributorEvidenceRecord, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
-import { nowIso } from "../utils/json";
+import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
 
@@ -272,7 +272,8 @@ export function createApp() {
         201,
       );
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "github_device_flow_start_failed" }, error instanceof Error && error.message === "github_oauth_not_configured" ? 503 : 502);
+      const message = errorMessage(error, "github_device_flow_start_failed");
+      return c.json({ error: message }, message === "github_oauth_not_configured" ? 503 : 502);
     }
   });
 
@@ -283,7 +284,8 @@ export function createApp() {
     try {
       return c.json(await pollGitHubDeviceFlow(c.env, deviceCode));
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "github_device_flow_poll_failed" }, error instanceof Error && error.message === "github_oauth_not_configured" ? 503 : 502);
+      const message = errorMessage(error, "github_device_flow_poll_failed");
+      return c.json({ error: message }, message === "github_oauth_not_configured" ? 503 : 502);
     }
   });
 
@@ -294,7 +296,7 @@ export function createApp() {
     try {
       return c.json(await createSessionFromGitHubToken(c.env, githubToken, { source: "github_token_exchange" }), 201);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "github_session_create_failed" }, 401);
+      return c.json({ error: errorMessage(error, "github_session_create_failed") }, 401);
     }
   });
 

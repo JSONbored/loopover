@@ -208,6 +208,52 @@ describe("GitHub backfill", () => {
     expect(await listContributorRepoStats(env, "jsonbored")).toEqual([]);
   });
 
+  it("records unknown contributor activity failures and deterministic dominant label ties", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) throw "network vanished";
+      return Response.json({
+        data: {
+          r_JSONbored_gittensory_all: {
+            issueCount: 2,
+            nodes: [
+              { __typename: "PullRequest", updatedAt: "bad-date", labels: { nodes: [{ name: "zeta" }] }, body: "" },
+              { __typename: "PullRequest", updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "alpha" }] }, body: "Fixes #1" },
+            ],
+          },
+          r_JSONbored_gittensory_merged: { issueCount: 0, nodes: [] },
+          r_JSONbored_gittensory_open: {
+            issueCount: 2,
+            nodes: [
+              { __typename: "PullRequest", updatedAt: "bad-date", labels: { nodes: [{ name: "zeta" }] }, body: "" },
+              { __typename: "PullRequest", updatedAt: "2026-05-23T00:00:00Z", labels: { nodes: [{ name: "alpha" }] }, body: "Fixes #1" },
+            ],
+          },
+          r_JSONbored_gittensory_issues: {
+            issueCount: 1,
+            nodes: [{ __typename: "Issue", updatedAt: "2026-05-22T00:00:00Z", labels: { nodes: [null, { name: "alpha" }, { name: "zeta" }] }, body: "" }],
+          },
+        },
+      });
+    });
+
+    const failed = await refreshContributorActivity(env, "jsonbored");
+    const recovered = await refreshContributorActivity(env, "jsonbored");
+
+    expect(failed).toMatchObject({ updatedRepoStats: 0, warnings: ["Contributor activity refresh failed for JSONbored/gittensory: unknown error"] });
+    expect(recovered).toMatchObject({ updatedRepoStats: 1, warnings: [] });
+    expect(await listContributorRepoStats(env, "jsonbored")).toEqual([
+      expect.objectContaining({
+        dominantLabels: ["alpha", "zeta"],
+        lastActivityAt: "bad-date",
+        unlinkedPullRequests: 1,
+      }),
+    ]);
+  });
+
   it("carries GraphQL warnings and ignores repos with no contributor activity", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);
@@ -1296,6 +1342,133 @@ describe("GitHub backfill", () => {
     }
   });
 
+  it("skips missing repositories and preserves segment progress while waiting for rate-limit recovery", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+
+    await expect(backfillRepositorySegment(env, { repoFullName: "missing/repo", segment: "labels" })).resolves.toMatchObject({
+      status: "skipped",
+      fetchedCount: 0,
+      warnings: ["Repository was not found."],
+    });
+    await expect(backfillOpenPullRequestDetails(env, { repoFullName: "missing/repo" })).resolves.toMatchObject({
+      status: "skipped",
+      processed: 0,
+      warnings: ["Repository was not found."],
+    });
+
+    await seedRegisteredRepo(env);
+    await upsertRepoSyncSegment(env, {
+      repoFullName: "JSONbored/gittensory",
+      segment: "labels",
+      status: "partial",
+      sourceKind: "github",
+      mode: "resume",
+      fetchedCount: 7,
+      expectedCount: 20,
+      pageCount: 2,
+      nextCursor: "3",
+      completedAt: "2026-05-24T00:00:00.000Z",
+      warnings: ["previous partial"],
+    });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "JSONbored/gittensory",
+      resource: "rest",
+      path: "/labels",
+      statusCode: 200,
+      remaining: 0,
+      resetAt: "2999-01-01T00:00:00.000Z",
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", requestedBy: "schedule", mode: "resume", cursor: "4" });
+
+    expect(result).toMatchObject({ status: "waiting_rate_limit", fetchedCount: 7, expectedCount: 20, nextCursor: "3" });
+    expect(sent).toEqual([
+      {
+        message: expect.objectContaining({ type: "backfill-repo-segment", requestedBy: "schedule", repoFullName: "JSONbored/gittensory", segment: "labels", mode: "resume", force: true }),
+        options: { delaySeconds: 900 },
+      },
+    ]);
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ segment: "labels", status: "waiting_rate_limit", fetchedCount: 7, expectedCount: 20, pageCount: 2, nextCursor: "3" }),
+      ]),
+    );
+
+    const freshWaitEnv = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(freshWaitEnv);
+    await recordGitHubRateLimitObservation(freshWaitEnv, {
+      repoFullName: "JSONbored/gittensory",
+      resource: "rest",
+      path: "/labels",
+      statusCode: 200,
+      remaining: 0,
+      resetAt: "2999-01-01T00:00:00.000Z",
+    });
+    const freshWait = await backfillRepositorySegment(freshWaitEnv, { repoFullName: "JSONbored/gittensory", segment: "open_pull_requests", mode: "light" });
+    expect(freshWait).toMatchObject({ status: "waiting_rate_limit", fetchedCount: 0 });
+    expect(await listRepoSyncSegments(freshWaitEnv, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "open_pull_requests", status: "waiting_rate_limit", fetchedCount: 0, pageCount: 0 })]),
+    );
+  });
+
+  it("uses cached totals and unauthenticated segment fallback when no GitHub token is available", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env);
+    await env.DB.prepare(
+      `insert into repo_github_totals_snapshots (
+        id, repo_full_name, open_issues_total, open_pull_requests_total, merged_pull_requests_total,
+        closed_unmerged_pull_requests_total, labels_total, source_kind, fetched_at, payload_json
+      ) values ('totals-1', 'JSONbored/gittensory', 0, 0, 0, 0, 0, 'github', '2026-05-25T00:00:00.000Z', '{}')`,
+    ).run();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      expect(url).toContain("/labels?");
+      return Response.json([]);
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "light" });
+
+    expect(result).toMatchObject({ status: "complete", fetchedCount: 0, expectedCount: 0 });
+  });
+
+  it("reconciles stale open issue rows after complete open-data crawls", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertIssueFromGitHub(
+      env,
+      "JSONbored/gittensory",
+      { number: 99, title: "Previously open", state: "open", user: { login: "reporter" }, labels: [], body: "" },
+      { seenOpenAt: "2026-05-20T00:00:00.000Z" },
+    );
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+      if (url.includes("/issues?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "full", force: true });
+
+    expect(result).toMatchObject({ status: "complete", fetchedCount: 0 });
+    expect(result.warnings.join(" ")).toMatch(/Marked 1 stale open issue row/);
+    expect(await listIssues(env, "JSONbored/gittensory")).toEqual([expect.objectContaining({ number: 99, state: "closed" })]);
+  });
+
   it("backs off PR detail hydration under low REST rate limit", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
@@ -1322,6 +1495,159 @@ describe("GitHub backfill", () => {
     expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ type: "backfill-pr-details", mode: "resume", cursor: 4 })]));
     expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
       expect.arrayContaining([expect.objectContaining({ segment: "pull_request_files", status: "waiting_rate_limit" })]),
+    );
+  });
+
+  it("defaults PR detail retry cursors when rate-limit recovery starts without prior state", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "JSONbored/gittensory",
+      resource: "rest",
+      path: "/pulls",
+      statusCode: 200,
+      remaining: 0,
+      resetAt: "2999-01-01T00:00:00.000Z",
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "light" });
+
+    expect(result).toMatchObject({ status: "waiting_rate_limit", processed: 0 });
+    expect(sent).toEqual([{ message: expect.objectContaining({ type: "backfill-pr-details", repoFullName: "JSONbored/gittensory", mode: "light", cursor: 0 }), options: { delaySeconds: 900 } }]);
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "pull_request_files", status: "waiting_rate_limit", fetchedCount: 0, pageCount: 0 })]),
+    );
+  });
+
+  it("uses installation source for queued segment jobs and sparse live installation fallback metadata", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "gittensory", full_name: "JSONbored/gittensory", private: true, default_branch: "main", owner: { login: "JSONbored" } },
+      123,
+    );
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/app/installations/123")) return Response.json({ id: 123 });
+      if (url === "https://api.github.com/graphql") {
+        return Response.json({
+          data: {
+            rateLimit: {},
+            repository: {
+              issues: {},
+              openPullRequests: {},
+              mergedPullRequests: {},
+              closedPullRequests: {},
+              labels: {},
+            },
+          },
+        });
+      }
+      if (url.includes("/labels?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const queued = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "api", mode: "resume" });
+    const segment = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "resume", force: true });
+    const details = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "resume" });
+    const health = await refreshInstallationHealth(env);
+
+    expect(queued).toMatchObject({ status: "queued", totals: { sourceKind: "installation", openIssuesTotal: 0, openPullRequestsTotal: 0, labelsTotal: 0 } });
+    expect(segment).toMatchObject({ status: "complete", fetchedCount: 0, expectedCount: 0 });
+    expect(details).toMatchObject({ status: "complete", processed: 0 });
+    expect(health.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 123,
+          accountLogin: "JSONbored",
+          repositorySelection: "selected",
+          status: "needs_attention",
+          permissions: {},
+          events: [],
+          missingPermissions: ["metadata", "pull_requests", "issues"],
+          missingEvents: ["issues", "pull_request", "repository"],
+        }),
+      ]),
+    );
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "labels", sourceKind: "installation" })]),
+    );
+    expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ type: "backfill-repo-segment", segment: "labels" })]));
+  });
+
+  it("records label rate limits, in-loop page caps, and expired rate observations", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "JSONbored/gittensory",
+      resource: "rest",
+      path: "/old",
+      statusCode: 200,
+      remaining: 1,
+      resetAt: "2020-01-01T00:00:00.000Z",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({ name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } });
+      }
+      if (url.includes("/labels?")) {
+        return new Response("label secondary limit", {
+          status: 403,
+          headers: {
+            "x-ratelimit-limit": "5000",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1780000000",
+          },
+        });
+      }
+      if (url.includes("/issues?") && new URL(url).searchParams.get("page") === "1") {
+        return Response.json(
+          Array.from({ length: 100 }, (_, index) => ({ number: index + 1, title: `Issue ${index + 1}`, state: "open", user: { login: "reporter" }, labels: [], body: "" })),
+          { headers: { link: '<https://api.github.com/repositories/1/issues?page=2>; rel="next"', "x-ratelimit-remaining": "not-a-number" } },
+        );
+      }
+      if (url.includes("/pulls?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const result = await backfillRegisteredRepositories(env, { force: true, limits: { issues: 100, pullRequests: 0, recentMergedPullRequests: 0, pullRequestDetails: 0 } });
+
+    expect(result.repos[0]).toMatchObject({ status: "rate_limited", dataQuality: { capped: true, rateLimited: true, partial: true } });
+    expect(result.repos[0]?.warnings.join("\n")).toMatch(/Label sync failed|local cap/);
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ segment: "labels", status: "rate_limited", rateLimitResetAt: "2026-05-28T20:26:40.000Z" }),
+        expect.objectContaining({ segment: "open_issues", status: "capped", nextCursor: "2" }),
+      ]),
     );
   });
 });

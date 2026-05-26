@@ -57,5 +57,7 @@
 
 - Restore Nightward-style homepage flow (#9)
 
+- Use Gittensor screenshot in homepage hero
+
 
 

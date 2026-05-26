@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+
+### Fixes
+
+- Use Gittensor screenshot in homepage hero
+
+
 ## mcp-v0.1.4 - 2026-05-26
 
 

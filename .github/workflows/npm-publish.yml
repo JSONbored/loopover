@@ -6,7 +6,7 @@ on:
       - "mcp-v*.*.*"
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 concurrency:
@@ -66,3 +66,26 @@ jobs:
 
       - name: Publish with npm trusted publishing
         run: npx -y npm@11.15.0 publish --workspace @jsonbored/gittensory-mcp --access public --provenance
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#mcp-v}"
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
+          Published [@jsonbored/gittensory-mcp v${VERSION}](https://www.npmjs.com/package/@jsonbored/gittensory-mcp/v/${VERSION}) to npm with provenance.
+
+          Install:
+
+          \`\`\`sh
+          npm install -g @jsonbored/gittensory-mcp@${VERSION}
+          \`\`\`
+          EOF
+          if gh release view "$REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$REF_NAME" --repo "$GITHUB_REPOSITORY" --title "@jsonbored/gittensory-mcp v${VERSION}" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$REF_NAME" --repo "$GITHUB_REPOSITORY" --title "@jsonbored/gittensory-mcp v${VERSION}" --notes-file "$NOTES_FILE" --verify-tag
+          fi

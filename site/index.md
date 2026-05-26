@@ -6,8 +6,8 @@ hero:
   text: Know the Gittensor lane before you submit.
   tagline: MCP branch analysis and GitHub App context for score blockers, queue pressure, lane fit, and maintainer review load. Not a Gittensor frontend.
   image:
-    src: /logo.svg
-    alt: Gittensory logo
+    src: /images/gittensor-home-signal.webp
+    alt: Gittensor homepage showing live miner, reward, and repository activity.
   actions:
     - theme: brand
       text: Install MCP
@@ -55,36 +55,16 @@ Prefer a full setup first? Start with [install](/guide/install), run `gittensory
 
 ## Where It Fits
 
-| Audience | What Gittensory adds |
+| Audience | Gittensory adds |
 | --- | --- |
 | Gittensor miners | Scoreability blockers, lane fit, queue pressure, local diff quality, and cleanup-first guidance. |
-| Maintainers | Confirmed-miner context, sticky public-safe comments, configured labels, and private reviewability packets. |
+| Maintainers | Confirmed-miner comments, configured labels, and private reviewability packets. |
 | Coding agents | Structured MCP tools for repo context, current branch preflight, next actions, and PR packet drafting. |
 | Repo owners | Config quality, label readiness, maintainer-lane handling, and contribution intake health. |
 
-<section class="gtn-context-media" aria-labelledby="gtn-context-title">
-  <div class="gtn-context-media__copy">
-    <p class="gtn-eyebrow">Gittensor context</p>
-    <h2 id="gtn-context-title">Built around the live contribution market, not another dashboard.</h2>
-    <p>
-      Gittensory reads the Gittensor and GitHub signals that affect contribution quality:
-      registered repo lanes, miner history, open PR pressure, linked issue context, and maintainer friction.
-    </p>
-    <p class="gtn-context-media__links">
-      <a href="https://gittensor.io/" target="_blank" rel="noreferrer">Open Gittensor</a>
-      <a href="/guide/miners">Miner workflow</a>
-      <a href="/guide/maintainers">Maintainer workflow</a>
-    </p>
-  </div>
-  <a class="gtn-context-media__frame" href="https://gittensor.io/" target="_blank" rel="noreferrer" aria-label="Open Gittensor">
-    <img
-      src="/images/gittensor-home-signal.webp"
-      alt="Gittensor homepage showing live miner, reward, and repository activity."
-      width="1180"
-      height="660"
-    />
-  </a>
-</section>
+## Gittensor Context
+
+Gittensory reads the signals that affect contribution quality: registered repo lanes, official miner context, open PR pressure, linked issue expectations, local validation evidence, and maintainer friction. It turns those into MCP/API guidance and sanitized GitHub App output.
 
 ## Guardrails
 

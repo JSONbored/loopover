@@ -25,6 +25,8 @@ curl "$GITTENSORY_API_URL/openapi.json" \
 | `GET /v1/repos` | Known registered and installed repositories. |
 | `GET /v1/repos/:owner/:repo` | Repository metadata. |
 | `GET /v1/repos/:owner/:repo/intelligence` | Canonical repository intelligence bundle. |
+| `GET /v1/repos/:owner/:repo/registration-readiness` | Repo-owner readiness signal for Gittensor registration. |
+| `GET /v1/repos/:owner/:repo/gittensor-config-recommendation` | Private Gittensor config recommendation for repo owners. |
 | `GET /v1/repos/:owner/:repo/pulls/:number/maintainer-packet` | PR-specific maintainer review packet. |
 | `GET /v1/repos/:owner/:repo/pulls/:number/reviewability` | Private PR reviewability score and maintainer action. |
 

@@ -26,4 +26,4 @@ body:
         - label: This is backend-only.
         - label: This does not require storing user PATs.
         - label: This does not expose wallet details, raw trust scores, or private rankings publicly.
-        - label: This does not auto-close, auto-merge, or rewrite contributor work.
+        - label: This does not auto-close, auto-merge, rewrite contributor work, or label PRs outside the confirmed-miner policy.

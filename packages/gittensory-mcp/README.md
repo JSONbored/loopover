@@ -6,7 +6,7 @@ It inspects local git metadata and calls the Gittensory API for branch preflight
 
 ## Status
 
-The package is public beta. Gittensory still keeps sensitive score, trust, and maintainer context out of public PR comments.
+The package is public. Gittensory keeps sensitive score, trust, wallet, and maintainer context out of public PR comments.
 
 ## Install
 
@@ -31,6 +31,7 @@ gittensory-mcp login
 gittensory-mcp logout
 gittensory-mcp whoami
 gittensory-mcp status
+gittensory-mcp changelog
 gittensory-mcp doctor
 gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
@@ -70,5 +71,16 @@ The wrapper stores a Gittensory session token, not a GitHub token.
 - `GITTENSOR_SCORE_PREVIEW_CMD`
 - `GITTENSOR_ROOT`
 - `GITTENSORY_UPLOAD_SOURCE=false`
+- `GITTENSORY_SKIP_NPM_VERSION_CHECK=true`
 
 `GITTENSORY_UPLOAD_SOURCE=true` is not supported and fails closed.
+
+## Release Notes
+
+The package ships with `CHANGELOG.md`. Run:
+
+```sh
+gittensory-mcp changelog
+```
+
+`gittensory-mcp status` also reports the local package version, latest npm version when reachable, API health, auth state, and source-upload posture.

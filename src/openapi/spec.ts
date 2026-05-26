@@ -39,6 +39,8 @@ import {
   DecisionPackRefreshNeededSchema,
   RepoFitRecommendationSchema,
   RepoDecisionResponseSchema,
+  GittensorConfigRecommendationSchema,
+  RegistrationReadinessSchema,
   RepoIntelligenceSchema,
   RepoRewardRiskSchema,
   RegistrySnapshotSchema,
@@ -78,6 +80,8 @@ export function buildOpenApiSpec() {
   registry.register("DecisionPackRefreshNeeded", DecisionPackRefreshNeededSchema);
   registry.register("RepoDecisionResponse", RepoDecisionResponseSchema);
   registry.register("RepoIntelligence", RepoIntelligenceSchema);
+  registry.register("RegistrationReadiness", RegistrationReadinessSchema);
+  registry.register("GittensorConfigRecommendation", GittensorConfigRecommendationSchema);
   registry.register("RepoFitRecommendation", RepoFitRecommendationSchema);
   registry.register("PreflightResult", PreflightResultSchema);
   registry.register("LocalDiffPreflightResult", LocalDiffPreflightResultSchema);
@@ -159,7 +163,7 @@ export function buildOpenApiSpec() {
     method: "get",
     path: "/v1/readiness",
     responses: {
-      200: { description: "Operational readiness summary for private beta and public-review preparation", content: { "application/json": { schema: ReadinessSchema } } },
+      200: { description: "Operational readiness summary for hosted API, signal fidelity, and public-review preparation", content: { "application/json": { schema: ReadinessSchema } } },
     },
   });
   registry.registerPath({
@@ -207,6 +211,20 @@ export function buildOpenApiSpec() {
     path: "/v1/repos/{owner}/{repo}/intelligence",
     responses: {
       200: { description: "Canonical repository intelligence bundle", content: { "application/json": { schema: RepoIntelligenceSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/registration-readiness",
+    responses: {
+      200: { description: "Gittensor registration readiness signal for repo owners", content: { "application/json": { schema: RegistrationReadinessSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/gittensor-config-recommendation",
+    responses: {
+      200: { description: "Private Gittensor config recommendation for repo owners", content: { "application/json": { schema: GittensorConfigRecommendationSchema } } },
     },
   });
   registry.registerPath({

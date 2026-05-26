@@ -108,6 +108,8 @@ Protected endpoints use `Authorization: Bearer <GITTENSORY_API_TOKEN>` or a Gitt
 - `GET /v1/repos`
 - `GET /v1/repos/:owner/:repo`
 - `GET /v1/repos/:owner/:repo/intelligence`
+- `GET /v1/repos/:owner/:repo/registration-readiness`
+- `GET /v1/repos/:owner/:repo/gittensor-config-recommendation`
 - `GET /v1/repos/:owner/:repo/pulls/:number/maintainer-packet`
 - `GET /v1/repos/:owner/:repo/pulls/:number/reviewability`
 - `GET /v1/contributors/:login/profile`
@@ -155,8 +157,27 @@ npm run docs:preview
 
 The Pages workflow builds the docs on `main` for `https://gittensory.aethereal.dev/`, but deploys only when the repository variable `GITTENSORY_DOCS_DEPLOY` is set to `true`.
 
+## Changelog And Releases
+
+```sh
+npm run changelog
+npm run changelog:check
+```
+
+- `CHANGELOG.md` tracks backend/API/GitHub App changes.
+- `packages/gittensory-mcp/CHANGELOG.md` tracks npm-visible MCP package changes.
+- Root releases use `vX.Y.Z` tags.
+- MCP package releases use `mcp-vX.Y.Z` tags and publish through trusted publishing with provenance.
+
 ## Validation
 
 ```sh
 npm run test:ci
 ```
+
+## Support And Security
+
+- Public support: `SUPPORT.md`
+- Security policy: `SECURITY.md`
+- Privacy posture: `site/security/privacy.md`
+- Terms: `site/security/terms.md`

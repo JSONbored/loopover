@@ -17,6 +17,7 @@ import {
   upsertPullRequestFromGitHub,
   persistScoringModelSnapshot,
   upsertRepositoryFromGitHub,
+  upsertRepositorySettings,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -230,6 +231,30 @@ describe("api routes", () => {
       configQuality: { notObservedConfiguredLabels: expect.arrayContaining(["refactor"]) },
       labelAudit: { missingConfiguredLabels: expect.arrayContaining(["refactor"]) },
       dataQuality: expect.any(Object),
+    });
+
+    const registrationReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(registrationReadiness.status).toBe(200);
+    await expect(registrationReadiness.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      recommendedRegistrationMode: "direct_pr",
+      issuePolicy: "direct_pr_no_issue_required",
+      labelPolicy: { label: "gittensor" },
+      docsCompleteness: { status: "repo_docs_not_crawled" },
+      dataQuality: expect.any(Object),
+    });
+
+    const configRecommendation = await app.request("/v1/repos/entrius/allways-ui/gittensor-config-recommendation", { headers: apiHeaders(env) }, env);
+    expect(configRecommendation.status).toBe(200);
+    await expect(configRecommendation.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      privateOnly: true,
+      recommended: {
+        participationMode: "direct_pr",
+        issueDiscoveryShare: 0,
+        confirmedMinerLabel: "gittensor",
+      },
+      reasons: expect.arrayContaining([expect.stringMatching(/Direct-PR|Direct-PR|Direct/i)]),
     });
 
     for (const path of [
@@ -1227,6 +1252,72 @@ describe("api routes", () => {
     const missingBountyPayload = await mcpJson(missingBounty);
     expect(JSON.stringify(missingBountyPayload)).toMatch(/Bounty not found|error|isError/i);
   }, 15_000);
+
+  it("covers registration-readiness policy variants for repo-owner launch planning", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedSignalData(env);
+
+    const unknownReadiness = await app.request("/v1/repos/JSONbored/gittensory/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(unknownReadiness.status).toBe(200);
+    await expect(unknownReadiness.json()).resolves.toMatchObject({
+      ready: false,
+      recommendedRegistrationMode: "direct_pr",
+      blockers: expect.arrayContaining(["Repository is not registered in the latest Gittensory registry snapshot."]),
+    });
+
+    await upsertRepositorySettings(env, {
+      repoFullName: "entrius/allways-ui",
+      publicSurface: "off",
+      requireLinkedIssue: true,
+      autoLabelEnabled: false,
+      createMissingLabel: false,
+      gittensorLabel: "gittensor-miner",
+    });
+    const directReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(directReadiness.status).toBe(200);
+    await expect(directReadiness.json()).resolves.toMatchObject({
+      issuePolicy: "direct_pr_requires_linked_issue",
+      labelPolicy: { autoLabelEnabled: false, label: "gittensor-miner", createMissingLabel: false },
+      warnings: expect.arrayContaining(["GitHub App public surface is disabled; maintainers will not get comment/label assistance."]),
+    });
+
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        {
+          "entrius/allways-ui": {
+            emission_share: 0.01107,
+            issue_discovery_share: 0.01,
+            label_multipliers: {},
+            trusted_label_pipeline: false,
+            maintainer_cut: 0.03,
+          },
+        },
+        { kind: "raw-github", url: "https://example.test/issue-discovery-registry.json" },
+        "2026-05-26T00:00:00.000Z",
+      ),
+    );
+    const issueDiscoveryReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(issueDiscoveryReadiness.status).toBe(200);
+    await expect(issueDiscoveryReadiness.json()).resolves.toMatchObject({
+      recommendedRegistrationMode: "split",
+      issuePolicy: "split_pr_and_issue_discovery_enabled",
+    });
+
+    const recommendation = await app.request("/v1/repos/entrius/allways-ui/gittensor-config-recommendation", { headers: apiHeaders(env) }, env);
+    expect(recommendation.status).toBe(200);
+    await expect(recommendation.json()).resolves.toMatchObject({
+      privateOnly: true,
+      current: { issueDiscoveryShare: 0.01, maintainerCut: 0.03 },
+      recommended: {
+        requireLinkedIssue: true,
+        confirmedMinerLabel: "gittensor-miner",
+        publicSurface: "off",
+      },
+      reasons: expect.arrayContaining([expect.stringMatching(/issue discovery|Direct-PR/i)]),
+    });
+  });
 
   it("updates repository settings through protected internal API", async () => {
     const app = createApp();

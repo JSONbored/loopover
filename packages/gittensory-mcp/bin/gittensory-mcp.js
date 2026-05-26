@@ -8,6 +8,9 @@ import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
 
 const defaultApiUrl = "https://gittensory-api.zeronode.workers.dev";
+const packageName = "@jsonbored/gittensory-mcp";
+const packageVersion = "0.1.4";
+const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
@@ -121,7 +124,7 @@ if (cliArgs[0] && cliArgs[0] !== "--stdio") {
 
 const server = new McpServer({
   name: "gittensory-local",
-  version: "0.1.3",
+  version: packageVersion,
 });
 
 server.registerTool(
@@ -364,6 +367,7 @@ async function runCli(args) {
   if (command === "logout") return logout(options);
   if (command === "whoami") return whoami(options);
   if (command === "status") return status(options);
+  if (command === "changelog") return changelog(options);
   if (command === "doctor") return doctor(options);
   if (command === "init-client") return initClient(options);
   if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}`);
@@ -413,6 +417,7 @@ function printHelp() {
   gittensory-mcp logout [--json]
   gittensory-mcp whoami [--json]
   gittensory-mcp status [--json]
+  gittensory-mcp changelog [--json]
   gittensory-mcp doctor [--cwd path] [--json]
   gittensory-mcp init-client --print codex|claude|cursor [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
@@ -509,6 +514,8 @@ async function whoami(options) {
 
 async function status(options) {
   let auth = { status: getApiToken() ? "token_configured" : "unauthenticated" };
+  let health = null;
+  let latest = null;
   if (getApiToken()) {
     try {
       auth = await apiGet("/v1/auth/session");
@@ -516,8 +523,26 @@ async function status(options) {
       auth = { status: "token_configured", session: "unverified", error: error instanceof Error ? error.message : "status_failed" };
     }
   }
+  try {
+    health = await apiFetch("/health", { method: "GET" }, { auth: false, timeoutMs: 5000 });
+  } catch (error) {
+    health = { status: "unreachable", error: error instanceof Error ? error.message : "health_check_failed" };
+  }
+  try {
+    latest = await fetchLatestPackageVersion();
+  } catch (error) {
+    latest = { status: "unavailable", error: error instanceof Error ? error.message : "npm_version_check_failed" };
+  }
   const payload = {
     apiUrl,
+    package: {
+      name: packageName,
+      version: packageVersion,
+      latestVersion: latest?.version ?? null,
+      updateAvailable: typeof latest?.version === "string" && latest.version !== packageVersion,
+      latestStatus: latest?.status ?? "ok",
+    },
+    api: health,
     auth,
     configPath,
     sourceUploadDefault: false,
@@ -525,10 +550,25 @@ async function status(options) {
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
+    process.stdout.write(`${packageName}: ${packageVersion}${payload.package.latestVersion ? ` (latest ${payload.package.latestVersion})` : ""}\n`);
     process.stdout.write(`API: ${apiUrl}\n`);
+    process.stdout.write(`API health: ${health?.status ?? "unknown"}\n`);
     process.stdout.write(`Auth: ${auth.status}${auth.login ? ` (${auth.login})` : ""}\n`);
     process.stdout.write("Source upload: disabled\n");
   }
+}
+
+async function changelog(options) {
+  const text = existsSync(changelogPath) ? readFileSync(changelogPath, "utf8") : "# Changelog\n\nNo packaged changelog was found.\n";
+  const payload = {
+    package: {
+      name: packageName,
+      version: packageVersion,
+    },
+    changelog: text,
+  };
+  if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  else process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
 }
 
 async function doctor(options) {
@@ -732,6 +772,19 @@ async function apiFetch(path, init, options = {}) {
     throw new Error(`Gittensory API ${response.status}${retry ? ` retry-after=${retry}s` : ""}: ${JSON.stringify(payload).slice(0, 500)}`);
   }
   return payload;
+}
+
+async function fetchLatestPackageVersion() {
+  if (/^(1|true|yes)$/i.test(process.env.GITTENSORY_SKIP_NPM_VERSION_CHECK ?? "false")) return { status: "skipped" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  const response = await fetch("https://registry.npmjs.org/@jsonbored%2fgittensory-mcp/latest", {
+    signal: controller.signal,
+    headers: { accept: "application/json" },
+  }).finally(() => clearTimeout(timeout));
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || typeof payload.version !== "string") throw new Error("npm_latest_version_unavailable");
+  return { status: "ok", version: payload.version };
 }
 
 async function analyzeCurrentBranch(input) {

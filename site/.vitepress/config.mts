@@ -44,6 +44,8 @@ export default defineConfig({
         items: [
           { text: "API", link: "/reference/api" },
           { text: "Privacy", link: "/security/privacy" },
+          { text: "Terms", link: "/security/terms" },
+          { text: "Support", link: "/support" },
           { text: "Troubleshooting", link: "/troubleshooting" },
         ],
       },

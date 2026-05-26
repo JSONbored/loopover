@@ -1,6 +1,6 @@
 {
   "name": "@jsonbored/gittensory-mcp",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Local stdio MCP wrapper for Gittensory contributor intelligence.",
@@ -29,7 +29,8 @@
   },
   "files": [
     "bin",
-    "lib"
+    "lib",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "node --check bin/gittensory-mcp.js && node --check lib/local-branch.js"

@@ -504,6 +504,16 @@ export function createApp() {
     return c.json(await buildRepoIntelligenceResponse(c.env, fullName));
   });
 
+  app.get("/v1/repos/:owner/:repo/registration-readiness", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    return c.json(await buildRegistrationReadinessResponse(c.env, fullName));
+  });
+
+  app.get("/v1/repos/:owner/:repo/gittensor-config-recommendation", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    return c.json(await buildGittensorConfigRecommendationResponse(c.env, fullName));
+  });
+
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await getRepositorySettings(c.env, fullName));
@@ -946,6 +956,101 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     maintainerCutReadiness,
     contributorIntakeHealth,
     dataQuality,
+  };
+}
+
+async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
+  const intelligence = await buildRepoIntelligenceResponse(env, fullName);
+  const settings = await getRepositorySettings(env, fullName);
+  const repo = intelligence.repo;
+  const configQuality = intelligence.configQuality as ReturnType<typeof buildConfigQuality>;
+  const maintainerCutReadiness = intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>;
+  const contributorIntakeHealth = intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>;
+  const lane = buildLaneAdvice(repo, fullName);
+  const blockers = [
+    ...(!repo?.isRegistered ? ["Repository is not registered in the latest Gittensory registry snapshot."] : []),
+    ...(configQuality.level === "fragile" ? ["Repository config quality is fragile."] : []),
+    ...(contributorIntakeHealth.level === "blocked" ? ["Contributor intake health is blocked."] : []),
+  ];
+  const warnings = [
+    ...(configQuality.level === "needs_attention" ? ["Repository config quality needs attention before registration promotion."] : []),
+    ...(contributorIntakeHealth.level === "strained" ? ["Contributor intake is strained; expect more maintainer triage."] : []),
+    ...(settings.publicSurface === "off" ? ["GitHub App public surface is disabled; maintainers will not get comment/label assistance."] : []),
+  ];
+  const issuePolicy =
+    lane.lane === "issue_discovery"
+      ? "issue_discovery_enabled"
+      : lane.lane === "split"
+        ? "split_pr_and_issue_discovery_enabled"
+      : settings.requireLinkedIssue
+        ? "direct_pr_requires_linked_issue"
+        : "direct_pr_no_issue_required";
+  const ready = blockers.length === 0 && !["fragile", "needs_attention"].includes(configQuality.level);
+  return {
+    repoFullName: fullName,
+    generatedAt: nowIso(),
+    ready,
+    recommendedRegistrationMode: lane.lane === "issue_discovery" ? "issue_discovery" : lane.lane === "split" ? "split" : "direct_pr",
+    issuePolicy,
+    labelPolicy: {
+      autoLabelEnabled: settings.autoLabelEnabled,
+      label: settings.gittensorLabel,
+      createMissingLabel: settings.createMissingLabel,
+      configuredRegistryLabels: configQuality.configuredLabels,
+      missingOrUnusedRegistryLabels: configQuality.notObservedConfiguredLabels,
+    },
+    maintainerCutReadiness,
+    contributorIntakeHealth,
+    docsCompleteness: {
+      status: "repo_docs_not_crawled",
+      requiredDocs: ["README", "CONTRIBUTING", "SECURITY", "SUPPORT"],
+      note: "Gittensory validates public repo docs from the local project during CI; remote repo-doc crawling is not enabled in this signal yet.",
+    },
+    blockers,
+    warnings,
+    dataQuality: intelligence.dataQuality,
+  };
+}
+
+async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {
+  const intelligence = await buildRepoIntelligenceResponse(env, fullName);
+  const settings = await getRepositorySettings(env, fullName);
+  const repo = intelligence.repo;
+  const lane = buildLaneAdvice(repo, fullName);
+  const configQuality = intelligence.configQuality as ReturnType<typeof buildConfigQuality>;
+  const contributorIntakeHealth = intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>;
+  const maintainerCutReadiness = intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>;
+  const current = repo?.registryConfig ?? null;
+  const shouldEnableIssueDiscovery = contributorIntakeHealth.level === "healthy" && configQuality.level === "excellent";
+  const recommendedIssueDiscoveryShare = shouldEnableIssueDiscovery ? 0.1 : 0;
+  const currentAllocation = current?.emissionShare ?? 0;
+  const directPrShare = Math.max(0, currentAllocation - recommendedIssueDiscoveryShare);
+  const recommendedMaintainerCut = maintainerCutReadiness.ready ? Math.max(current?.maintainerCut ?? 0, 0.02) : current?.maintainerCut ?? 0;
+  return {
+    repoFullName: fullName,
+    generatedAt: nowIso(),
+    privateOnly: true,
+    current,
+    recommended: {
+      participationMode: recommendedIssueDiscoveryShare > 0 ? "split" : "direct_pr",
+      issueDiscoveryShare: recommendedIssueDiscoveryShare,
+      directPrShare,
+      maintainerCut: recommendedMaintainerCut,
+      requireLinkedIssue: settings.requireLinkedIssue,
+      labelMultipliers: configQuality.configuredLabels.length > 0 ? "keep_current_and_prune_unused" : "start_without_trusted_label_multipliers",
+      publicSurface: settings.publicSurface,
+      confirmedMinerLabel: settings.gittensorLabel,
+    },
+    reasons: [
+      lane.lane === "issue_discovery" ? "The current registry lane already routes meaningful work through issue discovery." : "Direct-PR mode is the safest default until issue-discovery intake is intentionally staffed.",
+      shouldEnableIssueDiscovery ? "Config and intake signals are strong enough to consider a small issue-discovery slice." : "Issue discovery should stay disabled until config quality and intake health are excellent.",
+      maintainerCutReadiness.ready ? "Maintainer cut can be considered because config and queue signals are clean." : "Maintainer cut should stay unchanged until readiness blockers are cleared.",
+    ],
+    warnings: [
+      ...(configQuality.notObservedConfiguredLabels.length > 0 ? [`${configQuality.notObservedConfiguredLabels.length} configured label(s) have not been observed in cached repo activity.`] : []),
+      ...(contributorIntakeHealth.level === "strained" || contributorIntakeHealth.level === "blocked" ? [`Contributor intake is ${contributorIntakeHealth.level}; avoid increasing noisy lanes yet.`] : []),
+    ],
+    dataQuality: intelligence.dataQuality,
   };
 }
 

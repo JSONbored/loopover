@@ -1026,6 +1026,36 @@ export const RepoIntelligenceSchema = z
   })
   .openapi("RepoIntelligence");
 
+export const RegistrationReadinessSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    ready: z.boolean(),
+    recommendedRegistrationMode: z.enum(["direct_pr", "issue_discovery", "split"]),
+    issuePolicy: z.enum(["issue_discovery_enabled", "split_pr_and_issue_discovery_enabled", "direct_pr_requires_linked_issue", "direct_pr_no_issue_required"]),
+    labelPolicy: z.record(z.unknown()),
+    maintainerCutReadiness: z.record(z.unknown()),
+    contributorIntakeHealth: z.record(z.unknown()),
+    docsCompleteness: z.record(z.unknown()),
+    blockers: z.array(z.string()),
+    warnings: z.array(z.string()),
+    dataQuality: z.record(z.unknown()),
+  })
+  .openapi("RegistrationReadiness");
+
+export const GittensorConfigRecommendationSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    privateOnly: z.boolean(),
+    current: z.record(z.unknown()).nullable(),
+    recommended: z.record(z.unknown()),
+    reasons: z.array(z.string()),
+    warnings: z.array(z.string()),
+    dataQuality: z.record(z.unknown()),
+  })
+  .openapi("GittensorConfigRecommendation");
+
 export const RewardRiskActionSchema = z
   .object({
     actionKind: z.enum([

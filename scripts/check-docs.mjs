@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
-const targets = ["README.md", "packages/gittensory-mcp/README.md", "site"];
+const targets = ["README.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "packages/gittensory-mcp/README.md", "site"];
 const staleRoutes = [
   "/v1/contributors/:login/opportunities",
   "/v1/contributors/:login/fit",
@@ -21,6 +21,8 @@ const forbidden = [
   { name: "dev vars assignment", pattern: /^GITHUB_(?:WEBHOOK_SECRET|APP_PRIVATE_KEY|PUBLIC_TOKEN)=.+$/m },
   { name: "gittensory token assignment", pattern: /^GITTENSORY_(?:API_TOKEN|MCP_TOKEN|TOKEN)=.+$/m },
   { name: "internal token assignment", pattern: /^INTERNAL_JOB_TOKEN=.+$/m },
+  { name: "stale private-beta wording", pattern: /\bprivate beta\b/i },
+  { name: "preview worker domain", pattern: /zeronode\.workers\.dev/i },
 ];
 
 const files = targets.flatMap((target) => collect(join(root, target))).filter((file) => /\.(md|mts|ts|js|json|yml)$/.test(file));
@@ -40,6 +42,14 @@ for (const file of files) {
 const siteIndex = readFileSync(join(root, "site/index.md"), "utf8");
 for (const phrase of ["Gittensor miners", "GitHub App", "MCP", "not a Gittensor frontend"]) {
   if (!siteIndex.includes(phrase)) failures.push(`site/index.md: missing required positioning phrase ${JSON.stringify(phrase)}`);
+}
+
+for (const required of ["SUPPORT.md", "site/security/privacy.md", "site/security/terms.md", "site/support.md"]) {
+  try {
+    readFileSync(join(root, required), "utf8");
+  } catch {
+    failures.push(`${required}: missing public-registration support/privacy/terms doc`);
+  }
 }
 
 if (failures.length > 0) {

@@ -50,6 +50,27 @@ describe("gittensory-mcp CLI", () => {
     );
   });
 
+  it("reports package status and prints the packaged changelog", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const status = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
+
+    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.1.4", latestStatus: "skipped" });
+    expect(status.api.status).toBe("ok");
+    expect(status.auth.login).toBe("JSONbored");
+
+    const changelog = JSON.parse(run(["changelog", "--json"])) as { package: { version: string }; changelog: string };
+    expect(changelog.package.version).toBe("0.1.4");
+    expect(changelog.changelog).toContain("# Changelog");
+  });
+
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });

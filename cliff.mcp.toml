@@ -21,7 +21,7 @@ footer = ""
 conventional_commits = true
 filter_unconventional = true
 split_commits = false
-tag_pattern = "^v[0-9].*"
+tag_pattern = "^mcp-v[0-9].*"
 sort_commits = "oldest"
 
 commit_parsers = [

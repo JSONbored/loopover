@@ -19,7 +19,7 @@ Out of scope:
 - frontend UI work
 - public leaderboards
 - public wallet or raw trust-score exposure
-- auto-labeling, auto-closing, auto-merging, or mutating contributor work
+- auto-closing, auto-merging, rewriting contributor work, or applying labels outside the explicit confirmed-miner GitHub App policy
 - storing contributor PATs
 - public text that implies compensation estimates or optimization tactics
 
@@ -29,6 +29,7 @@ Out of scope:
 - Add or update tests for behavior changes.
 - Keep API and MCP responses structured and machine-readable.
 - Keep public GitHub comments advisory, sanitized, and non-spammy.
+- Keep GitHub App labels limited to configured labels for officially confirmed Gittensor miner PRs.
 - Prefer deterministic, evidence-based rules over opaque scoring.
 - Use Conventional Commit style for release-quality changelog output.
 

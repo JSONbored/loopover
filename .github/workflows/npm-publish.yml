@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -47,10 +49,20 @@ jobs:
           set -euo pipefail
           PACK_JSON="$(npm pack --workspace @jsonbored/gittensory-mcp --json)"
           TARBALL="$(node -e 'const fs=require("fs"); const input=fs.readFileSync(0,"utf8"); process.stdout.write(JSON.parse(input)[0].filename)' <<< "$PACK_JSON")"
+          UNEXPECTED_FILES="$(tar -tzf "$TARBALL" | grep -Ev '^(package/(bin|lib)/|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
+          if [ -n "$UNEXPECTED_FILES" ]; then
+            printf '%s\n' "$UNEXPECTED_FILES"
+            echo "Unexpected file in package tarball"
+            exit 1
+          fi
+          if tar -xOf "$TARBALL" | grep -E '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|gh[pousr]_|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)'; then
+            echo "Secret-like content found in package tarball"
+            exit 1
+          fi
           TMP="$(mktemp -d)"
           npm --prefix "$TMP" init -y >/dev/null
           npm --prefix "$TMP" install "$PWD/$TARBALL" >/dev/null
           "$TMP/node_modules/.bin/gittensory-mcp" --help >/dev/null
 
       - name: Publish with npm trusted publishing
-        run: npx -y npm@11.15.0 publish --workspace @jsonbored/gittensory-mcp --access public
+        run: npx -y npm@11.15.0 publish --workspace @jsonbored/gittensory-mcp --access public --provenance

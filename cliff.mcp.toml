@@ -28,6 +28,8 @@ commit_parsers = [
   { message = "^feat", group = "Features" },
   { message = "^fix", group = "Fixes" },
   { message = "^test", group = "Tests" },
+  { message = "^docs\\(changelog\\)", skip = true },
+  { message = "^ci\\(changelog\\)", skip = true },
   { message = "^ci", group = "CI" },
   { message = "^build", group = "Build" },
   { message = "^docs", group = "Docs" },

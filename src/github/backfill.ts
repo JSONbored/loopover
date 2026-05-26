@@ -18,6 +18,7 @@ import {
   markUnseenOpenPullRequestsClosed,
   persistRepoGithubTotalsSnapshot,
   recordGitHubRateLimitObservation,
+  upsertInstallation,
   upsertCheckSummary,
   upsertContributor,
   upsertContributorRepoStat,
@@ -40,6 +41,8 @@ import type {
   GitHubIssuePayload,
   GitHubPullRequestPayload,
   GitHubRepositoryPayload,
+  InstallationHealthRecord,
+  InstallationRecord,
   JsonValue,
   PullRequestRecord,
   RecentMergedPullRequestRecord,
@@ -49,7 +52,7 @@ import type {
   RepositoryRecord,
 } from "../types";
 import { nowIso, repoParts } from "../utils/json";
-import { createInstallationToken } from "./app";
+import { createInstallationToken, getAppInstallation } from "./app";
 
 type GitHubLabelPayload = {
   name: string;
@@ -573,40 +576,109 @@ export async function refreshContributorActivity(
   return { ok: true, login, repoCount: repositories.length, updatedRepoStats, warnings };
 }
 
+export const REQUIRED_INSTALLATION_PERMISSIONS: Record<string, string> = {
+  checks: "write",
+  metadata: "read",
+  pull_requests: "read",
+  issues: "read",
+};
+
+export const REQUIRED_INSTALLATION_EVENTS = ["issues", "pull_request", "repository"] as const;
+export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target"] as const;
+
+export function enrichInstallationHealth(health: InstallationHealthRecord) {
+  const missingPermissions = new Set(health.missingPermissions);
+  const missingEvents = new Set(health.missingEvents);
+  return {
+    ...health,
+    requiredPermissions: REQUIRED_INSTALLATION_PERMISSIONS,
+    requiredEvents: [...REQUIRED_INSTALLATION_EVENTS],
+    optionalVisibleEvents: [...OPTIONAL_VISIBLE_INSTALLATION_EVENTS],
+    permissionRemediation: Object.entries(REQUIRED_INSTALLATION_PERMISSIONS).map(([permission, access]) => ({
+      permission,
+      requiredAccess: access,
+      currentAccess: health.permissions[permission] ?? "missing",
+      ok: !missingPermissions.has(permission),
+      action: missingPermissions.has(permission) ? `Set repository permission ${permission} to ${access}.` : "No change needed.",
+    })),
+    eventRemediation: REQUIRED_INSTALLATION_EVENTS.map((event) => ({
+      event,
+      ok: !missingEvents.has(event),
+      action: missingEvents.has(event) ? `Subscribe to the ${event} webhook event.` : "No change needed.",
+    })),
+    repairSteps:
+      health.status === "healthy"
+        ? ["No repair needed."]
+        : [
+            "Update the GitHub App permissions and subscribed events.",
+            "Approve the changed permissions or reinstall the app on the target account.",
+            "Run refresh-installation-health after GitHub sends the updated installation payload.",
+            "Recheck /v1/readiness and this installation health endpoint.",
+          ],
+  };
+}
+
 export async function refreshInstallationHealth(env: Env) {
   const [installations, repositories] = await Promise.all([listInstallations(env), listRepositories(env)]);
-  const requiredPermissions: Record<string, string> = {
-    checks: "write",
-    metadata: "read",
-    pull_requests: "read",
-  };
-  const requiredEvents = ["issues", "pull_request", "repository"];
   const health = [];
   for (const installation of installations) {
-    const installedRepos = repositories.filter((repo) => repo.installationId === installation.id && repo.isInstalled);
+    const { installation: currentInstallation, errorSummary } = await refreshStoredInstallation(env, installation);
+    const installedRepos = repositories.filter((repo) => repo.installationId === currentInstallation.id && repo.isInstalled);
     const registeredInstalled = installedRepos.filter((repo) => repo.isRegistered);
-    const missingPermissions = Object.entries(requiredPermissions)
-      .filter(([permission, expected]) => installation.permissions[permission] !== expected)
+    const missingPermissions = Object.entries(REQUIRED_INSTALLATION_PERMISSIONS)
+      .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))
       .map(([permission]) => permission);
-    const missingEvents = requiredEvents.filter((event) => !installation.events.includes(event));
-    const status = missingPermissions.length > 0 || missingEvents.length > 0 ? "needs_attention" : "healthy";
+    const missingEvents = REQUIRED_INSTALLATION_EVENTS.filter((event) => !currentInstallation.events.includes(event));
+    const status = errorSummary || missingPermissions.length > 0 || missingEvents.length > 0 ? "needs_attention" : "healthy";
     const record = {
-      installationId: installation.id,
-      accountLogin: installation.accountLogin,
-      repositorySelection: installation.repositorySelection,
+      installationId: currentInstallation.id,
+      accountLogin: currentInstallation.accountLogin,
+      repositorySelection: currentInstallation.repositorySelection,
       installedReposCount: installedRepos.length,
       registeredInstalledCount: registeredInstalled.length,
       status,
       missingPermissions,
       missingEvents,
-      permissions: installation.permissions,
-      events: installation.events,
+      permissions: currentInstallation.permissions,
+      events: currentInstallation.events,
       checkedAt: nowIso(),
+      errorSummary,
     } as const;
     await upsertInstallationHealth(env, record);
-    health.push(record);
+    health.push(enrichInstallationHealth(record));
   }
   return { ok: true, installations: health };
+}
+
+async function refreshStoredInstallation(env: Env, installation: InstallationRecord): Promise<{ installation: InstallationRecord; errorSummary?: string }> {
+  try {
+    const live = await getAppInstallation(env, installation.id);
+    await upsertInstallation(env, { installation: live });
+    return {
+      installation: {
+        ...installation,
+        accountLogin: live.account?.login ?? installation.accountLogin,
+        accountId: live.account?.id ?? installation.accountId,
+        targetType: live.target_type ?? live.account?.type ?? installation.targetType,
+        repositorySelection: live.repository_selection ?? installation.repositorySelection,
+        permissions: live.permissions ?? {},
+        events: live.events ?? [],
+        suspendedAt: live.suspended_at ?? undefined,
+        updatedAt: nowIso(),
+      },
+    };
+  } catch (error) {
+    return {
+      installation,
+      errorSummary: String(error).replace(/^Error: /, "") || "Failed to refresh GitHub App installation metadata.",
+    };
+  }
+}
+
+function permissionSatisfies(current: string | undefined, expected: string): boolean {
+  if (current === expected) return true;
+  const order: Record<string, number> = { read: 1, write: 2, admin: 3 };
+  return (order[current ?? ""] ?? 0) >= (order[expected] ?? Number.POSITIVE_INFINITY);
 }
 
 async function tokenForRepo(env: Env, repo: RepositoryRecord): Promise<string | undefined> {

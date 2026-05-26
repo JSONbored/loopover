@@ -1,0 +1,49 @@
+# API Reference
+
+The REST API is private beta and bearer-token protected except for `/health`, GitHub webhook delivery, and public auth start/poll endpoints.
+
+Use the live OpenAPI document when authenticated:
+
+```sh
+curl "$GITTENSORY_API_URL/openapi.json" \
+  -H "Authorization: Bearer $GITTENSORY_API_TOKEN"
+```
+
+## Contributor APIs
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /v1/contributors/:login/profile` | Contributor evidence profile using official Gittensor stats first when available. |
+| `GET /v1/contributors/:login/decision-pack` | Canonical private miner decision payload for MCP and internal clients. |
+| `GET /v1/contributors/:login/repos/:owner/:repo/decision` | Repo-specific decision extracted from the decision pack. |
+
+## Repo APIs
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /v1/repos` | Known registered and installed repositories. |
+| `GET /v1/repos/:owner/:repo` | Repository metadata. |
+| `GET /v1/repos/:owner/:repo/intelligence` | Canonical repository intelligence bundle. |
+| `GET /v1/repos/:owner/:repo/pulls/:number/maintainer-packet` | PR-specific maintainer review packet. |
+| `GET /v1/repos/:owner/:repo/pulls/:number/reviewability` | Private PR reviewability score and maintainer action. |
+
+## Local And Preflight APIs
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/local/branch-analysis` | MCP-oriented local branch analysis from structured metadata. |
+| `POST /v1/preflight/pr` | Planned PR metadata preflight. |
+| `POST /v1/preflight/local-diff` | Local-diff metadata preflight. |
+
+## Ops APIs
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /v1/readiness` | Service health, signal fidelity, secrets presence, and installation health summary. |
+| `GET /v1/sync/status` | Repo sync segments, GitHub totals, rate-limit state, and signal fidelity. |
+| `GET /v1/installations` | GitHub App installations and health records. |
+| `GET /v1/installations/:id/health` | Exact installation permission/event remediation context. |
+
+## MCP Endpoint
+
+`POST /mcp` exposes remote private-beta MCP over Streamable HTTP style requests. The local npm wrapper is still the preferred MCP user surface.

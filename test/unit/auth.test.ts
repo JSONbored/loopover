@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow } from "../../src/auth/github-oauth";
-import { RateLimiter } from "../../src/auth/rate-limit";
+import { RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
 import { authenticatePrivateToken, createSessionForGitHubUser, revokeSession } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -39,6 +39,14 @@ describe("private-beta auth and rate limiting", () => {
 
     const invalid = await limiter.fetch(new Request("https://rate-limit/check", { method: "POST", body: "{}" }));
     expect(invalid.status).toBe(400);
+  });
+
+  it("classifies rate-limit route costs", () => {
+    expect(routeClassForPath("/v1/auth/github/device/start")).toBe("strict");
+    expect(routeClassForPath("/v1/local/branch-analysis")).toBe("expensive");
+    expect(routeClassForPath("/v1/contributors/jsonbored/decision-pack")).toBe("expensive");
+    expect(routeClassForPath("/v1/internal/jobs/generate-signal-snapshots")).toBe("expensive");
+    expect(routeClassForPath("/v1/repos")).toBe("normal");
   });
 
   it("starts GitHub device flow and rejects malformed provider responses", async () => {

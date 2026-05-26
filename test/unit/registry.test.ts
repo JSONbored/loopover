@@ -37,6 +37,8 @@ describe("registry normalization", () => {
   it("normalizes repository-list and array payload shapes defensively", () => {
     const fromRepositoryList = normalizeRegistryPayload(
       {
+        ignored: null,
+        alsoIgnored: ["not", "a", "config"],
         repositories: [
           {
             full_name: "entrius/allways",
@@ -65,6 +67,7 @@ describe("registry normalization", () => {
           eligibility_mode: "active",
         },
         { repo: "bad/numbers", emission_share: Number.NaN, issue_discovery_share: "bad" },
+        {},
         "not-a-repo",
       ],
       { kind: "raw-github", url: "https://example.test/master_repositories.json" },

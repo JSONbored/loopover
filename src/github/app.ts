@@ -17,18 +17,7 @@ type CheckRunListResponse = {
 };
 
 export async function createInstallationToken(env: Env, installationId: number): Promise<string> {
-  if (!env.GITHUB_APP_PRIVATE_KEY) {
-    throw new Error("GitHub App credentials are not configured.");
-  }
-  const now = Math.floor(Date.now() / 1000);
-  const jwt = await signRs256Jwt(
-    {
-      iss: env.GITHUB_APP_ID,
-      iat: now - 60,
-      exp: now + 540,
-    },
-    env.GITHUB_APP_PRIVATE_KEY,
-  );
+  const jwt = await createAppJwt(env);
   const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: githubHeaders(`Bearer ${jwt}`),
@@ -40,6 +29,35 @@ export async function createInstallationToken(env: Env, installationId: number):
   const payload = (await response.json()) as { token?: string };
   if (!payload.token) throw new Error("GitHub installation token response did not include a token.");
   return payload.token;
+}
+
+export async function getAppInstallation(env: Env, installationId: number): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
+  const jwt = await createAppJwt(env);
+  const response = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+    headers: githubHeaders(`Bearer ${jwt}`),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to fetch GitHub App installation (${response.status}): ${body.slice(0, 200)}`);
+  }
+  const payload = (await response.json()) as NonNullable<GitHubWebhookPayload["installation"]>;
+  if (!payload.id) throw new Error("GitHub installation response did not include an id.");
+  return payload;
+}
+
+async function createAppJwt(env: Env): Promise<string> {
+  if (!env.GITHUB_APP_PRIVATE_KEY) {
+    throw new Error("GitHub App credentials are not configured.");
+  }
+  const now = Math.floor(Date.now() / 1000);
+  return signRs256Jwt(
+    {
+      iss: env.GITHUB_APP_ID,
+      iat: now - 60,
+      exp: now + 540,
+    },
+    env.GITHUB_APP_PRIVATE_KEY,
+  );
 }
 
 export async function createOrUpdateCheckRun(

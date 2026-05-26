@@ -230,7 +230,7 @@ describe("GitHub backfill", () => {
   });
 
   it("reports installation health from stored permissions and events", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedRegisteredRepo(env);
     await upsertInstallation(env, {
       installation: {
@@ -241,12 +241,35 @@ describe("GitHub backfill", () => {
         events: ["pull_request"],
       },
     });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { checks: "write", metadata: "read" },
+          events: ["pull_request"],
+        });
+      }
+      if (url.endsWith("/app/installations/124")) {
+        return Response.json({
+          id: 124,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "write" },
+          events: ["issues", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
 
     const result = await refreshInstallationHealth(env);
     expect(result.installations[0]).toMatchObject({
       status: "needs_attention",
-      missingPermissions: ["pull_requests"],
+      missingPermissions: ["pull_requests", "issues"],
       missingEvents: ["issues", "repository"],
+      repairSteps: expect.arrayContaining(["Update the GitHub App permissions and subscribed events."]),
     });
 
     await upsertInstallation(env, {
@@ -254,12 +277,106 @@ describe("GitHub backfill", () => {
         id: 124,
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
-        permissions: { checks: "write", metadata: "read", pull_requests: "read" },
+        permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "write" },
         events: ["issues", "pull_request", "repository"],
       },
     });
     const refreshed = await refreshInstallationHealth(env);
     expect(refreshed.installations).toEqual(expect.arrayContaining([expect.objectContaining({ installationId: 124, status: "healthy" })]));
+  });
+
+  it("refreshes installation health from live GitHub App metadata", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "unknown", id: 0, type: "unknown" },
+        repository_selection: "selected",
+        permissions: {},
+        events: [],
+      },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          target_type: "User",
+          repository_selection: "selected",
+          permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "write" },
+          events: ["issues", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshInstallationHealth(env);
+
+    expect(refreshed.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 123,
+          accountLogin: "JSONbored",
+          status: "healthy",
+          missingPermissions: [],
+          missingEvents: [],
+        }),
+      ]),
+    );
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "read" },
+          events: ["issues", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const recovered = await refreshInstallationHealth(env);
+    expect(recovered.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 123,
+          status: "healthy",
+          errorSummary: undefined,
+        }),
+      ]),
+    );
+  });
+
+  it("surfaces installation metadata refresh failures in health diagnostics", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "read" },
+        events: ["issues", "pull_request", "repository"],
+      },
+    });
+    vi.stubGlobal("fetch", async () => new Response("installation unavailable", { status: 503 }));
+
+    const refreshed = await refreshInstallationHealth(env);
+
+    expect(refreshed.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 123,
+          status: "needs_attention",
+          errorSummary: expect.stringContaining("Failed to fetch GitHub App installation"),
+        }),
+      ]),
+    );
   });
 
   it("skips repositories with backfill disabled", async () => {
@@ -450,6 +567,34 @@ describe("GitHub backfill", () => {
     expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
       expect.arrayContaining([expect.objectContaining({ segment: "open_issues", status: "complete", fetchedCount: 101, pageCount: 2 })]),
     );
+  });
+
+  it("runs a targeted labels segment refresh", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/graphql")) {
+        return Response.json({
+          data: {
+            repository: {
+              issues: { totalCount: 0 },
+              openPullRequests: { totalCount: 0 },
+              mergedPullRequests: { totalCount: 0 },
+              closedPullRequests: { totalCount: 0 },
+              labels: { totalCount: 1 },
+            },
+          },
+        });
+      }
+      if (url.includes("/labels?")) return Response.json([{ name: "bug", color: "cc0000", description: "Bug" }]);
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "resume", force: true });
+
+    expect(result).toMatchObject({ status: "complete", fetchedCount: 1, expectedCount: 1 });
+    expect(await listRepoLabels(env, "JSONbored/gittensory")).toEqual(expect.arrayContaining([expect.objectContaining({ name: "bug" })]));
   });
 
   it("resumes paginated segments from stored cursors instead of restarting from page one", async () => {

@@ -6,4 +6,5 @@ dist/
 .DS_Store
 coverage/
 *.tsbuildinfo
+site/.vitepress/cache/
 !migrations/*.sql

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -338,6 +338,8 @@ async function runCli(args) {
   if (command === "logout") return logout(options);
   if (command === "whoami") return whoami(options);
   if (command === "status") return status(options);
+  if (command === "doctor") return doctor(options);
+  if (command === "init-client") return initClient(options);
   if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}`);
   const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
@@ -350,6 +352,7 @@ async function runCli(args) {
     body: options.body,
     labels: options.label,
     linkedIssues: options.issue?.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0),
+    validation: validationFromOptions(options),
     scorePreviewCommand: options.scorePreviewCommand,
   });
   const payload = command === "preflight" ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket } : result;
@@ -359,6 +362,14 @@ async function runCli(args) {
   }
   process.stdout.write(`${result.analysis.summary}\n`);
   process.stdout.write(`Top action: ${result.analysis.nextActions?.[0]?.actionKind ?? "none"}\n`);
+  if (result.analysis.nextActions?.[0]?.whyThisHelps?.length) {
+    process.stdout.write("Why this helps:\n");
+    for (const line of result.analysis.nextActions[0].whyThisHelps.slice(0, 3)) process.stdout.write(`- ${line}\n`);
+  }
+  if (result.analysis.scoreBlockers?.length) {
+    process.stdout.write("Score blockers:\n");
+    for (const blocker of result.analysis.scoreBlockers.slice(0, 5)) process.stdout.write(`- ${blocker}\n`);
+  }
   process.stdout.write(`Preflight: ${result.analysis.preflight.status}\n`);
   process.stdout.write(`Source upload: disabled\n`);
 }
@@ -370,8 +381,10 @@ function printHelp() {
   gittensory-mcp logout [--json]
   gittensory-mcp whoami [--json]
   gittensory-mcp status [--json]
-  gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
-  gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
+  gittensory-mcp doctor [--cwd path] [--json]
+  gittensory-mcp init-client --print codex|claude|cursor [--json]
+  gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|npm test|summary"] [--json]
+  gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|npm test|summary"] [--json]
 
 Environment:
   GITTENSORY_API_URL
@@ -386,6 +399,7 @@ Environment:
 
 function parseOptions(args) {
   const options = {};
+  const repeatable = new Set(["label", "issue", "validation", "validationCommand", "validationStatus", "validationSummary"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -400,7 +414,7 @@ function parseOptions(args) {
       continue;
     }
     index += 1;
-    if (key === "label" || key === "issue") options[key] = [...(options[key] ?? []), value];
+    if (repeatable.has(key)) options[key] = [...(options[key] ?? []), value];
     else options[key] = value;
   }
   return options;
@@ -485,8 +499,145 @@ async function status(options) {
   }
 }
 
+async function doctor(options) {
+  const checks = [];
+  const add = (name, statusValue, detail, remediation) => checks.push(stripUndefined({ name, status: statusValue, detail, remediation }));
+
+  try {
+    const health = await apiFetch("/health", { method: "GET" }, { auth: false });
+    add("api_health", health.status === "ok" ? "pass" : "warn", `API responded from ${apiUrl}.`);
+  } catch (error) {
+    add("api_health", "fail", error instanceof Error ? error.message : "health_check_failed", "Check GITTENSORY_API_URL or network access.");
+  }
+
+  const token = getApiToken();
+  if (!token) {
+    add("auth", "fail", "No Gittensory API/session token is configured.", "Run `gittensory-mcp login`.");
+  } else {
+    try {
+      const session = await apiGet("/v1/auth/session");
+      add("auth", "pass", `Authenticated as ${session.login}; session expires ${session.expiresAt}.`);
+    } catch (error) {
+      add("auth", "warn", `A token is configured but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `gittensory-mcp login`.");
+    }
+  }
+
+  if (/^(1|true|yes)$/i.test(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false")) {
+    add("source_upload", "fail", "GITTENSORY_UPLOAD_SOURCE is enabled.", "Unset GITTENSORY_UPLOAD_SOURCE. Source upload is unsupported in v1.");
+  } else {
+    add("source_upload", "pass", "Source upload is disabled and unsupported in v1.");
+  }
+
+  try {
+    const metadata = collectLocalBranchMetadata({
+      cwd: options.cwd ?? process.cwd(),
+      baseRef: options.base,
+      repoFullName: options.repo,
+      login: options.login ?? config.session?.login ?? "local",
+    });
+    add("git_metadata", "pass", `${metadata.repoFullName} on ${metadata.branchName}; ${metadata.changedFiles.length} changed file(s).`);
+  } catch (error) {
+    add("git_metadata", "warn", error instanceof Error ? error.message : "git_metadata_failed", "Run from a git repo or pass --repo owner/repo.");
+  }
+
+  const commandPath = findExecutable("gittensory-mcp");
+  if (commandPath) add("client_path", "pass", `gittensory-mcp is visible on PATH at ${commandPath}.`);
+  else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in Codex, Claude, or Cursor config.");
+
+  const payload = {
+    status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",
+    apiUrl,
+    configPath,
+    sourceUploadSupported: false,
+    checks,
+  };
+  if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  else {
+    process.stdout.write(`Gittensory doctor: ${payload.status}\n`);
+    for (const check of checks) {
+      process.stdout.write(`- ${check.status}: ${check.name} - ${check.detail}\n`);
+      if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
+    }
+  }
+}
+
+function initClient(options) {
+  const client = String(options.print ?? options.client ?? "").toLowerCase();
+  if (!client) throw new Error("Pass --print codex, --print claude, or --print cursor.");
+  const command = options.command ?? "gittensory-mcp";
+  const snippet = clientSnippet(client, command);
+  const payload = {
+    client,
+    command,
+    args: ["--stdio"],
+    snippet,
+    notes: [
+      "Run `gittensory-mcp login` before starting the MCP client.",
+      "Use an absolute command path if the client does not inherit your shell PATH.",
+      "This command prints config only; it does not edit client files.",
+    ],
+  };
+  if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  else process.stdout.write(`${snippet}\n`);
+}
+
 function getApiToken() {
   return process.env.GITTENSORY_API_TOKEN ?? process.env.GITTENSORY_TOKEN ?? process.env.GITTENSORY_MCP_TOKEN ?? config.session?.token;
+}
+
+function validationFromOptions(options) {
+  const direct = (options.validation ?? []).map((entry) => {
+    const [statusOrCommand, commandOrSummary, ...summaryParts] = String(entry).split("|");
+    const status = isValidationStatus(statusOrCommand) ? statusOrCommand : "not_run";
+    const command = isValidationStatus(statusOrCommand) ? commandOrSummary : statusOrCommand;
+    return stripUndefined({
+      command: command?.trim(),
+      status,
+      summary: summaryParts.join("|").trim() || (isValidationStatus(statusOrCommand) ? undefined : commandOrSummary?.trim()),
+    });
+  });
+  const commands = options.validationCommand ?? [];
+  const statuses = options.validationStatus ?? [];
+  const summaries = options.validationSummary ?? [];
+  const expanded = commands.map((command, index) =>
+    stripUndefined({
+      command,
+      status: isValidationStatus(statuses[index]) ? statuses[index] : "not_run",
+      summary: summaries[index],
+    }),
+  );
+  return [...direct, ...expanded].filter((entry) => typeof entry.command === "string" && entry.command.length > 0);
+}
+
+function isValidationStatus(value) {
+  return value === "passed" || value === "failed" || value === "not_run";
+}
+
+function clientSnippet(client, command) {
+  if (client === "codex") return `[mcp_servers.gittensory]\ncommand = ${JSON.stringify(command)}\nargs = ["--stdio"]`;
+  if (client === "claude" || client === "cursor") {
+    return JSON.stringify(
+      {
+        mcpServers: {
+          gittensory: {
+            command,
+            args: ["--stdio"],
+          },
+        },
+      },
+      null,
+      2,
+    );
+  }
+  throw new Error(`Unsupported client: ${client}. Use codex, claude, or cursor.`);
+}
+
+function findExecutable(name) {
+  for (const directory of String(process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const candidate = join(directory, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 function loadConfig() {
@@ -518,14 +669,18 @@ async function apiPost(path, body) {
 async function apiFetch(path, init, options = {}) {
   const token = getApiToken();
   if (options.auth !== false && !token) throw new Error("Run `gittensory-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.GITTENSORY_API_TIMEOUT_MS ?? options.timeoutMs ?? 30000);
+  const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000);
   const response = await fetch(`${apiUrl}${path}`, {
     ...init,
+    signal: init?.signal ?? controller.signal,
     headers: {
       ...(token && options.auth !== false ? { authorization: `Bearer ${token}` } : {}),
       "content-type": "application/json",
       accept: "application/json",
     },
-  });
+  }).finally(() => clearTimeout(timeout));
   const text = await response.text();
   const payload = text ? JSON.parse(text) : {};
   if (!response.ok) {
@@ -606,4 +761,10 @@ function toolResult(summary, data) {
 
 function camel(value) {
   return value.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
+}
+
+function stripUndefined(value) {
+  if (Array.isArray(value)) return value.map(stripUndefined);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, stripUndefined(entry)]));
 }

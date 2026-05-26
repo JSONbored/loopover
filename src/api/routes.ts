@@ -51,6 +51,7 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
+  enrichInstallationHealth,
   refreshContributorActivity,
   refreshInstallationHealth,
 } from "../github/backfill";
@@ -455,7 +456,7 @@ export function createApp() {
   app.get("/v1/installations", async (c) =>
     c.json({
       installations: await listInstallations(c.env),
-      health: await listInstallationHealth(c.env),
+      health: (await listInstallationHealth(c.env)).map(enrichInstallationHealth),
     }),
   );
 
@@ -464,7 +465,7 @@ export function createApp() {
     if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
-    return c.json(health);
+    return c.json(enrichInstallationHealth(health));
   });
 
   app.get("/v1/repos", async (c) => c.json(await listRepositories(c.env)));

@@ -1331,7 +1331,7 @@ export async function upsertInstallationHealth(env: Env, health: InstallationHea
       permissionsJson: jsonString(health.permissions),
       eventsJson: jsonString(health.events),
       checkedAt: health.checkedAt,
-      errorSummary: health.errorSummary,
+      errorSummary: health.errorSummary ?? null,
     })
     .onConflictDoUpdate({
       target: installationHealth.installationId,
@@ -1346,7 +1346,7 @@ export async function upsertInstallationHealth(env: Env, health: InstallationHea
         permissionsJson: jsonString(health.permissions),
         eventsJson: jsonString(health.events),
         checkedAt: health.checkedAt,
-        errorSummary: health.errorSummary,
+        errorSummary: health.errorSummary ?? null,
       },
     });
 }

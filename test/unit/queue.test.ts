@@ -330,7 +330,7 @@ describe("queue processors", () => {
   });
 
   it("marks installation health from queued installation metadata", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -344,12 +344,25 @@ describe("queue processors", () => {
         id: 123,
         account: { login: "JSONbored", id: 1, type: "User" },
         repository_selection: "selected",
-        permissions: { checks: "write", metadata: "read", pull_requests: "read" },
+        permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "read" },
         events: ["issues", "pull_request", "repository"],
       },
       repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }],
     });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "read" },
+          events: ["issues", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
 
     await processJob(env, { type: "refresh-installation-health", requestedBy: "test" });
     expect(await listInstallationHealth(env)).toMatchObject([{ status: "healthy", registeredInstalledCount: 1 }]);
@@ -542,4 +555,20 @@ function completeSegment(repoFullName: string, segment: "labels" | "open_issues"
     completedAt: "2026-05-25T00:00:00.000Z",
     warnings: [],
   };
+}
+
+async function generatePrivateKeyPem(): Promise<string> {
+  const key = (await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
+  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
+  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }

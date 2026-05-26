@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createInstallationToken, createOrUpdateCheckRun, getInstallationId } from "../../src/github/app";
+import { generateKeyPairSync } from "node:crypto";
+import { createInstallationToken, createOrUpdateCheckRun, getAppInstallation, getInstallationId } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -58,6 +59,17 @@ describe("GitHub check runs", () => {
     expect(result?.id).toBe(42);
     expect(calls.some((url) => url.includes("/app/installations/123/access_tokens"))).toBe(true);
     expect(calls.some((url) => url.includes("/repos/JSONbored/gittensory/check-runs"))).toBe(true);
+  });
+
+  it("accepts GitHub App RSA private key PEMs for installation tokens", async () => {
+    const privateKey = generateRsaPrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(createInstallationToken(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123)).resolves.toBe("installation-token");
   });
 
   it("updates an existing Gittensory check run for the same head SHA", async () => {
@@ -152,6 +164,42 @@ describe("GitHub check runs", () => {
     vi.stubGlobal("fetch", async () => Response.json({}));
     await expect(createInstallationToken(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123)).rejects.toThrow(/did not include a token/);
   });
+
+  it("fetches live GitHub App installation metadata", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          target_type: "User",
+          repository_selection: "selected",
+          permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "write" },
+          events: ["issues", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const installation = await getAppInstallation(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123);
+
+    expect(installation).toMatchObject({
+      id: 123,
+      account: { login: "JSONbored" },
+      permissions: { checks: "write" },
+      events: expect.arrayContaining(["pull_request"]),
+    });
+  });
+
+  it("surfaces live GitHub App installation fetch failures", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async () => new Response("installation missing", { status: 404 }));
+    await expect(getAppInstallation(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123)).rejects.toThrow(/Failed to fetch GitHub App installation/);
+
+    vi.stubGlobal("fetch", async () => Response.json({}));
+    await expect(getAppInstallation(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123)).rejects.toThrow(/did not include an id/);
+  });
 });
 
 async function generatePrivateKeyPem(): Promise<string> {
@@ -168,4 +216,9 @@ async function generatePrivateKeyPem(): Promise<string> {
   const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
   const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
   return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
+}
+
+function generateRsaPrivateKeyPem(): string {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return privateKey.export({ type: "pkcs1", format: "pem" }).toString();
 }

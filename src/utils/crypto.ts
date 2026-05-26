@@ -60,13 +60,14 @@ export async function signRs256Jwt(payload: Record<string, string | number>, pri
 
 async function importPkcs8PrivateKey(privateKeyPem: string): Promise<CryptoKey> {
   const normalized = privateKeyPem.replace(/\\n/g, "\n");
+  const isPkcs1Rsa = normalized.includes("-----BEGIN RSA PRIVATE KEY-----");
   const base64 = normalized
     .replace("-----BEGIN PRIVATE KEY-----", "")
     .replace("-----END PRIVATE KEY-----", "")
+    .replace("-----BEGIN RSA PRIVATE KEY-----", "")
+    .replace("-----END RSA PRIVATE KEY-----", "")
     .replace(/\s+/g, "");
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  const bytes = isPkcs1Rsa ? wrapPkcs1RsaPrivateKey(base64ToBytes(base64)) : base64ToBytes(base64);
   return crypto.subtle.importKey(
     "pkcs8",
     bytes,
@@ -74,4 +75,45 @@ async function importPkcs8PrivateKey(privateKeyPem: string): Promise<CryptoKey> 
     false,
     ["sign"],
   );
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function wrapPkcs1RsaPrivateKey(pkcs1Der: Uint8Array): Uint8Array {
+  const version = der(0x02, new Uint8Array([0]));
+  const rsaEncryptionOid = new Uint8Array([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]);
+  const nullParam = new Uint8Array([0x05, 0x00]);
+  const algorithm = der(0x30, concatBytes(rsaEncryptionOid, nullParam));
+  const privateKey = der(0x04, pkcs1Der);
+  return der(0x30, concatBytes(version, algorithm, privateKey));
+}
+
+function der(tag: number, content: Uint8Array): Uint8Array {
+  return concatBytes(new Uint8Array([tag]), derLength(content.length), content);
+}
+
+function derLength(length: number): Uint8Array {
+  if (length < 0x80) return new Uint8Array([length]);
+  const bytes: number[] = [];
+  let remaining = length;
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff);
+    remaining >>= 8;
+  }
+  return new Uint8Array([0x80 | bytes.length, ...bytes]);
+}
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
 }

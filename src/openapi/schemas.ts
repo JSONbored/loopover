@@ -579,6 +579,14 @@ export const InstallationHealthSchema = z
     events: z.array(z.string()),
     checkedAt: z.string(),
     errorSummary: z.string().nullable().optional(),
+    requiredPermissions: z.record(z.string()).optional(),
+    requiredEvents: z.array(z.string()).optional(),
+    optionalVisibleEvents: z.array(z.string()).optional(),
+    permissionRemediation: z
+      .array(z.object({ permission: z.string(), requiredAccess: z.string(), currentAccess: z.string(), ok: z.boolean(), action: z.string() }))
+      .optional(),
+    eventRemediation: z.array(z.object({ event: z.string(), ok: z.boolean(), action: z.string() })).optional(),
+    repairSteps: z.array(z.string()).optional(),
   })
   .openapi("InstallationHealth");
 

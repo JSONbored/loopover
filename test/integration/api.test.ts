@@ -484,7 +484,12 @@ describe("api routes", () => {
 
     const installationHealth = await app.request("/v1/installations/123/health", { headers: apiHeaders(env) }, env);
     expect(installationHealth.status).toBe(200);
-    await expect(installationHealth.json()).resolves.toMatchObject({ installationId: 123 });
+    await expect(installationHealth.json()).resolves.toMatchObject({
+      installationId: 123,
+      requiredPermissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "read" },
+      permissionRemediation: expect.arrayContaining([expect.objectContaining({ permission: "checks", ok: true })]),
+      repairSteps: ["No repair needed."],
+    });
 
     const invalidInstallationHealth = await app.request("/v1/installations/not-a-number/health", { headers: apiHeaders(env) }, env);
     expect(invalidInstallationHealth.status).toBe(400);
@@ -1497,7 +1502,7 @@ async function seedSignalData(env: Env): Promise<void> {
     status: "healthy",
     missingPermissions: [],
     missingEvents: [],
-    permissions: { checks: "write", metadata: "read", pull_requests: "read" },
+    permissions: { checks: "write", metadata: "read", pull_requests: "read", issues: "read" },
     events: ["issues", "pull_request", "repository"],
     checkedAt: "2026-05-23T00:00:00.000Z",
   });

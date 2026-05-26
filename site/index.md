@@ -1,84 +1,91 @@
 ---
 layout: home
+
+hero:
+  name: Gittensory
+  text: Know the Gittensor lane before you submit.
+  tagline: MCP branch analysis and GitHub App context for score blockers, queue pressure, lane fit, and maintainer review load. Not a Gittensor frontend.
+  image:
+    src: /logo.svg
+    alt: Gittensory logo
+  actions:
+    - theme: brand
+      text: Install MCP
+      link: /guide/install
+    - theme: alt
+      text: Miner Workflow
+      link: /guide/miners
+    - theme: alt
+      text: GitHub App
+      link: /guide/github-app-setup
+
+features:
+  - title: MCP branch preflight
+    details: Local metadata-only checks for lane fit, stale base risk, validation evidence, and score blockers.
+  - title: Quiet maintainer surface
+    details: Confirmed-miner comments and labels without public check-run noise or private signal leakage.
+  - title: Private scoreability context
+    details: Current, ungated, and scenario-based scoreability reasoning stays in authenticated MCP/API output.
 ---
 
-<section class="gtn-hero" aria-labelledby="gtn-home-title">
-  <div class="gtn-hero__copy">
-    <p class="gtn-eyebrow">Gittensor contribution intelligence</p>
-    <h1 id="gtn-home-title">Gittensory</h1>
-    <p class="gtn-hero__lead">Decision intelligence for Gittensor contributors and maintainers.</p>
-    <p class="gtn-hero__body">
-      Use MCP and GitHub App signals to help Gittensor miners choose better work, understand score blockers,
-      reduce maintainer noise, and ship cleaner Gittensor submissions.
-    </p>
-    <div class="gtn-hero__actions">
-      <a class="gtn-button gtn-button--primary" href="/guide/install">Install MCP</a>
-      <a class="gtn-button" href="/guide/github-app-setup">GitHub App Setup</a>
-    </div>
+<!-- markdownlint-disable MD041 MD033 -->
+
+<section class="gtn-install-strip" aria-label="Start with Gittensory MCP">
+  <div class="gtn-install-copy">
+    <p class="gtn-eyebrow">Start now</p>
+    <h2>Analyze the branch before it becomes review load.</h2>
+    <p>One local command gives your agent lane fit, queue pressure, score blockers, and a public-safe PR packet.</p>
   </div>
-  <figure class="gtn-hero__media">
+  <div class="gtn-install-command" aria-label="Recommended Gittensory command">
+    <span>Metadata-only branch analysis</span>
+    <code>gittensory-mcp analyze-branch --login YOUR_GITHUB_LOGIN --json</code>
+  </div>
+</section>
+
+Prefer a full setup first? Start with [install](/guide/install), run `gittensory-mcp login`, then add `gittensory-mcp --stdio` to Codex, Claude, or Cursor.
+
+## Pick A Path
+
+- [Install the MCP package](/guide/install): get the CLI, authenticate with GitHub Device Flow, and verify local setup with `doctor`.
+- [Connect an MCP client](/guide/mcp): print Codex, Claude Desktop, or Cursor config without mutating local files.
+- [Check miner work](/guide/miners): run branch analysis, scenario projections, and preflight before opening a PR.
+- [Set up the GitHub App](/guide/github-app-setup): give maintainers confirmed-miner comments and labels without noisy checks.
+- [Review maintainer behavior](/guide/maintainers): understand quiet-by-default PR visibility and public-safe output boundaries.
+- [Read the API contract](/reference/api): inspect the modern private API for decision packs, branch analysis, reviewability, and readiness.
+
+## Where It Fits
+
+| Audience | What Gittensory adds |
+| --- | --- |
+| Gittensor miners | Scoreability blockers, lane fit, queue pressure, local diff quality, and cleanup-first guidance. |
+| Maintainers | Confirmed-miner context, sticky public-safe comments, configured labels, and private reviewability packets. |
+| Coding agents | Structured MCP tools for repo context, current branch preflight, next actions, and PR packet drafting. |
+| Repo owners | Config quality, label readiness, maintainer-lane handling, and contribution intake health. |
+
+<section class="gtn-context-media" aria-labelledby="gtn-context-title">
+  <div class="gtn-context-media__copy">
+    <p class="gtn-eyebrow">Gittensor context</p>
+    <h2 id="gtn-context-title">Built around the live contribution market, not another dashboard.</h2>
+    <p>
+      Gittensory reads the Gittensor and GitHub signals that affect contribution quality:
+      registered repo lanes, miner history, open PR pressure, linked issue context, and maintainer friction.
+    </p>
+    <p class="gtn-context-media__links">
+      <a href="https://gittensor.io/" target="_blank" rel="noreferrer">Open Gittensor</a>
+      <a href="/guide/miners">Miner workflow</a>
+      <a href="/guide/maintainers">Maintainer workflow</a>
+    </p>
+  </div>
+  <a class="gtn-context-media__frame" href="https://gittensor.io/" target="_blank" rel="noreferrer" aria-label="Open Gittensor">
     <img
       src="/images/gittensor-home-signal.webp"
       alt="Gittensor homepage showing live miner, reward, and repository activity."
-      width="540"
-      height="560"
+      width="1180"
+      height="660"
     />
-    <figcaption>
-      <a href="https://gittensor.io/" target="_blank" rel="noreferrer">Context: Gittensor Subnet 74</a>
-    </figcaption>
-  </figure>
+  </a>
 </section>
 
-<section class="gtn-proof-strip" aria-label="Where Gittensory helps">
-  <article>
-    <span>01 / Gittensor miners</span>
-    <h2>Pick work with fewer blind spots.</h2>
-    <p>Score blockers, lane fit, queue pressure, and local branch preflight before opening another PR.</p>
-  </article>
-  <article>
-    <span>02 / Maintainers</span>
-    <h2>See signal without noisy checks.</h2>
-    <p>Confirmed-miner comments, configured labels, reviewability context, and public-safe next steps.</p>
-  </article>
-  <article>
-    <span>03 / Agents</span>
-    <h2>Ask for repo-aware guidance.</h2>
-    <p>Metadata-only MCP branch analysis for Codex, Claude, Cursor, and local automation.</p>
-  </article>
-  <article>
-    <span>04 / Repo Owners</span>
-    <h2>Tune intake before it gets loud.</h2>
-    <p>Config quality, label readiness, maintainer-lane handling, and contribution intake health.</p>
-  </article>
-</section>
+## Guardrails
 
-<section class="gtn-when">
-  <div>
-    <p class="gtn-eyebrow">When to use it</p>
-    <h2>Before the work becomes review load.</h2>
-  </div>
-  <div class="gtn-when__grid">
-    <p>Before opening a PR, check lane fit, linked issue expectations, validation evidence, and duplicate risk.</p>
-    <p>After approvals, rerun scoreability projections with realistic pending-merge assumptions.</p>
-    <p>When open PR pressure is high, decide whether cleanup beats opening new work.</p>
-    <p>When a maintainer wants confirmed-miner context, keep the public surface quiet and sanitized.</p>
-  </div>
-</section>
-
-<section class="gtn-signal-panel">
-  <div>
-    <p class="gtn-eyebrow">What Gittensory is</p>
-    <h2>Not a Gittensor frontend.</h2>
-    <p>
-      Gittensory is not a Gittensor frontend. It is the private signal layer behind better Gittensor contributions:
-      official miner context, registry lanes, queue pressure, scoreability projections,
-      maintainer friction, and public-safe PR packets.
-    </p>
-  </div>
-  <div class="gtn-terminal" aria-label="Gittensory signal example">
-    <div><b>lane</b><span>direct_pr / issue_discovery / maintainer</span></div>
-    <div><b>scoreability</b><span>current, ungated, and scenario-gated</span></div>
-    <div><b>risk</b><span>open PR pressure, credibility, stale base</span></div>
-    <div><b>output</b><span>private MCP JSON + sanitized PR packet</span></div>
-  </div>
-</section>
+Gittensory is not a Gittensor frontend, public leaderboard, wallet tool, or auto-review bot. Public GitHub output stays sanitized. Private scoreability and reward/risk context stays in authenticated MCP/API surfaces.

@@ -55,5 +55,7 @@
 
 - Add explicit favicon metadata
 
+- Restore Nightward-style homepage flow
+
 
 

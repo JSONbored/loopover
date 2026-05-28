@@ -5,7 +5,7 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
+import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewCommand, resolveScorePreviewCommand, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
 
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
@@ -493,6 +493,12 @@ async function runCli(args) {
   }
   process.stdout.write(`Preflight: ${result.analysis.preflight.status}\n`);
   process.stdout.write(`Source upload: disabled\n`);
+  if (result.local?.localScorerStatus?.ok === false) {
+    process.stdout.write(`Local scorer: ${result.local.localScorerStatus.code ?? "metadata_only"}\n`);
+    for (const line of result.local.setupGuidance ?? setupGuidanceForLocalScorer(result.local.localScorerStatus)) {
+      process.stdout.write(`- ${line}\n`);
+    }
+  }
 }
 
 async function runAgentCli(args) {
@@ -581,6 +587,7 @@ Environment:
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT
+  GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS
   GITTENSORY_UPLOAD_SOURCE=false
 `);
 }
@@ -777,7 +784,31 @@ async function doctor(options) {
 
   const commandPath = findExecutable("gittensory-mcp");
   if (commandPath) add("client_path", "pass", `gittensory-mcp is visible on PATH at ${commandPath}.`);
-  else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in Codex, Claude, or Cursor config.");
+  else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in Codex, Claude, or MCP client config.");
+
+  const scorerCommand = resolveScorePreviewCommand();
+  if (!scorerCommand) {
+    add(
+      "local_scorer",
+      "warn",
+      "GITTENSOR_SCORE_PREVIEW_CMD is not configured; branch analysis will fall back to metadata-only scoring.",
+      `Example: export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewCommand("metadata")}"`,
+    );
+  } else {
+    const probe = probeLocalScorer(scorerCommand);
+    if (probe.ok) {
+      add("local_scorer", "pass", `Configured scorer responded in ${probe.durationMs ?? 0}ms (${scorerCommand}).`);
+    } else {
+      const remediation = setupGuidanceForLocalScorer(probe).slice(1).join(" ");
+      add("local_scorer", "warn", `Configured scorer failed (${probe.code ?? "scorer_failed"}): ${probe.reason}`, remediation || "Run gittensory-mcp doctor --json for structured diagnostics.");
+    }
+  }
+
+  if (process.env.GITTENSOR_ROOT) {
+    add("gittensor_root", "pass", `GITTENSOR_ROOT is set to ${process.env.GITTENSOR_ROOT}.`);
+  } else if (scorerCommand?.includes("gittensor-score-preview.py")) {
+    add("gittensor_root", "warn", "Python gittensor scorer is configured but GITTENSOR_ROOT is unset.", "Set GITTENSOR_ROOT to a local entrius/gittensor checkout.");
+  }
 
   const payload = {
     status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",

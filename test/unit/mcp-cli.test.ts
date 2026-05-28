@@ -46,6 +46,7 @@ describe("gittensory-mcp CLI", () => {
         expect.objectContaining({ name: "auth", status: "pass", detail: expect.stringContaining("JSONbored") }),
         expect.objectContaining({ name: "source_upload", status: "pass" }),
         expect.objectContaining({ name: "git_metadata", status: "pass" }),
+        expect.objectContaining({ name: "local_scorer", status: "warn" }),
       ]),
     );
   });

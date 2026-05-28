@@ -91,10 +91,45 @@ The same capabilities are exposed to MCP clients as:
 - `GITHUB_TOKEN` for non-interactive login bootstrap
 - `GITTENSOR_SCORE_PREVIEW_CMD`
 - `GITTENSOR_ROOT`
+- `GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS` (default `15000`)
 - `GITTENSORY_UPLOAD_SOURCE=false`
 - `GITTENSORY_SKIP_NPM_VERSION_CHECK=true`
 
 `GITTENSORY_UPLOAD_SOURCE=true` is not supported and fails closed.
+
+### Local score preview adapter
+
+Branch analysis can call a local scorer command that reads branch metadata JSON from stdin and prints one JSON object to stdout. Gittensory never uploads source contents; the scorer runs on your machine.
+
+Metadata-only fallback is used when the command is missing or fails. Run `gittensory-mcp doctor` for setup diagnostics.
+
+Reference wrappers ship with the package:
+
+```sh
+export GITTENSOR_SCORE_PREVIEW_CMD="node $(npm root -g)/@jsonbored/gittensory-mcp/scripts/gittensor-score-preview.mjs"
+```
+
+For tree-sitter scoring with a local [entrius/gittensor](https://github.com/entrius/gittensor) checkout:
+
+```sh
+export GITTENSOR_ROOT=/path/to/gittensor
+export GITTENSOR_SCORE_PREVIEW_CMD="python3 $(npm root -g)/@jsonbored/gittensory-mcp/scripts/gittensor-score-preview.py"
+```
+
+Expected stdout shape:
+
+```json
+{
+  "sourceTokenScore": 42,
+  "totalTokenScore": 58,
+  "sourceLines": 40,
+  "testTokenScore": 16,
+  "nonCodeTokenScore": 0,
+  "warnings": []
+}
+```
+
+Snake_case aliases such as `source_token_score` are also accepted.
 
 ## Release Notes
 

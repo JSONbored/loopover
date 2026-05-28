@@ -652,3 +652,23 @@ export const auditEvents = sqliteTable(
     routeCreated: index("audit_events_route_created_idx").on(table.route, table.createdAt),
   }),
 );
+
+export const aiUsageEvents = sqliteTable(
+  "ai_usage_events",
+  {
+    id: text("id").primaryKey(),
+    feature: text("feature").notNull(),
+    actor: text("actor"),
+    route: text("route"),
+    model: text("model").notNull(),
+    status: text("status").notNull(),
+    estimatedNeurons: integer("estimated_neurons").notNull().default(0),
+    detail: text("detail"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    featureCreated: index("ai_usage_events_feature_created_idx").on(table.feature, table.createdAt),
+    actorCreated: index("ai_usage_events_actor_created_idx").on(table.actor, table.createdAt),
+  }),
+);

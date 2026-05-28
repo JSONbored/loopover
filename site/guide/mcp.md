@@ -2,6 +2,8 @@
 
 The MCP package is the contributor-facing surface and the first base-agent interface. Your coding agent can ask Gittensory what the current branch means in Gittensor terms, what to do next, and how to draft a public-safe packet before you open or update a PR.
 
+Your local agent supplies the LLM. Gittensory supplies deterministic Gittensor context: lane fit, score blockers, queue pressure, role context, and public-safe packets. Hosted Workers AI summaries are optional backend polish, not the source of truth.
+
 ## What Agents Can Ask
 
 - what repo lane applies: direct PR, issue discovery, split, inactive, or unknown

@@ -25,6 +25,10 @@ Local MCP branch analysis sends metadata only:
 
 Source contents are not uploaded in v1. `GITTENSORY_UPLOAD_SOURCE=true` fails closed.
 
+## Optional Workers AI
+
+Gittensory's scoring and recommendations are deterministic. Cloudflare Workers AI can be enabled later as a quota-gated summarization layer, but it receives only compact signal metadata, not source code. If the AI layer is disabled, unavailable, or over budget, Gittensory falls back to deterministic templates.
+
 ## Public Output Boundaries
 
 Public comments and public-safe PR packets must not include:

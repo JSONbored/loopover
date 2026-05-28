@@ -7,6 +7,8 @@
 
 - Add deterministic base-agent orchestrator
 
+- Add optional workers ai summaries
+
 
 
 ### Fixes

@@ -13,7 +13,22 @@
     "GITHUB_APP_SLUG": "gittensory",
     "GITHUB_OAUTH_CLIENT_ID": "Iv23li574mpdLo2PnVN4",
     "GITTENSOR_REGISTRY_URL": "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",
-    "PUBLIC_API_ORIGIN": "https://gittensory-api.zeronode.workers.dev"
+    "PUBLIC_API_ORIGIN": "https://api.gittensory.aethereal.dev",
+    "AI_SUMMARIES_ENABLED": "false",
+    "AI_PUBLIC_COMMENTS_ENABLED": "false",
+    "WORKERS_AI_SUMMARY_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+    "AI_DAILY_NEURON_BUDGET": "10000",
+    "AI_MAX_OUTPUT_TOKENS": "256",
+    "ADMIN_GITHUB_LOGINS": "JSONbored"
+  },
+  "routes": [
+    {
+      "pattern": "api.gittensory.aethereal.dev",
+      "custom_domain": true
+    }
+  ],
+  "ai": {
+    "binding": "AI"
   },
   "d1_databases": [
     {

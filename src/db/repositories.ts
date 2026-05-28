@@ -1,7 +1,8 @@
-import { and, desc, eq, not, sql } from "drizzle-orm";
+import { and, desc, eq, gte, not, sql } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
+  aiUsageEvents,
   agentActions,
   agentContextSnapshots,
   agentRuns,
@@ -732,6 +733,43 @@ export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promi
     metadataJson: jsonString(event.metadata ?? {}),
     createdAt: event.createdAt ?? nowIso(),
   });
+}
+
+export async function recordAiUsageEvent(
+  env: Env,
+  event: {
+    feature: string;
+    actor?: string | null | undefined;
+    route?: string | null | undefined;
+    model: string;
+    status: string;
+    estimatedNeurons: number;
+    detail?: string | null | undefined;
+    metadata?: Record<string, unknown> | undefined;
+  },
+): Promise<void> {
+  const db = getDb(env.DB);
+  await db.insert(aiUsageEvents).values({
+    id: crypto.randomUUID(),
+    feature: event.feature,
+    actor: event.actor ?? null,
+    route: event.route ?? null,
+    model: event.model,
+    status: event.status,
+    estimatedNeurons: Math.max(0, Math.round(event.estimatedNeurons)),
+    detail: event.detail ?? null,
+    metadataJson: jsonString(event.metadata ?? {}),
+    createdAt: nowIso(),
+  });
+}
+
+export async function sumAiEstimatedNeuronsSince(env: Env, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ total: sql<number>`coalesce(sum(${aiUsageEvents.estimatedNeurons}), 0)` })
+    .from(aiUsageEvents)
+    .where(and(gte(aiUsageEvents.createdAt, sinceIso), eq(aiUsageEvents.status, "ok")));
+  return Number(row?.total ?? 0);
 }
 
 export async function upsertContributorScoringProfile(env: Env, profile: ContributorScoringProfileRecord): Promise<void> {

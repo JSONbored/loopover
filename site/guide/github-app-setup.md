@@ -7,7 +7,7 @@ The GitHub App is the maintainer surface. GitHub OAuth is the MCP user-auth surf
 | Field | Value |
 | --- | --- |
 | Homepage URL | `https://gittensory.aethereal.dev` |
-| Webhook URL | your Gittensory API origin plus `/v1/github/webhook` |
+| Webhook URL | `https://api.gittensory.aethereal.dev/v1/github/webhook` |
 | Webhook active | Enabled |
 | SSL verification | Enabled |
 | Install target | Current account or selected organizations |

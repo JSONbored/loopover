@@ -23,6 +23,12 @@ Gittensory is not a Gittensor frontend, not a public leaderboard, and not an aut
 - GitHub App: quiet PR inspection, public-safe sticky comments, maintainer-configured labels, and explicit `@gittensory` commands on installed repos.
 - Docs site: VitePress under `site/`, deployed at `https://gittensory.aethereal.dev/`.
 
+## AI Posture
+
+Gittensory's core decisions are deterministic. MCP users normally bring their own AI harness through Codex, Claude, Cursor, or another MCP client, while Gittensory supplies the structured Gittensor context those agents need.
+
+Cloudflare Workers AI is optional and disabled by default. When enabled, it can rewrite compact deterministic signal bundles into clearer prose, but it never receives source contents and all public output still passes through Gittensory's sanitizer.
+
 ## MCP Install
 
 Public npm:
@@ -100,6 +106,8 @@ wrangler secret put INTERNAL_JOB_TOKEN
 ```
 
 `GITHUB_PUBLIC_TOKEN` is a server-side token used to raise public GitHub API rate limits during registered-repo backfill. It is not a contributor token.
+
+The production API origin is `https://api.gittensory.aethereal.dev`. The `workers.dev` deployment URL is treated as an internal fallback, not the public integration target.
 
 ## Canonical API
 

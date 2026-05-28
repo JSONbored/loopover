@@ -113,6 +113,24 @@ describe("agent orchestrator", () => {
     });
   });
 
+  it("attaches optional Workers AI summaries when enabled", async () => {
+    const env = createTestEnv({
+      AI: { run: vi.fn(async () => ({ response: "Clean up queue pressure before adding more work." })) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "10000",
+    });
+    await persistDecisionPack(env, decisionPackFixture());
+
+    const bundle = await planNextWork(env, { login: "oktofeesh1", repoFullName: "we-promise/sure", objective: "Pick one action" });
+
+    expect(bundle.run.payload).toMatchObject({
+      aiSummary: expect.objectContaining({
+        status: "ok",
+        text: "Clean up queue pressure before adding more work.",
+      }),
+    });
+  });
+
   it("falls back to repo-fit actions when a snapshot has no top actions", async () => {
     const env = createTestEnv();
     await persistDecisionPack(env, decisionPackFixture({ topActions: [] }));

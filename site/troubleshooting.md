@@ -52,7 +52,7 @@ Gittensory rejects source upload mode in v1.
 Check the installation health endpoint:
 
 ```sh
-export GITTENSORY_API_URL="https://your-gittensory-api-origin.example"
+export GITTENSORY_API_URL="https://api.gittensory.aethereal.dev"
 curl "$GITTENSORY_API_URL/v1/installations/INSTALLATION_ID/health" \
   -H "Authorization: Bearer $GITTENSORY_API_TOKEN"
 ```

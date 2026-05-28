@@ -21,6 +21,7 @@ import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } 
 import { fetchPublicContributorProfile } from "../github/public";
 import { getOrCreateScoringModelSnapshot } from "../scoring/model";
 import { loadFreshContributorDecisionPack, repoDecisionFromPack, type ContributorDecisionPack, type DecisionAction, type RepoDecision } from "./decision-pack";
+import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
 import { buildLocalBranchAnalysis, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import type {
@@ -162,14 +163,15 @@ export async function executeAgentRun(env: Env, runId: string): Promise<AgentRun
       kind === "preflight_branch" || kind === "prepare_pr_packet" || kind === "explain_branch_blockers"
         ? await executeLocalBranchRun(env, run, kind)
         : await executeDecisionPackRun(env, run, kind);
+    const summarized = await attachPrivateAiSummary(env, bundle);
     await recordAuditEvent(env, {
       eventType: "agent.run_completed",
       actor: run.actorLogin,
       targetKey: String(run.payload.repoFullName ?? ""),
       outcome: "completed",
-      metadata: { runId, kind, actionCount: bundle.actions.length },
+      metadata: { runId, kind, actionCount: summarized.actions.length },
     });
-    return bundle;
+    return summarized;
   } catch (error) {
     const message = error instanceof Error ? error.message : "agent_run_failed";
     await updateAgentRun(env, runId, { status: "failed", errorSummary: message });
@@ -184,6 +186,18 @@ export async function executeAgentRun(env: Env, runId: string): Promise<AgentRun
     if (!failed) throw error;
     return failed;
   }
+}
+
+async function attachPrivateAiSummary(env: Env, bundle: AgentRunBundle): Promise<AgentRunBundle> {
+  const summary = await summarizeAgentBundleWithAi(env, bundle, "private");
+  if (summary.status === "disabled" || summary.status === "unavailable") return bundle;
+  await updateAgentRun(env, bundle.run.id, {
+    payload: {
+      ...bundle.run.payload,
+      aiSummary: summary as unknown as JsonValue,
+    },
+  });
+  return (await getAgentRunBundle(env, bundle.run.id)) ?? bundle;
 }
 
 async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: string): Promise<AgentRunBundle> {

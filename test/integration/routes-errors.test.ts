@@ -64,11 +64,11 @@ describe("api route guards and error branches", () => {
       "/v1/repos",
       {
         method: "OPTIONS",
-        headers: { origin: "https://api.gittensory.aethereal.dev", "access-control-request-method": "GET" },
+        headers: { origin: "https://gittensory-api.aethereal.dev", "access-control-request-method": "GET" },
       },
       env,
     );
-    expect(allowedPreflight.headers.get("access-control-allow-origin")).toBe("https://api.gittensory.aethereal.dev");
+    expect(allowedPreflight.headers.get("access-control-allow-origin")).toBe("https://gittensory-api.aethereal.dev");
 
     const limitedEnv = createTestEnv({ RATE_LIMITER: denyAllRateLimiter() as unknown as DurableObjectNamespace });
     const limited = await app.request("/v1/auth/github/device/start", { method: "POST" }, limitedEnv);

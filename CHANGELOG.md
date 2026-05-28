@@ -61,5 +61,9 @@
 
 - Use Gittensor screenshot in homepage hero
 
+- Keep workers dev fallback route
+
+- Use first-level api domain
+
 
 

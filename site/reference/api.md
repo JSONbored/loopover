@@ -5,7 +5,7 @@ The REST API is bearer-token protected except for `/health`, GitHub webhook deli
 Use the live OpenAPI document when authenticated:
 
 ```sh
-export GITTENSORY_API_URL="https://api.gittensory.aethereal.dev"
+export GITTENSORY_API_URL="https://gittensory-api.aethereal.dev"
 curl "$GITTENSORY_API_URL/openapi.json" \
   -H "Authorization: Bearer $GITTENSORY_API_TOKEN"
 ```

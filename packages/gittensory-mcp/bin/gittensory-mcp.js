@@ -7,7 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
 
-const defaultApiUrl = "https://api.gittensory.aethereal.dev";
+const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const packageName = "@jsonbored/gittensory-mcp";
 const packageVersion = "0.2.0";
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);

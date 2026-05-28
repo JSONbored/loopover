@@ -107,7 +107,7 @@ wrangler secret put INTERNAL_JOB_TOKEN
 
 `GITHUB_PUBLIC_TOKEN` is a server-side token used to raise public GitHub API rate limits during registered-repo backfill. It is not a contributor token.
 
-The production API origin is `https://api.gittensory.aethereal.dev`. The `workers.dev` deployment URL is treated as an internal fallback, not the public integration target.
+The production API origin is `https://gittensory-api.aethereal.dev`. The `workers.dev` deployment URL is treated as an internal fallback, not the public integration target.
 
 ## Canonical API
 

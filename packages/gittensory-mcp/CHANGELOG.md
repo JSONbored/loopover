@@ -13,6 +13,8 @@
 
 - Create GitHub releases for MCP tag publishes
 
+- Use first-level api domain
+
 
 ## mcp-v0.1.4 - 2026-05-26
 

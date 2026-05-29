@@ -45,7 +45,7 @@
     "agents": "^0.7.9",
     "drizzle-orm": "^0.45.0",
     "hono": "^4.12.22",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.9",

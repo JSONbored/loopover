@@ -78,9 +78,9 @@ export function collectLocalBranchMetadata(input) {
 
 export function buildBranchAnalysisPayload(input) {
   const metadata = collectLocalBranchMetadata(input);
-  metadata.repoRoot = input.cwd ?? process.cwd();
+  const scorerMetadata = { ...metadata, repoRoot: input.cwd ?? process.cwd() };
   const scorerCommand = resolveScorePreviewCommand(input);
-  const externalPreview = runExternalScorePreview(metadata, scorerCommand);
+  const externalPreview = runExternalScorePreview(scorerMetadata, scorerCommand);
   const localScorer = externalPreview.ok ? normalizeScorerOutput(externalPreview.payload) : metadataOnlyScorer(externalPreview);
   return {
     ...metadata,

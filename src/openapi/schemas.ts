@@ -1127,6 +1127,15 @@ export const RepoIntelligenceSchema = z
     maintainerCutReadiness: z.record(z.unknown()).nullable().optional(),
     contributorIntakeHealth: z.record(z.unknown()).nullable().optional(),
     dataQuality: z.record(z.unknown()),
+    burdenForecast: BurdenForecastSchema.optional(),
+    burdenForecastFreshness: z
+      .object({
+        source: z.enum(["snapshot", "computed"]),
+        generatedAt: z.string(),
+        ageSeconds: z.number(),
+        freshness: z.enum(["fresh", "stale"]),
+      })
+      .optional(),
   })
   .openapi("RepoIntelligence");
 

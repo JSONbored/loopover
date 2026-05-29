@@ -79,6 +79,7 @@ import {
   repoDecisionFromPack,
 } from "../services/decision-pack";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
+import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -103,7 +104,7 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
-import type { ContributorEvidenceRecord, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
+import type { ContributorEvidenceRecord, DataQuality, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
@@ -1054,7 +1055,8 @@ export function createApp() {
 }
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
-  const [repo, snapshots, dataQuality] = await Promise.all([
+  let burdenForecastError: unknown;
+  const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
     getRepository(env, fullName),
     Promise.all(
       ["queue-health", "config-quality", "label-audit", "maintainer-lane", "maintainer-cut-readiness", "contributor-intake-health"].map(async (signalType) => [
@@ -1063,8 +1065,26 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       ]),
     ),
     loadRepoDataQuality(env, fullName),
+    loadOrComputeBurdenForecastResponse(env, fullName).catch((error) => {
+      burdenForecastError = error;
+      return null;
+    }),
   ]);
+  const intelligenceDataQuality = burdenForecastError
+    ? withDataQualityWarning(dataQuality, `Burden forecast unavailable for ${fullName}: ${errorMessage(burdenForecastError)}`)
+    : dataQuality;
   const snapshotMap = Object.fromEntries(snapshots);
+  const burdenForecastSlice = burdenForecast
+    ? {
+        burdenForecast: burdenForecast.report,
+        burdenForecastFreshness: {
+          source: burdenForecast.source,
+          generatedAt: burdenForecast.generatedAt,
+          ageSeconds: burdenForecast.ageSeconds,
+          freshness: burdenForecast.freshness,
+        },
+      }
+    : {};
   if (snapshotMap["queue-health"] && snapshotMap["config-quality"] && snapshotMap["label-audit"]) {
     return {
       status: "ready",
@@ -1079,7 +1099,8 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       maintainerLane: snapshotMap["maintainer-lane"],
       maintainerCutReadiness: snapshotMap["maintainer-cut-readiness"],
       contributorIntakeHealth: snapshotMap["contributor-intake-health"],
-      dataQuality,
+      dataQuality: intelligenceDataQuality,
+      ...burdenForecastSlice,
     };
   }
   const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts] = await Promise.all([
@@ -1110,7 +1131,17 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     maintainerLane,
     maintainerCutReadiness,
     contributorIntakeHealth,
-    dataQuality,
+    dataQuality: intelligenceDataQuality,
+    ...burdenForecastSlice,
+  };
+}
+
+function withDataQualityWarning(dataQuality: DataQuality, warning: string): DataQuality {
+  return {
+    ...dataQuality,
+    status: dataQuality.status === "complete" ? "degraded" : dataQuality.status,
+    partial: true,
+    warnings: [...new Set([...dataQuality.warnings, warning])],
   };
 }
 

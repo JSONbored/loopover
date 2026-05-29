@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   listCollisionEdges,
   createAgentRun,
+  getBurdenForecast,
   getContributorEvidence,
   getAgentRun,
   getContributorScoringProfile,
@@ -103,6 +104,9 @@ describe("queue processors", () => {
     expect(await listSignalSnapshots(env, "contributor-decision-pack", "oktofeesh1")).not.toHaveLength(0);
     expect(await getContributorEvidence(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
     expect(await getContributorScoringProfile(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
+    const persistedBurden = await getBurdenForecast(env, "JSONbored/gittensory");
+    expect(persistedBurden).toMatchObject({ repoFullName: "JSONbored/gittensory" });
+    expect(persistedBurden?.payload).toMatchObject({ level: expect.any(String), summary: expect.any(String) });
   });
 
   it("runs queued agent jobs through the queue processor", async () => {

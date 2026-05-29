@@ -169,7 +169,7 @@ export async function fetchOfficialGittensorMiner(login: string): Promise<Offici
   try {
     const miners = await fetchJson<GittensorMinerSummaryResponse[]>(`${GITTENSOR_API_BASE}/miners`);
     const normalizedLogin = login.toLowerCase();
-    const miner = miners.find((candidate) => candidate.githubUsername?.toLowerCase() === normalizedLogin || candidate.githubId === login);
+    const miner = miners.find((candidate) => candidate.githubUsername?.toLowerCase() === normalizedLogin);
     if (!miner?.githubId || !miner.githubUsername) return { status: "not_found" };
     return { status: "confirmed", snapshot: await buildGittensorContributorSnapshot({ ...miner, githubId: miner.githubId, githubUsername: miner.githubUsername }) };
   } catch (error) {

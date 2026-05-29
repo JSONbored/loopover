@@ -77,5 +77,15 @@
 
 - Ignore stale beta api origins
 
+- Restore actionKind guards and add split-lane copy
+
+
+
+### Tests
+
+- Tighten and extend decision-pack regression coverage
+
+- Cover review-requested branches and tier sanitization
+
 
 

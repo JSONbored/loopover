@@ -95,6 +95,21 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
+const SIGNAL_FRESHNESS_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
+const MAX_SIGNAL_FRESHNESS_TARGETS = 200;
+const MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS = 256;
+const FRESHNESS_SIGNAL_TYPES = [
+  "contributor-decision-pack",
+  "contributor-intake-health",
+  "contributor-outcome-history",
+  "contributor-strategy",
+  "config-quality",
+  "label-audit",
+  "maintainer-cut-readiness",
+  "maintainer-lane",
+  "pr-reviewability",
+  "queue-health",
+];
 
 export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<void> {
   if (!payload.installation?.id) return;
@@ -1511,34 +1526,46 @@ export async function listSignalSnapshots(env: Env, signalType: string, targetKe
   return rows.map(toSignalSnapshotRecord);
 }
 
-export async function listLatestSignalSnapshotsByTarget(env: Env): Promise<SignalSnapshotRecord[]> {
+export async function listLatestSignalSnapshotsByTarget(
+  env: Env,
+  options: { limit?: number; generatedAfter?: string; maxTargetKeyChars?: number } = {},
+): Promise<SignalSnapshotRecord[]> {
+  const limit = Math.max(1, Math.min(options.limit ?? MAX_SIGNAL_FRESHNESS_TARGETS, MAX_SIGNAL_FRESHNESS_TARGETS));
+  const generatedAfter = options.generatedAfter ?? new Date(Date.now() - SIGNAL_FRESHNESS_LOOKBACK_MS).toISOString();
+  const maxTargetKeyChars = Math.max(1, Math.min(options.maxTargetKeyChars ?? MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS, MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS));
+  const freshnessSignalPlaceholders = FRESHNESS_SIGNAL_TYPES.map(() => "?").join(", ");
   const { results } = await env.DB.prepare(
     `
-      SELECT id, signal_type, target_key, repo_full_name, payload_json, generated_at
+      SELECT id, signal_type, target_key, repo_full_name, generated_at
       FROM (
         SELECT
           id,
           signal_type,
           target_key,
           repo_full_name,
-          payload_json,
           generated_at,
           row_number() OVER (
             PARTITION BY signal_type, target_key
             ORDER BY generated_at DESC, id DESC
           ) AS snapshot_rank
         FROM signal_snapshots
+        WHERE generated_at >= ?
+          AND length(target_key) <= ?
+          AND signal_type IN (${freshnessSignalPlaceholders})
       )
       WHERE snapshot_rank = 1
-      ORDER BY signal_type, target_key
+      ORDER BY generated_at ASC, signal_type, target_key
+      LIMIT ?
     `,
-  ).all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; payload_json: string; generated_at: string }>();
+  )
+    .bind(generatedAfter, maxTargetKeyChars, ...FRESHNESS_SIGNAL_TYPES, limit)
+    .all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; generated_at: string }>();
   return results.map((row) => ({
     id: row.id,
     signalType: row.signal_type,
     targetKey: row.target_key,
     repoFullName: row.repo_full_name,
-    payload: parseJson<Record<string, never>>(row.payload_json, {}),
+    payload: {},
     generatedAt: row.generated_at,
   }));
 }

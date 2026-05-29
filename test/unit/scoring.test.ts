@@ -148,6 +148,39 @@ IGNORED = "not numeric"
     expect(JSON.stringify(preview)).not.toMatch(/guaranteed payout|wallet|hotkey|farming/i);
   });
 
+  it("keeps GitHub-observed pending PR scenarios separate from user assumptions", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 5,
+        credibility: 0.2,
+        pendingMergedPrCount: 1,
+        projectedCredibility: 0.5,
+        observedApprovedPrCount: 1,
+        observedStalePrCount: 1,
+        observedDraftPrCount: 1,
+        observedBlockedPrCount: 1,
+        observedMaintainerPrCount: 1,
+      },
+    });
+    const userSupplied = preview.scenarioPreviews.find((scenario) => scenario.name === "afterPendingMerges");
+    const approved = preview.scenarioPreviews.find((scenario) => scenario.name === "afterApprovedPrsMerge");
+    const stale = preview.scenarioPreviews.find((scenario) => scenario.name === "afterStalePrsClose");
+
+    expect(userSupplied).toMatchObject({ source: "user_supplied", gates: { openPrCount: 4, credibilityObserved: 0.5 } });
+    expect(approved).toMatchObject({ source: "github_observed", gates: { openPrCount: 4, credibilityObserved: 0.8 } });
+    expect(stale).toMatchObject({ source: "github_observed", gates: { openPrCount: 4, credibilityObserved: 0.2 } });
+    expect(approved?.assumptions.join(" ")).toMatch(/draft PR.*excluded|blocked PR.*excluded|maintainer-lane PR.*outside-contributor/);
+    expect(preview.effectiveEstimatedScore).toBe(0);
+    expect(preview.underlyingPotentialScore).toBeGreaterThan(0);
+    expect(JSON.stringify(preview)).not.toMatch(/guaranteed payout|wallet|hotkey|farming/i);
+  });
+
   it("warns on metadata-only weak previews without using public reward or wallet language", () => {
     const preview = buildScorePreview({
       repo: null,

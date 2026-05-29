@@ -1918,6 +1918,9 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
     baseRef: pr.base?.ref,
     htmlUrl: pr.html_url,
     mergedAt: pr.merged_at,
+    isDraft: pr.draft ?? pr.isDraft,
+    mergeableState: pr.mergeable_state ?? pr.mergeableState ?? mergeableBooleanState(pr.mergeable),
+    reviewDecision: pr.reviewDecision,
     body: pr.body,
     labels: (pr.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
     linkedIssues: extractLinkedIssueNumbers(pr.body ?? ""),
@@ -1925,7 +1928,14 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
 }
 
 function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): PullRequestRecord {
-  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null }>(row.payloadJson, {});
+  const payload = parseJson<{
+    body?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    draft?: boolean | null;
+    mergeable_state?: string | null;
+    reviewDecision?: string | null;
+  }>(row.payloadJson, {});
   return {
     repoFullName: row.repoFullName,
     number: row.number,
@@ -1938,6 +1948,9 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     baseRef: row.baseRef,
     htmlUrl: row.htmlUrl,
     mergedAt: row.mergedAt,
+    isDraft: payload.draft,
+    mergeableState: payload.mergeable_state,
+    reviewDecision: payload.reviewDecision,
     body: payload.body,
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
@@ -1961,12 +1974,33 @@ function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRe
   };
 }
 
-function compactGitHubPayload(payload: { body?: string | null; created_at?: string | null; updated_at?: string | null }): Record<string, JsonValue> {
+function compactGitHubPayload(payload: {
+  body?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  draft?: boolean | null;
+  isDraft?: boolean | null;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
+  mergeableState?: string | null;
+  reviewDecision?: string | null;
+}): Record<string, JsonValue> {
+  const draft = payload.draft ?? payload.isDraft;
+  const mergeableState = payload.mergeable_state ?? payload.mergeableState ?? mergeableBooleanState(payload.mergeable);
   return {
     body: truncateBody(payload.body),
     created_at: payload.created_at ?? null,
     updated_at: payload.updated_at ?? null,
+    ...(draft !== undefined ? { draft } : {}),
+    ...(mergeableState !== undefined ? { mergeable_state: mergeableState } : {}),
+    ...(payload.reviewDecision !== undefined ? { reviewDecision: payload.reviewDecision } : {}),
   };
+}
+
+function mergeableBooleanState(value: boolean | null | undefined): string | undefined {
+  if (value === true) return "mergeable";
+  if (value === false) return "blocked";
+  return undefined;
 }
 
 function truncateBody(body: string | null | undefined): string | null {

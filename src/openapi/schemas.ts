@@ -829,8 +829,8 @@ const ScoreGateDeltaSchema = z.object({
 });
 
 const ScoreScenarioPreviewSchema = z.object({
-  name: z.enum(["current", "cleanGates", "afterPendingMerges", "linkedIssueFixed", "bestReasonableCase"]),
-  source: z.enum(["current_data", "user_supplied", "gittensory_projection"]),
+  name: z.enum(["current", "cleanGates", "afterPendingMerges", "afterApprovedPrsMerge", "afterStalePrsClose", "linkedIssueFixed", "bestReasonableCase"]),
+  source: z.enum(["current_data", "user_supplied", "github_observed", "gittensory_projection"]),
   assumptions: z.array(z.string()),
   scoreEstimate: ScoreEstimateSchema,
   gates: ScoreGatesSchema,
@@ -1243,8 +1243,19 @@ export const LocalBranchAnalysisSchema = z
       current: ScoreScenarioPreviewSchema,
       bestReasonableCase: ScoreScenarioPreviewSchema,
       afterPendingMerges: ScoreScenarioPreviewSchema.optional(),
+      afterApprovedPrsMerge: ScoreScenarioPreviewSchema.optional(),
+      afterStalePrsClose: ScoreScenarioPreviewSchema.optional(),
       gateDeltas: z.array(ScoreGateDeltaSchema),
       blockedBy: z.array(ScoreGateBlockerSchema),
+    }),
+    observedPullRequestScenarios: z.object({
+      approvedOrMergeable: z.number(),
+      stale: z.number(),
+      closed: z.number(),
+      draft: z.number(),
+      blocked: z.number(),
+      maintainerLane: z.number(),
+      notes: z.array(z.string()),
     }),
     rewardRisk: RepoRewardRiskSchema,
     scoreBlockers: z.array(z.string()),

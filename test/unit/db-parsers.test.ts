@@ -3,14 +3,50 @@ import {
   getLatestScorePreview,
   getLatestScoringModelSnapshot,
   getFreshOfficialMinerDetection,
+  listPullRequests,
   listPullRequestDetailSyncStates,
   listRepoSyncSegments,
   listRepoSyncStates,
   upsertOfficialMinerDetection,
+  upsertPullRequestFromGitHub,
 } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("database row parser hardening", () => {
+  it("preserves cached pull request review and mergeability scenario fields", async () => {
+    const env = createTestEnv();
+
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 1,
+      title: "Blocked branch",
+      state: "open",
+      draft: true,
+      mergeable: false,
+      reviewDecision: "CHANGES_REQUESTED",
+      user: { login: "oktofeesh1" },
+      labels: [{ name: "bug" }],
+      body: "Fixes #7",
+    });
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 2,
+      title: "Mergeable branch",
+      state: "open",
+      isDraft: false,
+      mergeable: true,
+      reviewDecision: "APPROVED",
+      user: { login: "oktofeesh1" },
+      labels: [],
+      body: null,
+    });
+
+    await expect(listPullRequests(env, "owner/repo")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ number: 1, isDraft: true, mergeableState: "blocked", reviewDecision: "CHANGES_REQUESTED", linkedIssues: [7] }),
+        expect.objectContaining({ number: 2, isDraft: false, mergeableState: "mergeable", reviewDecision: "APPROVED" }),
+      ]),
+    );
+  });
+
   it("normalizes enum-like database values from stored sync, scoring, and preview rows", async () => {
     const env = createTestEnv();
 

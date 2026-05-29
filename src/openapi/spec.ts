@@ -225,6 +225,14 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/repos/{owner}/{repo}/issue-quality",
+    responses: {
+      200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityReportSchema } } },
+      404: { description: "Repo is unknown or has no issue-quality coverage yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/repos/{owner}/{repo}/registration-readiness",
     responses: {
       200: { description: "Gittensor registration readiness signal for repo owners", content: { "application/json": { schema: RegistrationReadinessSchema } } },

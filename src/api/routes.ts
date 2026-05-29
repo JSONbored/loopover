@@ -87,6 +87,7 @@ import {
   buildContributorProfile,
   buildContributorScoringProfile,
   buildContributorIntakeHealth,
+  buildIssueQualityReport,
   buildLabelAudit,
   buildLaneAdvice,
   buildLocalDiffPreflightResult,
@@ -556,6 +557,13 @@ export function createApp() {
   app.get("/v1/repos/:owner/:repo/intelligence", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await buildRepoIntelligenceResponse(c.env, fullName));
+  });
+
+  app.get("/v1/repos/:owner/:repo/issue-quality", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const response = await buildIssueQualityResponse(c.env, fullName);
+    if (!response) return c.json({ error: "issue_quality_not_found", repoFullName: fullName }, 404);
+    return c.json(response);
   });
 
   app.get("/v1/repos/:owner/:repo/registration-readiness", async (c) => {
@@ -1079,6 +1087,18 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     contributorIntakeHealth,
     dataQuality,
   };
+}
+
+async function buildIssueQualityResponse(env: Env, fullName: string) {
+  const cached = (await listSignalSnapshots(env, "issue-quality", fullName))[0];
+  if (cached) {
+    return { status: "ready" as const, source: "snapshot" as const, repoFullName: fullName, generatedAt: cached.generatedAt ?? nowIso(), report: cached.payload };
+  }
+  const repo = await getRepository(env, fullName);
+  if (!repo) return null;
+  const [issues, pullRequests] = await Promise.all([listIssueSignalSample(env, fullName), listOpenPullRequests(env, fullName)]);
+  const report = buildIssueQualityReport(repo, issues, pullRequests, fullName);
+  return { status: "ready" as const, source: "computed" as const, repoFullName: fullName, generatedAt: nowIso(), report };
 }
 
 async function buildRegistrationReadinessResponse(env: Env, fullName: string) {

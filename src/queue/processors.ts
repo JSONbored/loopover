@@ -68,6 +68,7 @@ import {
   buildContributorScoringProfile,
   buildContributorStrategy,
   buildContributorIntakeHealth,
+  buildIssueQualityReport,
   buildLabelAudit,
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
@@ -353,6 +354,7 @@ export async function generateSignalSnapshots(env: Env, repoFullName?: string): 
     const maintainerLane = buildMaintainerLaneReport(repo, issues, pullRequests, repo.fullName, collisions, queueCounts);
     const maintainerCutReadiness = buildMaintainerCutReadiness(repo, issues, pullRequests, repo.fullName, queueCounts, collisions);
     const contributorIntakeHealth = buildContributorIntakeHealth(repo, issues, pullRequests, repo.fullName, collisions, queueCounts);
+    const issueQuality = buildIssueQualityReport(repo, issues, pullRequests, repo.fullName);
     await replaceCollisionEdges(env, repo.fullName, buildCollisionEdges(collisions));
     const generatedAt = new Date().toISOString();
     await persistSignalSnapshot(env, {
@@ -401,6 +403,14 @@ export async function generateSignalSnapshots(env: Env, repoFullName?: string): 
       targetKey: repo.fullName,
       repoFullName: repo.fullName,
       payload: contributorIntakeHealth as unknown as Record<string, never>,
+      generatedAt,
+    });
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: "issue-quality",
+      targetKey: repo.fullName,
+      repoFullName: repo.fullName,
+      payload: issueQuality as unknown as Record<string, never>,
       generatedAt,
     });
   }

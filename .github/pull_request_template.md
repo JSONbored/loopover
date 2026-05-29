@@ -5,7 +5,7 @@
 ## Validation
 
 - [ ] `npm run test:ci`
-- [ ] `npm run changelog:check`
+- [ ] Changelog updated only if this is a release-prep change
 
 ## Safety
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":semanticCommitScope(deps)",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "assignees": ["JSONbored"],
+  "branchPrefix": "renovate/",
+  "dependencyDashboardTitle": "Dependency Dashboard",
+  "enabledManagers": ["npm", "github-actions"],
+  "minimumReleaseAge": "3 days",
+  "packageRules": [
+    {
+      "groupName": "npm minor and patch dependencies",
+      "groupSlug": "npm-minor-patch",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "semanticCommitScope": "deps"
+    },
+    {
+      "dependencyDashboardApproval": true,
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "semanticCommitScope": "deps"
+    },
+    {
+      "commitMessageTopic": "GitHub Actions",
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions",
+      "matchManagers": ["github-actions"],
+      "semanticCommitScope": "actions"
+    },
+    {
+      "enabled": false,
+      "matchDepTypes": ["engines"]
+    }
+  ],
+  "postUpdateOptions": ["npmDedupe"],
+  "prBodyNotes": [
+    "Dependency PRs must keep `npm run test:ci` passing and preserve the 95% global coverage gate.",
+    "GitHub Actions updates must remain SHA-pinned."
+  ],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "bump",
+  "rebaseWhen": "behind-base-branch",
+  "schedule": ["before 6am on monday"],
+  "separateMajorMinor": true,
+  "separateMultipleMajor": true,
+  "timezone": "America/Phoenix",
+  "vulnerabilityAlerts": {
+    "enabled": true
+  }
+}

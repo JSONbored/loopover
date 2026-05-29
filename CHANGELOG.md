@@ -11,6 +11,8 @@
 
 - Fix mcp publish tarball allowlist
 
+- Replace dependabot with renovate
+
 
 
 ### Chores

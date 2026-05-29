@@ -32,6 +32,7 @@ Out of scope:
 - Keep GitHub App labels limited to configured labels for officially confirmed Gittensor miner PRs.
 - Prefer deterministic, evidence-based rules over opaque scoring.
 - Use Conventional Commit style for release-quality changelog output.
+- Do not update changelogs in ordinary PRs unless the PR is explicitly preparing a release.
 
 ## Pull Request Checklist
 

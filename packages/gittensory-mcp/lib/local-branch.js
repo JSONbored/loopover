@@ -119,7 +119,7 @@ export function redactScorerCommand(command) {
   const text = String(command ?? "").trim();
   if (!text) return text;
   const parts = splitCommand(text);
-  const interpreter = parts[0] ?? "command";
+  const interpreter = parts[0]?.split(/[\\/]/).pop() ?? "command";
   const script = parts.at(-1)?.split(/[\\/]/).pop();
   if (script && /\.(mjs|js|cjs|py)$/i.test(script)) return `${interpreter} <scorer-script>/${script}`;
   return "<configured-scorer-command>";

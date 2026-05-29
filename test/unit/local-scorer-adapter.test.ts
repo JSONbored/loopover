@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 function fixtureCommand(name: string) {
-  return `node ${join(process.cwd(), "packages/gittensory-mcp/scripts/test-fixtures", name)}`;
+  return `node ${join(process.cwd(), "test/fixtures/local-scorer", name)}`;
 }
 
 describe("local scorer adapter", () => {

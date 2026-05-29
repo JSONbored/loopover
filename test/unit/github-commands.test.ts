@@ -131,7 +131,9 @@ describe("GitHub mention commands", () => {
     });
     expect(blockers).toContain("### Gittensory readiness blockers");
     expect(blockers).toContain("**Readiness blockers**");
-    expect(blockers).toContain("open pull request pressure");
+    expect(blockers).toContain("Resolve queue pressure before opening more work.");
+    expect(blockers).toContain("Open pull request queue pressure");
+    expect(blockers).not.toContain("5 open PR(s)");
 
     const duplicateCheck = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
@@ -157,6 +159,46 @@ describe("GitHub mention commands", () => {
     expect(nextAction).toContain("### Gittensory next step");
     expect(nextAction).toContain("**Recommended next step**");
     expect(nextAction).toContain("After tests pass.");
+  });
+
+  it("does not publish private blocker why details", () => {
+    const body = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 24, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-private-blockers"),
+        actions: [
+          {
+            id: "private-blockers",
+            runId: "run-private-blockers",
+            actionType: "explain_score_blockers",
+            status: "blocked",
+            recommendation: "Resolve blockers",
+            why: [
+              "5 open PR(s) create scoreability and review-pressure risk.",
+              "Closed PR rate is 48%.",
+              "Official repo credibility is 0.42.",
+            ],
+            blockedBy: ["open_pr_pressure", "closed_pr_credibility", "low_credibility"],
+            publicSafeSummary: "Resolve public readiness blockers before opening more work.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "blockers",
+      },
+    });
+
+    expect(body).toContain("Resolve public readiness blockers before opening more work.");
+    expect(body).toContain("Open pull request queue pressure");
+    expect(body).toContain("Closed pull request credibility signal");
+    expect(body).toContain("Contributor credibility needs improvement");
+    expect(body).not.toMatch(/5 open PR\(s\)|Closed PR rate is 48%|Official repo credibility is 0\.42/i);
   });
 
   it("renders help, miner-context fallback, refresh, and empty-action responses", () => {

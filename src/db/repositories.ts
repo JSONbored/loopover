@@ -95,6 +95,21 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
+const SIGNAL_FRESHNESS_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
+const MAX_SIGNAL_FRESHNESS_TARGETS = 200;
+const MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS = 256;
+const FRESHNESS_SIGNAL_TYPES = [
+  "contributor-decision-pack",
+  "contributor-intake-health",
+  "contributor-outcome-history",
+  "contributor-strategy",
+  "config-quality",
+  "label-audit",
+  "maintainer-cut-readiness",
+  "maintainer-lane",
+  "pr-reviewability",
+  "queue-health",
+];
 
 export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<void> {
   if (!payload.installation?.id) return;
@@ -752,7 +767,7 @@ export async function getFreshOfficialMinerDetection(env: Env, login: string, no
   return row ? toOfficialMinerDetection(row) : null;
 }
 
-export async function upsertOfficialMinerDetection(env: Env, login: string, detection: OfficialGittensorMinerDetection, ttlMs: number, fetchedAtMs = Date.now()): Promise<void> {
+export async function upsertOfficialMinerDetection(env: Env, login: string, detection: OfficialGittensorMinerDetection, ttlMs: number, fetchedAtMs = Date.now()): Promise<OfficialGittensorMinerDetection> {
   const fetchedAt = new Date(fetchedAtMs).toISOString();
   const cacheableDetection = toCacheableOfficialMinerDetection(detection);
   const values = {
@@ -762,21 +777,34 @@ export async function upsertOfficialMinerDetection(env: Env, login: string, dete
     expiresAt: new Date(fetchedAtMs + ttlMs).toISOString(), updatedAt: fetchedAt,
   };
   await getDb(env.DB).insert(officialMinerDetections).values(values).onConflictDoUpdate({ target: officialMinerDetections.login, set: values });
+  return cacheableDetection;
 }
 
 function toCacheableOfficialMinerDetection(detection: OfficialGittensorMinerDetection): OfficialGittensorMinerDetection {
   return detection.status === "confirmed" ? { status: "confirmed", snapshot: toCacheableGittensorSnapshot(detection.snapshot) } : detection;
 }
 
+const OFFICIAL_MINER_CACHE_STRING_LIMITS = {
+  githubId: 128,
+  githubUsername: 128,
+  failedReason: 512,
+  timestamp: 64,
+} as const;
+
 function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnapshot>): GittensorContributorSnapshot {
   return {
     source: "gittensor_api",
-    githubId: String(snapshot.githubId ?? ""),
-    githubUsername: String(snapshot.githubUsername ?? ""),
+    githubId: boundedString(snapshot.githubId, OFFICIAL_MINER_CACHE_STRING_LIMITS.githubId),
+    githubUsername: boundedString(snapshot.githubUsername, OFFICIAL_MINER_CACHE_STRING_LIMITS.githubUsername),
     uid: optionalNumber(snapshot.uid),
-    failedReason: typeof snapshot.failedReason === "string" ? snapshot.failedReason : snapshot.failedReason === null ? null : undefined,
-    evaluatedAt: typeof snapshot.evaluatedAt === "string" ? snapshot.evaluatedAt : undefined,
-    updatedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : undefined,
+    failedReason:
+      typeof snapshot.failedReason === "string"
+        ? boundedString(snapshot.failedReason, OFFICIAL_MINER_CACHE_STRING_LIMITS.failedReason)
+        : snapshot.failedReason === null
+          ? null
+          : undefined,
+    evaluatedAt: typeof snapshot.evaluatedAt === "string" ? boundedString(snapshot.evaluatedAt, OFFICIAL_MINER_CACHE_STRING_LIMITS.timestamp) : undefined,
+    updatedAt: typeof snapshot.updatedAt === "string" ? boundedString(snapshot.updatedAt, OFFICIAL_MINER_CACHE_STRING_LIMITS.timestamp) : undefined,
     isEligible: Boolean(snapshot.isEligible),
     credibility: finiteNumber(snapshot.credibility),
     eligibleRepoCount: finiteNumber(snapshot.eligibleRepoCount),
@@ -798,40 +826,18 @@ function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnap
       solvedIssues: finiteNumber(snapshot.totals?.solvedIssues),
       validSolvedIssues: finiteNumber(snapshot.totals?.validSolvedIssues),
     },
-    repositories: Array.isArray(snapshot.repositories)
-      ? snapshot.repositories.map((repo) => ({
-          repoFullName: String(repo.repoFullName ?? ""),
-          pullRequests: finiteNumber(repo.pullRequests),
-          mergedPullRequests: finiteNumber(repo.mergedPullRequests),
-          openPullRequests: finiteNumber(repo.openPullRequests),
-          closedPullRequests: finiteNumber(repo.closedPullRequests),
-          openIssues: finiteNumber(repo.openIssues),
-          closedIssues: finiteNumber(repo.closedIssues),
-          solvedIssues: finiteNumber(repo.solvedIssues),
-          validSolvedIssues: finiteNumber(repo.validSolvedIssues),
-          isEligible: Boolean(repo.isEligible),
-          isIssueEligible: Boolean(repo.isIssueEligible),
-          credibility: finiteNumber(repo.credibility),
-          issueCredibility: finiteNumber(repo.issueCredibility),
-          totalScore: finiteNumber(repo.totalScore),
-          baseTotalScore: finiteNumber(repo.baseTotalScore),
-        }))
-      : [],
-    pullRequests: Array.isArray(snapshot.pullRequests)
-      ? snapshot.pullRequests.map((pr) => ({
-          repoFullName: String(pr.repoFullName ?? ""),
-          number: finiteNumber(pr.number),
-          title: String(pr.title ?? ""),
-          state: String(pr.state ?? ""),
-          mergedAt: typeof pr.mergedAt === "string" ? pr.mergedAt : pr.mergedAt === null ? null : undefined,
-          label: typeof pr.label === "string" ? pr.label : pr.label === null ? null : undefined,
-          score: finiteNumber(pr.score),
-          baseScore: finiteNumber(pr.baseScore),
-          tokenScore: finiteNumber(pr.tokenScore),
-        }))
-      : [],
-    issueLabels: Array.isArray(snapshot.issueLabels) ? snapshot.issueLabels.filter((label): label is string => typeof label === "string") : [],
+    // The public-surface cache only needs identity, status, and aggregate totals.
+    // Do not persist per-repository, PR, title, or label data from Gittensor/GitHub;
+    // those untrusted arrays can be arbitrarily large and make D1 rows expensive to
+    // serialize, store, read, and parse during webhook processing.
+    repositories: [],
+    pullRequests: [],
+    issueLabels: [],
   };
+}
+
+function boundedString(value: unknown, maxLength: number): string {
+  return String(value ?? "").slice(0, maxLength);
 }
 
 function finiteNumber(value: unknown): number {
@@ -933,6 +939,18 @@ export async function upsertBurdenForecast(env: Env, forecast: BurdenForecastRec
       target: burdenForecasts.repoFullName,
       set: { payloadJson: jsonString(forecast.payload), generatedAt: forecast.generatedAt },
     });
+}
+
+export async function getBurdenForecast(env: Env, repoFullName: string): Promise<BurdenForecastRecord | null> {
+  const db = getDb(env.DB);
+  const row = await db.select().from(burdenForecasts).where(eq(burdenForecasts.repoFullName, repoFullName)).limit(1);
+  const first = row[0];
+  if (!first) return null;
+  return {
+    repoFullName: first.repoFullName,
+    payload: parseJson<Record<string, JsonValue>>(first.payloadJson, {}),
+    generatedAt: first.generatedAt,
+  };
 }
 
 export async function persistRegistryDriftEvents(env: Env, events: RegistryDriftEventRecord[]): Promise<void> {
@@ -1511,34 +1529,46 @@ export async function listSignalSnapshots(env: Env, signalType: string, targetKe
   return rows.map(toSignalSnapshotRecord);
 }
 
-export async function listLatestSignalSnapshotsByTarget(env: Env): Promise<SignalSnapshotRecord[]> {
+export async function listLatestSignalSnapshotsByTarget(
+  env: Env,
+  options: { limit?: number; generatedAfter?: string; maxTargetKeyChars?: number } = {},
+): Promise<SignalSnapshotRecord[]> {
+  const limit = Math.max(1, Math.min(options.limit ?? MAX_SIGNAL_FRESHNESS_TARGETS, MAX_SIGNAL_FRESHNESS_TARGETS));
+  const generatedAfter = options.generatedAfter ?? new Date(Date.now() - SIGNAL_FRESHNESS_LOOKBACK_MS).toISOString();
+  const maxTargetKeyChars = Math.max(1, Math.min(options.maxTargetKeyChars ?? MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS, MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS));
+  const freshnessSignalPlaceholders = FRESHNESS_SIGNAL_TYPES.map(() => "?").join(", ");
   const { results } = await env.DB.prepare(
     `
-      SELECT id, signal_type, target_key, repo_full_name, payload_json, generated_at
+      SELECT id, signal_type, target_key, repo_full_name, generated_at
       FROM (
         SELECT
           id,
           signal_type,
           target_key,
           repo_full_name,
-          payload_json,
           generated_at,
           row_number() OVER (
             PARTITION BY signal_type, target_key
             ORDER BY generated_at DESC, id DESC
           ) AS snapshot_rank
         FROM signal_snapshots
+        WHERE generated_at >= ?
+          AND length(target_key) <= ?
+          AND signal_type IN (${freshnessSignalPlaceholders})
       )
       WHERE snapshot_rank = 1
-      ORDER BY signal_type, target_key
+      ORDER BY generated_at ASC, signal_type, target_key
+      LIMIT ?
     `,
-  ).all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; payload_json: string; generated_at: string }>();
+  )
+    .bind(generatedAfter, maxTargetKeyChars, ...FRESHNESS_SIGNAL_TYPES, limit)
+    .all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; generated_at: string }>();
   return results.map((row) => ({
     id: row.id,
     signalType: row.signal_type,
     targetKey: row.target_key,
     repoFullName: row.repo_full_name,
-    payload: parseJson<Record<string, never>>(row.payload_json, {}),
+    payload: {},
     generatedAt: row.generated_at,
   }));
 }
@@ -1918,6 +1948,9 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
     baseRef: pr.base?.ref,
     htmlUrl: pr.html_url,
     mergedAt: pr.merged_at,
+    isDraft: pr.draft ?? pr.isDraft,
+    mergeableState: pr.mergeable_state ?? pr.mergeableState ?? mergeableBooleanState(pr.mergeable),
+    reviewDecision: pr.reviewDecision,
     body: pr.body,
     labels: (pr.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
     linkedIssues: extractLinkedIssueNumbers(pr.body ?? ""),
@@ -1925,7 +1958,14 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
 }
 
 function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): PullRequestRecord {
-  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null }>(row.payloadJson, {});
+  const payload = parseJson<{
+    body?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    draft?: boolean | null;
+    mergeable_state?: string | null;
+    reviewDecision?: string | null;
+  }>(row.payloadJson, {});
   return {
     repoFullName: row.repoFullName,
     number: row.number,
@@ -1938,6 +1978,9 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     baseRef: row.baseRef,
     htmlUrl: row.htmlUrl,
     mergedAt: row.mergedAt,
+    isDraft: payload.draft,
+    mergeableState: payload.mergeable_state,
+    reviewDecision: payload.reviewDecision,
     body: payload.body,
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
@@ -1961,12 +2004,33 @@ function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRe
   };
 }
 
-function compactGitHubPayload(payload: { body?: string | null; created_at?: string | null; updated_at?: string | null }): Record<string, JsonValue> {
+function compactGitHubPayload(payload: {
+  body?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  draft?: boolean | null;
+  isDraft?: boolean | null;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
+  mergeableState?: string | null;
+  reviewDecision?: string | null;
+}): Record<string, JsonValue> {
+  const draft = payload.draft ?? payload.isDraft;
+  const mergeableState = payload.mergeable_state ?? payload.mergeableState ?? mergeableBooleanState(payload.mergeable);
   return {
     body: truncateBody(payload.body),
     created_at: payload.created_at ?? null,
     updated_at: payload.updated_at ?? null,
+    ...(draft !== undefined ? { draft } : {}),
+    ...(mergeableState !== undefined ? { mergeable_state: mergeableState } : {}),
+    ...(payload.reviewDecision !== undefined ? { reviewDecision: payload.reviewDecision } : {}),
   };
+}
+
+function mergeableBooleanState(value: boolean | null | undefined): string | undefined {
+  if (value === true) return "mergeable";
+  if (value === false) return "blocked";
+  return undefined;
 }
 
 function truncateBody(body: string | null | undefined): string | null {

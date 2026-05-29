@@ -21,6 +21,7 @@ import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } 
 import { fetchPublicContributorProfile } from "../github/public";
 import { getOrCreateScoringModelSnapshot } from "../scoring/model";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack, type ContributorDecisionPack, type DecisionAction, type RepoDecision } from "./decision-pack";
+import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
 import { buildLocalBranchAnalysis, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
@@ -282,7 +283,7 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
 }
 
 async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Promise<LocalBranchAnalysis & { dataQuality?: { status: "complete" | "degraded" | "blocked" | "unknown"; warnings: string[] } }> {
-  const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, scoringSnapshot] =
+  const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, scoringSnapshot, issueQuality] =
     await Promise.all([
       fetchPublicContributorProfile(input.login),
       listContributorPullRequests(env, input.login),
@@ -296,6 +297,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
       listPullRequests(env, input.repoFullName),
       listRecentMergedPullRequests(env, input.repoFullName),
       getOrCreateScoringModelSnapshot(env),
+      loadOrComputeIssueQualityResponse(env, input.repoFullName),
     ]);
   const repoStats = contributorRepoStatsFromGittensor(gittensorSnapshot).length > 0 ? contributorRepoStatsFromGittensor(gittensorSnapshot) : cachedRepoStats;
   const profile = buildContributorProfile(input.login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
@@ -307,11 +309,14 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     repo,
     issues,
     pullRequests,
+    contributorPullRequests,
     recentMergedPullRequests,
+    repositories,
     profile,
     outcomeHistory,
     scoringSnapshot,
     scoringProfile,
+    issueQuality: issueQuality?.report,
   });
 }
 

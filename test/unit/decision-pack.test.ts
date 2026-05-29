@@ -634,6 +634,81 @@ describe("decision-pack service", () => {
     expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
   });
 
+  it("uses issue-quality candidates in issue-discovery next actions", () => {
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/issues", 0.02, 1, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      syncState: { primaryLanguage: "TypeScript", openIssuesCount: 42 } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+      issueQuality: {
+        repoFullName: "owner/issues",
+        generatedAt: "2026-05-29T00:00:00.000Z",
+        lane: { repoFullName: "owner/issues", lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [
+          { number: 42, title: "Actionable bug report", status: "ready", score: 90, reasons: [], warnings: [] },
+          { number: 41, title: "Covered issue", status: "do_not_use", score: 0, reasons: [], warnings: [] },
+        ],
+        summary: "2 open issues evaluated.",
+      },
+    });
+    expect(decision.issueQuality).toMatchObject({ readyCount: 1, doNotUseCount: 1 });
+    expect(decision.priorityScore).toBeGreaterThan(35);
+    expect(decision.nextActions[0]).toContain("#42");
+    expect(decision.whyThisHelps[0]).toMatch(/ready candidate/);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+
+    const splitDecision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/split-issues", 0.02, 0.5, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript", openIssuesCount: 4 } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+      issueQuality: {
+        repoFullName: "owner/split-issues",
+        generatedAt: "2026-05-29T00:00:00.000Z",
+        lane: { repoFullName: "owner/split-issues", lane: "split", issueDiscoveryShare: 0.5, directPrShare: 0.5, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 50, title: "Split-lane ready report", status: "ready", score: 85, reasons: [], warnings: [] }],
+        summary: "1 open issue evaluated.",
+      },
+    });
+    expect(splitDecision.nextActions[0]).toContain("#50");
+    expect(splitDecision.publicNextActions[0]).toContain("issue-quality ready candidates");
+    expect(noStructuralCountLeak(splitDecision.publicNextActions)).toBe(true);
+
+    const blockedQualityDecision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/blocked-issues", 0.02, 1, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      issueQuality: {
+        repoFullName: "owner/blocked-issues",
+        generatedAt: "2026-05-29T00:00:00.000Z",
+        lane: { repoFullName: "owner/blocked-issues", lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 41, title: "Covered issue", status: "do_not_use", score: 0, reasons: [], warnings: [] }],
+        summary: "1 open issue evaluated.",
+      },
+    });
+    expect(blockedQualityDecision.issueQuality).toMatchObject({ readyCount: 0, doNotUseCount: 1 });
+    expect(blockedQualityDecision.priorityScore).toBeLessThan(35);
+    expect(blockedQualityDecision.riskReasons).toEqual(expect.arrayContaining([expect.stringContaining("No ready issue-quality candidate")]));
+
+    const emptyQualityDecision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/empty-issues", 0.02, 1, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      issueQuality: {
+        repoFullName: "owner/empty-issues",
+        generatedAt: "2026-05-29T00:00:00.000Z",
+        lane: { repoFullName: "owner/empty-issues", lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [],
+        summary: "0 open issues evaluated.",
+      },
+    });
+    expect(emptyQualityDecision.priorityScore).toBe(40);
+  });
+
   it("issues avoid_for_now reasoning with sanitized public copy", () => {
     const decision = __decisionPackInternals.buildRepoDecision({
       repo: repoWithLabels("owner/inactive", 0, 0, {}),

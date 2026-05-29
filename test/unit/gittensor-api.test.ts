@@ -183,6 +183,12 @@ describe("Gittensor API contributor snapshots", () => {
     await expect(fetchGittensorContributorSnapshot("jsonbored")).resolves.toBeNull();
   });
 
+  it("does not match a PR author login against a miner numeric GitHub ID", async () => {
+    vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "official-real-miner", githubId: "12345" }]));
+
+    await expect(fetchOfficialGittensorMiner("12345")).resolves.toEqual({ status: "not_found" });
+  });
+
   it("classifies official miner detection without a complete identity and handles non-Error failures", async () => {
     vi.stubGlobal("fetch", async () => Response.json([{ githubUsername: "jsonbored" }, { githubId: "49853598" }]));
     await expect(fetchOfficialGittensorMiner("jsonbored")).resolves.toEqual({ status: "not_found" });

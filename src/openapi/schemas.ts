@@ -1262,6 +1262,7 @@ export const LocalBranchAnalysisSchema = z
     }),
     prPacket: z.object({
       titleSuggestion: z.string(),
+      markdown: z.string(),
       bodySections: z.array(z.object({ heading: z.string(), lines: z.array(z.string()) })),
       reviewerNotes: z.array(z.string()),
       validationSummary: z.object({

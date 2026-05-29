@@ -120,6 +120,7 @@ export type LocalBranchAnalysis = {
   };
   prPacket: {
     titleSuggestion: string;
+    markdown: string;
     bodySections: Array<{ heading: string; lines: string[] }>;
     reviewerNotes: string[];
     validationSummary: {
@@ -238,6 +239,8 @@ export function buildLocalBranchAnalysis(args: {
     roleContext,
     laneSummary: lane.summary,
     localFindings,
+    baseFreshness,
+    recommendedRerunCondition,
   });
   const scoreBlockers = [
     ...rewardRisk.scoreBlockers,
@@ -499,8 +502,10 @@ function buildPublicSafePrPacket(args: {
   roleContext: RoleContext;
   laneSummary: string;
   localFindings: LocalBranchAnalysis["localFindings"];
+  baseFreshness: LocalBranchAnalysis["baseFreshness"];
+  recommendedRerunCondition: string;
 }): LocalBranchAnalysis["prPacket"] {
-  const topPaths = args.changedFiles.slice(0, 8).map((file) => file.path);
+  const topPaths = args.changedFiles.slice(0, 8).map(changedFileSummary);
   const publicSafeWarnings = [
     ...(args.roleContext.maintainerLane ? ["This is maintainer-lane context; present it as repo stewardship work."] : []),
     ...args.preflight.findings
@@ -510,13 +515,14 @@ function buildPublicSafePrPacket(args: {
       .filter((finding) => finding.code !== "score_preview_warning" && finding.severity === "warning")
       .flatMap((finding) => (finding.action ? [finding.action] : [finding.title])),
   ].filter(isPublicSafeText);
+  const nextSteps = [...publicSafeWarnings, args.baseFreshness.recommendation, args.recommendedRerunCondition, "Keep source upload disabled; this packet is based on local git metadata only."].filter(
+    (line): line is string => Boolean(line && isPublicSafeText(line)),
+  );
   const validationLines =
     args.validationSummary.commands.length > 0
       ? args.validationSummary.commands.map((entry) => `- ${entry.status}: ${entry.command}${entry.summary ? ` (${entry.summary})` : ""}`)
       : ["- Not supplied yet."];
-  return {
-    titleSuggestion: args.title,
-    bodySections: [
+  const bodySections = [
       {
         heading: "Summary",
         lines: ["Describe the user-visible problem or maintainer-facing improvement this branch addresses."],
@@ -525,6 +531,8 @@ function buildPublicSafePrPacket(args: {
         heading: "Linked Context",
         lines: args.preflight.linkedIssues.length > 0 ? args.preflight.linkedIssues.map((issue) => `- Closes #${issue}`) : ["- No linked issue detected; explain why this is a no-issue PR."],
       },
+      { heading: "Branch Freshness", lines: branchFreshnessLines(args.baseFreshness) },
+      { heading: "Overlap/WIP Check", lines: overlapCautionLines(args.preflight.collisions) },
       {
         heading: "Changed Paths",
         lines: topPaths.length > 0 ? topPaths.map((path) => `- ${path}`) : ["- No changed paths were detected from local metadata."],
@@ -533,7 +541,12 @@ function buildPublicSafePrPacket(args: {
         heading: "Validation",
         lines: validationLines,
       },
-    ],
+      { heading: "Next Steps", lines: [...new Set(nextSteps)].slice(0, 6).map((line) => `- ${line.replace(/^- /, "")}`) },
+    ];
+  return {
+    titleSuggestion: args.title,
+    markdown: renderPrPacketMarkdown(args.title, bodySections),
+    bodySections,
     reviewerNotes: [
       `Lane context: ${args.laneSummary}`,
       `Review burden: ${args.preflight.reviewBurden}`,
@@ -542,6 +555,26 @@ function buildPublicSafePrPacket(args: {
     validationSummary: args.validationSummary,
     publicSafeWarnings: [...new Set(publicSafeWarnings)],
   };
+}
+
+function branchFreshnessLines(freshness: LocalBranchAnalysis["baseFreshness"]): string[] {
+  return [`- Base freshness: ${freshness.status}.`, ...freshness.warnings.filter(isPublicSafeText).map((warning) => `- ${warning}`), freshness.passedValidationCount > 0 ? `- Validation evidence supplied: ${freshness.passedValidationCount} passed command(s).` : "- No passed validation evidence was supplied."];
+}
+
+function overlapCautionLines(collisions: LocalDiffPreflightResult["collisions"]): string[] {
+  if (collisions.length === 0) return ["- No active overlap or WIP was detected from cached issue/PR metadata."];
+  return collisions
+    .slice(0, 3)
+    .map((cluster) => `- Possible overlap or WIP (${cluster.risk}): ${cluster.reason} Check ${cluster.items.slice(0, 3).map((item) => `${item.type === "pull_request" ? "PR" : item.type === "issue" ? "issue" : "merged PR"} #${item.number}`).join(", ")} before posting.`)
+    .filter(isPublicSafeText);
+}
+
+function changedFileSummary(file: LocalBranchChangedFile): string {
+  return `${file.previousPath ? `${safeRepoPath(file.previousPath)} -> ${safeRepoPath(file.path)}` : safeRepoPath(file.path)} (${file.status ?? "modified"}, ${file.binary ? "binary" : `+${nonNegative(file.additions)}/-${nonNegative(file.deletions)}`})`;
+}
+
+function renderPrPacketMarkdown(title: string, sections: Array<{ heading: string; lines: string[] }>): string {
+  return `${[`# ${title}`, ...sections.flatMap((section) => ["", `## ${section.heading}`, ...section.lines])].filter(isPublicSafeText).join("\n").trim()}\n`;
 }
 
 function summarizeValidation(validation: LocalBranchValidation[]): LocalBranchAnalysis["prPacket"]["validationSummary"] {
@@ -569,7 +602,11 @@ function firstCommitTitle(messages: string[] | undefined): string | undefined {
 }
 
 function isPublicSafeText(text: string): boolean {
-  return !/\b(reward|score|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|trust score)\b/i.test(text);
+  return !/\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-\s]?trust|trust score|private[-\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(text);
+}
+
+function safeRepoPath(path: string): string {
+  return /^(\/Users\/|\/home\/|\/tmp\/|[A-Z]:\/Users\/)/i.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
 }
 
 function isTestFile(file: string): boolean {

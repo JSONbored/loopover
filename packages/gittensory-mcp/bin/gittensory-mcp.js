@@ -552,12 +552,27 @@ function outputAgentPayload(payload, options, summary) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
+  const packetMarkdown = payload?.prPacket?.markdown ?? payload?.actions?.find((action) => action?.actionType === "prepare_pr_packet")?.payload?.prPacket?.markdown;
+  if (typeof packetMarkdown === "string" && packetMarkdown.trim()) {
+    const safeMarkdown = requirePublicSafePacketMarkdown(packetMarkdown);
+    return process.stdout.write(safeMarkdown.endsWith("\n") ? safeMarkdown : `${safeMarkdown}\n`);
+  }
   process.stdout.write(`${summary}\n`);
   const actions = payload.actions ?? [];
   for (const action of actions.slice(0, 3)) {
     process.stdout.write(`- ${action.actionType}: ${action.recommendation}\n`);
     if (action.rerunWhen) process.stdout.write(`  rerun: ${action.rerunWhen}\n`);
   }
+}
+
+function requirePublicSafePacketMarkdown(markdown) {
+  const unsafeLine = markdown.split(/\r?\n/).find((line) => isUnsafePublicPacketText(line));
+  if (unsafeLine) throw new Error("Refusing to print unsafe public packet markdown from the server.");
+  return markdown;
+}
+
+function isUnsafePublicPacketText(value) {
+  return /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-\s]?trust|trust score|private[-\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(value);
 }
 
 function printHelp() {

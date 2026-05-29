@@ -404,6 +404,142 @@ describe("decision-pack service", () => {
     expect(tsDecision.nextActions[0]).toMatch(/in TypeScript/);
   });
 
+  it("emits sanitized publicNextActions across every recommendation tier without lane shares or counts", () => {
+    const tiers = [
+      { name: "cleanup_first", outcome: { openPullRequests: 6, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any, lane: "direct_pr", emission: 0.005, idShare: 0, maintainerLane: false },
+      { name: "maintainer_lane", outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1, maintainerLane: true } as any, lane: "direct_pr", emission: 0.005, idShare: 0, maintainerLane: true, maintainerCut: 0.25 },
+      { name: "pursue", outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any, lane: "direct_pr", emission: 0.04, idShare: 0, maintainerLane: false },
+      { name: "pursue-split", outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any, lane: "split", emission: 0.04, idShare: 0.5, maintainerLane: false },
+      { name: "watch", outcome: undefined, lane: "issue_discovery", emission: 0.01, idShare: 1, maintainerLane: false },
+      { name: "avoid_for_now", outcome: undefined, lane: "inactive", emission: 0, idShare: 0, maintainerLane: false },
+    ];
+    for (const tier of tiers) {
+      const decision = __decisionPackInternals.buildRepoDecision({
+        repo: repoWithLabels(`owner/${tier.name}`, tier.emission, tier.idShare, { bug: 1.1 }, tier.maintainerCut ?? 0),
+        roleContext: { maintainerLane: tier.maintainerLane } as any,
+        outcome: tier.outcome,
+        syncState: { primaryLanguage: "TypeScript" } as any,
+        languageSet: new Set(["typescript"]),
+        labelHistory: new Set(["bug"]),
+      });
+      const joined = decision.publicNextActions.join(" | ");
+      expect(decision.publicNextActions.length).toBeGreaterThan(0);
+      expect(joined).not.toMatch(/\b\d+(\.\d+)?\b/);
+      expect(joined).not.toMatch(/share|emission|priority/i);
+      expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+    }
+  });
+
+  it("covers languageMatch true/false and labelFit empty/non-empty paths", () => {
+    const ctx = (overrides: Record<string, unknown> = {}) =>
+      __decisionPackInternals.buildRepoDecision({
+        repo: repoWithLabels("owner/lang", 0.005, 0, { bug: 1.1 }),
+        roleContext: { maintainerLane: false } as any,
+        outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequestRate: 0, credibility: 1 } as any,
+        syncState: { primaryLanguage: "TypeScript" } as any,
+        languageSet: new Set(["typescript"]),
+        labelHistory: new Set(["bug"]),
+        ...overrides,
+      });
+    const matched = ctx();
+    expect(matched.languageMatch).toEqual({ language: "TypeScript", match: true });
+    expect(matched.labelFit).toEqual(["bug"]);
+    expect(matched.nextActions[0]).toMatch(/in TypeScript/);
+    expect(matched.nextActions[0]).toMatch(/target labels: bug/);
+
+    const noLangMatch = ctx({ languageSet: new Set(["go"]) });
+    expect(noLangMatch.languageMatch).toEqual({ language: "TypeScript", match: false });
+    expect(noLangMatch.nextActions[0]).not.toMatch(/in TypeScript/);
+
+    const noSyncLang = ctx({ syncState: undefined });
+    expect(noSyncLang.languageMatch).toEqual({ language: null, match: false });
+    expect(noSyncLang.nextActions[0]).not.toMatch(/ in [A-Z]/);
+
+    const emptyLabels = ctx({ labelHistory: new Set() });
+    expect(emptyLabels.labelFit).toEqual([]);
+    expect(emptyLabels.nextActions[0]).not.toMatch(/target labels/);
+
+    const missingHistory = ctx({ labelHistory: undefined });
+    expect(missingHistory.labelFit).toEqual([]);
+  });
+
+  it("preserves cleanup_first priority when triggered without an open_pr_pressure blocker", () => {
+    const moderateCleanup = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/moderate", 0.005, 0, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 3, mergedPullRequests: 1, closedPullRequestRate: 0.1, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(moderateCleanup.recommendation).toBe("cleanup_first");
+    expect(moderateCleanup.scoreBlockers.map((b) => b.code)).not.toContain("open_pr_pressure");
+    const pursueBaseline = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/baseline", 0.005, 0, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequestRate: 0.1, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(pursueBaseline.recommendation).toBe("pursue");
+    expect(moderateCleanup.priorityScore).toBeGreaterThan(pursueBaseline.priorityScore);
+  });
+
+  it("handles undefined outcome paths in cleanup and watch copy", () => {
+    const cleanup = __decisionPackInternals.whyThisHelpsFor("cleanup_first", {
+      repoFullName: "owner/x",
+      lane: "direct_pr",
+      queue: { openPullRequests: 0, openIssues: 0, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+      rewardUpside: { directPrShare: 0.01, issueDiscoveryShare: 0, emissionShare: 0.01, maintainerCut: 0 },
+      outcome: undefined,
+      languageMatch: { language: null, match: false },
+      labelFit: [],
+    } as any);
+    expect(cleanup[0]).toMatch(/0 of your open PR/);
+
+    const cleanupNext = __decisionPackInternals.nextActionsFor("cleanup_first", {
+      repoFullName: "owner/x",
+      lane: "direct_pr",
+      queue: { openPullRequests: 0, openIssues: 0, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+      rewardUpside: { directPrShare: 0.01, issueDiscoveryShare: 0, emissionShare: 0.01, maintainerCut: 0 },
+      outcome: undefined,
+      languageMatch: { language: null, match: false },
+      labelFit: [],
+    } as any);
+    expect(cleanupNext[0]).toMatch(/your 0 open PR/);
+
+    const watchSplit = __decisionPackInternals.whyThisHelpsFor("watch", {
+      repoFullName: "owner/y",
+      lane: "split",
+      queue: { openPullRequests: 0, openIssues: 0, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+      rewardUpside: { directPrShare: 0.01, issueDiscoveryShare: 0.01, emissionShare: 0.01, maintainerCut: 0 },
+      outcome: undefined,
+      languageMatch: { language: null, match: false },
+      labelFit: [],
+    } as any);
+    expect(watchSplit[0]).toMatch(/low-direct-PR/);
+  });
+
+  it("covers scoreBlockersFor branches when outcome is undefined", () => {
+    const noOutcome = __decisionPackInternals.scoreBlockersFor("owner/x", "direct_pr", { maintainerLane: false } as any, undefined);
+    expect(noOutcome.map((b) => b.code)).not.toContain("open_pr_pressure");
+    expect(noOutcome.map((b) => b.code)).not.toContain("closed_pr_credibility");
+    expect(noOutcome.map((b) => b.code)).not.toContain("low_credibility");
+  });
+
+  it("falls back to nowIso in withSnapshotMetadata when both generatedAt fields are missing", () => {
+    const wrapped = __decisionPackInternals.withSnapshotMetadata({
+      id: "snap",
+      signalType: "contributor-decision-pack",
+      targetKey: "user",
+      generatedAt: null,
+      payload: { status: "ready", source: "computed", login: "user", repoDecisions: [], topActions: [] } as any,
+    });
+    expect(typeof wrapped.generatedAt).toBe("string");
+    expect(wrapped.generatedAt.length).toBeGreaterThan(0);
+  });
+
   it("produces fully deterministic repoDecisions, priorityScores, and nextActions across builds", () => {
     const fixedArgs = () => ({
       login: "jsonbored",

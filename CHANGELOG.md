@@ -83,5 +83,7 @@
 
 - Tighten and extend decision-pack regression coverage
 
+- Cover review-requested branches and tier sanitization
+
 
 

@@ -236,6 +236,43 @@ describe("api routes", () => {
       dataQuality: expect.any(Object),
     });
 
+    const settingsPreviewUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/settings-preview", { method: "POST", body: "{}" }, env);
+    expect(settingsPreviewUnauthenticated.status).toBe(401);
+
+    const minerPreview = await app.request(
+      "/v1/repos/entrius/allways-ui/settings-preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed", title: "Fix cache", labels: ["bug"], linkedIssues: [7] } }) },
+      env,
+    );
+    expect(minerPreview.status).toBe(200);
+    const minerPreviewBody = (await minerPreview.json()) as { decision: { willComment: boolean; skipped: boolean }; previewComment: string | null; settings: { publicSurface: string } };
+    expect(minerPreviewBody.decision.skipped).toBe(false);
+    expect(minerPreviewBody.decision.willComment).toBe(true);
+    expect(minerPreviewBody.previewComment).toContain("Gittensory contribution context");
+    expect(minerPreviewBody.previewComment).not.toMatch(/wallet|hotkey|trust score|scoreability|payout/i);
+
+    const invalidPreview = await app.request(
+      "/v1/repos/entrius/allways-ui/settings-preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ sample: { minerStatus: "maybe" } }) },
+      env,
+    );
+    expect(invalidPreview.status).toBe(400);
+
+    const unknownRepoPreview = await app.request("/v1/repos/missing/repo/settings-preview", { method: "POST", headers: apiHeaders(env), body: "{" }, env);
+    expect(unknownRepoPreview.status).toBe(200);
+    await expect(unknownRepoPreview.json()).resolves.toMatchObject({
+      installation: null,
+      sample: { authorLogin: "sample-contributor", minerStatus: "confirmed" },
+    });
+
+    const botPreview = await app.request(
+      "/v1/repos/entrius/allways-ui/settings-preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ sample: { authorLogin: "robot", authorType: "Bot", minerStatus: "confirmed" } }) },
+      env,
+    );
+    expect(botPreview.status).toBe(200);
+    await expect(botPreview.json()).resolves.toMatchObject({ decision: { skipped: true, skipReason: "bot_author" }, previewComment: null });
+
     const registrationReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
     expect(registrationReadiness.status).toBe(200);
     await expect(registrationReadiness.json()).resolves.toMatchObject({
@@ -699,6 +736,28 @@ describe("api routes", () => {
       const legacy = await app.request(path, { headers: apiHeaders(env) }, env);
       expect(legacy.status).toBe(404);
     }
+  });
+
+  it("settings-preview never mutates GitHub state", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedSignalData(env);
+    const calls: Array<{ method: string; url: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ method: (init?.method ?? "GET").toUpperCase(), url: input.toString() });
+      return new Response("not found", { status: 404 });
+    });
+    const response = await app.request(
+      "/v1/repos/entrius/allways-ui/settings-preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed", labels: ["bug"], linkedIssues: [7] } }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    // The dry-run preview is fully offline: it must make no GitHub calls at all, and certainly no mutating ones.
+    const githubCalls = calls.filter((call) => /github\.com/.test(call.url));
+    expect(githubCalls).toEqual([]);
+    const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");
+    expect(mutatingCalls).toEqual([]);
   });
 
   it("reports ready status when required public-review dependencies are present", async () => {
@@ -2007,6 +2066,19 @@ async function seedSignalData(env: Env): Promise<void> {
       events: ["issues", "pull_request", "repository"],
     },
   });
+  await upsertInstallationHealth(env, {
+    installationId: 123,
+    accountLogin: "entrius",
+    repositorySelection: "selected",
+    installedReposCount: 1,
+    registeredInstalledCount: 1,
+    status: "healthy",
+    missingPermissions: [],
+    missingEvents: [],
+    permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+    events: ["issues", "pull_request", "repository"],
+    checkedAt: "2026-05-23T00:00:00.000Z",
+  });
   const snapshot = normalizeRegistryPayload(
     {
       "entrius/allways-ui": {
@@ -2043,7 +2115,7 @@ async function seedSignalData(env: Env): Promise<void> {
     private: false,
     default_branch: "test",
     owner: { login: "entrius" },
-  });
+  }, 123);
   await persistScoringModelSnapshot(env, {
     id: "scoring-1",
     sourceKind: "test",

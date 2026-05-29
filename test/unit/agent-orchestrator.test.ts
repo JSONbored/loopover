@@ -259,7 +259,7 @@ describe("agent orchestrator", () => {
     expect(__agentOrchestratorInternals.mapDecisionAction("maintainer_cut_readiness")).toBe("explain_repo_fit");
     expect(__agentOrchestratorInternals.recommendationText(action("file_issue_discovery", "owner/issues", "watch", 30), readyDecision)).toMatch(/actionable/);
     expect(__agentOrchestratorInternals.recommendationText(action("maintainer_lane_improve_repo", "owner/maintainer", "maintainer_lane", 44), maintainerDecision)).toMatch(/maintainer-lane/);
-    expect(__agentOrchestratorInternals.recommendationText({ ...action("open_new_direct_pr", "owner/ready", "pursue", 80), nextActions: [] }, readyDecision)).toMatch(/Pick narrow work/);
+    expect(__agentOrchestratorInternals.recommendationText({ ...action("open_new_direct_pr", "owner/ready", "pursue", 80), nextActions: [] }, readyDecision)).toMatch(/pick narrow work/i);
     expect(__agentOrchestratorInternals.maintainerImpactFor(maintainerDecision)).toMatch(/Repo-owner/);
     expect(__agentOrchestratorInternals.rerunWhenForDecision(criticalDecision)).toMatch(/blockers/);
     expect(__agentOrchestratorInternals.sameRepo("Owner/Repo", "owner/repo")).toBe(true);
@@ -397,12 +397,11 @@ describe("agent orchestrator", () => {
     const noRepoBlockers = await explainBlockersWithAgent(env, { login: "oktofeesh1" });
     const missingRepoPlan = await planNextWork(env, { login: "oktofeesh1", repoFullName: "missing/repo" });
 
-    expect(plan.actions.map((entry) => entry.recommendation)).toEqual(
-      expect.arrayContaining([
-        "Use Gittensory preflight before posting public PR context.",
-        "Only file an actionable, non-duplicate issue-discovery report.",
-      ]),
-    );
+    const planRepos = plan.actions.map((entry) => entry.targetRepoFullName);
+    expect(planRepos).toEqual(expect.arrayContaining(["touchpilot/touchpilot", "entrius/allways"]));
+    const joined = plan.actions.map((entry) => entry.recommendation).join(" | ");
+    expect(joined).toMatch(/touchpilot\/touchpilot:.*narrow change/);
+    expect(joined).toMatch(/entrius\/allways:.*non-duplicate/);
     expect(plan.contextSnapshots[0]?.freshnessWarnings).toEqual(expect.arrayContaining(["entrius/allways: capped signal coverage", "entrius/allways: rate limited signal coverage"]));
     expect(noBlockers.actions[0]).toMatchObject({
       status: "ready",
@@ -672,8 +671,11 @@ function repoDecision(overrides: Partial<ContributorDecisionPack["repoDecisions"
     },
     scoreBlockers: [],
     riskReasons: [],
+    languageMatch: { language: null, match: false },
+    labelFit: [],
     whyThisHelps: [`${overrides.repoFullName ?? "owner/repo"}: private reward estimate should stay private.`],
     nextActions: ["Pick one narrow change and run branch preflight."],
+    publicNextActions: [`${overrides.repoFullName ?? "owner/repo"}: Use Gittensory preflight before posting public PR context.`],
     ...overrides,
   } as ContributorDecisionPack["repoDecisions"][number];
 }
@@ -684,13 +686,22 @@ function action(
   recommendation: ContributorDecisionPack["topActions"][number]["recommendation"],
   priorityScore: number,
 ): ContributorDecisionPack["topActions"][number] {
+  const nextAction =
+    actionKind === "file_issue_discovery"
+      ? `${repoFullName}: file only actionable, non-duplicate issue-discovery reports.`
+      : actionKind === "cleanup_existing_prs" || actionKind === "land_existing_prs"
+        ? `${repoFullName}: close, update, or land your open PR(s) before opening more work.`
+        : actionKind === "maintainer_lane_improve_repo" || actionKind === "maintainer_cut_readiness"
+          ? `${repoFullName}: maintainer-lane repo health work; improve intake, label clarity, and queue hygiene.`
+          : `${repoFullName}: pick one narrow change; run tests + branch preflight before opening the PR.`;
   return {
     actionKind,
     repoFullName,
     priorityScore,
     recommendation,
     whyThisHelps: [`${repoFullName}: action improves private scoreability.`],
-    nextActions: ["Use Gittensory preflight before posting public PR context."],
+    nextActions: [nextAction],
+    publicNextActions: [`${repoFullName}: Use Gittensory preflight before posting public PR context.`],
   };
 }
 

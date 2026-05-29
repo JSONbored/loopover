@@ -100,6 +100,7 @@ import {
 import { attachDataQuality, buildCoreSignalFidelity, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis } from "../signals/local-branch";
+import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import type { ContributorEvidenceRecord, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -251,6 +252,21 @@ const repositorySettingsSchema = z.object({
   requireLinkedIssue: z.boolean().default(false),
   backfillEnabled: z.boolean().default(true),
   privateTrustEnabled: z.boolean().default(true),
+});
+
+const settingsPreviewSchema = z.object({
+  sample: z
+    .object({
+      authorLogin: z.string().trim().min(1).max(100).optional(),
+      authorType: z.enum(["User", "Bot"]).optional(),
+      authorAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
+      minerStatus: z.enum(["confirmed", "not_found", "unavailable"]).optional(),
+      title: z.string().max(300).optional(),
+      body: z.string().max(10000).nullable().optional(),
+      labels: z.array(z.string().max(100)).max(50).optional(),
+      linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
+    })
+    .optional(),
 });
 
 export function createApp() {
@@ -555,6 +571,42 @@ export function createApp() {
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await getRepositorySettings(c.env, fullName));
+  });
+
+  app.post("/v1/repos/:owner/:repo/settings-preview", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const parsed = settingsPreviewSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_settings_preview_request", issues: parsed.error.issues }, 400);
+    const [repo, settings, issues, pullRequests] = await Promise.all([
+      getRepository(c.env, fullName),
+      getRepositorySettings(c.env, fullName),
+      listIssues(c.env, fullName),
+      listPullRequests(c.env, fullName),
+    ]);
+    const installationId = repo?.installationId ?? null;
+    const healthRecord = installationId !== null ? await getInstallationHealth(c.env, installationId) : null;
+    const enriched = healthRecord ? enrichInstallationHealth(healthRecord) : null;
+    const installation = enriched
+      ? {
+          installationId: enriched.installationId,
+          status: enriched.status,
+          missingPermissions: enriched.missingPermissions,
+          missingEvents: enriched.missingEvents,
+          permissionRemediation: enriched.permissionRemediation,
+        }
+      : null;
+    return c.json(
+      buildRepoSettingsPreview({
+        repoFullName: fullName,
+        repo,
+        settings,
+        installation,
+        issues,
+        pullRequests,
+        sample: parsed.data.sample ?? {},
+      }),
+    );
   });
 
   app.get("/v1/repos/:owner/:repo/pulls/:number/maintainer-packet", async (c) => {

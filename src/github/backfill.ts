@@ -201,6 +201,9 @@ type GitHubOpenPullRequestsResponse = {
           state?: string;
           url?: string;
           body?: string | null;
+          isDraft?: boolean | null;
+          mergeable?: string | null;
+          reviewDecision?: string | null;
           createdAt?: string | null;
           updatedAt?: string | null;
           authorAssociation?: string | null;
@@ -1125,6 +1128,9 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
             state
             url
             body
+            isDraft
+            mergeable
+            reviewDecision
             createdAt
             updatedAt
             authorAssociation
@@ -1151,6 +1157,9 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
         ...(pr.createdAt === undefined ? {} : { created_at: pr.createdAt }),
         ...(pr.updatedAt === undefined ? {} : { updated_at: pr.updatedAt }),
         ...(pr.body === undefined ? {} : { body: pr.body }),
+        ...(pr.isDraft === undefined ? {} : { draft: pr.isDraft }),
+        ...(pr.mergeable === undefined ? {} : { mergeableState: pr.mergeable }),
+        ...(pr.reviewDecision === undefined ? {} : { reviewDecision: pr.reviewDecision }),
         ...(pr.author?.login ? { user: { login: pr.author.login } } : {}),
         ...(pr.authorAssociation ? { author_association: pr.authorAssociation } : {}),
         head: { ...(pr.headRefOid ? { sha: pr.headRefOid } : {}), ...(pr.headRefName ? { ref: pr.headRefName } : {}) },

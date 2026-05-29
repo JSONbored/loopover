@@ -108,6 +108,9 @@ import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
 
+const MAX_LOCAL_BRANCH_REF_CHARS = 256;
+const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
+
 const preflightSchema = z.object({
   repoFullName: z.string().min(3),
   contributorLogin: z.string().min(1).optional(),
@@ -128,8 +131,8 @@ const localDiffPreflightSchema = preflightSchema.extend({
 
 const localBranchChangedFileSchema = z
   .object({
-    path: z.string().min(1),
-    previousPath: z.string().min(1).optional(),
+    path: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
+    previousPath: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     additions: z.number().int().min(0).optional(),
     deletions: z.number().int().min(0).optional(),
     status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
@@ -139,16 +142,16 @@ const localBranchChangedFileSchema = z
 
 const localBranchValidationSchema = z
   .object({
-    command: z.string().min(1),
+    command: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
     status: z.enum(["passed", "failed", "not_run"]),
-    summary: z.string().optional(),
+    summary: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
   })
   .strict();
 
 const localBranchScorerSchema = z
   .object({
     mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
-    activeModel: z.string().optional(),
+    activeModel: z.string().max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     sourceTokenScore: z.number().min(0).optional(),
     totalTokenScore: z.number().min(0).optional(),
     sourceLines: z.number().min(0).optional(),
@@ -160,29 +163,29 @@ const localBranchScorerSchema = z
 
 const localBranchAnalysisSchema = z
   .object({
-    login: z.string().min(1),
-    repoFullName: z.string().min(3),
-    baseRef: z.string().min(1).optional(),
-    headRef: z.string().min(1).optional(),
-    branchName: z.string().min(1).optional(),
-    baseSha: z.string().min(1).optional(),
-    headSha: z.string().min(1).optional(),
-    mergeBaseSha: z.string().min(1).optional(),
-    remoteTrackingSha: z.string().min(1).optional(),
-    commitMessages: z.array(z.string()).max(30).optional(),
+    login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
+    repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS),
+    baseRef: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    headRef: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    branchName: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    baseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    headSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    mergeBaseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    remoteTrackingSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    commitMessages: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(30).optional(),
     changedFiles: z.array(localBranchChangedFileSchema).max(500).optional(),
     validation: z.array(localBranchValidationSchema).max(50).optional(),
     linkedIssues: z.array(z.number().int().positive()).optional(),
-    labels: z.array(z.string()).optional(),
-    title: z.string().min(1).optional(),
-    body: z.string().optional(),
+    labels: z.array(z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS)).max(50).optional(),
+    title: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    body: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
     localScorer: localBranchScorerSchema.optional(),
     pendingMergedPrCount: z.number().int().min(0).optional(),
     pendingClosedPrCount: z.number().int().min(0).optional(),
     approvedPrCount: z.number().int().min(0).optional(),
     expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
     projectedCredibility: z.number().min(0).max(1).optional(),
-    scenarioNotes: z.array(z.string()).max(20).optional(),
+    scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
   })
   .strict();
 
@@ -760,7 +763,9 @@ export function createApp() {
       repo,
       issues,
       pullRequests,
+      contributorPullRequests: context.contributorPullRequests,
       recentMergedPullRequests,
+      repositories: context.repositories,
       profile: context.profile,
       outcomeHistory: context.outcomeHistory,
       scoringSnapshot: snapshot,

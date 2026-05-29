@@ -11,6 +11,7 @@ import {
   upsertRecentMergedPullRequest,
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
+  listLatestSignalSnapshotsByTarget,
   upsertRepoLabel,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
@@ -580,6 +581,22 @@ describe("api routes", () => {
     );
     expect(localBranchWithLocalTarget.status).toBe(200);
 
+    const oversizedLocalBranch = await app.request(
+      "/v1/local/branch-analysis",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          branchName: "a".repeat(257),
+          changedFiles: [{ path: "src/cache.ts", additions: 1, deletions: 0 }],
+        }),
+      },
+      env,
+    );
+    expect(oversizedLocalBranch.status).toBe(400);
+
     const sourceContentRejected = await app.request(
       "/v1/local/branch-analysis",
       {
@@ -961,6 +978,44 @@ describe("api routes", () => {
       ]),
     );
     expect(payload.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Freshness SLO is degraded")]));
+  });
+
+  it("bounds freshness snapshot listings and excludes private local branch targets", async () => {
+    const env = createTestEnv();
+    const nowMs = Date.now();
+    await persistSignalSnapshot(env, {
+      id: "private-local-branch",
+      signalType: "local-branch-analysis",
+      targetKey: `attacker:victim/repo:${"a".repeat(200)}`,
+      repoFullName: "victim/repo",
+      payload: { private: true },
+      generatedAt: new Date(nowMs - 60 * 1000).toISOString(),
+    });
+    await persistSignalSnapshot(env, {
+      id: "oversized-public-target",
+      signalType: "queue-health",
+      targetKey: `owner/repo-${"b".repeat(260)}`,
+      repoFullName: "owner/repo",
+      payload: { ignored: true },
+      generatedAt: new Date(nowMs - 60 * 1000).toISOString(),
+    });
+    for (let index = 0; index < 220; index += 1) {
+      await persistSignalSnapshot(env, {
+        id: `public-target-${index}`,
+        signalType: "queue-health",
+        targetKey: `owner/repo-${index}`,
+        repoFullName: `owner/repo-${index}`,
+        payload: { large: "x".repeat(100) },
+        generatedAt: new Date(nowMs - index * 1000).toISOString(),
+      });
+    }
+
+    const snapshots = await listLatestSignalSnapshotsByTarget(env);
+
+    expect(snapshots).toHaveLength(200);
+    expect(snapshots.some((snapshot) => snapshot.signalType === "local-branch-analysis")).toBe(false);
+    expect(snapshots.some((snapshot) => snapshot.id === "oversized-public-target")).toBe(false);
+    expect(snapshots.every((snapshot) => Object.keys(snapshot.payload).length === 0)).toBe(true);
   });
 
   it("exposes capped and rate-limited sync segments in readiness and sync status", async () => {

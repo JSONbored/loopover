@@ -287,7 +287,143 @@ describe("GitHub mention commands", () => {
     expect(withPrFallbackScope).toContain("Scope: owner/from-pr#5");
     expect(withPrFallbackScope).toContain("After tests pass.");
   });
+
+  it("covers blocker label fallbacks, rerun bullets, and duplicate-risk heuristics", () => {
+    const blockersWithFallbackLabel = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 20, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-blockers-fallback"),
+        actions: [
+          {
+            id: "blocker-fallback",
+            runId: "run-blockers-fallback",
+            actionType: "monitor_existing_pr",
+            status: "blocked",
+            recommendation: "Wait for review capacity",
+            why: [],
+            blockedBy: ["custom_signal_code"],
+            publicSafeSummary: "Reduce concurrent review load.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "blockers",
+      },
+    });
+    expect(blockersWithFallbackLabel).toContain("custom signal code");
+    expect(blockersWithFallbackLabel).toContain("Reduce concurrent review load.");
+
+    const duplicateViaRecommendation = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
+      repo: null,
+      issue: { number: 21, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-duplicate-rec"),
+        actions: [
+          {
+            id: "duplicate-rec",
+            runId: "run-duplicate-rec",
+            actionType: "monitor_existing_pr",
+            status: "watch",
+            recommendation: "Compare WIP overlap with active pull requests",
+            why: ["Maintainer queue is busy"],
+            blockedBy: [],
+            riskImpact: "Concurrent review pressure",
+            publicSafeSummary: "Review linked issues before requesting detailed review.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "duplicate",
+      },
+    });
+    expect(duplicateViaRecommendation).toContain("**Duplicate & WIP caution**");
+    expect(duplicateViaRecommendation).toMatch(/overlap|WIP|Concurrent/i);
+
+    const preflightWithRerun = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory preflight")!,
+      repo: null,
+      issue: { number: 22, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: {
+        run: completedRun("run-preflight-rerun"),
+        actions: [
+          {
+            id: "preflight-rerun",
+            runId: "run-preflight-rerun",
+            actionType: "prepare_pr_packet",
+            status: "recommended",
+            recommendation: "Prepare packet",
+            why: [],
+            blockedBy: ["open_pr_pressure"],
+            publicSafeSummary: "Run local branch preflight first.",
+            rerunWhen: "After CI completes.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "preflight",
+      },
+    });
+    expect(preflightWithRerun).toContain("Rerun when:");
+    expect(preflightWithRerun).toContain("Open pull request queue pressure");
+
+    const duplicateFallbackPick = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
+      repo: null,
+      issue: { number: 23, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-duplicate-fallback"),
+        actions: [
+          {
+            id: "fallback-action",
+            runId: "run-duplicate-fallback",
+            actionType: "choose_next_work",
+            status: "recommended",
+            recommendation: "Pick the next issue",
+            why: [],
+            blockedBy: [],
+            publicSafeSummary: "No duplicate signal in this fallback action.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "fallback",
+      },
+    });
+    expect(duplicateFallbackPick).toContain("No duplicate signal in this fallback action.");
+  });
 });
+
+function completedRun(id: string) {
+  return {
+    id,
+    objective: "test",
+    actorLogin: "oktofeesh1",
+    surface: "github_comment" as const,
+    mode: "copilot" as const,
+    status: "completed" as const,
+    dataQualityStatus: "complete" as const,
+    payload: {},
+  };
+}
 
 function sampleBundle() {
   return {

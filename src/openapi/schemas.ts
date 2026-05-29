@@ -449,6 +449,71 @@ export const RepositorySettingsSchema = z
   })
   .openapi("RepositorySettings");
 
+export const RepoSettingsPreviewSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    settings: z.object({
+      publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
+      commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+      publicSignalLevel: z.enum(["minimal", "standard"]),
+      checkRunMode: z.enum(["off", "enabled"]),
+      checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
+      autoLabelEnabled: z.boolean(),
+      gittensorLabel: z.string(),
+      createMissingLabel: z.boolean(),
+      includeMaintainerAuthors: z.boolean(),
+      requireLinkedIssue: z.boolean(),
+    }),
+    installation: z
+      .object({
+        installationId: z.number(),
+        status: z.enum(["healthy", "needs_attention", "broken"]),
+        missingPermissions: z.array(z.string()),
+        missingEvents: z.array(z.string()),
+        permissionRemediation: z.array(
+          z.object({
+            permission: z.string(),
+            requiredAccess: z.string(),
+            currentAccess: z.string(),
+            ok: z.boolean(),
+            action: z.string(),
+          }),
+        ),
+      })
+      .nullable(),
+    sample: z.object({
+      authorLogin: z.string(),
+      authorType: z.string(),
+      authorAssociation: z.string(),
+      minerStatus: z.enum(["confirmed", "not_found", "unavailable"]),
+      title: z.string(),
+      labels: z.array(z.string()),
+      linkedIssues: z.array(z.number()),
+    }),
+    decision: z.object({
+      willComment: z.boolean(),
+      willLabel: z.boolean(),
+      willCheckRun: z.boolean(),
+      skipped: z.boolean(),
+      skipReason: z.enum(["surface_off", "missing_author", "bot_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"]).nullable(),
+      actions: z.array(z.enum(["skip", "comment", "label", "check_run", "none"])),
+      summary: z.string(),
+    }),
+    previewComment: z.string().nullable(),
+    appliedLabel: z.string().nullable(),
+    checkRun: z
+      .object({
+        willCreate: z.boolean(),
+        title: z.string(),
+        detailLevel: z.enum(["minimal", "standard", "deep"]),
+      })
+      .nullable(),
+    warnings: z.array(z.string()),
+    summary: z.string(),
+  })
+  .openapi("RepoSettingsPreview");
+
 export const RepoSyncStateSchema = z
   .object({
     repoFullName: z.string(),

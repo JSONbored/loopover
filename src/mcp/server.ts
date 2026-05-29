@@ -36,6 +36,7 @@ import {
   startAgentRun,
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
+import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -242,6 +243,15 @@ export class GittensoryMcp {
         inputSchema: ownerRepoShape,
       },
       async (input) => this.toolResult(await this.getRepoContext(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_burden_forecast",
+      {
+        description: "Return the cached or freshly-computed maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
+        inputSchema: ownerRepoShape,
+      },
+      async (input) => this.toolResult(await this.getBurdenForecast(input)),
     );
 
     server.registerTool(
@@ -484,6 +494,24 @@ export class GittensoryMcp {
         configQuality: buildConfigQuality(repo, issues, pullRequests, fullName),
         dataQuality: await this.loadRepoDataQuality(fullName),
       },
+    };
+  }
+
+  private async getBurdenForecast(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    const response = await loadOrComputeBurdenForecastResponse(this.env, fullName);
+    if (!response) {
+      return {
+        summary: `Gittensory has no cached burden forecast for ${fullName}.`,
+        data: { status: "not_found", repoFullName: fullName },
+      };
+    }
+    return {
+      summary:
+        response.source === "snapshot"
+          ? `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`
+          : `Gittensory burden forecast for ${fullName} (computed from cached metadata).`,
+      data: response as unknown as Record<string, unknown>,
     };
   }
 

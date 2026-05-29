@@ -735,6 +735,16 @@ export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promi
   });
 }
 
+export async function hasRecentAuditEvent(env: Env, actor: string, eventType: string, sinceIso: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), gte(auditEvents.createdAt, sinceIso)))
+    .limit(1);
+  return rows.length > 0;
+}
+
 export async function recordAiUsageEvent(
   env: Env,
   event: {

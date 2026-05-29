@@ -77,5 +77,7 @@
 
 - Audit and surface queue-unavailable on decision-pack rebuild failures
 
+- Debounce stale-pack rebuild enqueues via audit log
+
 
 

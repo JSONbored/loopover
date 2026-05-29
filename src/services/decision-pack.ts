@@ -1,4 +1,5 @@
 import {
+  hasRecentAuditEvent,
   listContributorIssues,
   listContributorPullRequests,
   listContributorRepoStats,
@@ -32,6 +33,7 @@ import { nowIso } from "../utils/json";
 
 export const CONTRIBUTOR_DECISION_PACK_SIGNAL = "contributor-decision-pack";
 export const DECISION_PACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const DECISION_PACK_REBUILD_DEBOUNCE_MS = 15 * 1000;
 
 export type DecisionRecommendation = "pursue" | "cleanup_first" | "maintainer_lane" | "avoid_for_now" | "watch";
 export type DecisionActionKind = "cleanup_existing_prs" | "land_existing_prs" | "open_new_direct_pr" | "file_issue_discovery" | "maintainer_lane_improve_repo" | "maintainer_cut_readiness";
@@ -170,16 +172,25 @@ export async function loadContributorDecisionPackForServing(
 }
 
 async function tryEnqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
+  const sinceIso = new Date(Date.now() - DECISION_PACK_REBUILD_DEBOUNCE_MS).toISOString();
+  if (await hasRecentAuditEvent(env, login, "decision_pack.rebuild_enqueued", sinceIso)) {
+    return true;
+  }
   try {
     await env.JOBS.send({ type: "build-contributor-decision-packs", requestedBy: "api", login });
+    await recordAuditEvent(env, {
+      eventType: "decision_pack.rebuild_enqueued",
+      actor: login,
+      outcome: "queued",
+    });
     return true;
   } catch (error) {
     await recordAuditEvent(env, {
       eventType: "decision_pack.rebuild_enqueue_failed",
       actor: login,
       outcome: "error",
-      detail: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+      detail: String(error),
+    });
     return false;
   }
 }

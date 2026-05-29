@@ -239,14 +239,6 @@ describe("decision-pack service", () => {
   });
 
   it("issues repo-specific direct-PR reasoning that names language and label fit", () => {
-    const profile = {
-      login: "jsonbored",
-      github: { topLanguages: ["TypeScript", "Python"] },
-      source: {},
-      gittensor: null,
-      registeredRepoActivity: { reposTouched: ["owner/direct"], dominantLabels: ["bug", "good-first-issue"] },
-      trustSignals: {},
-    } as any;
     const decision = __decisionPackInternals.buildRepoDecision({
       repo: repoWithLabels("owner/direct", 0.04, 0, { bug: 1.2, "good-first-issue": 1.1, perf: 1 }),
       roleContext: { maintainerLane: false } as any,
@@ -256,22 +248,42 @@ describe("decision-pack service", () => {
       labelHistory: new Set(["bug", "good-first-issue"]),
     });
     expect(decision.recommendation).toBe("pursue");
+    expect(decision.lane.lane).toBe("direct_pr");
     expect(decision.languageMatch).toEqual({ language: "TypeScript", match: true });
     expect(decision.labelFit).toEqual(expect.arrayContaining(["bug", "good-first-issue"]));
     expect(decision.nextActions[0]).toMatch(/in TypeScript/);
     expect(decision.nextActions[0]).toMatch(/bug, good-first-issue/);
     expect(decision.whyThisHelps[0]).toMatch(/3 merged PR/);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+  });
+
+  it("issues split-lane reasoning distinct from direct-PR copy", () => {
+    const split = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/split", 0.04, 0.5, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    const directOnly = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/direct-only", 0.04, 0, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(split.recommendation).toBe("pursue");
+    expect(split.lane.lane).toBe("split");
+    expect(split.nextActions[0]).toMatch(/split lane/);
+    expect(split.whyThisHelps[0]).toMatch(/split lane/);
+    expect(split.nextActions[0]).not.toEqual(directOnly.nextActions[0]);
+    expect(split.whyThisHelps[0]).not.toEqual(directOnly.whyThisHelps[0]);
+    expect(noStructuralCountLeak(split.publicNextActions)).toBe(true);
   });
 
   it("issues issue-discovery-only reasoning that discourages direct PRs", () => {
-    const profile = {
-      login: "jsonbored",
-      github: { topLanguages: ["TypeScript"] },
-      source: {},
-      gittensor: null,
-      registeredRepoActivity: { reposTouched: [], dominantLabels: ["bug"] },
-      trustSignals: {},
-    } as any;
     const decision = __decisionPackInternals.buildRepoDecision({
       repo: repoWithLabels("owner/issues", 0.02, 1, { bug: 1.1 }),
       roleContext: { maintainerLane: false } as any,
@@ -285,42 +297,51 @@ describe("decision-pack service", () => {
     expect(decision.nextActions[0]).toMatch(/non-duplicate/);
     expect(decision.nextActions[0]).toMatch(/Open issues in queue: 42/);
     expect(decision.whyThisHelps[0]).toMatch(/issue-discovery-only/);
-    expect(decision.publicNextActions[0]).not.toMatch(/\d/);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
   });
 
-  it("issues maintainer-lane reasoning without inheriting outside-contributor queue penalties", () => {
-    const profile = {
-      login: "jsonbored",
-      github: { topLanguages: ["TypeScript"] },
-      source: {},
-      gittensor: null,
-      registeredRepoActivity: { reposTouched: ["jsonbored/owned"], dominantLabels: ["bug"] },
-      trustSignals: {},
-    } as any;
+  it("issues avoid_for_now reasoning with sanitized public copy", () => {
     const decision = __decisionPackInternals.buildRepoDecision({
-      repo: repoWithLabels("jsonbored/owned", 0.03, 0, { bug: 1.1 }, 0.2),
+      repo: repoWithLabels("owner/inactive", 0, 0, {}),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      syncState: undefined,
+      languageSet: new Set(),
+      labelHistory: new Set(),
+    });
+    expect(decision.recommendation).toBe("avoid_for_now");
+    expect(decision.whyThisHelps[0]).toMatch(/risk-adjusted priority is low/);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+  });
+
+  it("does not leak outside-contributor open-PR counts into maintainer-lane copy", () => {
+    const outsideCleanup = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/outside", 0.005, 0, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 8, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1, maintainerLane: false } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    const maintainerOwned = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("jsonbored/owned", 0.005, 0, { bug: 1.1 }, 0.2),
       roleContext: { maintainerLane: true } as any,
       outcome: { openPullRequests: 8, mergedPullRequests: 0, closedPullRequestRate: 0, credibility: 1, maintainerLane: true } as any,
       syncState: { primaryLanguage: "TypeScript" } as any,
       languageSet: new Set(["typescript"]),
       labelHistory: new Set(["bug"]),
     });
-    expect(decision.recommendation).toBe("maintainer_lane");
-    expect(decision.nextActions[0]).toMatch(/repo owner/);
-    expect(decision.whyThisHelps[0]).toMatch(/Maintainer cut: 0.2/);
-    expect(decision.nextActions.join(" ")).not.toMatch(/\b8 open PR/);
-    expect(decision.publicNextActions[0]).not.toMatch(/\b\d/);
+    expect(outsideCleanup.recommendation).toBe("cleanup_first");
+    expect(maintainerOwned.recommendation).toBe("maintainer_lane");
+    expect(outsideCleanup.nextActions[0]).toMatch(/8 open PR/);
+    expect(maintainerOwned.nextActions.join(" | ")).not.toMatch(/8 open PR/);
+    expect(maintainerOwned.whyThisHelps.join(" | ")).not.toMatch(/8 open PR/);
+    expect(maintainerOwned.nextActions[0]).toMatch(/repo owner/);
+    expect(maintainerOwned.whyThisHelps[0]).toMatch(/Maintainer cut: 0.2/);
+    expect(noStructuralCountLeak(maintainerOwned.publicNextActions)).toBe(true);
   });
 
   it("ranks cleanup-first above pursue when open-PR pressure is the trigger", () => {
-    const profile = {
-      login: "jsonbored",
-      github: { topLanguages: ["TypeScript"] },
-      source: {},
-      gittensor: null,
-      registeredRepoActivity: { reposTouched: ["owner/pressure", "owner/clean"], dominantLabels: ["bug"] },
-      trustSignals: {},
-    } as any;
     const pressure = __decisionPackInternals.buildRepoDecision({
       repo: repoWithLabels("owner/pressure", 0.005, 0, { bug: 1.1 }),
       roleContext: { maintainerLane: false } as any,
@@ -341,9 +362,10 @@ describe("decision-pack service", () => {
     expect(pursueRepo.recommendation).toBe("pursue");
     expect(pressure.priorityScore).toBeGreaterThan(pursueRepo.priorityScore);
     expect(pressure.nextActions[0]).toMatch(/7 open PR/);
+    expect(noStructuralCountLeak(pressure.publicNextActions)).toBe(true);
   });
 
-  it("includes a duplicate-risk caveat when queue pressure is high", () => {
+  it("surfaces queue-pressure caveats when repo open-PR and open-issue queues are large", () => {
     const decision = __decisionPackInternals.buildRepoDecision({
       repo: repoWithLabels("owner/busy", 0.02, 0.5, { bug: 1 }),
       roleContext: { maintainerLane: false } as any,
@@ -355,7 +377,34 @@ describe("decision-pack service", () => {
     expect(decision.riskReasons).toEqual(expect.arrayContaining([expect.stringContaining("busy"), expect.stringContaining("large")]));
   });
 
-  it("sorts repoDecisions deterministically across repeated builds", () => {
+  it("threads languageSet end-to-end via buildContributorDecisionPack", () => {
+    const profile = {
+      login: "jsonbored",
+      github: { topLanguages: ["TypeScript"] },
+      source: {},
+      gittensor: null,
+      registeredRepoActivity: { reposTouched: ["owner/ts"], dominantLabels: ["bug"] },
+      trustSignals: {},
+    } as any;
+    const pack = __decisionPackInternals.buildContributorDecisionPack({
+      login: "jsonbored",
+      profile,
+      outcomeHistory: { login: "jsonbored", totals: {}, repoOutcomes: [], successPatterns: [], failurePatterns: [], summary: "" } as any,
+      repositories: [repoWithLabels("owner/ts", 0.04, 0, { bug: 1.1 })],
+      syncStates: [{ repoFullName: "owner/ts", primaryLanguage: "TypeScript" }] as any,
+      syncSegments: [],
+      totals: [],
+      scoringModelSnapshotId: "scoring-1",
+      contributorPullRequests: [],
+      contributorIssues: [],
+    });
+    const tsDecision = pack.repoDecisions.find((d) => d.repoFullName === "owner/ts")!;
+    expect(tsDecision.languageMatch).toEqual({ language: "TypeScript", match: true });
+    expect(tsDecision.labelFit).toContain("bug");
+    expect(tsDecision.nextActions[0]).toMatch(/in TypeScript/);
+  });
+
+  it("produces fully deterministic repoDecisions, priorityScores, and nextActions across builds", () => {
     const fixedArgs = () => ({
       login: "jsonbored",
       profile: {
@@ -368,7 +417,7 @@ describe("decision-pack service", () => {
       } as any,
       outcomeHistory: { login: "jsonbored", totals: {}, repoOutcomes: [], successPatterns: [], failurePatterns: [], summary: "" } as any,
       repositories: [repoWithLabels("owner/c", 0.02, 0, { bug: 1 }), repoWithLabels("owner/a", 0.02, 0, { bug: 1 }), repoWithLabels("owner/b", 0.02, 0, { bug: 1 })],
-      syncStates: [] as any,
+      syncStates: [{ repoFullName: "owner/a", primaryLanguage: "TypeScript" }, { repoFullName: "owner/b", primaryLanguage: "TypeScript" }, { repoFullName: "owner/c", primaryLanguage: "TypeScript" }] as any,
       syncSegments: [],
       totals: [],
       scoringModelSnapshotId: "scoring-1",
@@ -377,10 +426,18 @@ describe("decision-pack service", () => {
     });
     const packA = __decisionPackInternals.buildContributorDecisionPack(fixedArgs());
     const packB = __decisionPackInternals.buildContributorDecisionPack(fixedArgs());
-    expect(packA.repoDecisions.map((decision) => decision.repoFullName)).toEqual(packB.repoDecisions.map((decision) => decision.repoFullName));
-    expect(packA.topActions.map((action) => `${action.actionKind}:${action.repoFullName}`)).toEqual(packB.topActions.map((action) => `${action.actionKind}:${action.repoFullName}`));
+    expect(packA.repoDecisions.map((d) => d.repoFullName)).toEqual(packB.repoDecisions.map((d) => d.repoFullName));
+    expect(packA.repoDecisions.map((d) => d.priorityScore)).toEqual(packB.repoDecisions.map((d) => d.priorityScore));
+    expect(packA.repoDecisions.map((d) => d.nextActions)).toEqual(packB.repoDecisions.map((d) => d.nextActions));
+    expect(packA.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`)).toEqual(packB.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`));
   });
 });
+
+function noStructuralCountLeak(lines: string[]): boolean {
+  const joined = lines.join(" | ");
+  if (/\b(openPullRequests?|openIssues?|mergedPullRequests?|closedPullRequests?|priorityScore)\b/.test(joined)) return false;
+  return !/\b\d+\s*open\s*PR/i.test(joined);
+}
 
 function repo(fullName: string, emissionShare: number, issueDiscoveryShare: number) {
   const [owner, name] = fullName.split("/");

@@ -339,7 +339,9 @@ describe("agent orchestrator", () => {
 
     const planRepos = plan.actions.map((entry) => entry.targetRepoFullName);
     expect(planRepos).toEqual(expect.arrayContaining(["touchpilot/touchpilot", "entrius/allways"]));
-    expect(plan.actions.map((entry) => entry.recommendation).join(" | ")).toMatch(/touchpilot\/touchpilot|entrius\/allways/);
+    const joined = plan.actions.map((entry) => entry.recommendation).join(" | ");
+    expect(joined).toMatch(/touchpilot\/touchpilot:.*narrow change/);
+    expect(joined).toMatch(/entrius\/allways:.*non-duplicate/);
     expect(plan.contextSnapshots[0]?.freshnessWarnings).toEqual(expect.arrayContaining(["entrius/allways: capped signal coverage", "entrius/allways: rate limited signal coverage"]));
     expect(noBlockers.actions[0]).toMatchObject({
       status: "ready",

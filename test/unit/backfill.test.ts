@@ -865,7 +865,7 @@ describe("GitHub backfill", () => {
 
     const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "api", mode: "resume", force: true });
 
-    expect(result).toMatchObject({ status: "queued", totals: { openIssuesTotal: 2911, openPullRequestsTotal: 167 } });
+    expect(result).toMatchObject({ status: "queued", totals: { openIssuesTotal: 2744, openPullRequestsTotal: 167 } });
     expect(await listRepoSyncStates(env)).toMatchObject([{ status: "running", openIssuesCount: 1100, openPullRequestsCount: 167, lastCompletedAt: "2026-05-24T00:00:00.000Z" }]);
     expect(sent).toEqual(
       expect.arrayContaining([

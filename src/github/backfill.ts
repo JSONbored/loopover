@@ -780,7 +780,10 @@ async function refreshRepoGithubTotals(
   const snapshot: RepoGithubTotalsSnapshotRecord = {
     id: crypto.randomUUID(),
     repoFullName: repo.fullName,
-    openIssuesTotal: repository.issues?.totalCount ?? 0,
+    openIssuesTotal: Math.max(
+      0,
+      (repository.issues?.totalCount ?? 0) - (repository.openPullRequests?.totalCount ?? 0),
+    ),
     openPullRequestsTotal: repository.openPullRequests?.totalCount ?? 0,
     mergedPullRequestsTotal: repository.mergedPullRequests?.totalCount ?? 0,
     closedUnmergedPullRequestsTotal: repository.closedPullRequests?.totalCount ?? 0,
@@ -1071,6 +1074,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
         issues(states: OPEN, first: 100${after}) {
           pageInfo { hasNextPage endCursor }
           nodes {
+            __typename
             number
             title
             state
@@ -1089,6 +1093,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
     const response = await githubGraphQl<GitHubOpenIssuesResponse>(env, query, token);
     const issues = response.data?.repository?.issues;
     for (const issue of issues?.nodes ?? []) {
+      if (issue?.__typename === "PullRequest") continue;
       if (!issue?.number || existingNumbers.has(issue.number)) continue;
       const payload: GitHubIssuePayload = {
         number: issue.number,

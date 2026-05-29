@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { createSessionForGitHubUser } from "../../src/auth/security";
+import { persistSignalSnapshot } from "../../src/db/repositories";
 import { handleMcpRequest } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -40,6 +42,62 @@ describe("api route guards and error branches", () => {
     const logout = await app.request("/v1/auth/logout", { method: "POST", headers: authHeaders }, env);
     expect(logout.status).toBe(200);
     expect((await app.request("/v1/auth/session", { headers: authHeaders }, env)).status).toBe(401);
+  });
+
+  it("limits GitHub-backed sessions to their own private contributor advisory data", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
+    const sessionHeaders = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+
+    await persistSignalSnapshot(env, {
+      id: "victim-decision-pack",
+      signalType: "contributor-decision-pack",
+      targetKey: "victim",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "victim",
+        generatedAt: "2026-05-29T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        profile: {},
+        outcomeHistory: {},
+        roleContexts: [],
+        repoDecisions: [{ repoFullName: "owner/private-repo", recommendation: "avoid", scoreBlockers: ["private score blocker"] }],
+        topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "owner/private-repo", priorityScore: 50, rationale: "private next action" }],
+        cleanupFirst: [],
+        pursueRepos: [],
+        avoidRepos: [{ repoFullName: "owner/private-repo", recommendation: "avoid" }],
+        maintainerLaneRepos: [],
+        scoreBlockers: ["private score blocker"],
+        dataQuality: { signalFidelity: { status: "ready" } },
+        summary: "private advisory summary",
+        nextActions: ["sensitive next action"],
+      } as never,
+      generatedAt: "2026-05-29T00:00:00.000Z",
+    });
+
+    const ownDecisionPack = await app.request("/v1/contributors/attacker/decision-pack", { headers: sessionHeaders }, env);
+    expect(ownDecisionPack.status).toBe(202);
+
+    const victimDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: sessionHeaders }, env);
+    expect(victimDecisionPack.status).toBe(403);
+    await expect(victimDecisionPack.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const victimRepoDecision = await app.request("/v1/contributors/victim/repos/owner/private-repo/decision", { headers: sessionHeaders }, env);
+    expect(victimRepoDecision.status).toBe(403);
+    await expect(victimRepoDecision.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const maintainerPacket = await app.request("/v1/repos/owner/private-repo/pulls/1/maintainer-packet", { headers: sessionHeaders }, env);
+    expect(maintainerPacket.status).toBe(403);
+    await expect(maintainerPacket.json()).resolves.toMatchObject({ error: "static_token_required" });
+
+    const staticTokenDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: apiHeaders(env) }, env);
+    expect(staticTokenDecisionPack.status).toBe(200);
+    await expect(staticTokenDecisionPack.json()).resolves.toMatchObject({ login: "victim", summary: "private advisory summary" });
   });
 
   it("keeps OAuth setup, CORS, and rate limits explicit", async () => {

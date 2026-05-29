@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import { createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
-import { authenticateInternalToken, authenticatePrivateToken, authenticateSessionToken, extractBearerToken, revokeSession } from "../auth/security";
+import { authenticateInternalToken, authenticatePrivateToken, authenticateSessionToken, extractBearerToken, revokeSession, type AuthIdentity } from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
 import {
   countOpenIssues,
@@ -622,6 +622,8 @@ export function createApp() {
   });
 
   app.get("/v1/repos/:owner/:repo/pulls/:number/maintainer-packet", async (c) => {
+    const unauthorized = await requireStaticProtectedApiToken(c);
+    if (unauthorized) return unauthorized;
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const number = Number(c.req.param("number"));
     if (!Number.isFinite(number)) return c.json({ error: "invalid_pull_number" }, 400);
@@ -692,6 +694,8 @@ export function createApp() {
 
   app.get("/v1/contributors/:login/decision-pack", async (c) => {
     const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
     const serving = await loadContributorDecisionPackForServing(c.env, login);
     if (serving.kind === "ready") return c.json(serving.pack);
     return c.json(serving.refresh, 202);
@@ -699,6 +703,8 @@ export function createApp() {
 
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {
     const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const serving = await loadContributorDecisionPackForServing(c.env, login);
     if (serving.kind === "needs_refresh") {
@@ -1310,6 +1316,30 @@ function contributorEvidenceFromProfile(profile: {
       credibilityAssumption: profile.evidence.credibilityAssumption,
     },
   };
+}
+
+type ProtectedRouteContext = {
+  env: Env;
+  req: { header: (name: string) => string | undefined | null };
+  json: (object: { error: string }, status?: number) => Response;
+};
+
+async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
+  return authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+}
+
+async function requireStaticProtectedApiToken(c: ProtectedRouteContext): Promise<Response | null> {
+  const identity = await authenticateRequestIdentity(c);
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind === "session") return c.json({ error: "static_token_required" }, 403);
+  return null;
+}
+
+async function requireContributorAccess(c: ProtectedRouteContext, login: string): Promise<Response | null> {
+  const identity = await authenticateRequestIdentity(c);
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
+  return null;
 }
 
 function requiresApiToken(path: string): boolean {

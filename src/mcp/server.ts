@@ -2,7 +2,7 @@ import { createMcpHandler } from "agents/mcp";
 import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authenticatePrivateToken, extractBearerToken } from "../auth/security";
+import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -220,14 +220,18 @@ const variantsShape = {
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
-  if (!(await isAuthorizedMcpRequest(c))) return c.json({ error: "unauthorized" }, 401);
+  const identity = await authenticateMcpRequest(c);
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
 
-  const server = new GittensoryMcp(c.env).createServer();
+  const server = new GittensoryMcp(c.env, identity).createServer();
   return createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
 }
 
 export class GittensoryMcp {
-  constructor(private readonly env: Env) {}
+  constructor(
+    private readonly env: Env,
+    private readonly identity: AuthIdentity = { kind: "static", actor: "mcp" },
+  ) {}
 
   createServer(): McpServer {
     const server = new McpServer({
@@ -463,6 +467,12 @@ export class GittensoryMcp {
     return server;
   }
 
+  private requireContributorAccess(login: string): void {
+    if (this.identity.kind === "session" && this.identity.actor.toLowerCase() !== login.toLowerCase()) {
+      throw new Error("Forbidden: session can only access the authenticated GitHub login.");
+    }
+  }
+
   private async getRepoContext(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts] = await Promise.all([
@@ -515,6 +525,7 @@ export class GittensoryMcp {
   }
 
   private async getDecisionPack(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
     const serving = await loadContributorDecisionPackForServing(this.env, login);
     if (serving.kind === "ready") {
       return {
@@ -529,6 +540,7 @@ export class GittensoryMcp {
   }
 
   private async explainRepoDecision(input: { login: string; owner: string; repo: string }): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const fullName = `${input.owner}/${input.repo}`;
     const serving = await loadContributorDecisionPackForServing(this.env, input.login);
     if (serving.kind === "needs_refresh") {
@@ -687,6 +699,7 @@ export class GittensoryMcp {
   }
 
   private async agentPlanNextWork(input: z.infer<z.ZodObject<typeof agentPlanShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const bundle = await planNextWork(this.env, { ...input, surface: "mcp" });
     return {
       summary: `Gittensory base-agent plan for ${input.login}.`,
@@ -695,6 +708,7 @@ export class GittensoryMcp {
   }
 
   private async agentStartRun(input: z.infer<z.ZodObject<typeof agentRunShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.actorLogin);
     const bundle = await startAgentRun(this.env, {
       objective: input.objective,
       actorLogin: input.actorLogin,
@@ -721,6 +735,7 @@ export class GittensoryMcp {
   }
 
   private async agentExplainNextAction(input: z.infer<z.ZodObject<typeof agentPlanShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const bundle = await explainBlockersWithAgent(this.env, { ...input, surface: "mcp" });
     return {
       summary: `Gittensory base-agent next-action explanation for ${input.login}.`,
@@ -740,6 +755,7 @@ export class GittensoryMcp {
   }
 
   private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
+    this.requireContributorAccess(input.login);
     const [context, repo, issues, pullRequests, recentMergedPullRequests, snapshot] = await Promise.all([
       this.loadContributorFastContext(input.login),
       getRepository(this.env, input.repoFullName),
@@ -846,8 +862,8 @@ function authoritativeContributorRepoStats(
   return officialRepoStats.length > 0 ? officialRepoStats : cachedRepoStats;
 }
 
-async function isAuthorizedMcpRequest(c: AppContext): Promise<boolean> {
-  return Boolean(await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization"))));
+async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {
+  return authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
 }
 
 function getExecutionContext(c: AppContext): ExecutionContext<unknown> {

@@ -78,6 +78,8 @@ import {
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
+import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -102,10 +104,13 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
-import type { ContributorEvidenceRecord, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
+import type { ContributorEvidenceRecord, DataQuality, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
+
+const MAX_LOCAL_BRANCH_REF_CHARS = 256;
+const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
 
 const preflightSchema = z.object({
   repoFullName: z.string().min(3),
@@ -127,8 +132,8 @@ const localDiffPreflightSchema = preflightSchema.extend({
 
 const localBranchChangedFileSchema = z
   .object({
-    path: z.string().min(1),
-    previousPath: z.string().min(1).optional(),
+    path: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
+    previousPath: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     additions: z.number().int().min(0).optional(),
     deletions: z.number().int().min(0).optional(),
     status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
@@ -138,16 +143,16 @@ const localBranchChangedFileSchema = z
 
 const localBranchValidationSchema = z
   .object({
-    command: z.string().min(1),
+    command: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
     status: z.enum(["passed", "failed", "not_run"]),
-    summary: z.string().optional(),
+    summary: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
   })
   .strict();
 
 const localBranchScorerSchema = z
   .object({
     mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
-    activeModel: z.string().optional(),
+    activeModel: z.string().max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     sourceTokenScore: z.number().min(0).optional(),
     totalTokenScore: z.number().min(0).optional(),
     sourceLines: z.number().min(0).optional(),
@@ -159,29 +164,29 @@ const localBranchScorerSchema = z
 
 const localBranchAnalysisSchema = z
   .object({
-    login: z.string().min(1),
-    repoFullName: z.string().min(3),
-    baseRef: z.string().min(1).optional(),
-    headRef: z.string().min(1).optional(),
-    branchName: z.string().min(1).optional(),
-    baseSha: z.string().min(1).optional(),
-    headSha: z.string().min(1).optional(),
-    mergeBaseSha: z.string().min(1).optional(),
-    remoteTrackingSha: z.string().min(1).optional(),
-    commitMessages: z.array(z.string()).max(30).optional(),
+    login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
+    repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS),
+    baseRef: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    headRef: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    branchName: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    baseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    headSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    mergeBaseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    remoteTrackingSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    commitMessages: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(30).optional(),
     changedFiles: z.array(localBranchChangedFileSchema).max(500).optional(),
     validation: z.array(localBranchValidationSchema).max(50).optional(),
     linkedIssues: z.array(z.number().int().positive()).optional(),
-    labels: z.array(z.string()).optional(),
-    title: z.string().min(1).optional(),
-    body: z.string().optional(),
+    labels: z.array(z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS)).max(50).optional(),
+    title: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    body: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
     localScorer: localBranchScorerSchema.optional(),
     pendingMergedPrCount: z.number().int().min(0).optional(),
     pendingClosedPrCount: z.number().int().min(0).optional(),
     approvedPrCount: z.number().int().min(0).optional(),
     expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
     projectedCredibility: z.number().min(0).max(1).optional(),
-    scenarioNotes: z.array(z.string()).max(20).optional(),
+    scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
   })
   .strict();
 
@@ -570,6 +575,13 @@ export function createApp() {
     return c.json(await buildRepoIntelligenceResponse(c.env, fullName));
   });
 
+  app.get("/v1/repos/:owner/:repo/issue-quality", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const response = await buildIssueQualityResponse(c.env, fullName);
+    if (!response) return c.json({ error: "issue_quality_not_found", repoFullName: fullName }, 404);
+    return c.json(response);
+  });
+
   app.get("/v1/repos/:owner/:repo/registration-readiness", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await buildRegistrationReadinessResponse(c.env, fullName));
@@ -724,33 +736,40 @@ export function createApp() {
     const body = await c.req.json().catch(() => null);
     const parsed = preflightSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_preflight_request", issues: parsed.error.issues }, 400);
-    const repo = await getRepository(c.env, parsed.data.repoFullName);
-    const issues = await listIssues(c.env, parsed.data.repoFullName);
-    const pullRequests = await listPullRequests(c.env, parsed.data.repoFullName);
-    return c.json(buildPreflightResult(parsed.data, repo, issues, pullRequests));
+    const [repo, issues, pullRequests, issueQuality] = await Promise.all([
+      getRepository(c.env, parsed.data.repoFullName),
+      listIssues(c.env, parsed.data.repoFullName),
+      listPullRequests(c.env, parsed.data.repoFullName),
+      loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
+    ]);
+    return c.json(buildPreflightResult(parsed.data, repo, issues, pullRequests, issueQuality?.report));
   });
 
   app.post("/v1/preflight/local-diff", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = localDiffPreflightSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_local_diff_preflight_request", issues: parsed.error.issues }, 400);
-    const repo = await getRepository(c.env, parsed.data.repoFullName);
-    const issues = await listIssues(c.env, parsed.data.repoFullName);
-    const pullRequests = await listPullRequests(c.env, parsed.data.repoFullName);
-    return c.json(buildLocalDiffPreflightResult(parsed.data, repo, issues, pullRequests));
+    const [repo, issues, pullRequests, issueQuality] = await Promise.all([
+      getRepository(c.env, parsed.data.repoFullName),
+      listIssues(c.env, parsed.data.repoFullName),
+      listPullRequests(c.env, parsed.data.repoFullName),
+      loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
+    ]);
+    return c.json(buildLocalDiffPreflightResult(parsed.data, repo, issues, pullRequests, issueQuality?.report));
   });
 
   app.post("/v1/local/branch-analysis", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = localBranchAnalysisSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
-    const [context, repo, issues, pullRequests, recentMergedPullRequests, snapshot] = await Promise.all([
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, snapshot, issueQuality] = await Promise.all([
       loadContributorFastContext(c.env, parsed.data.login),
       getRepository(c.env, parsed.data.repoFullName),
       listIssues(c.env, parsed.data.repoFullName),
       listPullRequests(c.env, parsed.data.repoFullName),
       listRecentMergedPullRequests(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
+      loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: parsed.data.login, fit, scoringSnapshot: snapshot });
@@ -759,11 +778,14 @@ export function createApp() {
       repo,
       issues,
       pullRequests,
+      contributorPullRequests: context.contributorPullRequests,
       recentMergedPullRequests,
+      repositories: context.repositories,
       profile: context.profile,
       outcomeHistory: context.outcomeHistory,
       scoringSnapshot: snapshot,
       scoringProfile,
+      issueQuality: issueQuality?.report,
     });
     const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
@@ -1033,7 +1055,8 @@ export function createApp() {
 }
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
-  const [repo, snapshots, dataQuality] = await Promise.all([
+  let burdenForecastError: unknown;
+  const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
     getRepository(env, fullName),
     Promise.all(
       ["queue-health", "config-quality", "label-audit", "maintainer-lane", "maintainer-cut-readiness", "contributor-intake-health"].map(async (signalType) => [
@@ -1042,8 +1065,26 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       ]),
     ),
     loadRepoDataQuality(env, fullName),
+    loadOrComputeBurdenForecastResponse(env, fullName).catch((error) => {
+      burdenForecastError = error;
+      return null;
+    }),
   ]);
+  const intelligenceDataQuality = burdenForecastError
+    ? withDataQualityWarning(dataQuality, `Burden forecast unavailable for ${fullName}: ${errorMessage(burdenForecastError)}`)
+    : dataQuality;
   const snapshotMap = Object.fromEntries(snapshots);
+  const burdenForecastSlice = burdenForecast
+    ? {
+        burdenForecast: burdenForecast.report,
+        burdenForecastFreshness: {
+          source: burdenForecast.source,
+          generatedAt: burdenForecast.generatedAt,
+          ageSeconds: burdenForecast.ageSeconds,
+          freshness: burdenForecast.freshness,
+        },
+      }
+    : {};
   if (snapshotMap["queue-health"] && snapshotMap["config-quality"] && snapshotMap["label-audit"]) {
     return {
       status: "ready",
@@ -1058,7 +1099,8 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       maintainerLane: snapshotMap["maintainer-lane"],
       maintainerCutReadiness: snapshotMap["maintainer-cut-readiness"],
       contributorIntakeHealth: snapshotMap["contributor-intake-health"],
-      dataQuality,
+      dataQuality: intelligenceDataQuality,
+      ...burdenForecastSlice,
     };
   }
   const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts] = await Promise.all([
@@ -1089,8 +1131,22 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     maintainerLane,
     maintainerCutReadiness,
     contributorIntakeHealth,
-    dataQuality,
+    dataQuality: intelligenceDataQuality,
+    ...burdenForecastSlice,
   };
+}
+
+function withDataQualityWarning(dataQuality: DataQuality, warning: string): DataQuality {
+  return {
+    ...dataQuality,
+    status: dataQuality.status === "complete" ? "degraded" : dataQuality.status,
+    partial: true,
+    warnings: [...new Set([...dataQuality.warnings, warning])],
+  };
+}
+
+async function buildIssueQualityResponse(env: Env, fullName: string) {
+  return loadOrComputeIssueQualityResponse(env, fullName);
 }
 
 async function buildRegistrationReadinessResponse(env: Env, fullName: string) {

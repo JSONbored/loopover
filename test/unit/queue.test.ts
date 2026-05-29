@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   listCollisionEdges,
   createAgentRun,
+  getBurdenForecast,
   getContributorEvidence,
   getAgentRun,
   getContributorScoringProfile,
@@ -97,9 +98,15 @@ describe("queue processors", () => {
     expect(await listRepoSyncStates(env)).toMatchObject([{ repoFullName: "JSONbored/gittensory", status: "success" }]);
     expect(await listCollisionEdges(env, "JSONbored/gittensory")).not.toHaveLength(0);
     expect(await listSignalSnapshots(env, "queue-health", "JSONbored/gittensory")).toHaveLength(1);
+    const issueQualitySnapshots = await listSignalSnapshots(env, "issue-quality", "JSONbored/gittensory");
+    expect(issueQualitySnapshots).toHaveLength(1);
+    expect(issueQualitySnapshots[0]?.payload).toMatchObject({ repoFullName: "JSONbored/gittensory", issues: expect.any(Array), summary: expect.any(String) });
     expect(await listSignalSnapshots(env, "contributor-decision-pack", "oktofeesh1")).not.toHaveLength(0);
     expect(await getContributorEvidence(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
     expect(await getContributorScoringProfile(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
+    const persistedBurden = await getBurdenForecast(env, "JSONbored/gittensory");
+    expect(persistedBurden).toMatchObject({ repoFullName: "JSONbored/gittensory" });
+    expect(persistedBurden?.payload).toMatchObject({ level: expect.any(String), summary: expect.any(String) });
   });
 
   it("runs queued agent jobs through the queue processor", async () => {

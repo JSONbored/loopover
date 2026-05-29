@@ -25,9 +25,11 @@ import {
   buildRoleContext,
   type ContributorOutcomeHistory,
   type ContributorProfile,
+  type IssueQualityReport,
   type RoleContext,
 } from "../signals/engine";
 import { buildSignalFidelity } from "../signals/data-quality";
+import { loadIssueQualityReportMap } from "./issue-quality";
 import type { ContributorRepoStatRecord, JsonValue, RepositoryRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord, SignalSnapshotRecord } from "../types";
 import { nowIso } from "../utils/json";
 
@@ -118,6 +120,7 @@ export type RepoDecision = {
   whyThisHelps: string[];
   nextActions: string[];
   publicNextActions: string[];
+  issueQuality?: IssueQualitySummary | undefined;
 };
 
 export type DecisionAction = {
@@ -135,6 +138,14 @@ export type ScoreBlocker = {
   repoFullName?: string | undefined;
   severity: "info" | "warning" | "critical";
   detail: string;
+};
+
+export type IssueQualitySummary = {
+  readyCount: number;
+  needsProofCount: number;
+  holdCount: number;
+  doNotUseCount: number;
+  topReadyIssues: Array<{ number: number; title: string; score: number }>;
 };
 
 export async function loadContributorDecisionPack(env: Env, login: string): Promise<ContributorDecisionPack | null> {
@@ -242,6 +253,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     getOrCreateScoringModelSnapshot(env),
   ]);
   const repoStats = authoritativeContributorRepoStats(gittensorSnapshot, cachedRepoStats);
+  const issueQualityByRepo = await loadIssueQualityReportMap(env, repositories);
   const profile = buildContributorProfile(login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
   const outcomeHistory = buildContributorOutcomeHistory({
     login,
@@ -264,6 +276,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     scoringModelSnapshotId: scoringSnapshot.id,
     contributorPullRequests,
     contributorIssues,
+    issueQualityByRepo,
   });
 
   await upsertContributorEvidence(env, {
@@ -312,11 +325,15 @@ function buildContributorDecisionPack(args: {
   scoringModelSnapshotId: string;
   contributorPullRequests: Parameters<typeof buildRoleContext>[0]["pullRequests"];
   contributorIssues: Parameters<typeof buildRoleContext>[0]["issues"];
+  issueQualityByRepo?: Map<string, IssueQualityReport> | undefined;
 }): ContributorDecisionPack {
   const registeredRepositories = args.repositories.filter((repo) => repo.isRegistered);
   const syncByRepo = new Map(args.syncStates.map((state) => [state.repoFullName.toLowerCase(), state]));
   const totalsByRepo = new Map(args.totals.map((total) => [total.repoFullName.toLowerCase(), total]));
   const outcomeByRepo = new Map(args.outcomeHistory.repoOutcomes.map((outcome) => [outcome.repoFullName.toLowerCase(), outcome]));
+  const issueQualityByRepo = args.issueQualityByRepo
+    ? new Map([...args.issueQualityByRepo.entries()].map(([repoFullName, report]) => [repoFullName.toLowerCase(), report]))
+    : new Map<string, IssueQualityReport>();
   const languageSet = new Set((args.profile.github?.topLanguages ?? []).map((language) => language.toLowerCase()));
   const labelHistory = new Set(args.profile.registeredRepoActivity?.dominantLabels ?? []);
   const roleContexts = registeredRepositories.map((repo) =>
@@ -341,6 +358,7 @@ function buildContributorDecisionPack(args: {
         totals: totalsByRepo.get(key),
         languageSet,
         labelHistory,
+        issueQuality: issueQualityByRepo.get(key),
       });
     })
     .sort((left, right) => right.priorityScore - left.priorityScore || left.repoFullName.localeCompare(right.repoFullName));
@@ -389,6 +407,7 @@ function buildRepoDecision(args: {
   totals?: RepoGithubTotalsSnapshotRecord | undefined;
   languageSet?: Set<string> | undefined;
   labelHistory?: Set<string> | undefined;
+  issueQuality?: IssueQualityReport | undefined;
 }): RepoDecision {
   const lane = buildLaneAdvice(args.repo, args.repo.fullName);
   const config = args.repo.registryConfig;
@@ -407,15 +426,18 @@ function buildRepoDecision(args: {
     maintainerCut: round(config?.maintainerCut ?? 0),
   };
   const blockers = scoreBlockersFor(args.repo.fullName, lane.lane, args.roleContext, args.outcome);
+  const issueQuality = summarizeIssueQuality(args.issueQuality);
   const riskReasons = [
     ...(queue.openPullRequests >= 25 ? [`Repo queue is busy with ${queue.openPullRequests} open PR(s).`] : []),
     ...(queue.openIssues >= 100 ? [`Repo issue queue is large with ${queue.openIssues} open issue(s).`] : []),
     ...(args.outcome && args.outcome.closedPullRequestRate >= 0.35 ? [`Repo-specific closed PR rate is ${Math.round(args.outcome.closedPullRequestRate * 100)}%.`] : []),
     ...(args.outcome && args.outcome.openPullRequests >= 3 ? [`Contributor has ${args.outcome.openPullRequests} open PR(s) in this repo.`] : []),
     ...(lane.lane === "issue_discovery" ? ["Direct PRs are not the useful lane here; use issue-discovery behavior only."] : []),
+    ...(issueQuality && issueQuality.doNotUseCount > 0 ? [`Issue quality marks ${issueQuality.doNotUseCount} cached issue(s) as already covered or duplicate-prone.`] : []),
+    ...(issueQuality && issueQuality.readyCount === 0 && (lane.lane === "issue_discovery" || lane.lane === "split") ? ["No ready issue-quality candidate is cached for this repo."] : []),
   ];
   const recommendation = recommendationFor(lane.lane, args.roleContext, args.outcome, blockers);
-  const priorityScore = priorityFor(recommendation, rewardUpside, args.outcome, queue, blockers);
+  const priorityScore = clamp(priorityFor(recommendation, rewardUpside, args.outcome, queue, blockers) + issueQualityPriorityAdjustment(lane.lane, issueQuality), 0, 100);
   const syncLanguage = args.syncState?.primaryLanguage ?? null;
   const languageMatch: LanguageMatch = {
     language: syncLanguage,
@@ -433,6 +455,7 @@ function buildRepoDecision(args: {
     outcome: args.outcome,
     languageMatch,
     labelFit,
+    issueQuality,
   };
   return {
     repoFullName: args.repo.fullName,
@@ -450,6 +473,7 @@ function buildRepoDecision(args: {
     whyThisHelps: whyThisHelpsFor(recommendation, copyContext),
     nextActions: nextActionsFor(recommendation, copyContext),
     publicNextActions: publicNextActionsFor(recommendation, copyContext),
+    issueQuality,
   };
 }
 
@@ -529,12 +553,14 @@ type RepoCopyContext = {
   outcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined;
   languageMatch: LanguageMatch;
   labelFit: string[];
+  issueQuality?: IssueQualitySummary | undefined;
 };
 
 function whyThisHelpsFor(recommendation: DecisionRecommendation, context: RepoCopyContext): string[] {
-  const { repoFullName, rewardUpside, outcome, languageMatch, labelFit, lane } = context;
+  const { repoFullName, rewardUpside, outcome, languageMatch, labelFit, lane, issueQuality } = context;
   const labelPhrase = labelFit.length > 0 ? ` Label overlap with your history: ${labelFit.slice(0, 3).join(", ")}.` : "";
   const languagePhrase = languageMatch.match && languageMatch.language ? ` Primary language ${languageMatch.language} matches your top languages.` : "";
+  const qualityPhrase = issueQuality && issueQuality.readyCount > 0 ? ` Issue quality has ${issueQuality.readyCount} ready candidate(s).` : "";
   if (recommendation === "cleanup_first") {
     const openCount = outcome?.openPullRequests ?? 0;
     return [`${repoFullName}: ${openCount} of your open PR(s) here block scoreability; clearing them lowers maintainer friction.${labelPhrase}`];
@@ -546,20 +572,21 @@ function whyThisHelpsFor(recommendation: DecisionRecommendation, context: RepoCo
     const merged = outcome?.mergedPullRequests ?? 0;
     const historyPhrase = merged > 0 ? ` You have ${merged} merged PR(s) in this repo already.` : "";
     if (lane === "split") {
-      return [`${repoFullName}: split lane (direct PR ${round(rewardUpside.directPrShare)}, issue-discovery ${round(rewardUpside.issueDiscoveryShare)}); both lanes are useful here.${languagePhrase}${labelPhrase}${historyPhrase}`];
+      return [`${repoFullName}: split lane (direct PR ${round(rewardUpside.directPrShare)}, issue-discovery ${round(rewardUpside.issueDiscoveryShare)}); both lanes are useful here.${languagePhrase}${labelPhrase}${historyPhrase}${qualityPhrase}`];
     }
     return [`${repoFullName}: direct PR lane share ${round(rewardUpside.directPrShare)} with no hard personal blocker.${languagePhrase}${labelPhrase}${historyPhrase}`];
   }
   if (recommendation === "watch") {
-    return [`${repoFullName}: ${lane === "issue_discovery" ? "issue-discovery-only" : "low-direct-PR"} lane; only actionable, non-duplicate issue reports add value.${labelPhrase}`];
+    return [`${repoFullName}: ${lane === "issue_discovery" ? "issue-discovery-only" : "low-direct-PR"} lane; only actionable, non-duplicate issue reports add value.${labelPhrase}${qualityPhrase}`];
   }
   return [`${repoFullName}: risk-adjusted priority is low until blockers improve.`];
 }
 
 function nextActionsFor(recommendation: DecisionRecommendation, context: RepoCopyContext): string[] {
-  const { repoFullName, queue, outcome, languageMatch, labelFit, lane } = context;
+  const { repoFullName, queue, outcome, languageMatch, labelFit, lane, issueQuality } = context;
   const labelHint = labelFit.length > 0 ? ` (target labels: ${labelFit.slice(0, 3).join(", ")})` : "";
   const languageHint = languageMatch.match && languageMatch.language ? ` in ${languageMatch.language}` : "";
+  const topReadyIssue = issueQuality?.topReadyIssues[0];
   if (recommendation === "cleanup_first") {
     const openCount = outcome?.openPullRequests ?? 0;
     return [
@@ -575,6 +602,11 @@ function nextActionsFor(recommendation: DecisionRecommendation, context: RepoCop
   }
   if (recommendation === "pursue") {
     if (lane === "split") {
+      if (topReadyIssue) {
+        return [
+          `${repoFullName}: split lane — either open a narrow direct PR${languageHint}${labelHint} or file issue-discovery on #${topReadyIssue.number}: ${topReadyIssue.title}.`,
+        ];
+      }
       return [
         `${repoFullName}: split lane — choose direct PR${languageHint}${labelHint} OR file an actionable issue-discovery report; queue has ${queue.openPullRequests} open PR(s) and ${queue.openIssues} open issue(s).`,
       ];
@@ -584,6 +616,11 @@ function nextActionsFor(recommendation: DecisionRecommendation, context: RepoCop
     ];
   }
   if (recommendation === "watch" || lane === "issue_discovery") {
+    if (topReadyIssue) {
+      return [
+        `${repoFullName}: file issue-discovery on ready candidate #${topReadyIssue.number}: ${topReadyIssue.title}${labelHint}.`,
+      ];
+    }
     return [
       `${repoFullName}: file only high-confidence, actionable, non-duplicate issue-discovery reports${labelHint}. Open issues in queue: ${queue.openIssues}.`,
     ];
@@ -592,9 +629,10 @@ function nextActionsFor(recommendation: DecisionRecommendation, context: RepoCop
 }
 
 function publicNextActionsFor(recommendation: DecisionRecommendation, context: RepoCopyContext): string[] {
-  const { repoFullName, languageMatch, labelFit, lane } = context;
+  const { repoFullName, languageMatch, labelFit, lane, issueQuality } = context;
   const languageHint = languageMatch.match && languageMatch.language ? ` in ${languageMatch.language}` : "";
   const labelHint = labelFit.length > 0 ? ` (consider labels: ${labelFit.slice(0, 3).join(", ")})` : "";
+  const issueQualityHint = issueQuality && issueQuality.readyCount > 0 ? " Use issue-quality ready candidates before posting." : "";
   if (recommendation === "cleanup_first") {
     return [`${repoFullName}: resolve open PR pressure before opening additional review load.`];
   }
@@ -603,14 +641,33 @@ function publicNextActionsFor(recommendation: DecisionRecommendation, context: R
   }
   if (recommendation === "pursue") {
     if (lane === "split") {
-      return [`${repoFullName}: split lane — direct PR or actionable issue report${languageHint}${labelHint}; use Gittensory preflight before posting public PR context.`];
+      return [`${repoFullName}: split lane — direct PR or actionable issue report${languageHint}${labelHint}; use Gittensory preflight before posting public PR context.${issueQualityHint}`];
     }
     return [`${repoFullName}: pick a narrow change${languageHint}${labelHint}; use Gittensory preflight before posting public PR context.`];
   }
   if (recommendation === "watch" || lane === "issue_discovery") {
-    return [`${repoFullName}: file only actionable, non-duplicate issue-discovery reports${labelHint}.`];
+    return [`${repoFullName}: file only actionable, non-duplicate issue-discovery reports${labelHint}.${issueQualityHint}`];
   }
   return [`${repoFullName}: consider a different repo until lane/credibility signals improve.`];
+}
+
+function summarizeIssueQuality(report: IssueQualityReport | undefined): IssueQualitySummary | undefined {
+  if (!report) return undefined;
+  const ready = report.issues.filter((issue) => issue.status === "ready");
+  return {
+    readyCount: ready.length,
+    needsProofCount: report.issues.filter((issue) => issue.status === "needs_proof").length,
+    holdCount: report.issues.filter((issue) => issue.status === "hold").length,
+    doNotUseCount: report.issues.filter((issue) => issue.status === "do_not_use").length,
+    topReadyIssues: ready.slice(0, 3).map((issue) => ({ number: issue.number, title: issue.title, score: issue.score })),
+  };
+}
+
+function issueQualityPriorityAdjustment(lane: string, issueQuality: IssueQualitySummary | undefined): number {
+  if (!issueQuality || (lane !== "issue_discovery" && lane !== "split")) return 0;
+  if (issueQuality.readyCount > 0) return 8;
+  if (issueQuality.doNotUseCount > 0 || issueQuality.needsProofCount > 0 || issueQuality.holdCount > 0) return -8;
+  return 0;
 }
 
 function sanitizeOfficialStats(profile: ContributorProfile): ContributorDecisionPack["profile"]["officialStats"] {

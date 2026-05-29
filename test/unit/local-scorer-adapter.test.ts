@@ -86,6 +86,7 @@ describe("local scorer adapter", () => {
     });
     expect(payload.localScorer).toMatchObject({ mode: "metadata_only" });
     expect(payload.localScorerStatus.ok).toBe(false);
+    expect(payload).not.toHaveProperty("repoRoot");
     expect(JSON.stringify(payload)).not.toMatch(/BEGIN (RSA )?PRIVATE KEY/);
 
     process.env.GITTENSORY_UPLOAD_SOURCE = "true";

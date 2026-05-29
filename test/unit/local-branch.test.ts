@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildLocalBranchAnalysis } from "../../src/signals/local-branch";
-import type { ContributorOutcomeHistory, ContributorProfile, ContributorScoringProfile } from "../../src/signals/engine";
+import type { ContributorOutcomeHistory, ContributorProfile, ContributorScoringProfile, IssueQualityReport } from "../../src/signals/engine";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
 describe("local branch analysis", () => {
@@ -114,6 +114,153 @@ describe("local branch analysis", () => {
     expect(analysis.nextActions[0]?.whyThisHelps.join(" ")).toMatch(/waiting for pending PRs/i);
   });
 
+  it("threads issue-quality warnings into local preflight and public-safe next steps", () => {
+    const issueQuality: IssueQualityReport = {
+      repoFullName: repo.fullName,
+      generatedAt: new Date().toISOString(),
+      lane: { repoFullName: repo.fullName, lane: "direct_pr", issueDiscoveryShare: 0, directPrShare: 0.04, summary: "Direct PR lane", contributorGuidance: "", maintainerGuidance: "" },
+      issues: [
+        {
+          number: 7,
+          title: "Cache refresh fails",
+          status: "do_not_use",
+          score: 0,
+          reasons: [],
+          warnings: ["1 merged PR(s) already reference this issue."],
+        },
+      ],
+      summary: "1 open issue evaluated.",
+    };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [
+          { path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" },
+          { path: "src/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+      issueQuality,
+    });
+
+    expect(analysis.preflight.status).toBe("needs_work");
+    expect(analysis.preflight.findings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "issue_quality_do_not_use" })]));
+    expect(analysis.branchQualityBlockers).toEqual(expect.arrayContaining(["Linked issue is already covered or duplicate-prone"]));
+    expect(analysis.prPacket.markdown).toContain("Confirm the linked issue is still actionable");
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("derives observed pending PR scenarios from cached GitHub PR state", () => {
+    const otherRepo: RepositoryRecord = { ...repo, fullName: "we-promise/sure", owner: "we-promise", name: "sure" };
+    const pressuredHistory: ContributorOutcomeHistory = {
+      ...outcomeHistory,
+      totals: { ...outcomeHistory.totals, openPullRequests: 6, credibility: 0.2 },
+      repoOutcomes: [{ ...outcomeHistory.repoOutcomes[0]!, openPullRequests: 6, credibility: 0.2, closedPullRequestRate: 0 }],
+    };
+    const basePr = {
+      authorLogin: "oktofeesh1",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug"],
+      linkedIssues: [7],
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2999-01-01T00:00:00.000Z",
+    };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [
+          { path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" },
+          { path: "src/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 70, sourceLines: 42, testTokenScore: 20 },
+      },
+      repo,
+      repositories: [repo, otherRepo],
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache edge", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        { ...basePr, repoFullName: repo.fullName, number: 1, title: "Approved cache fix", state: "open", reviewDecision: "APPROVED" },
+        { ...basePr, repoFullName: otherRepo.fullName, number: 2, title: "Draft branch", state: "open", isDraft: true },
+        { ...basePr, repoFullName: otherRepo.fullName, number: 3, title: "Needs changes", state: "open", reviewDecision: "CHANGES_REQUESTED" },
+        { ...basePr, repoFullName: otherRepo.fullName, number: 4, title: "Stale branch", state: "open", updatedAt: "2020-01-01T00:00:00.000Z" },
+        { ...basePr, repoFullName: otherRepo.fullName, number: 5, title: "Closed branch", state: "closed" },
+        { ...basePr, repoFullName: repo.fullName, number: 6, title: "Maintainer lane", state: "open", authorAssociation: "OWNER" },
+        { ...basePr, repoFullName: repo.fullName, number: 7, title: "Someone else's approved PR", state: "open", authorLogin: "someone-else", reviewDecision: "APPROVED" },
+      ],
+      profile,
+      outcomeHistory: pressuredHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.observedPullRequestScenarios).toMatchObject({ approvedOrMergeable: 1, stale: 1, closed: 1, draft: 1, blocked: 1, maintainerLane: 1 });
+    expect(analysis.scenarioScorePreview.afterApprovedPrsMerge).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.8 } });
+    expect(analysis.scenarioScorePreview.afterStalePrsClose).toMatchObject({ source: "github_observed", gates: { openPrCount: 4, credibilityObserved: 0.2 } });
+    expect(analysis.scenarioScorePreview.afterApprovedPrsMerge?.assumptions.join(" ")).toMatch(/draft PR.*excluded|blocked PR.*excluded|maintainer-lane PR.*outside-contributor/);
+    expect(analysis.scorePreview.effectiveEstimatedScore).toBe(0);
+    expect(analysis.scorePreview.underlyingPotentialScore).toBeGreaterThan(0);
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("falls back to same-repo observed PR scenarios when the registered repo list is unavailable", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" }],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 60, sourceLines: 42 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache edge", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        {
+          repoFullName: repo.fullName,
+          number: 1,
+          title: "Mergeable same-repo branch",
+          state: "open",
+          authorLogin: "oktofeesh1",
+          authorAssociation: "CONTRIBUTOR",
+          mergeableState: "CLEAN",
+          labels: [],
+          linkedIssues: [],
+        },
+        {
+          repoFullName: "we-promise/sure",
+          number: 2,
+          title: "Out-of-scope branch",
+          state: "open",
+          authorLogin: "oktofeesh1",
+          authorAssociation: "CONTRIBUTOR",
+          reviewDecision: "APPROVED",
+          labels: [],
+          linkedIssues: [],
+        },
+      ],
+      profile,
+      outcomeHistory: { ...outcomeHistory, totals: { ...outcomeHistory.totals, openPullRequests: 2 } },
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.observedPullRequestScenarios.approvedOrMergeable).toBe(1);
+    expect(analysis.scenarioScorePreview.afterApprovedPrsMerge?.gates.openPrCount).toBe(1);
+  });
+
   it("classifies stale base state and treats passed validation as test evidence", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
@@ -187,6 +334,28 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).toContain("[local path hidden]");
     expect(analysis.prPacket.markdown).not.toContain("/Users/example");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score|\/Users\/example/i);
+  });
+
+  it("removes snake_case private signals from public PR packet markdown", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 2, status: "modified" }],
+        validation: [{ command: "npm test", status: "passed", summary: "raw_trust=0.72 private_reviewability=ready trust_score=0.40" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.markdown).toContain("## Validation");
+    expect(analysis.prPacket.markdown).not.toMatch(/raw_trust|private_reviewability|trust_score/i);
   });
 
   it("distinguishes fresh, merge-base-stale, and large unverified base states", () => {

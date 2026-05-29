@@ -157,10 +157,6 @@ function blockersSections(bundle: AgentRunBundle | null | undefined): string[] {
   }
   const lines = ["**Readiness blockers**", ""];
   for (const action of actions.slice(0, 4)) {
-    if (action.why.length > 0) {
-      lines.push(...action.why.slice(0, 4).map((item) => `- ${publicBlockerDetail(item)}`));
-      continue;
-    }
     lines.push(...formatActionBullets(action, { includeBlockers: true, includeRerun: false }));
   }
   return dedupeBulletLines(lines);

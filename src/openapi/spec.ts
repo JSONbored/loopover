@@ -278,18 +278,18 @@ export function buildOpenApiSpec() {
     path: "/v1/contributors/{login}/decision-pack",
     responses: {
       200: {
-        description: "Canonical private contributor decision pack",
+        description: "Canonical private contributor decision pack. May carry freshness 'stale' or 'rebuilding' when a background rebuild is in progress.",
         content: { "application/json": { schema: ContributorDecisionPackSchema } },
       },
-      202: { description: "Decision pack snapshot is missing or stale", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
+      202: { description: "Decision pack snapshot is missing; a background rebuild has been requested", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
     },
   });
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/repos/{owner}/{repo}/decision",
     responses: {
-      200: { description: "Repo-specific contributor decision from decision pack", content: { "application/json": { schema: RepoDecisionResponseSchema } } },
-      202: { description: "Decision pack snapshot is missing or stale", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
+      200: { description: "Repo-specific contributor decision from decision pack. May carry freshness 'stale' or 'rebuilding'.", content: { "application/json": { schema: RepoDecisionResponseSchema } } },
+      202: { description: "Decision pack snapshot is missing; a background rebuild has been requested", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
     },
   });
   registry.registerPath({

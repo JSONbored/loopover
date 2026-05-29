@@ -1,4 +1,5 @@
 import {
+  hasRecentAuditEvent,
   listContributorIssues,
   listContributorPullRequests,
   listContributorRepoStats,
@@ -8,6 +9,7 @@ import {
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
+  recordAuditEvent,
   upsertContributorEvidence,
   upsertContributorScoringProfile,
 } from "../db/repositories";
@@ -31,9 +33,12 @@ import { nowIso } from "../utils/json";
 
 export const CONTRIBUTOR_DECISION_PACK_SIGNAL = "contributor-decision-pack";
 export const DECISION_PACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const DECISION_PACK_REBUILD_DEBOUNCE_MS = 15 * 1000;
+const pendingDecisionPackRebuilds = new Map<string, Promise<boolean>>();
 
 export type DecisionRecommendation = "pursue" | "cleanup_first" | "maintainer_lane" | "avoid_for_now" | "watch";
 export type DecisionActionKind = "cleanup_existing_prs" | "land_existing_prs" | "open_new_direct_pr" | "file_issue_discovery" | "maintainer_lane_improve_repo" | "maintainer_cut_readiness";
+export type DecisionPackFreshness = "fresh" | "stale" | "rebuilding" | "missing";
 
 export type ContributorDecisionPack = {
   status: "ready";
@@ -42,6 +47,8 @@ export type ContributorDecisionPack = {
   generatedAt: string;
   snapshotAgeSeconds?: number | undefined;
   stale: boolean;
+  freshness: DecisionPackFreshness;
+  rebuildEnqueued: boolean;
   scoringModelSnapshotId: string;
   profile: {
     login: string;
@@ -71,14 +78,14 @@ export type DecisionPackRefreshNeeded = {
   status: "needs_snapshot_refresh";
   login: string;
   generatedAt: string;
-  reason: "missing_snapshot" | "stale_snapshot";
-  enqueued: boolean;
-  staleSnapshot?: {
-    generatedAt: string;
-    ageSeconds: number;
-  };
-  dataQuality?: ContributorDecisionPack["dataQuality"] | undefined;
+  reason: "missing_snapshot";
+  freshness: Extract<DecisionPackFreshness, "missing">;
+  rebuildEnqueued: boolean;
 };
+
+export type ContributorDecisionPackServing =
+  | { kind: "ready"; pack: ContributorDecisionPack }
+  | { kind: "needs_refresh"; refresh: DecisionPackRefreshNeeded };
 
 export type LanguageMatch = {
   language: string | null;
@@ -136,10 +143,78 @@ export async function loadContributorDecisionPack(env: Env, login: string): Prom
   return withSnapshotMetadata(latest);
 }
 
-export async function loadFreshContributorDecisionPack(env: Env, login: string, maxAgeMs = DECISION_PACK_MAX_AGE_MS): Promise<ContributorDecisionPack | null> {
-  const pack = await loadContributorDecisionPack(env, login);
-  if (!pack) return null;
-  return pack.stale || snapshotAgeMs(pack.generatedAt) > maxAgeMs ? null : pack;
+export async function loadContributorDecisionPackForServing(
+  env: Env,
+  login: string,
+  options: { maxAgeMs?: number; enqueueRebuild?: boolean } = {},
+): Promise<ContributorDecisionPackServing> {
+  const maxAgeMs = options.maxAgeMs ?? DECISION_PACK_MAX_AGE_MS;
+  const enqueueRebuild = options.enqueueRebuild ?? true;
+  const cached = await loadContributorDecisionPack(env, login);
+  if (!cached) {
+    const rebuildEnqueued = enqueueRebuild ? await tryEnqueueDecisionPackRebuild(env, login) : false;
+    return {
+      kind: "needs_refresh",
+      refresh: {
+        status: "needs_snapshot_refresh",
+        login,
+        generatedAt: nowIso(),
+        reason: "missing_snapshot",
+        freshness: "missing",
+        rebuildEnqueued,
+      },
+    };
+  }
+  const stale = cached.stale || snapshotAgeMs(cached.generatedAt) > maxAgeMs;
+  if (!stale) {
+    return { kind: "ready", pack: { ...cached, freshness: "fresh", rebuildEnqueued: false } };
+  }
+  const rebuildEnqueued = enqueueRebuild ? await tryEnqueueDecisionPackRebuild(env, login) : false;
+  return {
+    kind: "ready",
+    pack: {
+      ...cached,
+      stale: true,
+      freshness: rebuildEnqueued ? "rebuilding" : "stale",
+      rebuildEnqueued,
+    },
+  };
+}
+
+async function tryEnqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
+  const pending = pendingDecisionPackRebuilds.get(login);
+  if (pending) return pending;
+  const sinceIso = new Date(Date.now() - DECISION_PACK_REBUILD_DEBOUNCE_MS).toISOString();
+  if (await hasRecentAuditEvent(env, login, "decision_pack.rebuild_enqueued", sinceIso)) {
+    return true;
+  }
+  const existing = pendingDecisionPackRebuilds.get(login);
+  if (existing) return existing;
+  const rebuild = enqueueDecisionPackRebuild(env, login).finally(() => {
+    pendingDecisionPackRebuilds.delete(login);
+  });
+  pendingDecisionPackRebuilds.set(login, rebuild);
+  return rebuild;
+}
+
+async function enqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
+  try {
+    await env.JOBS.send({ type: "build-contributor-decision-packs", requestedBy: "api", login });
+    await recordAuditEvent(env, {
+      eventType: "decision_pack.rebuild_enqueued",
+      actor: login,
+      outcome: "queued",
+    });
+    return true;
+  } catch (error) {
+    await recordAuditEvent(env, {
+      eventType: "decision_pack.rebuild_enqueue_failed",
+      actor: login,
+      outcome: "error",
+      detail: String(error),
+    });
+    return false;
+  }
 }
 
 export async function buildAndPersistContributorDecisionPack(env: Env, login: string): Promise<ContributorDecisionPack> {
@@ -280,6 +355,8 @@ function buildContributorDecisionPack(args: {
     login: args.login,
     generatedAt: nowIso(),
     stale: false,
+    freshness: "fresh",
+    rebuildEnqueued: false,
     scoringModelSnapshotId: args.scoringModelSnapshotId,
     profile: {
       login: args.profile.login,
@@ -378,11 +455,13 @@ function buildRepoDecision(args: {
 
 function scoreBlockersFor(repoFullName: string, lane: string, roleContext: RoleContext, outcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined): ScoreBlocker[] {
   const blockers: ScoreBlocker[] = [];
+  const openPullRequests = outcome?.openPullRequests ?? 0;
+  const closedPullRequestRate = outcome?.closedPullRequestRate ?? 0;
   if (roleContext.maintainerLane) blockers.push({ code: "maintainer_lane", repoFullName, severity: "info", detail: "Maintainer-lane activity is separate from normal outside-contributor reward evidence." });
   if (lane === "inactive" || lane === "unknown") blockers.push({ code: "inactive_or_unknown_lane", repoFullName, severity: "critical", detail: "The repo lane is inactive or unknown in the current registry snapshot." });
   if (lane === "issue_discovery") blockers.push({ code: "issue_discovery_only", repoFullName, severity: "warning", detail: "This repo is issue-discovery-only; direct PR reward/risk reasoning is not applicable." });
-  if ((outcome?.openPullRequests ?? 0) >= 5) blockers.push({ code: "open_pr_pressure", repoFullName, severity: "critical", detail: `${outcome?.openPullRequests ?? 0} open PR(s) create scoreability and review-pressure risk.` });
-  if ((outcome?.closedPullRequestRate ?? 0) >= 0.35) blockers.push({ code: "closed_pr_credibility", repoFullName, severity: "warning", detail: `Closed PR rate is ${Math.round((outcome?.closedPullRequestRate ?? 0) * 100)}%.` });
+  if (openPullRequests >= 5) blockers.push({ code: "open_pr_pressure", repoFullName, severity: "critical", detail: `${openPullRequests} open PR(s) create scoreability and review-pressure risk.` });
+  if (closedPullRequestRate >= 0.35) blockers.push({ code: "closed_pr_credibility", repoFullName, severity: "warning", detail: `Closed PR rate is ${Math.round(closedPullRequestRate * 100)}%.` });
   if (outcome && !outcome.maintainerLane && outcome.credibility > 0 && outcome.credibility < 0.8) blockers.push({ code: "low_credibility", repoFullName, severity: "warning", detail: `Official repo credibility is ${round(outcome.credibility)}.` });
   return blockers;
 }
@@ -544,13 +623,16 @@ function withSnapshotMetadata(snapshot: SignalSnapshotRecord): ContributorDecisi
   const payload = snapshot.payload as unknown as ContributorDecisionPack;
   const generatedAt = snapshot.generatedAt ?? payload.generatedAt ?? nowIso();
   const ageSeconds = Math.max(0, Math.floor(snapshotAgeMs(generatedAt) / 1000));
+  const stale = snapshotAgeMs(generatedAt) > DECISION_PACK_MAX_AGE_MS;
   return {
     ...payload,
     status: "ready",
     source: "snapshot",
     generatedAt,
     snapshotAgeSeconds: ageSeconds,
-    stale: snapshotAgeMs(generatedAt) > DECISION_PACK_MAX_AGE_MS,
+    stale,
+    freshness: stale ? "stale" : "fresh",
+    rebuildEnqueued: false,
   };
 }
 

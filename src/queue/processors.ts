@@ -2,6 +2,7 @@ import {
   countOpenIssues,
   countOpenPullRequests,
   getLatestRepoGithubTotalsSnapshot,
+  getFreshOfficialMinerDetection,
   getPullRequest,
   getRepository,
   getRepositorySettings,
@@ -12,6 +13,7 @@ import {
   listContributorRepoStats,
   listIssues,
   listIssueSignalSample,
+  listLatestSignalSnapshotsByTarget,
   listOtherOpenPullRequests,
   listOpenPullRequests,
   listPullRequests,
@@ -26,6 +28,7 @@ import {
   persistSignalSnapshot,
   recordWebhookEvent,
   replaceCollisionEdges,
+  upsertOfficialMinerDetection,
   upsertBurdenForecast,
   upsertContributorEvidence,
   upsertContributorScoringProfile,
@@ -42,7 +45,7 @@ import {
   refreshContributorActivity,
   refreshInstallationHealth,
 } from "../github/backfill";
-import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot } from "../gittensor/api";
+import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
 import { createOrUpdateCheckRun, getInstallationId } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment } from "../github/comments";
 import {
@@ -57,6 +60,10 @@ import { buildIssueAdvisory, buildPullRequestAdvisory } from "../rules/advisory"
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack } from "../services/decision-pack";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork } from "../services/agent-orchestrator";
+import {
+  buildFreshnessSloReport,
+  freshnessAuditMetadata,
+} from "../signals/data-quality";
 import {
   buildBurdenForecast,
   buildCollisionEdges,
@@ -79,6 +86,9 @@ import {
 import { decidePublicSurface } from "../signals/settings-preview";
 import type { ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue } from "../types";
 import { errorMessage } from "../utils/json";
+
+const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
+const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
 
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
   switch (message.type) {
@@ -202,7 +212,7 @@ async function fanOutRepoSignalSnapshotJobs(env: Env, requestedBy: "schedule" | 
 }
 
 async function repairDataFidelity(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
-  const [repositories, segments] = await Promise.all([listRepositories(env), listRepoSyncSegments(env)]);
+  const [repositories, segments, signalSnapshots] = await Promise.all([listRepositories(env), listRepoSyncSegments(env), listLatestSignalSnapshotsByTarget(env)]);
   const requiredSegments = new Set(["labels", "open_issues", "open_pull_requests"]);
   const segmentsByRepo = new Map<string, Set<string>>();
   for (const segment of segments) {
@@ -213,6 +223,7 @@ async function repairDataFidelity(env: Env, requestedBy: "schedule" | "api" | "t
     }
   }
   const registeredRepos = repositories.filter((repo) => repo.isRegistered);
+  const freshnessSlo = buildFreshnessSloReport({ repoCount: registeredRepos.length, segments, signalSnapshots });
   const repairs = [];
   const signalRefreshes = [];
   for (const repo of registeredRepos) {
@@ -247,8 +258,14 @@ async function repairDataFidelity(env: Env, requestedBy: "schedule" | "api" | "t
   ]);
   await recordAuditEvent(env, {
     eventType: "sync.fidelity_repair",
-    outcome: repairs.length > 0 ? "queued" : "completed",
-    metadata: { requestedBy, repairCount: repairs.length, signalRefreshCount: signalRefreshes.length, repairs: repairs.slice(0, 25) },
+    outcome: repairs.length > 0 || freshnessSlo.repairRecommended ? "queued" : "completed",
+    metadata: { requestedBy, repairCount: repairs.length, signalRefreshCount: signalRefreshes.length, repairs: repairs.slice(0, 25), freshnessSlo: freshnessAuditMetadata(freshnessSlo) },
+  });
+  await recordAuditEvent(env, {
+    eventType: "signals.freshness_slo",
+    outcome: freshnessSlo.repairRecommended ? "queued" : "completed",
+    detail: freshnessSlo.status,
+    metadata: { requestedBy, ...freshnessAuditMetadata(freshnessSlo) },
   });
 }
 
@@ -537,16 +554,12 @@ async function maybePublishPrPublicSurface(
   }
   if (!author) return;
 
-  const official = await fetchOfficialGittensorMiner(author);
+  const official = await getCachedOfficialMinerDetection(env, author, {
+    targetKey: `${repoFullName}#${pr.number}`,
+    deliveryId: webhook.deliveryId,
+  });
   if (official.status === "unavailable") {
-    await recordAuditEvent(env, {
-      eventType: "github_app.miner_detection_unavailable",
-      actor: author,
-      targetKey: `${repoFullName}#${pr.number}`,
-      outcome: "error",
-      detail: official.error,
-      metadata: { deliveryId: webhook.deliveryId },
-    });
+    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
     return;
   }
   if (official.status !== "confirmed") {
@@ -674,7 +687,9 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
 
   const [repo, cachedPullRequest] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, issue.number)]);
   const pullRequestAuthor = cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
-  const official = pullRequestAuthor ? await fetchOfficialGittensorMiner(pullRequestAuthor) : undefined;
+  const official = pullRequestAuthor
+    ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, { targetKey: `${repoFullName}#${issue.number}`, deliveryId })
+    : undefined;
   const authorization = isAuthorizedCommandActor({
     commenterLogin: commenter,
     commenterAssociation: payload.comment?.author_association ?? issue.author_association,
@@ -741,6 +756,28 @@ async function auditPrVisibilitySkip(
     detail: reason,
     metadata: { deliveryId },
   });
+}
+
+async function getCachedOfficialMinerDetection(env: Env, login: string, context: { targetKey: string; deliveryId: string }): Promise<OfficialGittensorMinerDetection> {
+  const cached = await getFreshOfficialMinerDetection(env, login);
+  if (cached) {
+    await auditMinerDetectionCache(env, "github_app.miner_detection_cache_hit", login, context, cached.status);
+    if (cached.status === "unavailable") await auditMinerDetectionUnavailable(env, login, context, cached.error);
+    return cached;
+  }
+  await auditMinerDetectionCache(env, "github_app.miner_detection_cache_miss", login, context, "miss");
+  const detection = await fetchOfficialGittensorMiner(login);
+  await upsertOfficialMinerDetection(env, login, detection, detection.status === "unavailable" ? OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS : OFFICIAL_MINER_DETECTION_TTL_MS);
+  if (detection.status === "unavailable") await auditMinerDetectionUnavailable(env, login, context, detection.error);
+  return detection;
+}
+
+async function auditMinerDetectionUnavailable(env: Env, actor: string, context: { targetKey: string; deliveryId: string }, detail: string): Promise<void> {
+  await recordAuditEvent(env, { eventType: "github_app.miner_detection_unavailable", actor, targetKey: context.targetKey, outcome: "error", detail, metadata: { deliveryId: context.deliveryId } });
+}
+
+async function auditMinerDetectionCache(env: Env, eventType: "github_app.miner_detection_cache_hit" | "github_app.miner_detection_cache_miss", actor: string, context: { targetKey: string; deliveryId: string }, detail: string): Promise<void> {
+  await recordAuditEvent(env, { eventType, actor, targetKey: context.targetKey, outcome: "completed", detail, metadata: { deliveryId: context.deliveryId } });
 }
 
 function officialGittensorContributorDetection(

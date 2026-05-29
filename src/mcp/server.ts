@@ -35,7 +35,7 @@ import {
   preparePrPacketWithAgent,
   startAgentRun,
 } from "../services/agent-orchestrator";
-import { loadFreshContributorDecisionPack, repoDecisionFromPack } from "../services/decision-pack";
+import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -59,6 +59,12 @@ type ToolPayload = {
   summary: string;
   data: Record<string, unknown>;
 };
+
+function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: boolean): string {
+  if (freshness === "fresh") return `Gittensory decision pack for ${login}.`;
+  if (rebuildEnqueued) return `Gittensory decision pack for ${login} (stale; background rebuild enqueued).`;
+  return `Gittensory decision pack for ${login} (stale; rebuild not enqueued).`;
+}
 
 const ownerRepoShape = {
   owner: z.string().min(1),
@@ -509,43 +515,29 @@ export class GittensoryMcp {
   }
 
   private async getDecisionPack(login: string): Promise<ToolPayload> {
-    const pack = await loadFreshContributorDecisionPack(this.env, login);
-    if (pack) {
+    const serving = await loadContributorDecisionPackForServing(this.env, login);
+    if (serving.kind === "ready") {
       return {
-        summary: `Gittensory decision pack for ${login}.`,
-        data: pack as unknown as Record<string, unknown>,
+        summary: decisionPackSummary(login, serving.pack.freshness, serving.pack.rebuildEnqueued),
+        data: serving.pack as unknown as Record<string, unknown>,
       };
     }
-    await this.env.JOBS.send({ type: "build-contributor-decision-packs", requestedBy: "api", login });
     return {
       summary: `Gittensory decision pack for ${login} needs a snapshot refresh.`,
-      data: {
-        status: "needs_snapshot_refresh",
-        login,
-        generatedAt: new Date().toISOString(),
-        reason: "missing_snapshot",
-        enqueued: true,
-      },
+      data: serving.refresh as unknown as Record<string, unknown>,
     };
   }
 
   private async explainRepoDecision(input: { login: string; owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    const pack = await loadFreshContributorDecisionPack(this.env, input.login);
-    if (!pack) {
-      await this.env.JOBS.send({ type: "build-contributor-decision-packs", requestedBy: "api", login: input.login });
+    const serving = await loadContributorDecisionPackForServing(this.env, input.login);
+    if (serving.kind === "needs_refresh") {
       return {
         summary: `Gittensory repo decision for ${input.login} in ${fullName} needs a snapshot refresh.`,
-        data: {
-          status: "needs_snapshot_refresh",
-          login: input.login,
-          repoFullName: fullName,
-          generatedAt: new Date().toISOString(),
-          reason: "missing_snapshot",
-          enqueued: true,
-        },
+        data: { ...serving.refresh, repoFullName: fullName } as unknown as Record<string, unknown>,
       };
     }
+    const pack = serving.pack;
     const decision = repoDecisionFromPack(pack, fullName);
     return {
       summary: `Gittensory repo decision for ${input.login} in ${fullName}.`,
@@ -555,6 +547,8 @@ export class GittensoryMcp {
         repoFullName: fullName,
         generatedAt: pack.generatedAt,
         source: pack.source,
+        freshness: pack.freshness,
+        rebuildEnqueued: pack.rebuildEnqueued,
         decision,
         dataQuality: pack.dataQuality,
       },

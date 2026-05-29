@@ -53,7 +53,7 @@
 
 - Add deterministic base-agent orchestrator (#14)
 
-- Make next-action recommendations repo-specific
+- Detect stale installs and API compatibility in doctor and status
 
 
 
@@ -86,6 +86,3 @@
 - Tighten and extend decision-pack regression coverage
 
 - Cover review-requested branches and tier sanitization
-
-
-

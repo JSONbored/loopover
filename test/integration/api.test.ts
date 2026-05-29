@@ -348,7 +348,13 @@ describe("api routes", () => {
 
     const missingDecisionPack = await app.request("/v1/contributors/oktofeesh1/decision-pack", { headers: apiHeaders(env) }, env);
     expect(missingDecisionPack.status).toBe(202);
-    await expect(missingDecisionPack.json()).resolves.toMatchObject({ status: "needs_snapshot_refresh", login: "oktofeesh1", enqueued: true });
+    await expect(missingDecisionPack.json()).resolves.toMatchObject({
+      status: "needs_snapshot_refresh",
+      login: "oktofeesh1",
+      reason: "missing_snapshot",
+      freshness: "missing",
+      rebuildEnqueued: true,
+    });
 
     const builtDecisionPack = await app.request(
       "/v1/internal/jobs/build-contributor-decision-packs/run",
@@ -408,7 +414,12 @@ describe("api routes", () => {
 
     const missingRepoDecisionSnapshot = await app.request("/v1/contributors/new-user/repos/entrius/allways-ui/decision", { headers: apiHeaders(env) }, env);
     expect(missingRepoDecisionSnapshot.status).toBe(202);
-    await expect(missingRepoDecisionSnapshot.json()).resolves.toMatchObject({ status: "needs_snapshot_refresh", repoFullName: "entrius/allways-ui" });
+    await expect(missingRepoDecisionSnapshot.json()).resolves.toMatchObject({
+      status: "needs_snapshot_refresh",
+      repoFullName: "entrius/allways-ui",
+      freshness: "missing",
+      rebuildEnqueued: true,
+    });
 
     for (const path of [
       "/v1/contributors/oktofeesh1/opportunities",
@@ -759,6 +770,7 @@ describe("api routes", () => {
     await expect(readiness.json()).resolves.toMatchObject({
       status: "ready",
       readyForPublicReview: true,
+      freshnessSlo: { status: "fresh", repairRecommended: false },
       secrets: { githubPublicToken: true },
       githubBackfill: { failingSyncs: [] },
       warnings: [],
@@ -822,11 +834,40 @@ describe("api routes", () => {
     expect(missingSnapshotReadiness.status).toBe(200);
     await expect(missingSnapshotReadiness.json()).resolves.toMatchObject({
       readyForPublicReview: false,
+      freshnessSlo: { status: "degraded", missingCount: expect.any(Number), repairRecommended: true },
       warnings: expect.arrayContaining([
         "Registry snapshot is missing.",
         "Scoring model snapshot is missing. Run refresh-scoring-model before public review.",
         "GITHUB_PUBLIC_TOKEN is not configured; public registered-repo backfill may hit GitHub rate limits.",
       ]),
+    });
+
+    const staleEnv = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await persistRegistrySnapshot(
+      staleEnv,
+      normalizeRegistryPayload(
+        { "entrius/allways-ui": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
+        { kind: "raw-github", url: "fixture://stale-registry" },
+        "2026-05-01T00:00:00.000Z",
+      ),
+    );
+    await persistScoringModelSnapshot(staleEnv, {
+      id: "stale-scoring",
+      sourceKind: "test",
+      sourceUrl: "fixture://stale-scoring",
+      fetchedAt: "2026-05-01T00:00:00.000Z",
+      activeModel: "current_density_model",
+      constants: {},
+      programmingLanguages: {},
+      warnings: [],
+      payload: {},
+    });
+    const staleReadiness = await app.request("/v1/readiness", { headers: apiHeaders(staleEnv) }, staleEnv);
+    expect(staleReadiness.status).toBe(200);
+    await expect(staleReadiness.json()).resolves.toMatchObject({
+      readyForPublicReview: false,
+      freshnessSlo: { status: "degraded", staleCount: expect.any(Number), launchBlockingCount: expect.any(Number), repairRecommended: true },
+      warnings: expect.arrayContaining([expect.stringContaining("Freshness SLO is degraded")]),
     });
 
     const missingSyncEnv = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
@@ -844,6 +885,51 @@ describe("api routes", () => {
       readyForPublicReview: false,
       warnings: expect.arrayContaining([expect.stringContaining("registered repo(s) do not have GitHub backfill state yet")]),
     });
+  });
+
+  it("keeps optional stale signal snapshots visible without blocking public review readiness", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedSignalData(env);
+    const nowMs = Date.now();
+    await persistSignalSnapshot(env, {
+      id: "stale-queue-health-entrius",
+      signalType: "queue-health",
+      targetKey: "entrius/allways-ui",
+      repoFullName: "entrius/allways-ui",
+      payload: {},
+      generatedAt: new Date(nowMs - 13 * 60 * 60 * 1000).toISOString(),
+    });
+    for (let index = 0; index < 250; index += 1) {
+      await persistSignalSnapshot(env, {
+        id: `fresh-queue-health-${index}`,
+        signalType: "queue-health",
+        targetKey: `owner/repo-${index}`,
+        repoFullName: `owner/repo-${index}`,
+        payload: {},
+        generatedAt: new Date(nowMs - index * 1000).toISOString(),
+      });
+    }
+
+    const readiness = await app.request("/v1/readiness", { headers: apiHeaders(env) }, env);
+    expect(readiness.status).toBe(200);
+    const payload = await readiness.json() as {
+      readyForPublicReview: boolean;
+      freshnessSlo: { status: string; launchBlockingCount: number; items: Array<{ area: string; targetKey: string; status: string; launchBlocking: boolean }> };
+      warnings: string[];
+    };
+
+    expect(payload.readyForPublicReview).toBe(true);
+    expect(payload.freshnessSlo).toMatchObject({
+      status: "degraded",
+      launchBlockingCount: 0,
+    });
+    expect(payload.freshnessSlo.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ area: "signal_snapshot", targetKey: "entrius/allways-ui", status: "stale", launchBlocking: false }),
+      ]),
+    );
+    expect(payload.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Freshness SLO is degraded")]));
   });
 
   it("exposes capped and rate-limited sync segments in readiness and sync status", async () => {
@@ -1139,7 +1225,7 @@ describe("api routes", () => {
       expect(response.status).toBe(200);
       const payload = (await mcpJson(response)) as { result: { structuredContent: Record<string, unknown> } };
       if (name === "gittensory_get_contributor_profile") expect(payload.result.structuredContent).toMatchObject({ login: "unknown-user" });
-      else expect(payload.result.structuredContent).toMatchObject({ status: "needs_snapshot_refresh", enqueued: true });
+      else expect(payload.result.structuredContent).toMatchObject({ status: "needs_snapshot_refresh", freshness: "missing", rebuildEnqueued: true });
     }
 
     const missingRepoDecision = await app.request(
@@ -1615,31 +1701,133 @@ describe("api routes", () => {
         login: "stale-user",
         generatedAt: "2026-01-01T00:00:00.000Z",
         stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
         scoringModelSnapshotId: "scoring-1",
         profile: {},
         outcomeHistory: {},
         roleContexts: [],
-        repoDecisions: [],
-        topActions: [],
+        repoDecisions: [{ repoFullName: "owner/repo", recommendation: "pursue" }],
+        topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "owner/repo", priorityScore: 50 }],
         cleanupFirst: [],
-        pursueRepos: [],
+        pursueRepos: [{ repoFullName: "owner/repo", recommendation: "pursue" }],
         avoidRepos: [],
         maintainerLaneRepos: [],
         scoreBlockers: [],
         dataQuality: { signalFidelity: { status: "degraded" } },
         summary: "stale",
-        nextActions: [],
+        nextActions: ["pick a narrow change"],
       } as never,
       generatedAt: "2026-01-01T00:00:00.000Z",
     });
     const staleDecisionPack = await app.request("/v1/contributors/stale-user/decision-pack", { headers: apiHeaders(env) }, env);
-    expect(staleDecisionPack.status).toBe(202);
-    await expect(staleDecisionPack.json()).resolves.toMatchObject({
-      status: "needs_snapshot_refresh",
-      reason: "stale_snapshot",
-      staleSnapshot: { generatedAt: "2026-01-01T00:00:00.000Z" },
+    expect(staleDecisionPack.status).toBe(200);
+    const staleBody = (await staleDecisionPack.json()) as {
+      status: string;
+      freshness: string;
+      rebuildEnqueued: boolean;
+      stale: boolean;
+      generatedAt: string;
+      topActions: unknown[];
+      repoDecisions: unknown[];
+      dataQuality: { signalFidelity: { status: string } };
+    };
+    expect(staleBody).toMatchObject({
+      status: "ready",
+      freshness: "rebuilding",
+      rebuildEnqueued: true,
+      stale: true,
+      generatedAt: "2026-01-01T00:00:00.000Z",
       dataQuality: { signalFidelity: { status: "degraded" } },
     });
+    expect(staleBody.topActions.length).toBeGreaterThan(0);
+    expect(staleBody.repoDecisions.length).toBeGreaterThan(0);
+
+    const staleRepoDecision = await app.request("/v1/contributors/stale-user/repos/owner/repo/decision", { headers: apiHeaders(env) }, env);
+    expect(staleRepoDecision.status).toBe(200);
+    await expect(staleRepoDecision.json()).resolves.toMatchObject({
+      status: "ready",
+      login: "stale-user",
+      repoFullName: "owner/repo",
+      freshness: "rebuilding",
+      rebuildEnqueued: true,
+      decision: { repoFullName: "owner/repo", recommendation: "pursue" },
+    });
+
+    const staleMcpQueued = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "stale-mcp-queued",
+          method: "tools/call",
+          params: { name: "gittensory_get_decision_pack", arguments: { login: "stale-user" } },
+        }),
+      },
+      env,
+    );
+    expect(staleMcpQueued.status).toBe(200);
+    const staleMcpQueuedPayload = (await mcpJson(staleMcpQueued)) as { result: { structuredContent: { freshness: string; rebuildEnqueued: boolean }; content: Array<{ text: string }> } };
+    expect(staleMcpQueuedPayload.result.structuredContent).toMatchObject({ freshness: "rebuilding", rebuildEnqueued: true });
+    expect(staleMcpQueuedPayload.result.content[0]?.text).toContain("background rebuild enqueued");
+
+    const queueDownEnv = createTestEnv({
+      JOBS: {
+        async send() {
+          throw new Error("queue offline");
+        },
+      } as unknown as Queue,
+    });
+    await persistSignalSnapshot(queueDownEnv, {
+      id: "stale-mcp-queue-down",
+      signalType: "contributor-decision-pack",
+      targetKey: "mcp-stale-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "mcp-stale-user",
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        profile: {},
+        outcomeHistory: {},
+        roleContexts: [],
+        repoDecisions: [{ repoFullName: "owner/repo", recommendation: "pursue" }],
+        topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "owner/repo", priorityScore: 50 }],
+        cleanupFirst: [],
+        pursueRepos: [{ repoFullName: "owner/repo", recommendation: "pursue" }],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "complete" } },
+        summary: "stale",
+        nextActions: ["pick a narrow change"],
+      } as never,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const staleMcp = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(queueDownEnv),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "stale-mcp-queue-down",
+          method: "tools/call",
+          params: { name: "gittensory_get_decision_pack", arguments: { login: "mcp-stale-user" } },
+        }),
+      },
+      queueDownEnv,
+    );
+    expect(staleMcp.status).toBe(200);
+    const staleMcpPayload = (await mcpJson(staleMcp)) as { result: { structuredContent: { freshness: string; rebuildEnqueued: boolean }; content: Array<{ text: string }> } };
+    expect(staleMcpPayload.result.structuredContent).toMatchObject({ freshness: "stale", rebuildEnqueued: false });
+    expect(staleMcpPayload.result.content[0]?.text).toContain("rebuild not enqueued");
+    expect(staleMcpPayload.result.content[0]?.text).not.toContain("background rebuild enqueued");
 
     await persistSignalSnapshot(env, {
       id: "fresh-empty-pack",

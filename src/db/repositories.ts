@@ -22,6 +22,7 @@ import {
   issueQualityReports,
   issues,
   githubRateLimitObservations,
+  officialMinerDetections,
   pullRequestFiles,
   pullRequestDetailSyncState,
   pullRequestReviews,
@@ -90,6 +91,7 @@ import type {
   ScoringModelSnapshotRecord,
   SignalSnapshotRecord,
 } from "../types";
+import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
@@ -733,6 +735,111 @@ export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promi
     metadataJson: jsonString(event.metadata ?? {}),
     createdAt: event.createdAt ?? nowIso(),
   });
+}
+
+export async function hasRecentAuditEvent(env: Env, actor: string, eventType: string, sinceIso: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ id: auditEvents.id })
+    .from(auditEvents)
+    .where(and(eq(auditEvents.actor, actor), eq(auditEvents.eventType, eventType), gte(auditEvents.createdAt, sinceIso)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+export async function getFreshOfficialMinerDetection(env: Env, login: string, now = nowIso()): Promise<OfficialGittensorMinerDetection | null> {
+  const [row] = await getDb(env.DB).select().from(officialMinerDetections).where(and(eq(officialMinerDetections.login, login.toLowerCase()), gte(officialMinerDetections.expiresAt, now))).limit(1);
+  return row ? toOfficialMinerDetection(row) : null;
+}
+
+export async function upsertOfficialMinerDetection(env: Env, login: string, detection: OfficialGittensorMinerDetection, ttlMs: number, fetchedAtMs = Date.now()): Promise<void> {
+  const fetchedAt = new Date(fetchedAtMs).toISOString();
+  const cacheableDetection = toCacheableOfficialMinerDetection(detection);
+  const values = {
+    login: login.toLowerCase(), status: cacheableDetection.status,
+    snapshotJson: cacheableDetection.status === "confirmed" ? jsonString(cacheableDetection.snapshot) : "{}",
+    error: cacheableDetection.status === "unavailable" ? cacheableDetection.error : null, fetchedAt,
+    expiresAt: new Date(fetchedAtMs + ttlMs).toISOString(), updatedAt: fetchedAt,
+  };
+  await getDb(env.DB).insert(officialMinerDetections).values(values).onConflictDoUpdate({ target: officialMinerDetections.login, set: values });
+}
+
+function toCacheableOfficialMinerDetection(detection: OfficialGittensorMinerDetection): OfficialGittensorMinerDetection {
+  return detection.status === "confirmed" ? { status: "confirmed", snapshot: toCacheableGittensorSnapshot(detection.snapshot) } : detection;
+}
+
+function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnapshot>): GittensorContributorSnapshot {
+  return {
+    source: "gittensor_api",
+    githubId: String(snapshot.githubId ?? ""),
+    githubUsername: String(snapshot.githubUsername ?? ""),
+    uid: optionalNumber(snapshot.uid),
+    failedReason: typeof snapshot.failedReason === "string" ? snapshot.failedReason : snapshot.failedReason === null ? null : undefined,
+    evaluatedAt: typeof snapshot.evaluatedAt === "string" ? snapshot.evaluatedAt : undefined,
+    updatedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : undefined,
+    isEligible: Boolean(snapshot.isEligible),
+    credibility: finiteNumber(snapshot.credibility),
+    eligibleRepoCount: finiteNumber(snapshot.eligibleRepoCount),
+    issueDiscoveryScore: finiteNumber(snapshot.issueDiscoveryScore),
+    issueTokenScore: finiteNumber(snapshot.issueTokenScore),
+    issueCredibility: finiteNumber(snapshot.issueCredibility),
+    isIssueEligible: Boolean(snapshot.isIssueEligible),
+    issueEligibleRepoCount: finiteNumber(snapshot.issueEligibleRepoCount),
+    alphaPerDay: finiteNumber(snapshot.alphaPerDay),
+    taoPerDay: finiteNumber(snapshot.taoPerDay),
+    usdPerDay: finiteNumber(snapshot.usdPerDay),
+    totals: {
+      pullRequests: finiteNumber(snapshot.totals?.pullRequests),
+      mergedPullRequests: finiteNumber(snapshot.totals?.mergedPullRequests),
+      openPullRequests: finiteNumber(snapshot.totals?.openPullRequests),
+      closedPullRequests: finiteNumber(snapshot.totals?.closedPullRequests),
+      openIssues: finiteNumber(snapshot.totals?.openIssues),
+      closedIssues: finiteNumber(snapshot.totals?.closedIssues),
+      solvedIssues: finiteNumber(snapshot.totals?.solvedIssues),
+      validSolvedIssues: finiteNumber(snapshot.totals?.validSolvedIssues),
+    },
+    repositories: Array.isArray(snapshot.repositories)
+      ? snapshot.repositories.map((repo) => ({
+          repoFullName: String(repo.repoFullName ?? ""),
+          pullRequests: finiteNumber(repo.pullRequests),
+          mergedPullRequests: finiteNumber(repo.mergedPullRequests),
+          openPullRequests: finiteNumber(repo.openPullRequests),
+          closedPullRequests: finiteNumber(repo.closedPullRequests),
+          openIssues: finiteNumber(repo.openIssues),
+          closedIssues: finiteNumber(repo.closedIssues),
+          solvedIssues: finiteNumber(repo.solvedIssues),
+          validSolvedIssues: finiteNumber(repo.validSolvedIssues),
+          isEligible: Boolean(repo.isEligible),
+          isIssueEligible: Boolean(repo.isIssueEligible),
+          credibility: finiteNumber(repo.credibility),
+          issueCredibility: finiteNumber(repo.issueCredibility),
+          totalScore: finiteNumber(repo.totalScore),
+          baseTotalScore: finiteNumber(repo.baseTotalScore),
+        }))
+      : [],
+    pullRequests: Array.isArray(snapshot.pullRequests)
+      ? snapshot.pullRequests.map((pr) => ({
+          repoFullName: String(pr.repoFullName ?? ""),
+          number: finiteNumber(pr.number),
+          title: String(pr.title ?? ""),
+          state: String(pr.state ?? ""),
+          mergedAt: typeof pr.mergedAt === "string" ? pr.mergedAt : pr.mergedAt === null ? null : undefined,
+          label: typeof pr.label === "string" ? pr.label : pr.label === null ? null : undefined,
+          score: finiteNumber(pr.score),
+          baseScore: finiteNumber(pr.baseScore),
+          tokenScore: finiteNumber(pr.tokenScore),
+        }))
+      : [],
+    issueLabels: Array.isArray(snapshot.issueLabels) ? snapshot.issueLabels.filter((label): label is string => typeof label === "string") : [],
+  };
+}
+
+function finiteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export async function recordAiUsageEvent(
@@ -1402,6 +1509,38 @@ export async function listSignalSnapshots(env: Env, signalType: string, targetKe
     .orderBy(desc(signalSnapshots.generatedAt))
     .limit(100);
   return rows.map(toSignalSnapshotRecord);
+}
+
+export async function listLatestSignalSnapshotsByTarget(env: Env): Promise<SignalSnapshotRecord[]> {
+  const { results } = await env.DB.prepare(
+    `
+      SELECT id, signal_type, target_key, repo_full_name, payload_json, generated_at
+      FROM (
+        SELECT
+          id,
+          signal_type,
+          target_key,
+          repo_full_name,
+          payload_json,
+          generated_at,
+          row_number() OVER (
+            PARTITION BY signal_type, target_key
+            ORDER BY generated_at DESC, id DESC
+          ) AS snapshot_rank
+        FROM signal_snapshots
+      )
+      WHERE snapshot_rank = 1
+      ORDER BY signal_type, target_key
+    `,
+  ).all<{ id: string; signal_type: string; target_key: string; repo_full_name: string | null; payload_json: string; generated_at: string }>();
+  return results.map((row) => ({
+    id: row.id,
+    signalType: row.signal_type,
+    targetKey: row.target_key,
+    repoFullName: row.repo_full_name,
+    payload: parseJson<Record<string, never>>(row.payload_json, {}),
+    generatedAt: row.generated_at,
+  }));
 }
 
 export async function createAgentRun(env: Env, run: AgentRunRecord): Promise<void> {
@@ -2074,6 +2213,16 @@ function toInstallationHealthRecord(row: typeof installationHealth.$inferSelect)
     checkedAt: row.checkedAt,
     errorSummary: row.errorSummary,
   };
+}
+
+function toOfficialMinerDetection(row: typeof officialMinerDetections.$inferSelect): OfficialGittensorMinerDetection {
+  if (row.status === "confirmed") {
+    const snapshot = parseJson<Partial<GittensorContributorSnapshot> | null>(row.snapshotJson, null);
+    return snapshot?.githubId && snapshot.githubUsername
+      ? { status: "confirmed", snapshot: toCacheableGittensorSnapshot(snapshot) }
+      : { status: "unavailable", error: "cached Gittensor miner snapshot is invalid" };
+  }
+  return row.status === "unavailable" ? { status: "unavailable", error: row.error ?? "cached Gittensor API unavailable" } : { status: "not_found" };
 }
 
 function toAuthSessionRecord(row: typeof authSessions.$inferSelect): AuthSessionRecord {

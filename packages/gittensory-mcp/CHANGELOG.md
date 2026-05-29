@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+
+### Features
+
+- Detect stale installs and API compatibility in doctor and status (#28)
+
+- Generate public-safe pr packets
+
+
 ## mcp-v0.2.0 - 2026-05-28
 
 

@@ -65,4 +65,11 @@ If a command returns `429`, retry after the reported `retry-after` value. Expens
 
 ## Stale Decision Pack
 
-If `decision-pack` returns `needs_snapshot_refresh`, Gittensory has enqueued a rebuild. Retry after the queue drains.
+`decision-pack` responses now include a `freshness` field with one of:
+
+- `fresh` — snapshot is within the freshness window; serve as-is.
+- `rebuilding` — snapshot is past the freshness window and a background rebuild is enqueued; the response still contains `topActions` and `repoDecisions` from the last good snapshot. The companion `rebuildEnqueued: true` confirms a job was queued.
+- `stale` — snapshot is past the freshness window and a rebuild could not be enqueued (queue offline). Treat the data as a best-effort fallback and retry shortly.
+- `missing` — no usable snapshot exists. The response status is `needs_snapshot_refresh` and a rebuild has been enqueued when possible.
+
+MCP `gittensory_get_decision_pack` and `agent plan` degrade the same way: a stale snapshot returns usable actions with `freshness: "rebuilding"` and a freshness warning on the agent context snapshot. Retry once the queue drains to pick up a `fresh` pack.

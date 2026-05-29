@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   getLatestScorePreview,
   getLatestScoringModelSnapshot,
+  getFreshOfficialMinerDetection,
   listPullRequestDetailSyncStates,
   listRepoSyncSegments,
   listRepoSyncStates,
+  upsertOfficialMinerDetection,
 } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
@@ -113,5 +115,193 @@ describe("database row parser hardening", () => {
     await expect(getLatestScorePreview(env, "owner/repo", "target-variant")).resolves.toMatchObject({ targetType: "variant" });
     await expect(getLatestScorePreview(env, "owner/repo", "target-bad-target")).resolves.toMatchObject({ targetType: "planned_pr" });
     await expect(getLatestScorePreview(env, "owner/repo", "missing")).resolves.toBeNull();
+  });
+
+  it("fails closed for malformed or incomplete cached official miner detections", async () => {
+    const env = createTestEnv();
+    for (const [login, status, snapshotJson, error] of [
+      ["broken", "confirmed", "{}", null],
+      ["outage", "unavailable", "{}", null],
+    ]) {
+      await env.DB.prepare(
+        `insert into official_miner_detections (
+          login, status, snapshot_json, error, fetched_at, expires_at, updated_at
+        ) values (?, ?, ?, ?, '2026-05-29T00:00:00.000Z', '2099-01-01T00:00:00.000Z', '2026-05-29T00:00:00.000Z')`,
+      )
+        .bind(login, status, snapshotJson, error)
+        .run();
+    }
+
+    await expect(getFreshOfficialMinerDetection(env, "missing")).resolves.toBeNull();
+    await expect(getFreshOfficialMinerDetection(env, "broken")).resolves.toEqual({ status: "unavailable", error: "cached Gittensor miner snapshot is invalid" });
+    await expect(getFreshOfficialMinerDetection(env, "outage")).resolves.toEqual({ status: "unavailable", error: "cached Gittensor API unavailable" });
+  });
+
+  it("allowlists cached official miner snapshot fields", async () => {
+    const env = createTestEnv();
+    await upsertOfficialMinerDetection(
+      env,
+      "oktofeesh1",
+      {
+        status: "confirmed",
+        snapshot: {
+          source: "gittensor_api",
+          githubId: "123",
+          githubUsername: "oktofeesh1",
+          uid: 7,
+          hotkey: "must-not-cache",
+          wallet: "must-not-cache",
+          coldkey: "must-not-cache",
+          failedReason: "needs more history",
+          evaluatedAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:01:00.000Z",
+          isEligible: true,
+          credibility: 1,
+          eligibleRepoCount: 1,
+          issueDiscoveryScore: 0,
+          issueTokenScore: 0,
+          issueCredibility: 1,
+          isIssueEligible: false,
+          issueEligibleRepoCount: 0,
+          alphaPerDay: 0,
+          taoPerDay: 0,
+          usdPerDay: 0,
+          totals: {
+            pullRequests: 1,
+            mergedPullRequests: 1,
+            openPullRequests: 0,
+            closedPullRequests: 0,
+            openIssues: 0,
+            closedIssues: 0,
+            solvedIssues: 0,
+            validSolvedIssues: 0,
+          },
+          repositories: [
+            {
+              repoFullName: "JSONbored/gittensory",
+              pullRequests: 1,
+              mergedPullRequests: 1,
+              openPullRequests: 0,
+              closedPullRequests: 0,
+              openIssues: 0,
+              closedIssues: 0,
+              solvedIssues: 0,
+              validSolvedIssues: 0,
+              isEligible: true,
+              isIssueEligible: false,
+              credibility: 1,
+              issueCredibility: 1,
+              totalScore: 0,
+              baseTotalScore: 0,
+              hotkey: "must-not-cache",
+            },
+            { wallet: "must-not-cache" },
+          ],
+          pullRequests: [
+            {
+              repoFullName: "JSONbored/gittensory",
+              number: 1,
+              title: "Fix cache",
+              state: "open",
+              mergedAt: "2026-05-29T00:00:00.000Z",
+              label: "bug",
+              score: 0,
+              baseScore: 0,
+              tokenScore: 0,
+              wallet: "must-not-cache",
+            },
+            { hotkey: "must-not-cache" },
+          ],
+          issueLabels: ["bug"],
+        } as never,
+      },
+      60_000,
+      Date.parse("2026-05-29T00:00:00.000Z"),
+    );
+
+    const raw = await env.DB.prepare("select snapshot_json from official_miner_detections where login = ?").bind("oktofeesh1").first<{ snapshot_json: string }>();
+    expect(raw?.snapshot_json).not.toMatch(/hotkey|coldkey|wallet|must-not-cache/i);
+    const cached = await getFreshOfficialMinerDetection(env, "oktofeesh1", "2026-05-29T00:00:30.000Z");
+    expect(JSON.stringify(cached)).not.toMatch(/hotkey|coldkey|wallet|must-not-cache/i);
+    expect(cached).toMatchObject({ status: "confirmed", snapshot: { githubId: "123", githubUsername: "oktofeesh1", uid: 7 } });
+  });
+
+  it("normalizes sparse cached official miner snapshots without preserving unknown fields", async () => {
+    const env = createTestEnv();
+    await upsertOfficialMinerDetection(
+      env,
+      "minimal",
+      {
+        status: "confirmed",
+        snapshot: {
+          source: "gittensor_api",
+          githubId: "456",
+          githubUsername: "minimal",
+          uid: "not-a-number",
+          failedReason: null,
+          evaluatedAt: 123,
+          updatedAt: 123,
+          totals: null,
+          repositories: "not-an-array",
+          pullRequests: "not-an-array",
+          issueLabels: ["bug", 7],
+          wallet: "must-not-cache",
+          hotkey: "must-not-cache",
+        } as never,
+      },
+      60_000,
+      Date.parse("2026-05-29T00:00:00.000Z"),
+    );
+
+    const cached = await getFreshOfficialMinerDetection(env, "minimal", "2026-05-29T00:00:30.000Z");
+    expect(JSON.stringify(cached)).not.toMatch(/hotkey|coldkey|wallet|must-not-cache/i);
+    expect(cached).toMatchObject({
+      status: "confirmed",
+      snapshot: {
+        githubId: "456",
+        githubUsername: "minimal",
+        uid: undefined,
+        failedReason: null,
+        evaluatedAt: undefined,
+        updatedAt: undefined,
+        totals: {
+          pullRequests: 0,
+          mergedPullRequests: 0,
+          openPullRequests: 0,
+          closedPullRequests: 0,
+          openIssues: 0,
+          closedIssues: 0,
+          solvedIssues: 0,
+          validSolvedIssues: 0,
+        },
+        repositories: [],
+        pullRequests: [],
+        issueLabels: ["bug"],
+      },
+    });
+  });
+
+  it("drops unknown fields even when cached miner identity fields are missing", async () => {
+    const env = createTestEnv();
+    await upsertOfficialMinerDetection(
+      env,
+      "anonymous",
+      {
+        status: "confirmed",
+        snapshot: {
+          source: "gittensor_api",
+          wallet: "must-not-cache",
+          coldkey: "must-not-cache",
+          hotkey: "must-not-cache",
+          issueLabels: "not-an-array",
+        } as never,
+      },
+      60_000,
+      Date.parse("2026-05-29T00:00:00.000Z"),
+    );
+
+    const raw = await env.DB.prepare("select snapshot_json from official_miner_detections where login = ?").bind("anonymous").first<{ snapshot_json: string }>();
+    expect(raw?.snapshot_json).not.toMatch(/hotkey|coldkey|wallet|must-not-cache/i);
+    expect(JSON.parse(raw?.snapshot_json ?? "{}")).toMatchObject({ githubId: "", githubUsername: "", issueLabels: [] });
   });
 });

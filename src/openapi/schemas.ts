@@ -665,6 +665,18 @@ export const SyncStatusSchema = z
   .object({
     generatedAt: z.string(),
     signalFidelity: SignalFidelitySchema,
+    freshnessSlo: z.object({
+      status: z.enum(["fresh", "degraded", "blocked"]),
+      generatedAt: z.string(),
+      staleCount: z.number(),
+      degradedCount: z.number(),
+      blockedCount: z.number(),
+      missingCount: z.number(),
+      launchBlockingCount: z.number(),
+      repairRecommended: z.boolean(),
+      items: z.array(z.object({ area: z.string(), targetKey: z.string(), status: z.string(), launchBlocking: z.boolean(), ageSeconds: z.number().optional(), sloSeconds: z.number(), breachSeconds: z.number().optional(), observedAt: z.string().nullable().optional(), summary: z.string() })),
+      warnings: z.array(z.string()),
+    }),
     coreSignalFidelity: CoreSignalFidelitySchema,
     historyCoverage: z.enum(["sampled", "counts_only", "full"]),
     refreshingRepos: z.array(z.string()),
@@ -685,6 +697,18 @@ export const ReadinessSchema = z
     ready: z.boolean(),
     readyForPublicReview: z.boolean(),
     signalFidelity: SignalFidelitySchema,
+    freshnessSlo: z.object({
+      status: z.enum(["fresh", "degraded", "blocked"]),
+      generatedAt: z.string(),
+      staleCount: z.number(),
+      degradedCount: z.number(),
+      blockedCount: z.number(),
+      missingCount: z.number(),
+      launchBlockingCount: z.number(),
+      repairRecommended: z.boolean(),
+      items: z.array(z.object({ area: z.string(), targetKey: z.string(), status: z.string(), launchBlocking: z.boolean(), ageSeconds: z.number().optional(), sloSeconds: z.number(), breachSeconds: z.number().optional(), observedAt: z.string().nullable().optional(), summary: z.string() })),
+      warnings: z.array(z.string()),
+    }),
     coreSignalFidelity: CoreSignalFidelitySchema,
     historyCoverage: z.enum(["sampled", "counts_only", "full"]),
     partialRepos: z.array(z.string()),
@@ -1022,6 +1046,8 @@ export const ContributorStrategySchema = z
   })
   .openapi("ContributorStrategy");
 
+export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]).openapi("DecisionPackFreshness");
+
 export const ContributorDecisionPackSchema = z
   .object({
     status: z.enum(["ready"]),
@@ -1030,6 +1056,8 @@ export const ContributorDecisionPackSchema = z
     generatedAt: z.string(),
     snapshotAgeSeconds: z.number().optional(),
     stale: z.boolean(),
+    freshness: DecisionPackFreshnessSchema,
+    rebuildEnqueued: z.boolean(),
     scoringModelSnapshotId: z.string(),
     profile: z.record(z.unknown()),
     outcomeHistory: ContributorOutcomeHistorySchema,
@@ -1053,10 +1081,9 @@ export const DecisionPackRefreshNeededSchema = z
     login: z.string(),
     repoFullName: z.string().optional(),
     generatedAt: z.string(),
-    reason: z.enum(["missing_snapshot", "stale_snapshot"]),
-    enqueued: z.boolean(),
-    staleSnapshot: z.object({ generatedAt: z.string(), ageSeconds: z.number() }).optional(),
-    dataQuality: z.record(z.unknown()).optional(),
+    reason: z.enum(["missing_snapshot"]),
+    freshness: z.enum(["missing"]),
+    rebuildEnqueued: z.boolean(),
   })
   .openapi("DecisionPackRefreshNeeded");
 
@@ -1067,6 +1094,8 @@ export const RepoDecisionResponseSchema = z
     repoFullName: z.string(),
     generatedAt: z.string(),
     source: z.enum(["computed", "snapshot"]),
+    freshness: DecisionPackFreshnessSchema,
+    rebuildEnqueued: z.boolean(),
     decision: z.record(z.unknown()),
     dataQuality: z.record(z.unknown()),
   })
@@ -1233,6 +1262,7 @@ export const LocalBranchAnalysisSchema = z
     }),
     prPacket: z.object({
       titleSuggestion: z.string(),
+      markdown: z.string(),
       bodySections: z.array(z.object({ heading: z.string(), lines: z.array(z.string()) })),
       reviewerNotes: z.array(z.string()),
       validationSummary: z.object({

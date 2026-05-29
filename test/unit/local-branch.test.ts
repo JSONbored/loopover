@@ -47,6 +47,11 @@ describe("local branch analysis", () => {
     expect(analysis.rewardRisk.rewardUpside.relevantLane).toBe("direct_pr");
     expect(analysis.nextActions.map((action) => action.actionKind)).toContain("open_new_direct_pr");
     expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "source_upload_disabled" })]));
+    expect(analysis.prPacket.markdown).toContain("## Branch Freshness");
+    expect(analysis.prPacket.markdown).toContain("## Overlap/WIP Check");
+    expect(analysis.prPacket.markdown).toContain("- Closes #7");
+    expect(analysis.prPacket.markdown).toContain("- passed: npm test -- cache");
+    expect(analysis.prPacket.markdown).toContain("metadata only");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
 
@@ -135,9 +140,53 @@ describe("local branch analysis", () => {
     expect(analysis.baseFreshness.status).toBe("stale");
     expect(analysis.baseFreshness.warnings.join(" ")).toMatch(/behind remote tracking SHA/i);
     expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "stale_base_ref" })]));
+    expect(analysis.prPacket.markdown).toContain("## Branch Freshness");
+    expect(analysis.prPacket.markdown).toMatch(/Base freshness: stale|git fetch origin/i);
     expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("missing_test_evidence");
     expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("local_diff_missing_tests");
     expect(analysis.recommendedRerunCondition).toMatch(/git fetch origin/i);
+  });
+
+  it("includes public-safe overlap caution and hides local absolute paths", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [
+          { path: "/Users/example/work/src/cache.ts", previousPath: "src/cache-old.ts", additions: 12, deletions: 2, status: "renamed" },
+          { path: "test/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [12] }],
+      pullRequests: [
+        {
+          repoFullName: repo.fullName,
+          number: 12,
+          title: "Fix cache refresh",
+          state: "open",
+          authorLogin: "someone-else",
+          authorAssociation: "CONTRIBUTOR",
+          labels: ["bug"],
+          linkedIssues: [7],
+          createdAt: "2026-05-25T00:00:00.000Z",
+          updatedAt: "2026-05-25T00:00:00.000Z",
+        },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.preflight.status).toBe("needs_work");
+    expect(analysis.prPacket.markdown).toContain("Possible overlap or WIP");
+    expect(analysis.prPacket.markdown).toContain("PR #12");
+    expect(analysis.prPacket.markdown).toContain("[local path hidden]");
+    expect(analysis.prPacket.markdown).not.toContain("/Users/example");
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score|\/Users\/example/i);
   });
 
   it("distinguishes fresh, merge-base-stale, and large unverified base states", () => {
@@ -314,6 +363,7 @@ describe("local branch analysis", () => {
       expect.arrayContaining([
         expect.objectContaining({ heading: "Changed Paths", lines: ["- No changed paths were detected from local metadata."] }),
         expect.objectContaining({ heading: "Validation", lines: ["- Not supplied yet."] }),
+        expect.objectContaining({ heading: "Next Steps", lines: expect.arrayContaining([expect.stringContaining("metadata only")]) }),
       ]),
     );
     expect(analysis.summary).toContain("is the top private next action");

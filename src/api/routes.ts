@@ -34,6 +34,7 @@ import {
   listPullRequestFiles,
   listPullRequestReviews,
   listRecentMergedPullRequests,
+  listLatestSignalSnapshotsByTarget,
   listRepoLabels,
   listRepoSyncSegments,
   listRepoSyncStates,
@@ -74,8 +75,7 @@ import {
 } from "../services/agent-orchestrator";
 import {
   buildAndPersistContributorDecisionPack,
-  loadContributorDecisionPack,
-  loadFreshContributorDecisionPack,
+  loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
 import {
@@ -98,7 +98,7 @@ import {
   buildQueueHealth,
   buildRegistryChangeReport,
 } from "../signals/engine";
-import { attachDataQuality, buildCoreSignalFidelity, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
+import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
@@ -398,20 +398,25 @@ export function createApp() {
   });
 
   app.get("/v1/sync/status", async (c) => {
-    const [snapshot, repositories, segments, totals, detailStates, installations, rateLimits] = await Promise.all([
+    const [snapshot, scoringSnapshot, repositories, segments, totals, detailStates, installations, rateLimits, signalSnapshots, bounties] = await Promise.all([
       getLatestRegistrySnapshot(c.env),
+      getLatestScoringModelSnapshot(c.env),
       listRepoSyncStates(c.env),
       listRepoSyncSegments(c.env),
       listLatestRepoGithubTotalsSnapshots(c.env),
       listAllPullRequestDetailSyncStates(c.env),
       listInstallationHealth(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
+      listLatestSignalSnapshotsByTarget(c.env),
+      listBounties(c.env),
     ]);
     const repoCount = snapshot?.repoCount ?? repositories.length;
     const coreSignalFidelity = buildCoreSignalFidelity(repoCount, repositories, segments, totals, detailStates);
+    const freshnessSlo = buildFreshnessSloReport({ registrySnapshot: snapshot, scoringSnapshot, repoCount, syncStates: repositories, totals, segments, signalSnapshots, bounties });
     return c.json({
       generatedAt: nowIso(),
       signalFidelity: buildSignalFidelity(repoCount, repositories, segments),
+      freshnessSlo,
       coreSignalFidelity,
       historyCoverage: coreSignalFidelity.historyCoverage,
       refreshingRepos: coreSignalFidelity.refreshingRepos,
@@ -426,7 +431,7 @@ export function createApp() {
   });
 
   app.get("/v1/readiness", async (c) => {
-    const [snapshot, scoringSnapshot, syncStates, syncSegments, totals, detailStates, installations, installationHealth, rateLimits] = await Promise.all([
+    const [snapshot, scoringSnapshot, syncStates, syncSegments, totals, detailStates, installations, installationHealth, rateLimits, signalSnapshots, bounties] = await Promise.all([
       getLatestRegistrySnapshot(c.env),
       getLatestScoringModelSnapshot(c.env),
       listRepoSyncStates(c.env),
@@ -436,10 +441,13 @@ export function createApp() {
       listInstallations(c.env),
       listInstallationHealth(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
+      listLatestSignalSnapshotsByTarget(c.env),
+      listBounties(c.env),
     ]);
     const repoCount = snapshot?.repoCount ?? syncStates.length;
     const signalFidelity = buildSignalFidelity(repoCount, syncStates, syncSegments);
     const coreSignalFidelity = buildCoreSignalFidelity(repoCount, syncStates, syncSegments, totals, detailStates);
+    const freshnessSlo = buildFreshnessSloReport({ registrySnapshot: snapshot, scoringSnapshot, repoCount, syncStates, totals, segments: syncSegments, signalSnapshots, bounties });
     const statusCounts = syncStates.reduce<Record<string, number>>((counts, state) => {
       counts[state.status] = (counts[state.status] ?? 0) + 1;
       return counts;
@@ -460,6 +468,7 @@ export function createApp() {
       ...(signalFidelity.cappedRepos.length > 0 ? [`${signalFidelity.cappedRepos.length} repo sync(s) hit local pagination caps; signal fidelity is degraded.`] : []),
       ...(signalFidelity.rateLimitedRepos.length > 0 ? [`${signalFidelity.rateLimitedRepos.length} repo sync(s) encountered GitHub rate limiting.`] : []),
       ...(signalFidelity.staleRepos.length > 0 ? [`${signalFidelity.staleRepos.length} repo sync(s) are stale.`] : []),
+      ...(freshnessSlo.status !== "fresh" ? [`Freshness SLO is ${freshnessSlo.status}; ${freshnessSlo.warnings.length} stale, missing, or blocked signal source(s) need repair.`] : []),
       ...(installationHealth.some((health) => health.status !== "healthy") ? ["One or more GitHub App installations need attention."] : []),
     ];
     const ready = Boolean(snapshot) && Boolean(c.env.INTERNAL_JOB_TOKEN) && Boolean(c.env.GITTENSORY_API_TOKEN);
@@ -470,7 +479,8 @@ export function createApp() {
         Boolean(c.env.GITHUB_PUBLIC_TOKEN) &&
         missingSyncCount === 0 &&
         failingSyncs.length === 0 &&
-        coreSignalFidelity.status === "complete"
+        coreSignalFidelity.status === "complete" &&
+        freshnessSlo.launchBlockingCount === 0
       : false;
     return c.json({
       status: ready ? "ready" : "needs_attention",
@@ -478,6 +488,7 @@ export function createApp() {
       ready,
       readyForPublicReview,
       signalFidelity,
+      freshnessSlo,
       coreSignalFidelity,
       historyCoverage: coreSignalFidelity.historyCoverage,
       partialRepos: signalFidelity.partialRepos,
@@ -681,46 +692,32 @@ export function createApp() {
 
   app.get("/v1/contributors/:login/decision-pack", async (c) => {
     const login = c.req.param("login");
-    const pack = await loadFreshContributorDecisionPack(c.env, login);
-    if (pack) return c.json(pack);
-    const stalePack = await loadContributorDecisionPack(c.env, login);
-    await c.env.JOBS.send({ type: "build-contributor-decision-packs", requestedBy: "api", login });
-    return c.json(
-      {
-        status: "needs_snapshot_refresh",
-        login,
-        generatedAt: nowIso(),
-        reason: stalePack ? "stale_snapshot" : "missing_snapshot",
-        enqueued: true,
-        ...(stalePack ? { staleSnapshot: { generatedAt: stalePack.generatedAt, ageSeconds: Math.max(0, Math.floor((Date.now() - Date.parse(stalePack.generatedAt)) / 1000)) } } : {}),
-        ...(stalePack?.dataQuality ? { dataQuality: stalePack.dataQuality } : {}),
-      },
-      202,
-    );
+    const serving = await loadContributorDecisionPackForServing(c.env, login);
+    if (serving.kind === "ready") return c.json(serving.pack);
+    return c.json(serving.refresh, 202);
   });
 
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {
     const login = c.req.param("login");
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const pack = await loadFreshContributorDecisionPack(c.env, login);
-    if (!pack) {
-      const stalePack = await loadContributorDecisionPack(c.env, login);
-      await c.env.JOBS.send({ type: "build-contributor-decision-packs", requestedBy: "api", login });
-      return c.json(
-        {
-          status: "needs_snapshot_refresh",
-          login,
-          repoFullName: fullName,
-          generatedAt: nowIso(),
-          reason: stalePack ? "stale_snapshot" : "missing_snapshot",
-          enqueued: true,
-        },
-        202,
-      );
+    const serving = await loadContributorDecisionPackForServing(c.env, login);
+    if (serving.kind === "needs_refresh") {
+      return c.json({ ...serving.refresh, repoFullName: fullName }, 202);
     }
+    const pack = serving.pack;
     const decision = repoDecisionFromPack(pack, fullName);
     if (!decision) return c.json({ error: "repo_decision_not_found", login, repoFullName: fullName }, 404);
-    return c.json({ status: "ready", login, repoFullName: fullName, generatedAt: pack.generatedAt, source: pack.source, decision, dataQuality: pack.dataQuality });
+    return c.json({
+      status: "ready",
+      login,
+      repoFullName: fullName,
+      generatedAt: pack.generatedAt,
+      source: pack.source,
+      freshness: pack.freshness,
+      rebuildEnqueued: pack.rebuildEnqueued,
+      decision,
+      dataQuality: pack.dataQuality,
+    });
   });
 
   app.post("/v1/preflight/pr", async (c) => {

@@ -570,6 +570,13 @@ export const contributorScoringProfiles = sqliteTable("contributor_scoring_profi
   generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
 });
 
+export const officialMinerDetections = sqliteTable("official_miner_detections", {
+  login: text("login").primaryKey(), status: text("status").notNull(),
+  snapshotJson: text("snapshot_json").notNull().default("{}"), error: text("error"),
+  fetchedAt: text("fetched_at").notNull(), expiresAt: text("expires_at").notNull(),
+  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+
 export const issueQualityReports = sqliteTable(
   "issue_quality_reports",
   {

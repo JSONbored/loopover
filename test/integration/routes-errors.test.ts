@@ -428,6 +428,12 @@ describe("api route guards and error branches", () => {
       body: JSON.stringify({ repoFullName: "JSONbored/gittensory" }),
     }, env);
     expect(queuedForecasts.status).toBe(202);
+
+    expect((await app.request("/v1/internal/jobs/backfill-pr-details", { method: "POST", headers: internalHeaders(env), body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/backfill-pr-details", { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ repoFullName: "" }) }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/backfill-pr-details/run", { method: "POST", headers: internalHeaders(env), body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs", { method: "POST", headers: internalHeaders(env), body: "not-json" }, env)).status).toBe(202);
+    expect((await app.request("/v1/internal/jobs/build-contributor-evidence", { method: "POST", headers: internalHeaders(env), body: "not-json" }, env)).status).toBe(202);
     expect(queued).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "refresh-scoring-model" }),

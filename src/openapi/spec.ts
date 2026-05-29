@@ -51,6 +51,7 @@ import {
   GitHubRateLimitObservationSchema,
   RepoSyncSegmentSchema,
   RepoSyncStateSchema,
+  RepoSettingsPreviewSchema,
   RepositorySchema,
   RepositorySettingsSchema,
   RoleContextSchema,
@@ -99,6 +100,7 @@ export function buildOpenApiSpec() {
   registry.register("Bounty", BountySchema);
   registry.register("BountyAdvisory", BountyAdvisorySchema);
   registry.register("RepositorySettings", RepositorySettingsSchema);
+  registry.register("RepoSettingsPreview", RepoSettingsPreviewSchema);
   registry.register("AgentRun", AgentRunSchema);
   registry.register("AgentAction", AgentActionSchema);
   registry.register("AgentContextSnapshot", AgentContextSnapshotSchema);
@@ -240,6 +242,14 @@ export function buildOpenApiSpec() {
     path: "/v1/repos/{owner}/{repo}/settings",
     responses: {
       200: { description: "Gittensory repository automation settings", content: { "application/json": { schema: RepositorySettingsSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/settings-preview",
+    responses: {
+      200: { description: "Maintainer dry-run preview of the public surface decision for a sample PR (no GitHub mutation)", content: { "application/json": { schema: RepoSettingsPreviewSchema } } },
+      400: { description: "Invalid settings preview request" },
     },
   });
   registry.registerPath({

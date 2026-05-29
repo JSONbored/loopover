@@ -85,7 +85,7 @@ export function buildBranchAnalysisPayload(input) {
   return {
     ...metadata,
     localScorer,
-    localScorerStatus: externalPreview,
+    localScorerStatus: sanitizeLocalScorerStatus(externalPreview),
   };
 }
 
@@ -99,6 +99,40 @@ export function referenceScorePreviewCommand(kind = "metadata") {
   const script = kind === "gittensor" ? "gittensor-score-preview.py" : "gittensor-score-preview.mjs";
   const interpreter = kind === "gittensor" ? "python3" : "node";
   return `${interpreter} ${join(packageRoot, "scripts", script)}`;
+}
+
+export function referenceScorePreviewExample(kind = "metadata") {
+  const script = kind === "gittensor" ? "gittensor-score-preview.py" : "gittensor-score-preview.mjs";
+  const interpreter = kind === "gittensor" ? "python3" : "node";
+  return `${interpreter} ./node_modules/@jsonbored/gittensory-mcp/scripts/${script}`;
+}
+
+export function redactLocalPath(value) {
+  const text = String(value ?? "");
+  if (!text) return text;
+  return text
+    .replace(/(?:~\/|[A-Za-z]:\\)[^\s"'`,;)]+/g, "<local-path>")
+    .replace(/(^|[\s"'`=])\/(?:[^\s"'`,;)]+(?:\/[^\s"'`,;)]+)*)/g, (_, prefix) => `${prefix}<local-path>`);
+}
+
+export function redactScorerCommand(command) {
+  const text = String(command ?? "").trim();
+  if (!text) return text;
+  const parts = splitCommand(text);
+  const interpreter = parts[0] ?? "command";
+  const script = parts.at(-1)?.split(/[\\/]/).pop();
+  if (script && /\.(mjs|js|cjs|py)$/i.test(script)) return `${interpreter} <scorer-script>/${script}`;
+  return "<configured-scorer-command>";
+}
+
+export function sanitizeLocalScorerStatus(status) {
+  if (!status || typeof status !== "object") return status;
+  return stripUndefined({
+    ...status,
+    reason: status.reason ? redactLocalPath(String(status.reason)) : undefined,
+    stderr: status.stderr ? redactLocalPath(String(status.stderr)) : undefined,
+    scorerCommand: status.scorerCommand ? redactScorerCommand(status.scorerCommand) : undefined,
+  });
 }
 
 export function runExternalScorePreview(metadata, scorerCommand) {
@@ -158,20 +192,21 @@ export function runExternalScorePreview(metadata, scorerCommand) {
       fallbackMode: "external_command",
     });
   } catch (error) {
-    return classifyScorerExecFailure(error, Date.now() - startedAt);
+    return classifyScorerExecFailure(error, Date.now() - startedAt, scorerCommand);
   }
 }
 
 export function setupGuidanceForLocalScorer(status) {
   if (status.ok) return [];
-  const code = status.code ?? inferScorerCode(status.reason);
+  const safeStatus = sanitizeLocalScorerStatus(status);
+  const code = safeStatus.code ?? inferScorerCode(safeStatus.reason);
   const guidance = [
     "Gittensory used metadata-only analysis because no external scorer succeeded.",
   ];
   switch (code) {
     case "missing_scorer_command":
-      guidance.push(`Set GITTENSOR_SCORE_PREVIEW_CMD, for example: export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewCommand("metadata")}"`);
-      guidance.push(`For tree-sitter scoring with a local gittensor checkout: export GITTENSOR_ROOT=/path/to/gittensor && export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewCommand("gittensor")}"`);
+      guidance.push(`Set GITTENSOR_SCORE_PREVIEW_CMD, for example: export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewExample("metadata")}"`);
+      guidance.push(`For tree-sitter scoring with a local gittensor checkout: export GITTENSOR_ROOT=<local-gittensor-checkout> && export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewExample("gittensor")}"`);
       break;
     case "empty_scorer_command":
       guidance.push("GITTENSOR_SCORE_PREVIEW_CMD is set but empty; provide a command that reads branch metadata JSON from stdin.");
@@ -181,16 +216,16 @@ export function setupGuidanceForLocalScorer(status) {
       break;
     case "malformed_json":
       guidance.push("External scorer must print one JSON object with sourceTokenScore/totalTokenScore fields to stdout.");
-      if (status.stderr) guidance.push(`Last scorer stdout snippet: ${truncateText(status.stderr, 160)}`);
+      if (safeStatus.stderr) guidance.push(`Last scorer stdout snippet: ${truncateText(safeStatus.stderr, 160)}`);
       break;
     case "non_zero_exit":
       guidance.push("External scorer exited with a non-zero status; inspect stderr and run gittensory-mcp doctor.");
-      if (status.stderr) guidance.push(`Scorer stderr: ${truncateText(status.stderr, 160)}`);
-      if (typeof status.exitCode === "number") guidance.push(`Exit code: ${status.exitCode}`);
+      if (safeStatus.stderr) guidance.push(`Scorer stderr: ${truncateText(safeStatus.stderr, 160)}`);
+      if (typeof safeStatus.exitCode === "number") guidance.push(`Exit code: ${safeStatus.exitCode}`);
       break;
     default:
       guidance.push("Set GITTENSOR_SCORE_PREVIEW_CMD to a command that reads branch metadata JSON from stdin and emits scoring metrics JSON.");
-      if (status.reason) guidance.push(`Last scorer error: ${status.reason}`);
+      if (safeStatus.reason) guidance.push(`Last scorer error: ${safeStatus.reason}`);
       break;
   }
   guidance.push("Local scorer output stays on your machine; Gittensory never uploads source contents.");
@@ -198,14 +233,16 @@ export function setupGuidanceForLocalScorer(status) {
 }
 
 export function probeLocalScorer(scorerCommand = resolveScorePreviewCommand()) {
-  return runExternalScorePreview(
+  return sanitizeLocalScorerStatus(
+    runExternalScorePreview(
     {
       repoFullName: "JSONbored/gittensory",
       branchName: "doctor-probe",
       changedFiles: [{ path: "src/example.ts", additions: 12, deletions: 2, status: "modified" }],
       repoRoot: process.cwd(),
     },
-    scorerCommand,
+      scorerCommand,
+    ),
   );
 }
 
@@ -317,21 +354,41 @@ function scorerFailure(code, reason, extra = {}) {
   });
 }
 
-function classifyScorerExecFailure(error, durationMs) {
+function classifyScorerExecFailure(error, durationMs, scorerCommand) {
   const execError = error && typeof error === "object" ? error : undefined;
+  const stdout = String(execError?.stdout ?? execError?.output?.[1] ?? "").trim();
   const stderr = truncateText(execError?.stderr ?? execError?.output?.[2] ?? "");
   const exitCode = typeof execError?.status === "number" ? execError.status : undefined;
+  if (stdout && !looksLikeScorerJson(stdout)) {
+    return scorerFailure("malformed_json", "External scorer stdout was not valid JSON.", {
+      durationMs,
+      stderr: truncateText(stdout),
+      scorerCommand: redactScorerCommand(scorerCommand),
+      fallbackMode: "metadata_only",
+    });
+  }
   if (execError?.code === "ETIMEDOUT" || (execError?.killed && execError?.signal === "SIGTERM")) {
-    return scorerFailure("timeout", `External scorer timed out after ${scorePreviewTimeoutMs()}ms.`, { durationMs, stderr });
+    return scorerFailure("timeout", `External scorer timed out after ${scorePreviewTimeoutMs()}ms.`, { durationMs, stderr, scorerCommand: redactScorerCommand(scorerCommand) });
   }
   if (typeof exitCode === "number" && exitCode !== 0) {
-    return scorerFailure("non_zero_exit", `External scorer exited with status ${exitCode}.`, { durationMs, stderr, exitCode });
+    return scorerFailure("non_zero_exit", `External scorer exited with status ${exitCode}.`, { durationMs, stderr, exitCode, scorerCommand: redactScorerCommand(scorerCommand) });
   }
   const message = error instanceof Error ? error.message : "external_scorer_failed";
   if (/JSON/i.test(message)) {
-    return scorerFailure("malformed_json", message, { durationMs, stderr });
+    return scorerFailure("malformed_json", "External scorer stdout was not valid JSON.", { durationMs, stderr, scorerCommand: redactScorerCommand(scorerCommand) });
   }
-  return scorerFailure("scorer_failed", message, { durationMs, stderr, exitCode });
+  return scorerFailure("scorer_failed", redactLocalPath(message), { durationMs, stderr, exitCode, scorerCommand: redactScorerCommand(scorerCommand) });
+}
+
+function looksLikeScorerJson(output) {
+  try {
+    const payload = JSON.parse(output);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const normalized = normalizeScorerOutput(payload);
+    return normalized.sourceTokenScore !== undefined || normalized.totalTokenScore !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function inferScorerCode(reason) {

@@ -5,7 +5,7 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewCommand, resolveScorePreviewCommand, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
+import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
 
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
@@ -783,7 +783,7 @@ async function doctor(options) {
   }
 
   const commandPath = findExecutable("gittensory-mcp");
-  if (commandPath) add("client_path", "pass", `gittensory-mcp is visible on PATH at ${commandPath}.`);
+  if (commandPath) add("client_path", "pass", "gittensory-mcp is visible on PATH.");
   else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in Codex, Claude, or MCP client config.");
 
   const scorerCommand = resolveScorePreviewCommand();
@@ -792,12 +792,12 @@ async function doctor(options) {
       "local_scorer",
       "warn",
       "GITTENSOR_SCORE_PREVIEW_CMD is not configured; branch analysis will fall back to metadata-only scoring.",
-      `Example: export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewCommand("metadata")}"`,
+      `Example: export GITTENSOR_SCORE_PREVIEW_CMD="${referenceScorePreviewExample("metadata")}"`,
     );
   } else {
     const probe = probeLocalScorer(scorerCommand);
     if (probe.ok) {
-      add("local_scorer", "pass", `Configured scorer responded in ${probe.durationMs ?? 0}ms (${scorerCommand}).`);
+      add("local_scorer", "pass", `Configured scorer responded in ${probe.durationMs ?? 0}ms.`);
     } else {
       const remediation = setupGuidanceForLocalScorer(probe).slice(1).join(" ");
       add("local_scorer", "warn", `Configured scorer failed (${probe.code ?? "scorer_failed"}): ${probe.reason}`, remediation || "Run gittensory-mcp doctor --json for structured diagnostics.");
@@ -805,7 +805,7 @@ async function doctor(options) {
   }
 
   if (process.env.GITTENSOR_ROOT) {
-    add("gittensor_root", "pass", `GITTENSOR_ROOT is set to ${process.env.GITTENSOR_ROOT}.`);
+    add("gittensor_root", "pass", "GITTENSOR_ROOT is configured.");
   } else if (scorerCommand?.includes("gittensor-score-preview.py")) {
     add("gittensor_root", "warn", "Python gittensor scorer is configured but GITTENSOR_ROOT is unset.", "Set GITTENSOR_ROOT to a local entrius/gittensor checkout.");
   }
@@ -999,7 +999,7 @@ async function analyzeCurrentBranch(input) {
       changedFileCount: body.changedFiles?.length ?? 0,
       testFileCount: body.changedFiles?.filter((file) => /(^|\/)(test|tests|spec|__tests__)\/|(^|\/)src\/test\/|(^|\/)[^/]+_test\.(go|py|rb)$|(^|\/)[^/]+_spec\.rb$|\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file.path)).length ?? 0,
       passedValidationCount: body.validation?.filter((entry) => entry.status === "passed").length ?? 0,
-      localScorerStatus,
+      localScorerStatus: sanitizeLocalScorerStatus(localScorerStatus),
       setupGuidance: setupGuidanceForLocalScorer(localScorerStatus),
     },
     analysis,
@@ -1048,7 +1048,7 @@ async function previewLocalScore(input) {
       codeFiles: diff.codeFiles,
       commitMessage: input.commitMessage ?? diff.commitMessage,
     },
-    upstreamPreview,
+    upstreamPreview: sanitizeLocalScorerStatus(upstreamPreview),
     remotePreview: await apiPost("/v1/scoring/preview", body),
     setupGuidance: upstreamPreview.ok
       ? []

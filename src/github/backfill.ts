@@ -1455,7 +1455,7 @@ async function fetchAndStorePullRequestDetails(
   token: string | undefined,
   warnings: string[],
 ): Promise<void> {
-  const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token)]);
+  const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
 
   for (const file of files) {
     await upsertPullRequestFile(env, {
@@ -1534,9 +1534,13 @@ async function fetchPullRequestChecks(
   repoFullName: string,
   pr: PullRequestRecord,
   token: string | undefined,
+  warnings: string[],
 ): Promise<{ check_runs?: GitHubCheckRunPayload[] }> {
   if (!pr.headSha) return { check_runs: [] };
-  return githubJson<{ check_runs?: GitHubCheckRunPayload[] }>(env, repoFullName, `/commits/${pr.headSha}/check-runs?per_page=100`, token).catch(() => ({ check_runs: [] }));
+  const checks = await githubJson<{ check_runs?: GitHubCheckRunPayload[] }>(env, repoFullName, `/commits/${pr.headSha}/check-runs?per_page=100`, token).catch(() => undefined);
+  if (checks) return checks;
+  warnings.push(`Check sync failed for #${pr.number}: GitHub REST check-run fetch failed.`);
+  return { check_runs: [] };
 }
 
 async function fetchPullRequestDetailsFromGraphQl(

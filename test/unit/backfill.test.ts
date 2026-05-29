@@ -1494,6 +1494,38 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("records partial PR detail state and check summary segment when check-run fetches fail", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 12,
+      title: "Checks unavailable",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "missing-checks" },
+      labels: [],
+      body: "",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/pulls/12/files")) return Response.json([{ filename: "src/signal.ts", status: "modified", additions: 1, deletions: 0, changes: 1 }]);
+      if (url.includes("/pulls/12/reviews")) return Response.json([]);
+      if (url.includes("/commits/missing-checks/check-runs")) return new Response("checks unavailable", { status: 503 });
+      return Response.json([]);
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+
+    expect(result).toMatchObject({ status: "partial", processed: 1 });
+    expect(result.warnings).toEqual([expect.stringContaining("Check sync failed for #12")]);
+    expect(await listPullRequestDetailSyncStates(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ pullNumber: 12, status: "partial", errorSummary: expect.stringContaining("Check sync failed") })]),
+    );
+    expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ segment: "check_summaries", status: "partial", warnings: [expect.stringContaining("Check sync failed for #12")] })]),
+    );
+  });
+
   it("records partial PR detail state when REST and GraphQL cannot load a pull request", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

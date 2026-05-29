@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -31,16 +31,25 @@ describe("gittensory-mcp CLI", () => {
   it("runs doctor against a local health/session fixture", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
+    const secretRoot = join(tempDir, "secret-gittensor");
+    const secretConfigDir = join(tempDir, "secret-config");
+    mkdirSync(secretConfigDir, { recursive: true });
+    writeFileSync(join(secretConfigDir, "config.json"), JSON.stringify({ apiUrl: url }), { mode: 0o600 });
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
         GITTENSORY_API_URL: url,
         GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_CONFIG_DIR: secretConfigDir,
+        GITTENSOR_ROOT: secretRoot,
+        GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-malformed.mjs")}`,
         GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
       }),
-    ) as { status: string; checks: Array<{ name: string; status: string; detail: string }> };
+    ) as { status: string; config: { configured: boolean }; checks: Array<{ name: string; status: string; detail: string; remediation?: string }> };
 
+    const serialized = JSON.stringify(payload);
     expect(payload.status).toMatch(/ok|warnings/);
+    expect(serialized).not.toMatch(/secret-gittensor|secret-config/);
+    expect(payload.config.configured).toBe(true);
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "api_health", status: "pass" }),
@@ -49,8 +58,13 @@ describe("gittensory-mcp CLI", () => {
         expect.objectContaining({ name: "git_metadata", status: "pass" }),
         expect.objectContaining({ name: "version", status: "pass" }),
         expect.objectContaining({ name: "api_compatibility", status: "pass" }),
+        expect.objectContaining({ name: "local_scorer", status: "warn" }),
+        expect.objectContaining({ name: "gittensor_root", status: "pass" }),
       ]),
     );
+    const localScorer = payload.checks.find((check) => check.name === "local_scorer");
+    expect(localScorer?.detail).toMatch(/malformed_json/);
+    expect(localScorer?.detail).not.toMatch(join(process.cwd(), "test/fixtures"));
   });
 
   it("reports a stale global install with an exact upgrade command and npx fallback", async () => {
@@ -273,6 +287,64 @@ describe("gittensory-mcp CLI", () => {
     expect(explain.topAction.actionType).toBe("choose_next_work");
   });
 
+  it("prints copy-paste public-safe markdown for agent packet output", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    git(tempDir, "checkout", "-b", "codex/public-safe-pr-packets");
+    mkdirSync(join(tempDir, "src"));
+    writeFileSync(join(tempDir, "src/packet.ts"), "export const packet = true;\n");
+    const url = await startFixtureServer();
+    const output = await runAsync(
+      ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD", "--body", "Closes #39", "--validation", "passed|npm test|packet tests passed"],
+      {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      },
+    );
+
+    expect(output).toContain("# Public-safe PR packet");
+    expect(output).toContain("## Validation");
+    expect(output).toContain("Closes #39");
+    expect(output).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|raw[-\s]?trust|private[-\s]?reviewability|reviewability|export const packet/i);
+  });
+
+  it("rejects unsafe server-provided packet markdown before non-json output", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    git(tempDir, "checkout", "-b", "codex/public-safe-pr-packets");
+
+    for (const unsafePhrase of ["score: 1.15", "reward estimate", "wallet address", "hotkey id", "raw-trust: 0.7", "private-reviewability: ready"]) {
+      if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
+      server = null;
+      const url = await startFixtureServer({ packetMarkdown: `# Public-safe PR packet\n\n- ${unsafePhrase}\n` });
+      await expect(
+        runAsync(
+          ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD"],
+          {
+            GITTENSORY_API_URL: url,
+            GITTENSORY_TOKEN: "session-token",
+            GITTENSORY_CONFIG_DIR: tempDir,
+          },
+        ),
+      ).rejects.toThrow("Refusing to print unsafe public packet markdown from the server.");
+    }
+  });
+
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });
@@ -316,7 +388,11 @@ function runAsync(args: string[], env: Record<string, string> = {}) {
   });
 }
 
-async function startFixtureServer(options: { latestVersion?: string; minMcpVersion?: string; npmStatus?: number } = {}) {
+function git(cwd: string, ...args: string[]) {
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+async function startFixtureServer(options: { latestVersion?: string; minMcpVersion?: string; npmStatus?: number; packetMarkdown?: string } = {}) {
   server = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.url && request.url.includes("gittensory-mcp/latest")) {
@@ -344,6 +420,10 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
       response.end(JSON.stringify(agentFixture()));
       return;
     }
+    if (request.url === "/v1/agent/prepare-pr-packet" && request.method === "POST") {
+      response.end(JSON.stringify(agentPacketFixture(options.packetMarkdown)));
+      return;
+    }
     response.statusCode = 404;
     response.end(JSON.stringify({ error: "not_found" }));
   });
@@ -351,6 +431,31 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture server did not bind a TCP port");
   return `http://127.0.0.1:${address.port}`;
+}
+
+function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Linked Context\n- Closes #39\n\n## Validation\n- passed: npm test (packet tests passed)\n") {
+  return {
+    ...agentFixture(),
+    actions: [
+      {
+        id: "action-packet",
+        runId: "run-1",
+        actionType: "prepare_pr_packet",
+        status: "ready",
+        recommendation: "Use this public-safe packet.",
+        why: ["Fixture"],
+        blockedBy: [],
+        publicSafeSummary: "Packet ready.",
+        approvalRequired: false,
+        safetyClass: "public_safe",
+        payload: {
+          prPacket: {
+            markdown,
+          },
+        },
+      },
+    ],
+  };
 }
 
 function agentFixture() {

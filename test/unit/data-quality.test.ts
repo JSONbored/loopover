@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCoreSignalFidelity, buildRepoDataQuality, buildSignalFidelity } from "../../src/signals/data-quality";
+import { buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity, freshnessAuditMetadata } from "../../src/signals/data-quality";
 import type { PullRequestDetailSyncStateRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord } from "../../src/types";
 
 describe("sync data quality", () => {
@@ -91,6 +91,21 @@ describe("sync data quality", () => {
     });
   });
 
+  it("falls back to repo sync completion time when segment completion is missing", () => {
+    const quality = buildRepoDataQuality(
+      "owner/repo",
+      repoState({ lastCompletedAt: "2026-05-01T00:00:00.000Z" }),
+      [segment({ segment: "open_issues", completedAt: undefined })],
+      { nowMs: Date.parse("2026-05-25T00:00:00.000Z") },
+    );
+
+    expect(quality).toMatchObject({
+      status: "degraded",
+      stale: true,
+      staleSegments: ["open_issues"],
+    });
+  });
+
   it("treats explicit stale segment status as stale even without an old timestamp", () => {
     const quality = buildRepoDataQuality(
       "owner/repo",
@@ -161,6 +176,190 @@ describe("sync data quality", () => {
 
     expect(fidelity.status).toBe("complete");
     expect(fidelity.nextRecoverableAt).toBeUndefined();
+  });
+
+  it("summarizes freshness SLOs and redacts audit metadata to counts and areas", () => {
+    const report = buildFreshnessSloReport({
+      registrySnapshot: { id: "registry", fetchedAt: "2026-05-20T00:00:00.000Z", generatedAt: "2026-05-20T00:00:00.000Z", source: { kind: "raw-github", url: "fixture://registry" }, repoCount: 1, totalEmissionShare: 0.01, warnings: [], repositories: [] },
+      scoringSnapshot: null,
+      repoCount: 1,
+      totals: [{ id: "totals", repoFullName: "owner/repo", openIssuesTotal: 1, openPullRequestsTotal: 1, mergedPullRequestsTotal: 0, closedUnmergedPullRequestsTotal: 0, labelsTotal: 1, sourceKind: "test", fetchedAt: "2026-05-25T00:00:00.000Z", payload: {} }],
+      segments: [segment({ repoFullName: "owner/repo", segment: "open_issues", status: "rate_limited", completedAt: "2026-05-25T00:00:00.000Z" })],
+      signalSnapshots: [{ id: "pack", signalType: "contributor-decision-pack", targetKey: "alice", payload: {}, generatedAt: "2026-05-24T00:00:00.000Z" }],
+      nowMs: Date.parse("2026-05-28T00:00:00.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      status: "blocked",
+      repairRecommended: true,
+      staleCount: expect.any(Number),
+      blockedCount: 1,
+      missingCount: 1,
+      warnings: expect.arrayContaining([expect.stringContaining("registry"), expect.stringContaining("repo_segments")]),
+    });
+    expect(freshnessAuditMetadata(report)).toEqual({
+      status: "blocked",
+      staleCount: report.staleCount,
+      degradedCount: report.degradedCount,
+      blockedCount: report.blockedCount,
+      missingCount: report.missingCount,
+      launchBlockingCount: 3,
+      repairRecommended: true,
+      affectedAreas: expect.arrayContaining(["registry", "repo_segments", "decision_pack", "scoring_model"]),
+    });
+  });
+
+  it("marks supplied freshness sources fresh when observations are inside their SLOs", () => {
+    const report = buildFreshnessSloReport({
+      registrySnapshot: { id: "registry", fetchedAt: "2026-05-25T00:00:00.000Z", generatedAt: "2026-05-25T00:00:00.000Z", source: { kind: "raw-github", url: "fixture://registry" }, repoCount: 1, totalEmissionShare: 0.01, warnings: [], repositories: [] },
+      scoringSnapshot: { id: "scoring", sourceKind: "test", sourceUrl: "fixture://scoring", fetchedAt: "2026-05-25T00:00:00.000Z", activeModel: "current_density_model", constants: {}, programmingLanguages: {}, warnings: [], payload: {} },
+      repoCount: 1,
+      syncStates: [repoState()],
+      totals: [totals()],
+      segments: [segment()],
+      signalSnapshots: [
+        { id: "decision", signalType: "contributor-decision-pack", targetKey: "oktofeesh1", payload: {}, generatedAt: "2026-05-25T00:00:00.000Z" },
+        { id: "queue", signalType: "queue-health", targetKey: "owner/repo", payload: {}, generatedAt: "2026-05-25T00:00:00.000Z" },
+      ],
+      bounties: [{ id: "bounty", repoFullName: "owner/repo", issueNumber: 1, status: "open", payload: {}, discoveredAt: "2026-05-25T00:00:00.000Z", updatedAt: "2026-05-25T00:00:00.000Z" }],
+      expectedDecisionPackKeys: ["oktofeesh1"],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      status: "fresh",
+      staleCount: 0,
+      degradedCount: 0,
+      blockedCount: 0,
+      missingCount: 0,
+      launchBlockingCount: 0,
+      repairRecommended: false,
+      warnings: [],
+    });
+    expect(report.items.map((item) => item.area).sort()).toEqual(["bounty_data", "decision_pack", "github_totals", "registry", "repo_segments", "scoring_model", "signal_snapshot"]);
+  });
+
+  it("degrades freshness when repo segments are active and totals are missing", () => {
+    const report = buildFreshnessSloReport({
+      repoCount: 1,
+      syncStates: [repoState({ status: "partial" })],
+      totals: [],
+      segments: [segment()],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      status: "degraded",
+      degradedCount: 1,
+      missingCount: 1,
+      warnings: expect.arrayContaining(["github_totals:registered_repos is missing", "repo_segments:registered_repos is degraded"]),
+    });
+  });
+
+  it("treats malformed freshness timestamps as missing observations", () => {
+    const report = buildFreshnessSloReport({
+      signalSnapshots: [{ id: "queue", signalType: "queue-health", targetKey: "owner/repo", payload: {}, generatedAt: "not-a-date" }],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      status: "degraded",
+      missingCount: 1,
+      launchBlockingCount: 0,
+      warnings: ["signal_snapshot:owner/repo is missing"],
+    });
+    expect(report.items[0]).toMatchObject({ area: "signal_snapshot", observedAt: null, status: "missing" });
+  });
+
+  it("does not degrade when optional bounties and decision packs are absent without expected targets", () => {
+    expect(
+      buildFreshnessSloReport({
+        signalSnapshots: [],
+        bounties: [],
+        nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+      }),
+    ).toMatchObject({
+      status: "fresh",
+      missingCount: 0,
+      launchBlockingCount: 0,
+      repairRecommended: false,
+      items: [],
+      warnings: [],
+    });
+  });
+
+  it("tracks signal freshness per target and uses each target's latest observation", () => {
+    const report = buildFreshnessSloReport({
+      signalSnapshots: [
+        { id: "old-a", signalType: "queue-health", targetKey: "owner/a", payload: {}, generatedAt: "2026-05-24T00:00:00.000Z" },
+        { id: "new-a", signalType: "queue-health", targetKey: "owner/a", payload: {}, generatedAt: "2026-05-25T00:30:00.000Z" },
+        { id: "old-b", signalType: "queue-health", targetKey: "owner/b", payload: {}, generatedAt: "2026-05-24T00:00:00.000Z" },
+      ],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(report).toMatchObject({
+      status: "degraded",
+      staleCount: 1,
+      launchBlockingCount: 0,
+      repairRecommended: true,
+    });
+    expect(report.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ area: "signal_snapshot", targetKey: "owner/a", status: "fresh", observedAt: "2026-05-25T00:30:00.000Z", launchBlocking: false }),
+        expect.objectContaining({ area: "signal_snapshot", targetKey: "owner/b", status: "stale", observedAt: "2026-05-24T00:00:00.000Z", launchBlocking: false }),
+      ]),
+    );
+  });
+
+  it("keeps sparse freshness inputs scoped to explicitly observed sources", () => {
+    const totalsOnly = buildFreshnessSloReport({
+      totals: [totals()],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+    const missingSegments = buildFreshnessSloReport({
+      repoCount: 1,
+      syncStates: [repoState({ status: "never_synced" })],
+      segments: [],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+    const discoveredBounty = buildFreshnessSloReport({
+      bounties: [{ id: "bounty", repoFullName: "owner/repo", issueNumber: 1, status: "open", payload: {}, discoveredAt: "2026-05-25T00:30:00.000Z" }],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(totalsOnly.items).toEqual([]);
+    expect(missingSegments).toMatchObject({
+      status: "degraded",
+      missingCount: 1,
+      warnings: ["repo_segments:registered_repos is missing"],
+    });
+    expect(discoveredBounty).toMatchObject({ status: "fresh", repairRecommended: false });
+    expect(discoveredBounty.items[0]).toMatchObject({ area: "bounty_data", ageSeconds: 1800, observedAt: "2026-05-25T00:30:00.000Z" });
+  });
+
+  it("degrades core fidelity when a registered repo has no segment coverage yet", () => {
+    expect(buildCoreSignalFidelity(1, [repoState()], [], [], [])).toMatchObject({
+      status: "degraded",
+      incompleteRepos: ["owner/repo"],
+      degradedRepos: 1,
+    });
+  });
+
+  it("uses segment expected counts for rate-limited core checks before totals exist", () => {
+    expect(
+      buildCoreSignalFidelity(
+        1,
+        [repoState({ status: "rate_limited" })],
+        [segment({ segment: "open_issues", status: "waiting_rate_limit", fetchedCount: 1, expectedCount: 2, rateLimitResetAt: "2026-05-27T00:00:00.000Z" })],
+        [],
+        [],
+      ),
+    ).toMatchObject({
+      status: "blocked",
+      incompleteRepos: ["owner/repo"],
+      waitingForRateLimitRepos: ["owner/repo"],
+    });
   });
 
   it("does not block repo fidelity when a rate-limited segment already has complete stored coverage", () => {

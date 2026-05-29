@@ -1,7 +1,17 @@
-import type { DataQuality, PullRequestDetailSyncStateRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord } from "../types";
+import type { BountyRecord, DataQuality, PullRequestDetailSyncStateRecord, RegistrySnapshot, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord, ScoringModelSnapshotRecord, SignalSnapshotRecord } from "../types";
 import { nowIso } from "../utils/json";
 
 const DEFAULT_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const FRESHNESS_SLO_MS = {
+  registry: DEFAULT_STALE_MS,
+  scoring_model: DEFAULT_STALE_MS,
+  github_totals: DEFAULT_STALE_MS,
+  repo_segments: DEFAULT_STALE_MS,
+  decision_pack: 6 * 60 * 60 * 1000,
+  bounty_data: 24 * 60 * 60 * 1000,
+  signal_snapshot: 12 * 60 * 60 * 1000,
+};
+const LAUNCH_BLOCKING_FRESHNESS_AREAS = new Set<keyof typeof FRESHNESS_SLO_MS>(["registry", "scoring_model", "github_totals", "repo_segments"]);
 const COMPLETE_SEGMENT_STATUSES = new Set<RepoSyncSegmentRecord["status"]>(["complete", "not_modified", "sampled"]);
 const BLOCKING_SEGMENT_STATUSES = new Set<RepoSyncSegmentRecord["status"]>(["error", "rate_limited", "waiting_rate_limit", "skipped"]);
 const REQUIRED_OPEN_SEGMENTS = new Set<RepoSyncSegmentRecord["segment"]>(["metadata", "labels", "open_issues", "open_pull_requests", "pull_request_files", "pull_request_reviews", "check_summaries"]);
@@ -30,6 +40,80 @@ export type CoreSignalFidelity = {
   waitingForRateLimitRepos: string[];
   historyCoverage: "sampled" | "counts_only" | "full";
 };
+
+export type FreshnessSloReport = {
+  status: "fresh" | "degraded" | "blocked";
+  generatedAt: string;
+  staleCount: number;
+  degradedCount: number;
+  blockedCount: number;
+  missingCount: number;
+  launchBlockingCount: number;
+  repairRecommended: boolean;
+  items: Array<{ area: keyof typeof FRESHNESS_SLO_MS; targetKey: string; status: "fresh" | "stale" | "degraded" | "blocked" | "missing"; launchBlocking: boolean; ageSeconds?: number; sloSeconds: number; breachSeconds?: number; observedAt?: string | null; summary: string }>;
+  warnings: string[];
+};
+
+export function buildFreshnessSloReport(args: {
+  registrySnapshot?: RegistrySnapshot | null;
+  scoringSnapshot?: ScoringModelSnapshotRecord | null;
+  repoCount?: number;
+  syncStates?: RepoSyncStateRecord[];
+  totals?: RepoGithubTotalsSnapshotRecord[];
+  segments?: RepoSyncSegmentRecord[];
+  signalSnapshots?: SignalSnapshotRecord[];
+  bounties?: BountyRecord[];
+  expectedDecisionPackKeys?: string[];
+  nowMs?: number;
+}): FreshnessSloReport {
+  const nowMs = args.nowMs ?? Date.now();
+  const items: FreshnessSloReport["items"] = [];
+  const add = (area: keyof typeof FRESHNESS_SLO_MS, targetKey: string, observedAt: string | null | undefined, forced?: "blocked" | "degraded" | "missing") => {
+    const observedMs = observedAt ? Date.parse(observedAt) : NaN;
+    const validObservedAt = observedAt && Number.isFinite(observedMs) ? observedAt : null;
+    const ageSeconds = validObservedAt ? Math.max(0, Math.floor((nowMs - observedMs) / 1000)) : undefined;
+    const status = forced ?? (!validObservedAt ? "missing" : ageSeconds !== undefined && ageSeconds * 1000 > FRESHNESS_SLO_MS[area] ? "stale" : "fresh");
+    const launchBlocking = status !== "fresh" && LAUNCH_BLOCKING_FRESHNESS_AREAS.has(area);
+    items.push({ area, targetKey, status, launchBlocking, ...(ageSeconds !== undefined ? { ageSeconds, breachSeconds: Math.max(0, ageSeconds - Math.floor(FRESHNESS_SLO_MS[area] / 1000)) } : {}), sloSeconds: Math.floor(FRESHNESS_SLO_MS[area] / 1000), observedAt: validObservedAt, summary: `${area}:${targetKey} is ${status}` });
+  };
+  if ("registrySnapshot" in args) add("registry", "latest", args.registrySnapshot?.fetchedAt);
+  if ("scoringSnapshot" in args) add("scoring_model", "latest", args.scoringSnapshot?.fetchedAt);
+  if ("totals" in args && (args.repoCount ?? 0) > 0) add("github_totals", "registered_repos", oldest(args.totals?.map((total) => total.fetchedAt)), args.totals?.length ? undefined : "missing");
+  if ((args.repoCount ?? 0) > 0) {
+    const segmentBlocked = args.segments?.some((segment) => BLOCKING_SEGMENT_STATUSES.has(segment.status) && !hasEffectiveSegmentCoverage(segment)) || args.syncStates?.some((state) => ["error", "skipped", "rate_limited"].includes(state.status));
+    const segmentDegraded = args.syncStates?.some((state) => !["success", "never_synced"].includes(state.status));
+    add("repo_segments", "registered_repos", oldest(args.segments?.map((segment) => segment.completedAt ?? segment.updatedAt)), segmentBlocked ? "blocked" : segmentDegraded ? "degraded" : args.segments?.length ? undefined : "missing");
+  }
+  for (const [key, snapshots] of groupBy(args.signalSnapshots ?? [], (snapshot) => `${snapshot.signalType}\0${snapshot.targetKey}`)) {
+    const type = snapshots[0]?.signalType ?? key;
+    const targetKey = snapshots[0]?.targetKey ?? type;
+    add(type === "contributor-decision-pack" ? "decision_pack" : "signal_snapshot", targetKey ?? type, newest(snapshots.map((snapshot) => snapshot.generatedAt)));
+  }
+  for (const key of args.expectedDecisionPackKeys ?? []) {
+    if (!items.some((item) => item.area === "decision_pack" && item.targetKey === key)) add("decision_pack", key, null, "missing");
+  }
+  if (args.bounties?.length) add("bounty_data", "all_bounties", oldest(args.bounties.map((bounty) => bounty.updatedAt ?? bounty.discoveredAt)));
+  const staleCount = items.filter((item) => item.status === "stale").length;
+  const degradedCount = items.filter((item) => item.status === "degraded").length;
+  const blockedCount = items.filter((item) => item.status === "blocked").length;
+  const missingCount = items.filter((item) => item.status === "missing").length;
+  const launchBlockingCount = items.filter((item) => item.launchBlocking).length;
+  const status = blockedCount > 0 ? "blocked" : staleCount + degradedCount + missingCount > 0 ? "degraded" : "fresh";
+  return { status, generatedAt: nowIso(), staleCount, degradedCount, blockedCount, missingCount, launchBlockingCount, repairRecommended: status !== "fresh", items, warnings: items.filter((item) => item.status !== "fresh").map((item) => item.summary) };
+}
+
+export function freshnessAuditMetadata(report: FreshnessSloReport) {
+  return {
+    status: report.status,
+    staleCount: report.staleCount,
+    degradedCount: report.degradedCount,
+    blockedCount: report.blockedCount,
+    missingCount: report.missingCount,
+    launchBlockingCount: report.launchBlockingCount,
+    repairRecommended: report.repairRecommended,
+    affectedAreas: [...new Set(report.items.filter((item) => item.status !== "fresh").map((item) => item.area))],
+  };
+}
 
 export function buildRepoDataQuality(
   repoFullName: string,
@@ -258,6 +342,23 @@ function groupByRepo<T extends { repoFullName: string }>(records: T[]): Map<stri
     grouped.set(record.repoFullName, existing);
   }
   return grouped;
+}
+
+function groupBy<T>(records: T[], keyFor: (record: T) => string): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const record of records) {
+    const key = keyFor(record);
+    grouped.set(key, [...(grouped.get(key) ?? []), record]);
+  }
+  return grouped;
+}
+
+function oldest(values: Array<string | null | undefined> | undefined): string | null | undefined {
+  return values?.filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value)))).sort()[0];
+}
+
+function newest(values: Array<string | null | undefined> | undefined): string | null | undefined {
+  return values?.filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value)))).sort().at(-1);
 }
 
 function isCompleteCount(segment: RepoSyncSegmentRecord | undefined, expected: number | null | undefined): boolean {

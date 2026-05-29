@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS official_miner_detections (login TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL CHECK (status IN ('confirmed', 'not_found', 'unavailable')), snapshot_json TEXT NOT NULL DEFAULT '{}', error TEXT, fetched_at TEXT NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);

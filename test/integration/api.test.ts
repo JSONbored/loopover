@@ -793,6 +793,7 @@ describe("api routes", () => {
     await expect(readiness.json()).resolves.toMatchObject({
       status: "ready",
       readyForPublicReview: true,
+      freshnessSlo: { status: "fresh", repairRecommended: false },
       secrets: { githubPublicToken: true },
       githubBackfill: { failingSyncs: [] },
       warnings: [],
@@ -856,11 +857,40 @@ describe("api routes", () => {
     expect(missingSnapshotReadiness.status).toBe(200);
     await expect(missingSnapshotReadiness.json()).resolves.toMatchObject({
       readyForPublicReview: false,
+      freshnessSlo: { status: "degraded", missingCount: expect.any(Number), repairRecommended: true },
       warnings: expect.arrayContaining([
         "Registry snapshot is missing.",
         "Scoring model snapshot is missing. Run refresh-scoring-model before public review.",
         "GITHUB_PUBLIC_TOKEN is not configured; public registered-repo backfill may hit GitHub rate limits.",
       ]),
+    });
+
+    const staleEnv = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await persistRegistrySnapshot(
+      staleEnv,
+      normalizeRegistryPayload(
+        { "entrius/allways-ui": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
+        { kind: "raw-github", url: "fixture://stale-registry" },
+        "2026-05-01T00:00:00.000Z",
+      ),
+    );
+    await persistScoringModelSnapshot(staleEnv, {
+      id: "stale-scoring",
+      sourceKind: "test",
+      sourceUrl: "fixture://stale-scoring",
+      fetchedAt: "2026-05-01T00:00:00.000Z",
+      activeModel: "current_density_model",
+      constants: {},
+      programmingLanguages: {},
+      warnings: [],
+      payload: {},
+    });
+    const staleReadiness = await app.request("/v1/readiness", { headers: apiHeaders(staleEnv) }, staleEnv);
+    expect(staleReadiness.status).toBe(200);
+    await expect(staleReadiness.json()).resolves.toMatchObject({
+      readyForPublicReview: false,
+      freshnessSlo: { status: "degraded", staleCount: expect.any(Number), launchBlockingCount: expect.any(Number), repairRecommended: true },
+      warnings: expect.arrayContaining([expect.stringContaining("Freshness SLO is degraded")]),
     });
 
     const missingSyncEnv = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
@@ -878,6 +908,51 @@ describe("api routes", () => {
       readyForPublicReview: false,
       warnings: expect.arrayContaining([expect.stringContaining("registered repo(s) do not have GitHub backfill state yet")]),
     });
+  });
+
+  it("keeps optional stale signal snapshots visible without blocking public review readiness", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedSignalData(env);
+    const nowMs = Date.now();
+    await persistSignalSnapshot(env, {
+      id: "stale-queue-health-entrius",
+      signalType: "queue-health",
+      targetKey: "entrius/allways-ui",
+      repoFullName: "entrius/allways-ui",
+      payload: {},
+      generatedAt: new Date(nowMs - 13 * 60 * 60 * 1000).toISOString(),
+    });
+    for (let index = 0; index < 250; index += 1) {
+      await persistSignalSnapshot(env, {
+        id: `fresh-queue-health-${index}`,
+        signalType: "queue-health",
+        targetKey: `owner/repo-${index}`,
+        repoFullName: `owner/repo-${index}`,
+        payload: {},
+        generatedAt: new Date(nowMs - index * 1000).toISOString(),
+      });
+    }
+
+    const readiness = await app.request("/v1/readiness", { headers: apiHeaders(env) }, env);
+    expect(readiness.status).toBe(200);
+    const payload = await readiness.json() as {
+      readyForPublicReview: boolean;
+      freshnessSlo: { status: string; launchBlockingCount: number; items: Array<{ area: string; targetKey: string; status: string; launchBlocking: boolean }> };
+      warnings: string[];
+    };
+
+    expect(payload.readyForPublicReview).toBe(true);
+    expect(payload.freshnessSlo).toMatchObject({
+      status: "degraded",
+      launchBlockingCount: 0,
+    });
+    expect(payload.freshnessSlo.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ area: "signal_snapshot", targetKey: "entrius/allways-ui", status: "stale", launchBlocking: false }),
+      ]),
+    );
+    expect(payload.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Freshness SLO is degraded")]));
   });
 
   it("exposes capped and rate-limited sync segments in readiness and sync status", async () => {

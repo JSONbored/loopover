@@ -31,10 +31,11 @@
   "files": [
     "bin",
     "lib",
+    "scripts",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "node --check bin/gittensory-mcp.js && node --check lib/local-branch.js"
+    "build": "node --check bin/gittensory-mcp.js && node --check lib/local-branch.js && node --check scripts/gittensor-score-preview.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

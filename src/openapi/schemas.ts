@@ -898,6 +898,16 @@ export const IssueQualityReportSchema = z
   })
   .openapi("IssueQualityReport");
 
+export const IssueQualityResponseSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    source: z.enum(["snapshot", "computed"]),
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    report: IssueQualityReportSchema,
+  })
+  .openapi("IssueQualityResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

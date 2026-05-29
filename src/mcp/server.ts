@@ -22,7 +22,6 @@ import {
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
-  listSignalSnapshots,
 } from "../db/repositories";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -37,6 +36,7 @@ import {
   startAgentRun,
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
+import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -45,7 +45,6 @@ import {
   buildContributorOutcomeHistory,
   buildContributorProfile,
   buildContributorScoringProfile,
-  buildIssueQualityReport,
   buildLaneAdvice,
   buildLocalDiffPreflightResult,
   buildPreflightResult,
@@ -500,26 +499,19 @@ export class GittensoryMcp {
 
   private async getIssueQuality(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    const cached = (await listSignalSnapshots(this.env, "issue-quality", fullName))[0];
-    if (cached) {
-      const payload = cached.payload as unknown as Record<string, unknown>;
-      return {
-        summary: `Gittensory issue quality for ${fullName} (cached).`,
-        data: { repoFullName: fullName, source: "snapshot", generatedAt: cached.generatedAt ?? null, report: payload },
-      };
-    }
-    const repo = await getRepository(this.env, fullName);
-    if (!repo) {
+    const response = await loadOrComputeIssueQualityResponse(this.env, fullName);
+    if (!response) {
       return {
         summary: `Gittensory has no cached issue quality for ${fullName}.`,
         data: { status: "not_found", repoFullName: fullName },
       };
     }
-    const [issues, pullRequests] = await Promise.all([listIssueSignalSample(this.env, fullName), listOpenPullRequests(this.env, fullName)]);
-    const report = buildIssueQualityReport(repo, issues, pullRequests, fullName);
     return {
-      summary: `Gittensory issue quality for ${fullName} (computed from cached metadata).`,
-      data: { repoFullName: fullName, source: "computed", generatedAt: report.generatedAt, report: report as unknown as Record<string, unknown> },
+      summary:
+        response.source === "snapshot"
+          ? `Gittensory issue quality for ${fullName} (cached).`
+          : `Gittensory issue quality for ${fullName} (computed from cached metadata).`,
+      data: response as unknown as Record<string, unknown>,
     };
   }
 

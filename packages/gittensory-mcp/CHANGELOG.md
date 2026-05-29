@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+
+### Features
+
+- Detect stale installs and API compatibility in doctor and status
+
+
 ## mcp-v0.2.0 - 2026-05-28
 
 

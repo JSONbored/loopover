@@ -11,6 +11,9 @@ const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
 const packageName = "@jsonbored/gittensory-mcp";
 const packageVersion = "0.2.0";
+const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
+const upgradeCommand = `npm install -g ${packageName}@latest`;
+const npxFallbackCommand = `npx ${packageName}@latest <command>`;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
@@ -678,46 +681,46 @@ async function whoami(options) {
 async function status(options) {
   let auth = { status: getApiToken() ? "token_configured" : "unauthenticated" };
   let health = null;
-  let latest = null;
   if (getApiToken()) {
     try {
       auth = await apiGet("/v1/auth/session");
     } catch (error) {
-      auth = { status: "token_configured", session: "unverified", error: error instanceof Error ? error.message : "status_failed" };
+      auth = { status: "token_configured", session: "unverified", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "status_failed") };
     }
   }
   try {
     health = await apiFetch("/health", { method: "GET" }, { auth: false, timeoutMs: 5000 });
   } catch (error) {
-    health = { status: "unreachable", error: error instanceof Error ? error.message : "health_check_failed" };
+    health = { status: "unreachable", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "health_check_failed") };
   }
-  try {
-    latest = await fetchLatestPackageVersion();
-  } catch (error) {
-    latest = { status: "unavailable", error: error instanceof Error ? error.message : "npm_version_check_failed" };
-  }
+  const pkg = await inspectInstallVersion();
+  const apiCompatibility = evaluateApiCompatibility(health);
   const payload = {
     apiUrl,
-    package: {
-      name: packageName,
-      version: packageVersion,
-      latestVersion: latest?.version ?? null,
-      updateAvailable: typeof latest?.version === "string" && latest.version !== packageVersion,
-      latestStatus: latest?.status ?? "ok",
-    },
+    package: pkg,
+    apiCompatibility,
     api: health,
     auth,
-    configPath,
+    config: { configured: existsSync(configPath) },
     sourceUploadDefault: false,
     sourceUploadSupported: false,
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
-    process.stdout.write(`${packageName}: ${packageVersion}${payload.package.latestVersion ? ` (latest ${payload.package.latestVersion})` : ""}\n`);
+    process.stdout.write(`${packageName}: ${packageVersion}${pkg.latestVersion ? ` (latest ${pkg.latestVersion})` : ""}\n`);
     process.stdout.write(`API: ${apiUrl}\n`);
     process.stdout.write(`API health: ${health?.status ?? "unknown"}\n`);
     process.stdout.write(`Auth: ${auth.status}${auth.login ? ` (${auth.login})` : ""}\n`);
     process.stdout.write("Source upload: disabled\n");
+    if (pkg.state === "stale") {
+      process.stdout.write(`Update available: ${packageVersion} -> ${pkg.latestVersion}. Upgrade with:\n  ${pkg.upgradeCommand}\n`);
+      process.stdout.write(`Or run without installing:\n  ${pkg.npxFallback}\n`);
+    } else if (pkg.state === "unavailable") {
+      process.stdout.write("Version check: npm registry was unavailable; skipping update check.\n");
+    }
+    if (apiCompatibility.status === "incompatible") {
+      process.stdout.write(`API requires at least ${packageName}@${apiCompatibility.minVersion}. Upgrade with:\n  ${apiCompatibility.upgradeCommand}\n`);
+    }
   }
 }
 
@@ -736,13 +739,51 @@ async function changelog(options) {
 
 async function doctor(options) {
   const checks = [];
-  const add = (name, statusValue, detail, remediation) => checks.push(stripUndefined({ name, status: statusValue, detail, remediation }));
+  const add = (name, statusValue, detail, remediation) =>
+    checks.push(
+      stripUndefined({
+        name,
+        status: statusValue,
+        detail: sanitizeDiagnosticText(detail, [options.cwd]),
+        remediation: sanitizeDiagnosticText(remediation, [options.cwd]),
+      }),
+    );
 
+  let health = null;
   try {
-    const health = await apiFetch("/health", { method: "GET" }, { auth: false });
+    health = await apiFetch("/health", { method: "GET" }, { auth: false });
     add("api_health", health.status === "ok" ? "pass" : "warn", `API responded from ${apiUrl}.`);
   } catch (error) {
+    health = { status: "unreachable" };
     add("api_health", "fail", error instanceof Error ? error.message : "health_check_failed", "Check GITTENSORY_API_URL or network access.");
+  }
+
+  const pkg = await inspectInstallVersion();
+  if (pkg.state === "stale") {
+    add("version", "warn", `Installed ${packageVersion} is behind npm latest ${pkg.latestVersion}.`, `${pkg.upgradeCommand} (no-install fallback: ${pkg.npxFallback})`);
+  } else if (pkg.state === "unavailable") {
+    add("version", "warn", "Could not reach the npm registry to check for updates.", `Retry when online, or run the no-install fallback: ${npxFallbackCommand}`);
+  } else if (pkg.state === "unknown") {
+    add("version", "warn", `Could not compare local ${packageVersion} against npm latest ${pkg.latestVersion ?? "unknown"}.`);
+  } else if (pkg.state === "ahead") {
+    add("version", "pass", `Installed ${packageVersion} is ahead of npm latest ${pkg.latestVersion}.`);
+  } else if (pkg.state === "skipped") {
+    add("version", "pass", "npm version check was skipped (GITTENSORY_SKIP_NPM_VERSION_CHECK).");
+  } else {
+    add("version", "pass", `Installed ${packageVersion} matches npm latest ${pkg.latestVersion}.`);
+  }
+
+  const apiCompatibility = evaluateApiCompatibility(health);
+  if (apiCompatibility.status === "incompatible") {
+    add("api_compatibility", "fail", `API requires at least ${packageName}@${apiCompatibility.minVersion}; local is ${packageVersion}.`, apiCompatibility.upgradeCommand);
+  } else if (apiCompatibility.status === "compatible") {
+    add("api_compatibility", "pass", `Local ${packageVersion} meets the API minimum ${apiCompatibility.minVersion}.`);
+  } else if (apiCompatibility.reason === "api_unreachable") {
+    add("api_compatibility", "warn", "API compatibility check was unavailable because API health was unreachable.");
+  } else if (apiCompatibility.status === "unknown") {
+    add("api_compatibility", "warn", `API reported an unsupported minimum client version (${apiCompatibility.minVersion}).`);
+  } else {
+    add("api_compatibility", "pass", "API did not report a minimum client version; compatibility check skipped.");
   }
 
   const token = getApiToken();
@@ -776,13 +817,13 @@ async function doctor(options) {
   }
 
   const commandPath = findExecutable("gittensory-mcp");
-  if (commandPath) add("client_path", "pass", `gittensory-mcp is visible on PATH at ${commandPath}.`);
+  if (commandPath) add("client_path", "pass", "gittensory-mcp is visible on PATH.");
   else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in Codex, Claude, or Cursor config.");
 
   const payload = {
     status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",
     apiUrl,
-    configPath,
+    config: { configured: existsSync(configPath) },
     sourceUploadSupported: false,
     checks,
   };
@@ -887,6 +928,32 @@ function findExecutable(name) {
   return null;
 }
 
+function sanitizeDiagnosticText(value, extraPaths = []) {
+  if (value === undefined || value === null) return value;
+  let text = String(value);
+  const sensitiveValues = [
+    process.env.GITTENSORY_API_TOKEN,
+    process.env.GITTENSORY_MCP_TOKEN,
+    process.env.GITTENSORY_TOKEN,
+    config.session?.token,
+  ].filter((candidate) => typeof candidate === "string" && candidate.length > 0);
+  for (const token of sensitiveValues) {
+    text = text.split(token).join("[redacted]");
+  }
+  const localPaths = [
+    configPath,
+    process.env.GITTENSORY_CONFIG_PATH,
+    process.env.GITTENSORY_CONFIG_DIR,
+    process.cwd(),
+    homedir(),
+    ...extraPaths,
+  ].filter((candidate) => typeof candidate === "string" && candidate.length > 1);
+  for (const localPath of localPaths.sort((left, right) => right.length - left.length)) {
+    text = text.split(localPath).join("[local-path]");
+  }
+  return text;
+}
+
 function loadConfig() {
   if (!existsSync(configPath)) return {};
   try {
@@ -941,13 +1008,109 @@ async function fetchLatestPackageVersion() {
   if (/^(1|true|yes)$/i.test(process.env.GITTENSORY_SKIP_NPM_VERSION_CHECK ?? "false")) return { status: "skipped" };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
-  const response = await fetch("https://registry.npmjs.org/@jsonbored%2fgittensory-mcp/latest", {
+  const response = await fetch(`${npmRegistryUrl}/@jsonbored%2fgittensory-mcp/latest`, {
     signal: controller.signal,
     headers: { accept: "application/json" },
   }).finally(() => clearTimeout(timeout));
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || typeof payload.version !== "string") throw new Error("npm_latest_version_unavailable");
   return { status: "ok", version: payload.version };
+}
+
+function parseSemver(version) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(String(version ?? "").trim());
+  if (!match) return null;
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: match[4] ?? null };
+}
+
+// Compares two dot-separated semver prerelease strings per the semver spec:
+// numeric identifiers compare numerically, others lexically, numeric < non-numeric,
+// and a shorter set of identifiers has lower precedence when all earlier ones match.
+function comparePrerelease(a, b) {
+  const left = a.split(".");
+  const right = b.split(".");
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const leftId = left[index];
+    const rightId = right[index];
+    if (leftId === undefined) return -1;
+    if (rightId === undefined) return 1;
+    const leftNumeric = /^\d+$/.test(leftId);
+    const rightNumeric = /^\d+$/.test(rightId);
+    if (leftNumeric && rightNumeric) {
+      if (Number(leftId) !== Number(rightId)) return Number(leftId) < Number(rightId) ? -1 : 1;
+    } else if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    } else if (leftId !== rightId) {
+      return leftId < rightId ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+// Returns -1 if a < b, 1 if a > b, 0 if equal, or null when either side is unparseable.
+function compareSemver(a, b) {
+  const left = parseSemver(a);
+  const right = parseSemver(b);
+  if (!left || !right) return null;
+  for (const part of ["major", "minor", "patch"]) {
+    if (left[part] !== right[part]) return left[part] < right[part] ? -1 : 1;
+  }
+  if (left.prerelease === right.prerelease) return 0;
+  // A release version has higher precedence than any prerelease of the same core.
+  if (left.prerelease === null) return 1;
+  if (right.prerelease === null) return -1;
+  return comparePrerelease(left.prerelease, right.prerelease);
+}
+
+// Maps a raw npm-latest lookup into a single install state. `comparison` is the result of
+// compareSemver(local, latest): negative means local is behind (stale), positive means ahead.
+function classifyVersionState(latestStatus, latestVersion, comparison) {
+  if (latestStatus === "skipped") return "skipped";
+  if (!latestVersion) return "unavailable";
+  if (comparison === null) return "unknown";
+  if (comparison < 0) return "stale";
+  if (comparison > 0) return "ahead";
+  return "current";
+}
+
+// Shared by `status` and `doctor`: compares the local install against npm latest and
+// produces deterministic upgrade guidance. Never throws and never returns sensitive data.
+async function inspectInstallVersion() {
+  let latest;
+  try {
+    latest = await fetchLatestPackageVersion();
+  } catch (error) {
+    latest = { status: "unavailable", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "npm_version_check_failed") };
+  }
+  const latestVersion = typeof latest.version === "string" ? latest.version : null;
+  const comparison = latestVersion ? compareSemver(packageVersion, latestVersion) : null;
+  const state = classifyVersionState(latest.status, latestVersion, comparison);
+  const stale = state === "stale";
+  return stripUndefined({
+    name: packageName,
+    version: packageVersion,
+    latestVersion,
+    latestStatus: latest.status ?? "ok",
+    state,
+    updateAvailable: stale,
+    upgradeCommand: stale ? upgradeCommand : undefined,
+    npxFallback: stale ? npxFallbackCommand : undefined,
+    detail: latest.error,
+  });
+}
+
+// Optional API compatibility check. The backend MAY advertise a minimum supported client
+// version via `minMcpVersion`/`minClientVersion` on /health; when it does not, this degrades
+// gracefully to "unavailable" instead of failing.
+function evaluateApiCompatibility(health) {
+  if (!health || health.status === "unreachable") return { status: "unavailable", reason: "api_unreachable" };
+  const minVersion =
+    typeof health.minMcpVersion === "string" ? health.minMcpVersion : typeof health.minClientVersion === "string" ? health.minClientVersion : null;
+  if (!minVersion) return { status: "unavailable", reason: "not_reported" };
+  const comparison = compareSemver(packageVersion, minVersion);
+  if (comparison === null) return { status: "unknown", minVersion };
+  if (comparison < 0) return stripUndefined({ status: "incompatible", minVersion, upgradeCommand });
+  return { status: "compatible", minVersion };
 }
 
 async function analyzeCurrentBranch(input) {

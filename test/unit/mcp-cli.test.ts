@@ -36,6 +36,7 @@ describe("gittensory-mcp CLI", () => {
         GITTENSORY_API_URL: url,
         GITTENSORY_TOKEN: "session-token",
         GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { status: string; checks: Array<{ name: string; status: string; detail: string }> };
 
@@ -46,8 +47,186 @@ describe("gittensory-mcp CLI", () => {
         expect.objectContaining({ name: "auth", status: "pass", detail: expect.stringContaining("JSONbored") }),
         expect.objectContaining({ name: "source_upload", status: "pass" }),
         expect.objectContaining({ name: "git_metadata", status: "pass" }),
+        expect.objectContaining({ name: "version", status: "pass" }),
+        expect.objectContaining({ name: "api_compatibility", status: "pass" }),
       ]),
     );
+  });
+
+  it("reports a stale global install with an exact upgrade command and npx fallback", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ latestVersion: "9.9.9" });
+    const payload = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_NPM_REGISTRY_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { package: { state: string; latestVersion: string; updateAvailable: boolean; upgradeCommand: string; npxFallback: string } };
+
+    expect(payload.package).toMatchObject({
+      state: "stale",
+      latestVersion: "9.9.9",
+      updateAvailable: true,
+      upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
+    });
+    expect(payload.package.npxFallback).toContain("npx @jsonbored/gittensory-mcp@latest");
+  });
+
+  it("reports a current install without upgrade guidance", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ latestVersion: "0.2.0" });
+    const payload = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_NPM_REGISTRY_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { package: { state: string; updateAvailable: boolean; upgradeCommand?: string } };
+
+    expect(payload.package.state).toBe("current");
+    expect(payload.package.updateAvailable).toBe(false);
+    expect(payload.package.upgradeCommand).toBeUndefined();
+  });
+
+  it("orders prerelease npm versions correctly (release outranks prerelease of the same core)", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    // Local 0.2.0 (release) vs latest 0.2.0-rc.1 (prerelease) -> local is ahead, not stale.
+    const aheadUrl = await startFixtureServer({ latestVersion: "0.2.0-rc.1" });
+    const ahead = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: aheadUrl,
+        GITTENSORY_NPM_REGISTRY_URL: aheadUrl,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { package: { state: string; updateAvailable: boolean } };
+    expect(ahead.package).toMatchObject({ state: "ahead", updateAvailable: false });
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+
+    // Local 0.2.0 vs a higher-core prerelease 0.3.0-rc.1 -> stale.
+    const staleUrl = await startFixtureServer({ latestVersion: "0.3.0-rc.1" });
+    const stale = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: staleUrl,
+        GITTENSORY_NPM_REGISTRY_URL: staleUrl,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { package: { state: string } };
+    expect(stale.package.state).toBe("stale");
+  });
+
+  it("treats an unavailable npm registry as a warning, not a hard failure", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ npmStatus: 500 });
+    const status = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_NPM_REGISTRY_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { package: { state: string; updateAvailable: boolean } };
+    expect(status.package.state).toBe("unavailable");
+    expect(status.package.updateAvailable).toBe(false);
+
+    const doctor = JSON.parse(
+      await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_NPM_REGISTRY_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { status: string; checks: Array<{ name: string; status: string; remediation?: string }> };
+    expect(doctor.status).not.toBe("needs_attention");
+    expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "version", status: "warn" })]));
+  });
+
+  it("flags a stale install in doctor with upgrade remediation", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ latestVersion: "1.0.0" });
+    const payload = JSON.parse(
+      await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_NPM_REGISTRY_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { checks: Array<{ name: string; status: string; remediation?: string }> };
+    const version = payload.checks.find((check) => check.name === "version");
+    expect(version).toMatchObject({ status: "warn" });
+    expect(version?.remediation).toContain("npm install -g @jsonbored/gittensory-mcp@latest");
+    expect(version?.remediation).toContain("npx @jsonbored/gittensory-mcp@latest");
+  });
+
+  it("reports API compatibility as unavailable when the API does not advertise a minimum version", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const payload = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as { apiCompatibility: { status: string } };
+    expect(payload.apiCompatibility.status).toBe("unavailable");
+  });
+
+  it("flags API compatibility mismatches with upgrade guidance", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ minMcpVersion: "9.0.0" });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+    const status = JSON.parse(await runAsync(["status", "--json"], env)) as { apiCompatibility: { status: string; minVersion: string; upgradeCommand: string } };
+    expect(status.apiCompatibility).toMatchObject({
+      status: "incompatible",
+      minVersion: "9.0.0",
+      upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
+    });
+
+    const doctor = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env)) as {
+      checks: Array<{ name: string; status: string; remediation?: string }>;
+    };
+    expect(doctor.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "api_compatibility",
+          status: "fail",
+          remediation: "npm install -g @jsonbored/gittensory-mcp@latest",
+        }),
+      ]),
+    );
+  });
+
+  it("does not print configured tokens or local absolute paths in status or doctor output", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ latestVersion: "9.9.9", minMcpVersion: "9.0.0" });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_NPM_REGISTRY_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+    const statusOutput = await runAsync(["status"], env);
+    const statusJsonOutput = await runAsync(["status", "--json"], env);
+    const doctorOutput = await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory"], env);
+    const doctorJsonOutput = await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env);
+    for (const output of [statusOutput, statusJsonOutput, doctorOutput, doctorJsonOutput]) {
+      expect(output).not.toContain("session-token");
+      expect(output).not.toContain(tempDir);
+      expect(output).not.toMatch(/"configPath"/);
+    }
+    expect(statusOutput).not.toContain("session-token");
+    // Sanity: upgrade guidance still surfaces in human-readable output.
+    expect(statusOutput).toContain("npm install -g @jsonbored/gittensory-mcp@latest");
   });
 
   it("reports package status and prints the packaged changelog", async () => {
@@ -137,11 +316,20 @@ function runAsync(args: string[], env: Record<string, string> = {}) {
   });
 }
 
-async function startFixtureServer() {
+async function startFixtureServer(options: { latestVersion?: string; minMcpVersion?: string; npmStatus?: number } = {}) {
   server = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
+    if (request.url && request.url.includes("gittensory-mcp/latest")) {
+      if (options.npmStatus && options.npmStatus >= 400) {
+        response.statusCode = options.npmStatus;
+        response.end(JSON.stringify({ error: "registry_error" }));
+        return;
+      }
+      response.end(JSON.stringify({ version: options.latestVersion ?? "0.2.0" }));
+      return;
+    }
     if (request.url === "/health") {
-      response.end(JSON.stringify({ status: "ok", service: "gittensory-api" }));
+      response.end(JSON.stringify({ status: "ok", service: "gittensory-api", ...(options.minMcpVersion ? { minMcpVersion: options.minMcpVersion } : {}) }));
       return;
     }
     if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-token") {

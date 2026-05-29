@@ -76,6 +76,7 @@ import {
   buildQueueHealth,
   detectGittensorContributor,
 } from "../signals/engine";
+import { decidePublicSurface } from "../signals/settings-preview";
 import type { ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue } from "../types";
 import { errorMessage } from "../utils/json";
 
@@ -520,20 +521,21 @@ async function maybePublishPrPublicSurface(
   advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>,
   webhook: { deliveryId: string; authorType?: string | undefined },
 ): Promise<void> {
-  if (!hasVisiblePrSurface(settings)) return;
-  const author = pr.authorLogin;
-  if (!author) {
-    await auditPrVisibilitySkip(env, repoFullName, pr.number, null, "missing_author", webhook.deliveryId);
+  const author = pr.authorLogin ?? null;
+  // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
+  const prelim = decidePublicSurface({
+    settings,
+    authorLogin: author,
+    authorType: webhook.authorType ?? null,
+    authorAssociation: pr.authorAssociation ?? null,
+    minerStatus: "not_checked",
+  });
+  if (prelim.skipped) {
+    if (prelim.skipReason === "surface_off") return;
+    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
     return;
   }
-  if (webhook.authorType === "Bot" || /\[bot\]$/i.test(author)) {
-    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "bot_author", webhook.deliveryId);
-    return;
-  }
-  if (!settings.includeMaintainerAuthors && pr.authorAssociation && ["OWNER", "MEMBER", "COLLABORATOR"].includes(pr.authorAssociation)) {
-    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "maintainer_author", webhook.deliveryId);
-    return;
-  }
+  if (!author) return;
 
   const official = await fetchOfficialGittensorMiner(author);
   if (official.status === "unavailable") {
@@ -547,10 +549,17 @@ async function maybePublishPrPublicSurface(
     });
     return;
   }
-  if (official.status === "not_found") {
+  if (official.status !== "confirmed") {
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
     return;
   }
+  const decision = decidePublicSurface({
+    settings,
+    authorLogin: author,
+    authorType: webhook.authorType ?? null,
+    authorAssociation: pr.authorAssociation ?? null,
+    minerStatus: "confirmed",
+  });
 
   const [contributorPullRequests, contributorIssues, repoIssues, repoPullRequests, github, cachedRepoStats] = await Promise.all([
     listContributorPullRequests(env, author),
@@ -580,7 +589,7 @@ async function maybePublishPrPublicSurface(
     repoIssues,
     repoPullRequests,
   );
-  if (shouldPublishPrComment(settings)) {
+  if (decision.willComment) {
     const body = buildPublicPrIntelligenceComment({
       repo,
       pr,
@@ -593,12 +602,12 @@ async function maybePublishPrPublicSurface(
     });
     await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, body);
   }
-  if (shouldApplyPrLabel(settings)) {
+  if (decision.willLabel) {
     await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, settings.gittensorLabel, {
       createMissingLabel: settings.createMissingLabel,
     });
   }
-  if (settings.checkRunMode === "enabled" && advisory.headSha) {
+  if (decision.willCheckRun && advisory.headSha) {
     await createOrUpdateCheckRun(env, installationId, repoFullName, {
       ...advisory,
       conclusion: "success",
@@ -616,7 +625,7 @@ async function maybePublishPrPublicSurface(
     metadata: {
       deliveryId: webhook.deliveryId,
       publicSurface: settings.publicSurface,
-      label: shouldApplyPrLabel(settings) ? settings.gittensorLabel : null,
+      label: decision.willLabel ? settings.gittensorLabel : null,
       checkRunMode: settings.checkRunMode,
     },
   });
@@ -714,19 +723,6 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     metadata: { deliveryId, command: command.name, actorKind: authorization.actorKind, runId: bundle?.run.id ?? null },
   });
   return true;
-}
-
-function hasVisiblePrSurface(settings: Awaited<ReturnType<typeof getRepositorySettings>>): boolean {
-  return settings.publicSurface !== "off" || settings.checkRunMode === "enabled";
-}
-
-function shouldPublishPrComment(settings: Awaited<ReturnType<typeof getRepositorySettings>>): boolean {
-  if (settings.commentMode === "off") return false;
-  return settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only";
-}
-
-function shouldApplyPrLabel(settings: Awaited<ReturnType<typeof getRepositorySettings>>): boolean {
-  return settings.autoLabelEnabled && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "label_only");
 }
 
 async function auditPrVisibilitySkip(

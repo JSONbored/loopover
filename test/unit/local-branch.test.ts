@@ -189,6 +189,28 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score|\/Users\/example/i);
   });
 
+  it("removes snake_case private signals from public PR packet markdown", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 2, status: "modified" }],
+        validation: [{ command: "npm test", status: "passed", summary: "raw_trust=0.72 private_reviewability=ready trust_score=0.40" }],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.markdown).toContain("## Validation");
+    expect(analysis.prPacket.markdown).not.toMatch(/raw_trust|private_reviewability|trust_score/i);
+  });
+
   it("distinguishes fresh, merge-base-stale, and large unverified base states", () => {
     const fresh = buildLocalBranchAnalysis({
       input: {

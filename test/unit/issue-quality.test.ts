@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildContributorFit,
   buildContributorOpportunities,
   buildIssueQualityReport,
   type ContributorProfile,
@@ -22,7 +23,14 @@ describe("issue quality reports", () => {
     const repo = issueDiscoveryRepo("owner/discovery");
     const report = buildIssueQualityReport(repo, [issue(repo.fullName, 2, "Actionable discovery", { body: "x".repeat(220), labels: ["good first issue"], updatedAt: now() })], [], repo.fullName);
     expect(report.lane.lane).toBe("issue_discovery");
-    expect(report.issues[0]?.status).toBe("ready");
+    expect(report.issues[0]).toMatchObject({
+      status: "ready",
+      reasons: expect.arrayContaining([
+        "Issue has enough body detail to evaluate.",
+        "No active PR is linked in cached metadata.",
+      ]),
+    });
+    expect(report.issues[0]?.score).toBeGreaterThanOrEqual(70);
     expect(report.issues[0]?.warnings).not.toEqual(expect.arrayContaining([expect.stringMatching(/direct-PR/i)]));
   });
 
@@ -43,7 +51,10 @@ describe("issue quality reports", () => {
       [],
       repo.fullName,
     );
-    expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("stale")]));
+    expect(report.issues[0]).toMatchObject({
+      status: "needs_proof",
+      warnings: expect.arrayContaining(["Issue is stale in cached metadata."]),
+    });
   });
 
   it("marks an already-solved issue as do_not_use when a linked PR exists", () => {
@@ -54,12 +65,13 @@ describe("issue quality reports", () => {
     expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/already reference this issue/i)]));
   });
 
-  it("surfaces duplicate-prone context via collision detection", () => {
+  it("surfaces duplicate-prone context via collision detection on both issues", () => {
     const repo = issueDiscoveryRepo("owner/dupes");
     const a = issue(repo.fullName, 10, "Login flow broken when user reconnects after disconnect", { body: "x".repeat(220), labels: ["bug"] });
     const b = issue(repo.fullName, 11, "Login flow fails after reconnect when user disconnects", { body: "x".repeat(220), labels: ["bug"] });
     const report = buildIssueQualityReport(repo, [a, b], [], repo.fullName);
-    expect(report.issues.some((entry) => entry.warnings.some((warning) => /duplicate|overlapping/i.test(warning)))).toBe(true);
+    const flagged = report.issues.filter((entry) => entry.warnings.includes("Potential duplicate or overlapping issue/PR context exists."));
+    expect(flagged.map((entry) => entry.number).sort()).toEqual([10, 11]);
   });
 
   it("downgrades direct-PR-lane issue filing in warnings", () => {
@@ -164,6 +176,34 @@ describe("buildContributorOpportunities x issue quality", () => {
       new Map([[repo.fullName, quality]]),
     );
     expect(opportunities[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/hold; consider skipping/i)]));
+  });
+
+  it("threads the issue-quality map through buildContributorFit so do_not_use is dropped end-to-end", () => {
+    const repo = issueDiscoveryRepo("owner/threaded");
+    const issues = [
+      issue(repo.fullName, 1, "Drop me", { body: "x".repeat(220), labels: ["bug"] }),
+      issue(repo.fullName, 2, "Keep me", { body: "x".repeat(220), labels: ["bug"] }),
+    ];
+    const quality: IssueQualityReport = {
+      repoFullName: repo.fullName,
+      generatedAt: now(),
+      lane: { repoFullName: repo.fullName, lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+      issues: [
+        { number: 1, title: "Drop me", status: "do_not_use", score: 0, reasons: [], warnings: [] },
+        { number: 2, title: "Keep me", status: "ready", score: 88, reasons: [], warnings: [] },
+      ],
+      summary: "",
+    };
+    const fit = buildContributorFit(
+      sampleProfile(),
+      [repo],
+      issues,
+      [],
+      [],
+      [],
+      new Map([[repo.fullName, quality]]),
+    );
+    expect(fit.opportunities.map((o) => o.issueNumber)).toEqual([2]);
   });
 
   it("matches the repo case-insensitively when looking up cached quality", () => {

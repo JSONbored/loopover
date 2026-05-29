@@ -53,7 +53,8 @@ async function createOrUpdateIssueCommentWithMarker(
     issue_number: issueNumber,
     per_page: 100,
   });
-  const existing = (comments.data as IssueComment[]).find((comment) => comment.body?.includes(marker));
+  const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
+  const existing = (comments.data as IssueComment[]).find((comment) => isGittensoryBotComment(comment, botLogin) && comment.body?.includes(marker));
   if (existing) {
     const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
       owner,
@@ -70,4 +71,8 @@ async function createOrUpdateIssueCommentWithMarker(
     body,
   });
   return response.data as { id: number; html_url?: string };
+}
+
+function isGittensoryBotComment(comment: IssueComment, botLogin: string): boolean {
+  return comment.user?.type === "Bot" && comment.user.login?.toLowerCase() === botLogin.toLowerCase();
 }

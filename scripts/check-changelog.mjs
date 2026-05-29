@@ -4,6 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+const requestedChecks = new Set(process.argv.slice(2));
+const validArgs = new Set(["--root", "--mcp"]);
+const invalidArgs = [...requestedChecks].filter((arg) => !validArgs.has(arg));
+
+if (invalidArgs.length > 0) {
+  console.error(`Unknown changelog check option: ${invalidArgs.join(", ")}`);
+  process.exit(1);
+}
+
 const tempDir = mkdtempSync(join(tmpdir(), "gittensory-changelog-"));
 
 try {
@@ -11,11 +20,15 @@ try {
     {
       label: "root changelog",
       output: "CHANGELOG.md",
+      command: "npm run changelog:root",
+      selector: "--root",
       args: ["--config", "cliff.toml", "--output", join(tempDir, "CHANGELOG.md")],
     },
     {
       label: "MCP package changelog",
       output: "packages/gittensory-mcp/CHANGELOG.md",
+      command: "npm run changelog:mcp",
+      selector: "--mcp",
       args: [
         "--config",
         "cliff.mcp.toml",
@@ -27,7 +40,7 @@ try {
         join(tempDir, "MCP_CHANGELOG.md"),
       ],
     },
-  ];
+  ].filter((check) => requestedChecks.size === 0 || requestedChecks.has(check.selector));
 
   const failures = [];
   for (const check of checks) {
@@ -35,7 +48,7 @@ try {
     run(["git-cliff", ...check.args], check.label);
     const expected = readFileSync(generatedPath, "utf8");
     const actual = readFileSync(check.output, "utf8");
-    if (normalize(actual) !== normalize(expected)) failures.push(`${check.output} is stale; run npm run changelog.`);
+    if (normalize(actual) !== normalize(expected)) failures.push(`${check.output} is stale; run ${check.command}.`);
   }
 
   if (failures.length > 0) {
@@ -43,7 +56,7 @@ try {
     process.exit(1);
   }
 
-  console.log("changelogs are current");
+  console.log(`${checks.map((check) => check.output).join(", ")} current`);
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
 }

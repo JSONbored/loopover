@@ -31,15 +31,22 @@ describe("gittensory-mcp CLI", () => {
   it("runs doctor against a local health/session fixture", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
+    const secretRoot = join(tempDir, "secret-gittensor");
+    const secretConfigDir = join(tempDir, "secret-config");
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
         GITTENSORY_API_URL: url,
         GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_CONFIG_DIR: secretConfigDir,
+        GITTENSOR_ROOT: secretRoot,
+        GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-malformed.mjs")}`,
       }),
-    ) as { status: string; checks: Array<{ name: string; status: string; detail: string }> };
+    ) as { status: string; configPath: string; checks: Array<{ name: string; status: string; detail: string; remediation?: string }> };
 
+    const serialized = JSON.stringify(payload);
     expect(payload.status).toMatch(/ok|warnings/);
+    expect(serialized).not.toMatch(/secret-gittensor|secret-config/);
+    expect(payload.configPath).not.toContain(secretConfigDir);
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "api_health", status: "pass" }),
@@ -47,8 +54,12 @@ describe("gittensory-mcp CLI", () => {
         expect.objectContaining({ name: "source_upload", status: "pass" }),
         expect.objectContaining({ name: "git_metadata", status: "pass" }),
         expect.objectContaining({ name: "local_scorer", status: "warn" }),
+        expect.objectContaining({ name: "gittensor_root", status: "pass" }),
       ]),
     );
+    const localScorer = payload.checks.find((check) => check.name === "local_scorer");
+    expect(localScorer?.detail).toMatch(/malformed_json/);
+    expect(localScorer?.detail).not.toMatch(join(process.cwd(), "test/fixtures"));
   });
 
   it("reports package status and prints the packaged changelog", async () => {

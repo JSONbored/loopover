@@ -377,6 +377,14 @@ function classifyScorerExecFailure(error, durationMs, scorerCommand) {
   if (/JSON/i.test(message)) {
     return scorerFailure("malformed_json", "External scorer stdout was not valid JSON.", { durationMs, stderr, scorerCommand: redactScorerCommand(scorerCommand) });
   }
+  if (stderr && !looksLikeScorerJson(stderr)) {
+    return scorerFailure("malformed_json", "External scorer stdout was not valid JSON.", {
+      durationMs,
+      stderr: truncateText(stderr),
+      scorerCommand: redactScorerCommand(scorerCommand),
+      fallbackMode: "metadata_only",
+    });
+  }
   return scorerFailure("scorer_failed", redactLocalPath(message), { durationMs, stderr, exitCode, scorerCommand: redactScorerCommand(scorerCommand) });
 }
 

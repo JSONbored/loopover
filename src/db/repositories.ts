@@ -941,6 +941,18 @@ export async function upsertBurdenForecast(env: Env, forecast: BurdenForecastRec
     });
 }
 
+export async function getBurdenForecast(env: Env, repoFullName: string): Promise<BurdenForecastRecord | null> {
+  const db = getDb(env.DB);
+  const row = await db.select().from(burdenForecasts).where(eq(burdenForecasts.repoFullName, repoFullName)).limit(1);
+  const first = row[0];
+  if (!first) return null;
+  return {
+    repoFullName: first.repoFullName,
+    payload: parseJson<Record<string, JsonValue>>(first.payloadJson, {}),
+    generatedAt: first.generatedAt,
+  };
+}
+
 export async function persistRegistryDriftEvents(env: Env, events: RegistryDriftEventRecord[]): Promise<void> {
   const db = getDb(env.DB);
   for (const event of events) {

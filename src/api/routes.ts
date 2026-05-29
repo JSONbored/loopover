@@ -292,6 +292,7 @@ const localBranchAnalysisSchema = z
     scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
     pendingCommitCount: z.number().int().min(0).optional(),
     ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+    focusManifest: z.record(z.unknown()).optional(),
   })
   .strict();
 

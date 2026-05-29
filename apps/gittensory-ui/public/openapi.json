@@ -5746,6 +5746,125 @@
               "risks"
             ]
           },
+          "manifestGuidance": {
+            "type": "object",
+            "properties": {
+              "present": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "repo_file",
+                  "api_record",
+                  "none"
+                ]
+              },
+              "linkedIssuePolicy": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "preferred",
+                  "optional"
+                ]
+              },
+              "issueDiscoveryPolicy": {
+                "type": "string",
+                "enum": [
+                  "encouraged",
+                  "neutral",
+                  "discouraged"
+                ]
+              },
+              "matchedWantedPaths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "matchedBlockedPaths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "preferredLabelHits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "warning",
+                        "critical"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "severity",
+                    "title",
+                    "detail"
+                  ]
+                }
+              },
+              "publicNextSteps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maintainerNotes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "present",
+              "source",
+              "linkedIssuePolicy",
+              "issueDiscoveryPolicy",
+              "matchedWantedPaths",
+              "matchedBlockedPaths",
+              "preferredLabelHits",
+              "findings",
+              "publicNextSteps",
+              "maintainerNotes",
+              "warnings",
+              "summary"
+            ]
+          },
           "prPacket": {
             "type": "object",
             "properties": {
@@ -5885,6 +6004,7 @@
           "recommendedRerunCondition",
           "localFindings",
           "maintainerFit",
+          "manifestGuidance",
           "prPacket",
           "nextActions",
           "workspaceIntelligence",

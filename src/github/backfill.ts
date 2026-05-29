@@ -201,6 +201,9 @@ type GitHubOpenPullRequestsResponse = {
           state?: string;
           url?: string;
           body?: string | null;
+          isDraft?: boolean | null;
+          mergeable?: string | null;
+          reviewDecision?: string | null;
           createdAt?: string | null;
           updatedAt?: string | null;
           authorAssociation?: string | null;
@@ -1125,6 +1128,9 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
             state
             url
             body
+            isDraft
+            mergeable
+            reviewDecision
             createdAt
             updatedAt
             authorAssociation
@@ -1151,6 +1157,9 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
         ...(pr.createdAt === undefined ? {} : { created_at: pr.createdAt }),
         ...(pr.updatedAt === undefined ? {} : { updated_at: pr.updatedAt }),
         ...(pr.body === undefined ? {} : { body: pr.body }),
+        ...(pr.isDraft === undefined ? {} : { draft: pr.isDraft }),
+        ...(pr.mergeable === undefined ? {} : { mergeableState: pr.mergeable }),
+        ...(pr.reviewDecision === undefined ? {} : { reviewDecision: pr.reviewDecision }),
         ...(pr.author?.login ? { user: { login: pr.author.login } } : {}),
         ...(pr.authorAssociation ? { author_association: pr.authorAssociation } : {}),
         head: { ...(pr.headRefOid ? { sha: pr.headRefOid } : {}), ...(pr.headRefName ? { ref: pr.headRefName } : {}) },
@@ -1455,7 +1464,7 @@ async function fetchAndStorePullRequestDetails(
   token: string | undefined,
   warnings: string[],
 ): Promise<void> {
-  const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token)]);
+  const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
 
   for (const file of files) {
     await upsertPullRequestFile(env, {
@@ -1534,9 +1543,13 @@ async function fetchPullRequestChecks(
   repoFullName: string,
   pr: PullRequestRecord,
   token: string | undefined,
+  warnings: string[],
 ): Promise<{ check_runs?: GitHubCheckRunPayload[] }> {
   if (!pr.headSha) return { check_runs: [] };
-  return githubJson<{ check_runs?: GitHubCheckRunPayload[] }>(env, repoFullName, `/commits/${pr.headSha}/check-runs?per_page=100`, token).catch(() => ({ check_runs: [] }));
+  const checks = await githubJson<{ check_runs?: GitHubCheckRunPayload[] }>(env, repoFullName, `/commits/${pr.headSha}/check-runs?per_page=100`, token).catch(() => undefined);
+  if (checks) return checks;
+  warnings.push(`Check sync failed for #${pr.number}: GitHub REST check-run fetch failed.`);
+  return { check_runs: [] };
 }
 
 async function fetchPullRequestDetailsFromGraphQl(

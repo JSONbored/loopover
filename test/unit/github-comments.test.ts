@@ -43,7 +43,7 @@ describe("GitHub PR intelligence comments", () => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
-        return Response.json([{ id: 101, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nold body` }]);
+        return Response.json([{ id: 101, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nold body`, user: { login: "gittensory[bot]", type: "Bot" } }]);
       }
       if (url.includes("/issues/comments/101") && init?.method === "PATCH") {
         const body = JSON.parse(String(init.body)) as { body: string };
@@ -63,6 +63,37 @@ describe("GitHub PR intelligence comments", () => {
 
     expect(result?.id).toBe(101);
     expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/101"))).toBe(true);
+  });
+
+  it("ignores user-authored marker comments and creates the app sticky comment", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        return Response.json([{ id: 666, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nspoofed body`, user: { login: "mallory", type: "User" } }]);
+      }
+      if (url.includes("/issues/12/comments") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { body: string };
+        expect(body.body).toContain("trusted body");
+        return Response.json({ id: 102, html_url: "https://github.com/comment/102" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      12,
+      `${PR_INTELLIGENCE_COMMENT_MARKER}\ntrusted body`,
+    );
+
+    expect(result?.id).toBe(102);
+    expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/666"))).toBe(false);
+    expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(true);
   });
 
   it("rejects invalid repository names before calling GitHub", async () => {

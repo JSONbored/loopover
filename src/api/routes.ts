@@ -78,6 +78,7 @@ import {
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -1033,7 +1034,7 @@ export function createApp() {
 }
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
-  const [repo, snapshots, dataQuality] = await Promise.all([
+  const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
     getRepository(env, fullName),
     Promise.all(
       ["queue-health", "config-quality", "label-audit", "maintainer-lane", "maintainer-cut-readiness", "contributor-intake-health"].map(async (signalType) => [
@@ -1042,8 +1043,20 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       ]),
     ),
     loadRepoDataQuality(env, fullName),
+    loadOrComputeBurdenForecastResponse(env, fullName).catch(() => null),
   ]);
   const snapshotMap = Object.fromEntries(snapshots);
+  const burdenForecastSlice = burdenForecast
+    ? {
+        burdenForecast: burdenForecast.report,
+        burdenForecastFreshness: {
+          source: burdenForecast.source,
+          generatedAt: burdenForecast.generatedAt,
+          ageSeconds: burdenForecast.ageSeconds,
+          freshness: burdenForecast.freshness,
+        },
+      }
+    : {};
   if (snapshotMap["queue-health"] && snapshotMap["config-quality"] && snapshotMap["label-audit"]) {
     return {
       status: "ready",
@@ -1059,6 +1072,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       maintainerCutReadiness: snapshotMap["maintainer-cut-readiness"],
       contributorIntakeHealth: snapshotMap["contributor-intake-health"],
       dataQuality,
+      ...burdenForecastSlice,
     };
   }
   const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts] = await Promise.all([
@@ -1090,6 +1104,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     maintainerCutReadiness,
     contributorIntakeHealth,
     dataQuality,
+    ...burdenForecastSlice,
   };
 }
 

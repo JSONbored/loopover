@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   upsertBounty,
+  upsertBurdenForecast,
   upsertCheckSummary,
   upsertInstallation,
   upsertInstallationHealth,
@@ -23,6 +24,7 @@ import { createApp } from "../../src/api/routes";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
+import type { JsonValue } from "../../src/types";
 
 describe("api routes", () => {
   afterEach(() => {
@@ -720,9 +722,18 @@ describe("api routes", () => {
         generatedAt: "2026-05-25T00:00:00.000Z",
       });
     }
+    await upsertBurdenForecast(env, {
+      repoFullName: "entrius/allways-ui",
+      payload: { repoFullName: "entrius/allways-ui", level: "medium", summary: "intelligence fixture" } as unknown as Record<string, JsonValue>,
+      generatedAt: "2026-05-25T00:00:00.000Z",
+    });
     const snapshotIntelligence = await app.request("/v1/repos/entrius/allways-ui/intelligence", { headers: apiHeaders(env) }, env);
     expect(snapshotIntelligence.status).toBe(200);
-    await expect(snapshotIntelligence.json()).resolves.toMatchObject({ source: "snapshot", queueHealth: { signals: { openPullRequests: 2 } } });
+    const snapshotIntelligenceBody = (await snapshotIntelligence.json()) as Record<string, unknown> & { burdenForecast?: Record<string, unknown>; burdenForecastFreshness?: { freshness: string; source: string; ageSeconds: number } };
+    expect(snapshotIntelligenceBody).toMatchObject({ source: "snapshot", queueHealth: { signals: { openPullRequests: 2 } } });
+    expect(snapshotIntelligenceBody.burdenForecast).toMatchObject({ level: "medium" });
+    expect(snapshotIntelligenceBody.burdenForecastFreshness).toMatchObject({ source: "snapshot", freshness: "stale" });
+    expect(snapshotIntelligenceBody.burdenForecastFreshness?.ageSeconds).toBeGreaterThan(0);
 
     for (const path of [
       "/v1/repos/entrius/allways-ui/issue-quality",
@@ -1128,6 +1139,7 @@ describe("api routes", () => {
     const toolsPayload = (await mcpJson(toolsList)) as { result: { tools: Array<{ name: string }> } };
     const toolNames = toolsPayload.result.tools.map((tool) => tool.name);
     expect(toolNames).toContain("gittensory_get_repo_context");
+    expect(toolNames).toContain("gittensory_get_burden_forecast");
     expect(toolNames).toContain("gittensory_get_contributor_profile");
     expect(toolNames).toContain("gittensory_get_decision_pack");
     expect(toolNames).toContain("gittensory_explain_repo_decision");
@@ -1245,8 +1257,27 @@ describe("api routes", () => {
     expect(missingRepoDecision.status).toBe(200);
     await expect(mcpJson(missingRepoDecision)).resolves.toMatchObject({ result: { structuredContent: { status: "not_found", decision: null } } });
 
+    const missingBurdenForecast = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "ghost", repo: "nothing" } } }),
+      },
+      env,
+    );
+    expect(missingBurdenForecast.status).toBe(200);
+    await expect(mcpJson(missingBurdenForecast)).resolves.toMatchObject({ result: { structuredContent: { status: "not_found", repoFullName: "ghost/nothing" } } });
+
+    await upsertBurdenForecast(env, {
+      repoFullName: "entrius/allways-ui",
+      payload: { repoFullName: "entrius/allways-ui", level: "low", summary: "mcp fixture", forecast: { projectedReviewLoad: 0, queueGrowthRisk: 0, stalePullRequests: 0, duplicateTrend: 0, reviewablePullRequests: 0 }, findings: [] } as unknown as Record<string, JsonValue>,
+      generatedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+
     for (const [name, args] of [
       ["gittensory_get_repo_context", { owner: "entrius", repo: "allways-ui" }],
+      ["gittensory_get_burden_forecast", { owner: "entrius", repo: "allways-ui" }],
       ["gittensory_get_contributor_profile", { login: "oktofeesh1" }],
       ["gittensory_get_decision_pack", { login: "oktofeesh1" }],
       ["gittensory_explain_repo_decision", { login: "oktofeesh1", owner: "entrius", repo: "allways-ui" }],

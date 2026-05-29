@@ -752,7 +752,7 @@ export async function getFreshOfficialMinerDetection(env: Env, login: string, no
   return row ? toOfficialMinerDetection(row) : null;
 }
 
-export async function upsertOfficialMinerDetection(env: Env, login: string, detection: OfficialGittensorMinerDetection, ttlMs: number, fetchedAtMs = Date.now()): Promise<void> {
+export async function upsertOfficialMinerDetection(env: Env, login: string, detection: OfficialGittensorMinerDetection, ttlMs: number, fetchedAtMs = Date.now()): Promise<OfficialGittensorMinerDetection> {
   const fetchedAt = new Date(fetchedAtMs).toISOString();
   const cacheableDetection = toCacheableOfficialMinerDetection(detection);
   const values = {
@@ -762,21 +762,34 @@ export async function upsertOfficialMinerDetection(env: Env, login: string, dete
     expiresAt: new Date(fetchedAtMs + ttlMs).toISOString(), updatedAt: fetchedAt,
   };
   await getDb(env.DB).insert(officialMinerDetections).values(values).onConflictDoUpdate({ target: officialMinerDetections.login, set: values });
+  return cacheableDetection;
 }
 
 function toCacheableOfficialMinerDetection(detection: OfficialGittensorMinerDetection): OfficialGittensorMinerDetection {
   return detection.status === "confirmed" ? { status: "confirmed", snapshot: toCacheableGittensorSnapshot(detection.snapshot) } : detection;
 }
 
+const OFFICIAL_MINER_CACHE_STRING_LIMITS = {
+  githubId: 128,
+  githubUsername: 128,
+  failedReason: 512,
+  timestamp: 64,
+} as const;
+
 function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnapshot>): GittensorContributorSnapshot {
   return {
     source: "gittensor_api",
-    githubId: String(snapshot.githubId ?? ""),
-    githubUsername: String(snapshot.githubUsername ?? ""),
+    githubId: boundedString(snapshot.githubId, OFFICIAL_MINER_CACHE_STRING_LIMITS.githubId),
+    githubUsername: boundedString(snapshot.githubUsername, OFFICIAL_MINER_CACHE_STRING_LIMITS.githubUsername),
     uid: optionalNumber(snapshot.uid),
-    failedReason: typeof snapshot.failedReason === "string" ? snapshot.failedReason : snapshot.failedReason === null ? null : undefined,
-    evaluatedAt: typeof snapshot.evaluatedAt === "string" ? snapshot.evaluatedAt : undefined,
-    updatedAt: typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : undefined,
+    failedReason:
+      typeof snapshot.failedReason === "string"
+        ? boundedString(snapshot.failedReason, OFFICIAL_MINER_CACHE_STRING_LIMITS.failedReason)
+        : snapshot.failedReason === null
+          ? null
+          : undefined,
+    evaluatedAt: typeof snapshot.evaluatedAt === "string" ? boundedString(snapshot.evaluatedAt, OFFICIAL_MINER_CACHE_STRING_LIMITS.timestamp) : undefined,
+    updatedAt: typeof snapshot.updatedAt === "string" ? boundedString(snapshot.updatedAt, OFFICIAL_MINER_CACHE_STRING_LIMITS.timestamp) : undefined,
     isEligible: Boolean(snapshot.isEligible),
     credibility: finiteNumber(snapshot.credibility),
     eligibleRepoCount: finiteNumber(snapshot.eligibleRepoCount),
@@ -798,40 +811,18 @@ function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnap
       solvedIssues: finiteNumber(snapshot.totals?.solvedIssues),
       validSolvedIssues: finiteNumber(snapshot.totals?.validSolvedIssues),
     },
-    repositories: Array.isArray(snapshot.repositories)
-      ? snapshot.repositories.map((repo) => ({
-          repoFullName: String(repo.repoFullName ?? ""),
-          pullRequests: finiteNumber(repo.pullRequests),
-          mergedPullRequests: finiteNumber(repo.mergedPullRequests),
-          openPullRequests: finiteNumber(repo.openPullRequests),
-          closedPullRequests: finiteNumber(repo.closedPullRequests),
-          openIssues: finiteNumber(repo.openIssues),
-          closedIssues: finiteNumber(repo.closedIssues),
-          solvedIssues: finiteNumber(repo.solvedIssues),
-          validSolvedIssues: finiteNumber(repo.validSolvedIssues),
-          isEligible: Boolean(repo.isEligible),
-          isIssueEligible: Boolean(repo.isIssueEligible),
-          credibility: finiteNumber(repo.credibility),
-          issueCredibility: finiteNumber(repo.issueCredibility),
-          totalScore: finiteNumber(repo.totalScore),
-          baseTotalScore: finiteNumber(repo.baseTotalScore),
-        }))
-      : [],
-    pullRequests: Array.isArray(snapshot.pullRequests)
-      ? snapshot.pullRequests.map((pr) => ({
-          repoFullName: String(pr.repoFullName ?? ""),
-          number: finiteNumber(pr.number),
-          title: String(pr.title ?? ""),
-          state: String(pr.state ?? ""),
-          mergedAt: typeof pr.mergedAt === "string" ? pr.mergedAt : pr.mergedAt === null ? null : undefined,
-          label: typeof pr.label === "string" ? pr.label : pr.label === null ? null : undefined,
-          score: finiteNumber(pr.score),
-          baseScore: finiteNumber(pr.baseScore),
-          tokenScore: finiteNumber(pr.tokenScore),
-        }))
-      : [],
-    issueLabels: Array.isArray(snapshot.issueLabels) ? snapshot.issueLabels.filter((label): label is string => typeof label === "string") : [],
+    // The public-surface cache only needs identity, status, and aggregate totals.
+    // Do not persist per-repository, PR, title, or label data from Gittensor/GitHub;
+    // those untrusted arrays can be arbitrarily large and make D1 rows expensive to
+    // serialize, store, read, and parse during webhook processing.
+    repositories: [],
+    pullRequests: [],
+    issueLabels: [],
   };
+}
+
+function boundedString(value: unknown, maxLength: number): string {
+  return String(value ?? "").slice(0, maxLength);
 }
 
 function finiteNumber(value: unknown): number {
@@ -1918,6 +1909,9 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
     baseRef: pr.base?.ref,
     htmlUrl: pr.html_url,
     mergedAt: pr.merged_at,
+    isDraft: pr.draft ?? pr.isDraft,
+    mergeableState: pr.mergeable_state ?? pr.mergeableState ?? mergeableBooleanState(pr.mergeable),
+    reviewDecision: pr.reviewDecision,
     body: pr.body,
     labels: (pr.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
     linkedIssues: extractLinkedIssueNumbers(pr.body ?? ""),
@@ -1925,7 +1919,14 @@ function toPullRequestRecord(repoFullName: string, pr: GitHubPullRequestPayload)
 }
 
 function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): PullRequestRecord {
-  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null }>(row.payloadJson, {});
+  const payload = parseJson<{
+    body?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    draft?: boolean | null;
+    mergeable_state?: string | null;
+    reviewDecision?: string | null;
+  }>(row.payloadJson, {});
   return {
     repoFullName: row.repoFullName,
     number: row.number,
@@ -1938,6 +1939,9 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     baseRef: row.baseRef,
     htmlUrl: row.htmlUrl,
     mergedAt: row.mergedAt,
+    isDraft: payload.draft,
+    mergeableState: payload.mergeable_state,
+    reviewDecision: payload.reviewDecision,
     body: payload.body,
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
@@ -1961,12 +1965,33 @@ function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRe
   };
 }
 
-function compactGitHubPayload(payload: { body?: string | null; created_at?: string | null; updated_at?: string | null }): Record<string, JsonValue> {
+function compactGitHubPayload(payload: {
+  body?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  draft?: boolean | null;
+  isDraft?: boolean | null;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
+  mergeableState?: string | null;
+  reviewDecision?: string | null;
+}): Record<string, JsonValue> {
+  const draft = payload.draft ?? payload.isDraft;
+  const mergeableState = payload.mergeable_state ?? payload.mergeableState ?? mergeableBooleanState(payload.mergeable);
   return {
     body: truncateBody(payload.body),
     created_at: payload.created_at ?? null,
     updated_at: payload.updated_at ?? null,
+    ...(draft !== undefined ? { draft } : {}),
+    ...(mergeableState !== undefined ? { mergeable_state: mergeableState } : {}),
+    ...(payload.reviewDecision !== undefined ? { reviewDecision: payload.reviewDecision } : {}),
   };
+}
+
+function mergeableBooleanState(value: boolean | null | undefined): string | undefined {
+  if (value === true) return "mergeable";
+  if (value === false) return "blocked";
+  return undefined;
 }
 
 function truncateBody(body: string | null | undefined): string | null {

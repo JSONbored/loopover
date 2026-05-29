@@ -67,6 +67,16 @@ export type LocalBranchAnalysisInput = {
   scenarioNotes?: string[] | undefined;
 };
 
+type ObservedPullRequestScenarios = {
+  approvedOrMergeable: number;
+  stale: number;
+  closed: number;
+  draft: number;
+  blocked: number;
+  maintainerLane: number;
+  notes: string[];
+};
+
 export type LocalBranchAnalysis = {
   login: string;
   repoFullName: string;
@@ -95,9 +105,12 @@ export type LocalBranchAnalysis = {
     current: ScorePreviewResult["scenarioPreviews"][number];
     bestReasonableCase: ScorePreviewResult["scenarioPreviews"][number];
     afterPendingMerges?: ScorePreviewResult["scenarioPreviews"][number] | undefined;
+    afterApprovedPrsMerge?: ScorePreviewResult["scenarioPreviews"][number] | undefined;
+    afterStalePrsClose?: ScorePreviewResult["scenarioPreviews"][number] | undefined;
     gateDeltas: ScorePreviewResult["gateDeltas"];
     blockedBy: ScorePreviewResult["blockedBy"];
   };
+  observedPullRequestScenarios: ObservedPullRequestScenarios;
   rewardRisk: RepoRewardRisk;
   scoreBlockers: string[];
   branchQualityBlockers: string[];
@@ -140,7 +153,9 @@ export function buildLocalBranchAnalysis(args: {
   repo: RepositoryRecord | null;
   issues: IssueRecord[];
   pullRequests: PullRequestRecord[];
+  contributorPullRequests?: PullRequestRecord[] | undefined;
   recentMergedPullRequests?: RecentMergedPullRequestRecord[] | undefined;
+  repositories?: RepositoryRecord[] | undefined;
   profile: ContributorProfile;
   outcomeHistory: ContributorOutcomeHistory;
   scoringSnapshot: ScoringModelSnapshotRecord;
@@ -180,6 +195,12 @@ export function buildLocalBranchAnalysis(args: {
   });
   const lane = buildLaneAdvice(args.repo, args.input.repoFullName);
   const repoOutcome = args.outcomeHistory.repoOutcomes.find((outcome) => sameRepo(outcome.repoFullName, args.input.repoFullName));
+  const observedPullRequestScenarios = buildObservedPullRequestScenarios({
+    login: args.input.login,
+    repoFullName: args.input.repoFullName,
+    pullRequests: args.contributorPullRequests ?? args.pullRequests,
+    repositories: args.repositories,
+  });
   const scoreInput = buildLocalScoreInput({
     input: args.input,
     changedFiles,
@@ -189,6 +210,7 @@ export function buildLocalBranchAnalysis(args: {
     roleContext,
     outcomeHistory: args.outcomeHistory,
     repoOutcome,
+    observedPullRequestScenarios,
   });
   const scorePreview = buildScorePreview({
     input: scoreInput,
@@ -227,6 +249,8 @@ export function buildLocalBranchAnalysis(args: {
     current: currentScenario,
     bestReasonableCase: bestReasonableScenario,
     afterPendingMerges: scorePreview.scenarioPreviews.find((scenario) => scenario.name === "afterPendingMerges"),
+    afterApprovedPrsMerge: scorePreview.scenarioPreviews.find((scenario) => scenario.name === "afterApprovedPrsMerge"),
+    afterStalePrsClose: scorePreview.scenarioPreviews.find((scenario) => scenario.name === "afterStalePrsClose"),
     gateDeltas: scorePreview.gateDeltas,
     blockedBy: scorePreview.blockedBy,
   };
@@ -260,6 +284,7 @@ export function buildLocalBranchAnalysis(args: {
     preflight,
     scorePreview,
     scenarioScorePreview,
+    observedPullRequestScenarios,
     rewardRisk,
     scoreBlockers: [...new Set(scoreBlockers)],
     branchQualityBlockers,
@@ -289,6 +314,7 @@ function buildLocalScoreInput(args: {
   roleContext: RoleContext;
   outcomeHistory: ContributorOutcomeHistory;
   repoOutcome?: ContributorOutcomeHistory["repoOutcomes"][number] | undefined;
+  observedPullRequestScenarios: ObservedPullRequestScenarios;
 }): ScorePreviewInput {
   const scorer = args.input.localScorer;
   const testLineCount = args.changedFiles.filter((file) => isTestFile(file.path)).reduce((sum, file) => sum + nonNegative(file.additions) + nonNegative(file.deletions), 0);
@@ -314,10 +340,101 @@ function buildLocalScoreInput(args: {
     pendingMergedPrCount: args.input.pendingMergedPrCount,
     pendingClosedPrCount: args.input.pendingClosedPrCount,
     approvedPrCount: args.input.approvedPrCount,
+    observedApprovedPrCount: args.observedPullRequestScenarios.approvedOrMergeable,
+    observedStalePrCount: args.observedPullRequestScenarios.stale,
+    observedClosedPrCount: args.observedPullRequestScenarios.closed,
+    observedDraftPrCount: args.observedPullRequestScenarios.draft,
+    observedBlockedPrCount: args.observedPullRequestScenarios.blocked,
+    observedMaintainerPrCount: args.observedPullRequestScenarios.maintainerLane,
     expectedOpenPrCountAfterMerge: args.input.expectedOpenPrCountAfterMerge,
     projectedCredibility: args.input.projectedCredibility,
     scenarioNotes: args.input.scenarioNotes,
+    observedScenarioNotes: args.observedPullRequestScenarios.notes,
   };
+}
+
+function buildObservedPullRequestScenarios(args: {
+  login: string;
+  repoFullName: string;
+  pullRequests: PullRequestRecord[];
+  repositories?: RepositoryRecord[] | undefined;
+  nowMs?: number | undefined;
+}): ObservedPullRequestScenarios {
+  const repoByName = new Map((args.repositories ?? []).map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const registeredRepos = new Set((args.repositories ?? []).filter((repo) => repo.isRegistered).map((repo) => repo.fullName.toLowerCase()));
+  const scopedPullRequests = args.pullRequests.filter((pr) => {
+    if (!sameLogin(pr.authorLogin, args.login)) return false;
+    if (registeredRepos.size > 0) return registeredRepos.has(pr.repoFullName.toLowerCase());
+    return sameRepo(pr.repoFullName, args.repoFullName);
+  });
+  let approvedOrMergeable = 0;
+  let stale = 0;
+  let closed = 0;
+  let draft = 0;
+  let blocked = 0;
+  let maintainerLane = 0;
+  for (const pr of scopedPullRequests) {
+    const repo = repoByName.get(pr.repoFullName.toLowerCase());
+    if (isMaintainerAuthoredPr(pr, repo, args.login)) {
+      maintainerLane += 1;
+      continue;
+    }
+    if (pr.state !== "open") {
+      if (pr.state === "closed" && !pr.mergedAt) closed += 1;
+      continue;
+    }
+    if (pr.isDraft) {
+      draft += 1;
+      continue;
+    }
+    if (isStaleOpenPr(pr, args.nowMs)) {
+      stale += 1;
+      continue;
+    }
+    if (isBlockedOpenPr(pr)) {
+      blocked += 1;
+      continue;
+    }
+    if (isApprovedOrMergeableOpenPr(pr)) approvedOrMergeable += 1;
+  }
+  return {
+    approvedOrMergeable,
+    stale,
+    closed,
+    draft,
+    blocked,
+    maintainerLane,
+    notes: observedPullRequestNotes({ approvedOrMergeable, stale, closed, draft, blocked, maintainerLane }),
+  };
+}
+
+function observedPullRequestNotes(scenarios: Omit<ObservedPullRequestScenarios, "notes">): string[] {
+  return [
+    ...(scenarios.approvedOrMergeable > 0 ? [`${scenarios.approvedOrMergeable} cached approved or mergeable open PR(s) can be modeled as likely-to-land.`] : []),
+    ...(scenarios.stale > 0 ? [`${scenarios.stale} cached stale open PR(s) can be modeled as cleanup-first rather than likely-to-land.`] : []),
+    ...(scenarios.closed > 0 ? [`${scenarios.closed} cached closed PR(s) can be modeled as no longer open.`] : []),
+  ];
+}
+
+function isMaintainerAuthoredPr(pr: PullRequestRecord, repo: RepositoryRecord | undefined, login: string): boolean {
+  return sameLogin(repo?.owner, login) || ["owner", "member", "collaborator"].includes((pr.authorAssociation ?? "").toLowerCase());
+}
+
+function isStaleOpenPr(pr: PullRequestRecord, nowMs: number | undefined): boolean {
+  const updatedAt = Date.parse(pr.updatedAt ?? pr.createdAt ?? "");
+  return Number.isFinite(updatedAt) && (nowMs ?? Date.now()) - updatedAt >= 14 * 24 * 60 * 60 * 1000;
+}
+
+function isBlockedOpenPr(pr: PullRequestRecord): boolean {
+  const reviewDecision = (pr.reviewDecision ?? "").toLowerCase();
+  const mergeableState = (pr.mergeableState ?? "").toLowerCase();
+  return reviewDecision === "changes_requested" || ["blocked", "dirty", "conflicting", "unknown", "unstable"].includes(mergeableState);
+}
+
+function isApprovedOrMergeableOpenPr(pr: PullRequestRecord): boolean {
+  const reviewDecision = (pr.reviewDecision ?? "").toLowerCase();
+  const mergeableState = (pr.mergeableState ?? "").toLowerCase();
+  return reviewDecision === "approved" || ["clean", "has_hooks", "mergeable", "mergeable_state_clean"].includes(mergeableState);
 }
 
 function buildLocalFindings(
@@ -625,6 +742,10 @@ function isCodeFile(file: string): boolean {
 
 function sameRepo(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
+}
+
+function sameLogin(left: string | null | undefined, right: string | null | undefined): boolean {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
 }
 
 function nonNegative(value: number | undefined): number {

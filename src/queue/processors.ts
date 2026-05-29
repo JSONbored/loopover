@@ -767,9 +767,9 @@ async function getCachedOfficialMinerDetection(env: Env, login: string, context:
   }
   await auditMinerDetectionCache(env, "github_app.miner_detection_cache_miss", login, context, "miss");
   const detection = await fetchOfficialGittensorMiner(login);
-  await upsertOfficialMinerDetection(env, login, detection, detection.status === "unavailable" ? OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS : OFFICIAL_MINER_DETECTION_TTL_MS);
-  if (detection.status === "unavailable") await auditMinerDetectionUnavailable(env, login, context, detection.error);
-  return detection;
+  const cacheableDetection = await upsertOfficialMinerDetection(env, login, detection, detection.status === "unavailable" ? OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS : OFFICIAL_MINER_DETECTION_TTL_MS);
+  if (cacheableDetection.status === "unavailable") await auditMinerDetectionUnavailable(env, login, context, cacheableDetection.error);
+  return cacheableDetection;
 }
 
 async function auditMinerDetectionUnavailable(env: Env, actor: string, context: { targetKey: string; deliveryId: string }, detail: string): Promise<void> {

@@ -184,15 +184,20 @@ The Pages workflow builds the docs on `main` for `https://gittensory.aethereal.d
 
 ## Changelog And Releases
 
+Normal feature/fix PRs do not edit changelogs. Keep PR titles Conventional Commit
+friendly, then update changelogs during release prep.
+
 ```sh
 npm run changelog
 npm run changelog:check
+npm run changelog:check:mcp
 ```
 
 - `CHANGELOG.md` tracks backend/API/GitHub App changes.
 - `packages/gittensory-mcp/CHANGELOG.md` tracks npm-visible MCP package changes.
 - Root releases use `vX.Y.Z` tags.
 - MCP package releases use `mcp-vX.Y.Z` tags and publish through trusted publishing with provenance.
+- MCP release validation runs `npm run test:release:mcp`, which includes the normal CI gate plus the MCP changelog freshness check.
 
 ## Validation
 

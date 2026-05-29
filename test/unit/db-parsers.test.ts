@@ -276,9 +276,58 @@ describe("database row parser hardening", () => {
         },
         repositories: [],
         pullRequests: [],
-        issueLabels: ["bug"],
+        issueLabels: [],
       },
     });
+  });
+
+  it("stores only bounded official miner identity and totals in the cache", async () => {
+    const env = createTestEnv();
+    await upsertOfficialMinerDetection(
+      env,
+      "oversized",
+      {
+        status: "confirmed",
+        snapshot: {
+          source: "gittensor_api",
+          githubId: "7".repeat(200),
+          githubUsername: "u".repeat(200),
+          failedReason: "f".repeat(600),
+          evaluatedAt: "e".repeat(100),
+          updatedAt: "u".repeat(100),
+          totals: {
+            pullRequests: 123,
+            mergedPullRequests: 45,
+            openPullRequests: 6,
+            closedPullRequests: 7,
+            openIssues: 8,
+            closedIssues: 9,
+            solvedIssues: 10,
+            validSolvedIssues: 11,
+          },
+          repositories: Array.from({ length: 200 }, (_, index) => ({ repoFullName: `owner/repo-${index}` })),
+          pullRequests: Array.from({ length: 200 }, (_, index) => ({ repoFullName: "owner/repo", number: index, title: "t".repeat(1000) })),
+          issueLabels: Array.from({ length: 200 }, (_, index) => `label-${index}`),
+        } as never,
+      },
+      60_000,
+      Date.parse("2026-05-29T00:00:00.000Z"),
+    );
+
+    const raw = await env.DB.prepare("select snapshot_json from official_miner_detections where login = ?").bind("oversized").first<{ snapshot_json: string }>();
+    const cachedSnapshot = JSON.parse(raw?.snapshot_json ?? "{}");
+
+    expect(cachedSnapshot.githubId).toHaveLength(128);
+    expect(cachedSnapshot.githubUsername).toHaveLength(128);
+    expect(cachedSnapshot.failedReason).toHaveLength(512);
+    expect(cachedSnapshot.evaluatedAt).toHaveLength(64);
+    expect(cachedSnapshot.updatedAt).toHaveLength(64);
+    expect(cachedSnapshot.totals).toMatchObject({ pullRequests: 123, mergedPullRequests: 45, openIssues: 8 });
+    expect(cachedSnapshot.repositories).toEqual([]);
+    expect(cachedSnapshot.pullRequests).toEqual([]);
+    expect(cachedSnapshot.issueLabels).toEqual([]);
+    expect(raw?.snapshot_json).not.toContain("owner/repo");
+    expect(raw?.snapshot_json).not.toContain("label-199");
   });
 
   it("drops unknown fields even when cached miner identity fields are missing", async () => {

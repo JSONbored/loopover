@@ -96,8 +96,12 @@ describe("GitHub mention commands", () => {
     });
     expect(body).toContain("<!-- gittensory-agent-command -->");
     expect(body).toContain("Scope: this repository#12");
-    expect(body).not.toMatch(/wallet|hotkey|coldkey|estimated score|reward estimate|payout|farming|raw trust score/i);
-    expect(sanitizePublicComment("wallet hotkey payout")).not.toMatch(/wallet|hotkey|payout/i);
+    expect(body).not.toMatch(/wallet|hotkey|coldkey|estimated score|reward estimate|payout|farming|raw trust score|reviewability|private ranking/i);
+    expect(body).not.toMatch(/private context,\s*private context/i);
+    expect(sanitizePublicComment("wallet hotkey payout reviewability private ranking")).not.toMatch(
+      /wallet|hotkey|payout|reviewability|private ranking/i,
+    );
+    expect(sanitizePublicComment("private ranking, wallet, payout")).toBe("private context");
   });
 
   it("renders command-specific sections for preflight, blockers, duplicate-check, and next-action", () => {

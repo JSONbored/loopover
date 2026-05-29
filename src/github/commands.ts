@@ -75,7 +75,7 @@ export function buildPublicAgentCommandComment(args: {
     "",
     ...sections,
     "",
-    "_Advisory context only. This public comment intentionally excludes private ranking, wallet, payout, and reviewability internals._",
+    "_Advisory context only. Public comments exclude non-public contributor signals and reviewability internals._",
   ].join("\n");
   return sanitizePublicComment(body);
 }
@@ -185,8 +185,11 @@ function duplicateCheckSections(bundle: AgentRunBundle | null | undefined): stri
   const lines = ["**Duplicate & WIP caution**", ""];
   for (const action of actions.slice(0, 4)) {
     lines.push(`- ${publicBlockerDetail(action.publicSafeSummary)}`);
+    for (const code of action.blockedBy.slice(0, 3)) {
+      lines.push(`- ${publicBlockerLabel(code)}`);
+    }
     const caution = [...action.why, action.riskImpact ?? ""]
-      .filter((item) => mentionsDuplicateRiskText(item))
+      .filter((item) => item.trim().length > 0 && (mentionsDuplicateRiskText(item) || /\blikely_duplicate\b/i.test(item)))
       .slice(0, 3)
       .map((item) => `- ${publicBlockerDetail(item)}`);
     lines.push(...caution);
@@ -307,8 +310,10 @@ function dedupeBulletLines(lines: string[]): string[] {
 }
 
 export function sanitizePublicComment(value: string): string {
-  return value
+  const sanitized = value
     .replace(/\b(raw trust score|trust score|wallet|hotkey|coldkey|seed phrase|mnemonic)\b/gi, "private context")
-    .replace(/\b(estimated score|score estimate|reward estimate|payout|farming)\b/gi, "private context")
+    .replace(/\b(estimated score|score estimate|reward estimate|payout|farming|reviewability)\b/gi, "private context")
+    .replace(/\b(private ranking|private rankings)\b/gi, "private context")
     .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work");
+  return sanitized.replace(/private context(?:,\s*private context)+/gi, "private context");
 }

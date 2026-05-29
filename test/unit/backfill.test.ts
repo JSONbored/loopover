@@ -1029,6 +1029,9 @@ describe("GitHub backfill", () => {
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
         if (query.includes("GittensoryOpenPullRequestsSupplement")) {
+          expect(query).toContain("isDraft");
+          expect(query).toContain("mergeable");
+          expect(query).toContain("reviewDecision");
           if (query.includes("after:")) {
             return Response.json({
               data: {
@@ -1054,6 +1057,9 @@ describe("GitHub backfill", () => {
                       state: "OPEN",
                       url: "https://github.com/JSONbored/gittensory/pull/11",
                       body: "GraphQL supplement",
+                      isDraft: false,
+                      mergeable: "CLEAN",
+                      reviewDecision: "APPROVED",
                       author: { login: "oktofeesh1" },
                       authorAssociation: "NONE",
                       headRefName: "feature",
@@ -1080,7 +1086,17 @@ describe("GitHub backfill", () => {
     expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Supplemented 2 open pull request")]));
     expect(await listPullRequests(env, "JSONbored/gittensory")).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ number: 11, title: "GraphQL-only PR", labels: ["bug"], headSha: "abc123", headRef: "feature", baseRef: "main" }),
+        expect.objectContaining({
+          number: 11,
+          title: "GraphQL-only PR",
+          isDraft: false,
+          mergeableState: "CLEAN",
+          reviewDecision: "APPROVED",
+          labels: ["bug"],
+          headSha: "abc123",
+          headRef: "feature",
+          baseRef: "main",
+        }),
       ]),
     );
   });

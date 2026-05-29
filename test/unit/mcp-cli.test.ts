@@ -313,7 +313,7 @@ describe("gittensory-mcp CLI", () => {
     expect(output).toContain("# Public-safe PR packet");
     expect(output).toContain("## Validation");
     expect(output).toContain("Closes #39");
-    expect(output).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|raw[-\s]?trust|private[-\s]?reviewability|reviewability|export const packet/i);
+    expect(output).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|raw[-_\s]?trust|private[-_\s]?reviewability|reviewability|export const packet/i);
   });
 
   it("rejects unsafe server-provided packet markdown before non-json output", async () => {
@@ -328,7 +328,7 @@ describe("gittensory-mcp CLI", () => {
     git(tempDir, "commit", "-m", "initial commit");
     git(tempDir, "checkout", "-b", "codex/public-safe-pr-packets");
 
-    for (const unsafePhrase of ["score: 1.15", "reward estimate", "wallet address", "hotkey id", "raw-trust: 0.7", "private-reviewability: ready"]) {
+    for (const unsafePhrase of ["score: 1.15", "reward estimate", "wallet address", "hotkey id", "raw-trust: 0.7", "private-reviewability: ready", "raw_trust: 0.7", "private_reviewability: ready", "trust_score: 0.4"]) {
       if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
       server = null;
       const url = await startFixtureServer({ packetMarkdown: `# Public-safe PR packet\n\n- ${unsafePhrase}\n` });
@@ -343,7 +343,7 @@ describe("gittensory-mcp CLI", () => {
         ),
       ).rejects.toThrow("Refusing to print unsafe public packet markdown from the server.");
     }
-  });
+  }, 10000);
 
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);

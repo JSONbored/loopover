@@ -122,6 +122,12 @@ export type GitHubPullRequestPayload = {
   state: string;
   html_url?: string;
   merged_at?: string | null;
+  draft?: boolean | null;
+  isDraft?: boolean | null;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
+  mergeableState?: string | null;
+  reviewDecision?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   user?: {
@@ -249,6 +255,9 @@ export type PullRequestRecord = {
   baseRef?: string | null | undefined;
   htmlUrl?: string | null | undefined;
   mergedAt?: string | null | undefined;
+  isDraft?: boolean | null | undefined;
+  mergeableState?: string | null | undefined;
+  reviewDecision?: string | null | undefined;
   body?: string | null | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;

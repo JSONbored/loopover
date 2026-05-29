@@ -38,7 +38,7 @@
     "validate": "npm run typecheck && npm run test:coverage"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@hono/zod-validator": "^0.7.4",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@octokit/core": "^7.0.6",

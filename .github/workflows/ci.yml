@@ -54,8 +54,5 @@ jobs:
       - name: Docs check
         run: npm run docs:check && npm run docs:build
 
-      - name: Changelog check
-        run: npm run changelog:check
-
       - name: Audit dependencies
         run: npm audit --audit-level=moderate

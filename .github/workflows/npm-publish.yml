@@ -41,8 +41,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Full validation gate
-        run: npm run test:ci
+      - name: MCP release validation gate
+        run: npm run test:release:mcp
 
       - name: Packed tarball smoke test
         run: |

@@ -1443,6 +1443,7 @@ export function buildContributorReconciliationReport(args: {
   const officialByRepo = new Map(args.profile.gittensor?.repositories.map((repo) => [repo.repoFullName.toLowerCase(), repo]) ?? []);
   const statByRepo = new Map(cachedStats.filter((stat) => sameLogin(stat.login, args.login)).map((stat) => [stat.repoFullName.toLowerCase(), stat]));
   const repoByName = new Map(args.repositories.map((repo) => [repo.fullName.toLowerCase(), repo]));
+  const officialAuthoritative = Boolean(args.profile.gittensor);
   const repos = [...repoNamesByKey.values()].map((entry) => entry.repoFullName).sort((left, right) => left.localeCompare(right)).map((repoFullName) => {
     const key = repoFullName.toLowerCase();
     const official = officialByRepo.get(key);
@@ -1472,8 +1473,8 @@ export function buildContributorReconciliationReport(args: {
       maintainerLane,
       official: officialCounts,
       cached,
-      effective: officialCounts ?? cached,
-      discrepancyReasons: reconciliationReasons(officialCounts, cached, maintainerLane),
+      effective: officialCounts ?? (officialAuthoritative ? emptyOutcomeCounts() : cached),
+      discrepancyReasons: reconciliationReasons(officialCounts, cached, maintainerLane, officialAuthoritative),
       freshness: {
         officialUpdatedAt: args.profile.gittensor?.updatedAt ?? args.profile.gittensor?.evaluatedAt,
         cachedLastActivityAt: cachedLastActivityAt(args.login, repoFullName, args.pullRequests, args.issues),
@@ -1579,9 +1580,14 @@ function sumReconciliationCounts(counts: ContributorOutcomeCounts[]): Contributo
   return { ...summed, closedPullRequestRate: rate(summed.closedPullRequests, summed.pullRequests), credibility: 0, issueCredibility: 0 };
 }
 
-function reconciliationReasons(official: ContributorOutcomeCounts | undefined, cached: ContributorOutcomeCounts, maintainerLane: boolean): string[] {
+function emptyOutcomeCounts(): ContributorOutcomeCounts {
+  return { pullRequests: 0, mergedPullRequests: 0, openPullRequests: 0, closedPullRequests: 0, issues: 0, openIssues: 0, closedIssues: 0, solvedIssues: 0, validSolvedIssues: 0 };
+}
+
+function reconciliationReasons(official: ContributorOutcomeCounts | undefined, cached: ContributorOutcomeCounts, maintainerLane: boolean, officialAuthoritative: boolean): string[] {
   return [
-    ...(!official ? ["Official source unavailable; cached GitHub history is context only."] : []),
+    ...(!official && officialAuthoritative && cached.pullRequests + cached.issues > 0 ? ["Official source omits this repo; cached GitHub history is context only."] : []),
+    ...(!official && !officialAuthoritative ? ["Official source unavailable; cached GitHub history is context only."] : []),
     ...(official && official.pullRequests !== cached.pullRequests
       ? [`Official PR total ${official.pullRequests} differs from cached GitHub context ${cached.pullRequests}; official total is authoritative.`]
       : []),

@@ -732,6 +732,7 @@ describe("v2 signal builders", () => {
     ];
     const cachedRepoStats: ContributorRepoStatRecord[] = [
       { login: "jsonbored", repoFullName: "jsonbored/Awesome-Claude", pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1, issues: 4, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["bug"] },
+      { login: "jsonbored", repoFullName: "entrius/gittensor", pullRequests: 1, mergedPullRequests: 0, openPullRequests: 1, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["bug"] },
     ];
     const history = buildContributorOutcomeHistory({
       login: "jsonbored",
@@ -740,6 +741,7 @@ describe("v2 signal builders", () => {
       pullRequests: [
         { ...pullRequests[0]!, repoFullName: "JSONbored/awesome-claude", number: 1, authorLogin: "jsonbored", state: "closed", mergedAt: "2026-05-01T00:00:00.000Z" },
         { ...pullRequests[0]!, repoFullName: "jsonbored/Awesome-Claude", number: 2, authorLogin: "jsonbored", state: "open", mergedAt: null },
+        { ...pullRequests[0]!, repoFullName: "entrius/gittensor", number: 3, authorLogin: "jsonbored", state: "open", mergedAt: null },
       ],
       issues: [{ ...issues[0]!, repoFullName: "JSONbored/awesome-claude", number: 3, authorLogin: "jsonbored", authorAssociation: "OWNER", state: "open" }],
       repoStats: officialStats,
@@ -763,7 +765,13 @@ describe("v2 signal builders", () => {
         expect.stringContaining("Maintainer-owned repo history"),
       ]),
     );
-    expect(history.reconciliation?.totals.cached).toMatchObject({ pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1, closedPullRequests: 0, issues: 4, openIssues: 1, closedIssues: 3 });
+    expect(history.reconciliation?.totals.cached).toMatchObject({ pullRequests: 3, mergedPullRequests: 1, openPullRequests: 2, closedPullRequests: 0, issues: 4, openIssues: 1, closedIssues: 3 });
+    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName === "entrius/gittensor")).toMatchObject({
+      official: undefined,
+      cached: { pullRequests: 1, openPullRequests: 1 },
+      effective: { pullRequests: 0, openPullRequests: 0 },
+      discrepancyReasons: expect.arrayContaining([expect.stringContaining("Official source omits this repo")]),
+    });
   });
 
   it("uses cached issue associations for reconciliation maintainer lanes", () => {

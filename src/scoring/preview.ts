@@ -548,9 +548,10 @@ function constant(constants: Record<string, number>, key: string, fallback: numb
 
 function saturationScore(sourceTokenScore: number, totalTokenScore: number, constants: Record<string, number>): number {
   const scale = Math.max(constant(constants, "SRC_TOK_SATURATION_SCALE", 58), 1);
+  const contributionBonusCap = Math.min(constant(constants, "MAX_CONTRIBUTION_BONUS", 5), 5);
   return (
     constant(constants, "MERGED_PR_BASE_SCORE", 25) * (1 - Math.exp(-sourceTokenScore / scale)) +
-    clamp(totalTokenScore / constant(constants, "CONTRIBUTION_SCORE_FOR_FULL_BONUS", 1500), 0, 1) * constant(constants, "MAX_CONTRIBUTION_BONUS", 5)
+    clamp(totalTokenScore / constant(constants, "CONTRIBUTION_SCORE_FOR_FULL_BONUS", 1500), 0, 1) * contributionBonusCap
   );
 }
 

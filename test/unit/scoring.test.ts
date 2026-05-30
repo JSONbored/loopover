@@ -83,6 +83,24 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(detectActiveModel(parsed)).toBe("pending_saturation_model");
   });
 
+  it("detects the active model from fetched constants before default fallback constants", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) {
+        return new Response("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
+      }
+      if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    expect(refreshed.activeModel).toBe("current_density_model");
+    expect(refreshed.constants.SRC_TOK_SATURATION_SCALE).toBe(58);
+    expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
+  });
+
   it("uses saturation math as the active private preview model", () => {
     const saturationSnapshot: ScoringModelSnapshotRecord = {
       ...snapshot,
@@ -114,6 +132,34 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(preview.scoreEstimate.estimatedMergedScore).toBeCloseTo(33.2016, 3);
     expect(preview.gates.baseTokenGatePassed).toBe(true);
     expect(JSON.stringify(preview.scoreEstimate)).not.toMatch(/reward estimate|wallet|hotkey|farming|payout/i);
+  });
+
+  it("keeps pending saturation projection bonus capped for density-era snapshots", () => {
+    const densitySnapshot: ScoringModelSnapshotRecord = {
+      ...snapshot,
+      activeModel: "current_density_model",
+      constants: {
+        ...snapshot.constants,
+        MAX_CONTRIBUTION_BONUS: 25,
+        SRC_TOK_SATURATION_SCALE: 58,
+      },
+    };
+    const preview = buildScorePreview({
+      repo,
+      snapshot: densitySnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 58,
+        totalTokenScore: 1500,
+        sourceLines: 120,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+
+    expect(preview.scoreEstimate.contributionBonus).toBe(25);
+    expect(preview.scoreEstimate.pendingSaturationScore).toBeCloseTo(20.803, 3);
+    expect(preview.underlyingPotentialScore).toBeLessThan(30);
   });
 
   it("keeps lane math tied to the recorded model snapshot and clamps score gates", () => {

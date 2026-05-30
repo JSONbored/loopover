@@ -50,11 +50,13 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
 
   let sourceKind: ScoringModelSnapshotRecord["sourceKind"] = "raw-github";
   let constants = { ...DEFAULT_SCORING_CONSTANTS };
+  let activeModelConstants = constants;
   let constantsPayload: Record<string, JsonValue> = {};
 
   if (constantsResult.ok) {
     const parsed = parsePythonNumberConstants(constantsResult.value);
     constants = { ...constants, ...parsed };
+    activeModelConstants = parsed;
     constantsPayload = { parsedConstantCount: Object.keys(parsed).length, sourceBytes: constantsResult.value.length };
     warnings.push(...activeModelWarnings(parsed));
   } else {
@@ -70,7 +72,7 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
     sourceKind,
     sourceUrl: SCORING_CONSTANTS_URL,
     fetchedAt,
-    activeModel: detectActiveModel(constants),
+    activeModel: detectActiveModel(activeModelConstants),
     constants,
     programmingLanguages: programmingLanguages as Record<string, JsonValue>,
     registrySnapshotId: registrySnapshot?.id,

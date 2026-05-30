@@ -70,6 +70,52 @@ IGNORED = "not numeric"
     expect(detectActiveModel({})).toBe("unknown");
   });
 
+  it("prefers exponential saturation when mixed upstream constants are present", () => {
+    const parsed = parsePythonNumberConstants(`
+MERGED_PR_BASE_SCORE = 25
+MAX_CONTRIBUTION_BONUS = 5
+CONTRIBUTION_SCORE_FOR_FULL_BONUS = 1500
+SRC_TOK_SATURATION_SCALE = 58.0
+MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5
+MAX_CODE_DENSITY_MULTIPLIER = 1.15
+`);
+    expect(parsed).toMatchObject({ SRC_TOK_SATURATION_SCALE: 58, MAX_CONTRIBUTION_BONUS: 5 });
+    expect(detectActiveModel(parsed)).toBe("pending_saturation_model");
+  });
+
+  it("uses saturation math as the active private preview model", () => {
+    const saturationSnapshot: ScoringModelSnapshotRecord = {
+      ...snapshot,
+      activeModel: "pending_saturation_model",
+      constants: {
+        ...snapshot.constants,
+        MAX_CONTRIBUTION_BONUS: 5,
+        SRC_TOK_SATURATION_SCALE: 58,
+      },
+    };
+    const preview = buildScorePreview({
+      repo,
+      snapshot: saturationSnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        labels: ["bug"],
+        linkedIssueMode: "standard",
+        sourceTokenScore: 58,
+        totalTokenScore: 1500,
+        sourceLines: 120,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+
+    expect(preview.activeModel).toBe("pending_saturation_model");
+    expect(preview.scoreEstimate.baseScore).toBeCloseTo(20.803, 3);
+    expect(preview.scoreEstimate.pendingSaturationScore).toBe(preview.scoreEstimate.baseScore);
+    expect(preview.scoreEstimate.estimatedMergedScore).toBeCloseTo(33.2016, 3);
+    expect(preview.gates.baseTokenGatePassed).toBe(true);
+    expect(JSON.stringify(preview.scoreEstimate)).not.toMatch(/reward estimate|wallet|hotkey|farming|payout/i);
+  });
+
   it("keeps lane math tied to the recorded model snapshot and clamps score gates", () => {
     const preview = buildScorePreview({
       repo,
@@ -254,7 +300,7 @@ IGNORED = "not numeric"
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("constants.py")) {
-        return new Response("OSS_EMISSION_SHARE = 0.90\nMIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
+        return new Response("OSS_EMISSION_SHARE = 0.90\nMERGED_PR_BASE_SCORE = 25\nSRC_TOK_SATURATION_SCALE = 58\nMIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
       }
       if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1, Python: 0.8 });
       return new Response("not found", { status: 404 });
@@ -262,7 +308,8 @@ IGNORED = "not numeric"
 
     const refreshed = await refreshScoringModelSnapshot(env);
     expect(refreshed.sourceKind).toBe("raw-github");
-    expect(refreshed.activeModel).toBe("current_density_model");
+    expect(refreshed.activeModel).toBe("pending_saturation_model");
+    expect(refreshed.warnings.join(" ")).toMatch(/density-era indicators/i);
     expect(refreshed.programmingLanguages).toMatchObject({ TypeScript: 1 });
     await expect(getLatestScoringModelSnapshot(env)).resolves.toMatchObject({ id: refreshed.id });
 

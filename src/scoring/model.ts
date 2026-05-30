@@ -11,9 +11,7 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   ISSUE_TREASURY_EMISSION_SHARE: 0.1,
   PR_LOOKBACK_DAYS: 30,
   MERGED_PR_BASE_SCORE: 25,
-  MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5,
-  MAX_CODE_DENSITY_MULTIPLIER: 1.15,
-  MAX_CONTRIBUTION_BONUS: 25,
+  MAX_CONTRIBUTION_BONUS: 5,
   CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500,
   TEST_FILE_CONTRIBUTION_WEIGHT: 0.05,
   MIN_VALID_MERGED_PRS: 3,
@@ -39,7 +37,7 @@ export const SCORING_CONSTANTS_URL =
 export const PROGRAMMING_LANGUAGES_URL =
   "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/programming_languages.json";
 
-const SCORING_CONSTANT_NAMES = new Set(Object.keys(DEFAULT_SCORING_CONSTANTS));
+const SCORING_CONSTANT_NAMES = new Set([...Object.keys(DEFAULT_SCORING_CONSTANTS), "MIN_TOKEN_SCORE_FOR_BASE_SCORE", "MAX_CODE_DENSITY_MULTIPLIER"]);
 
 export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringModelSnapshotRecord> {
   const warnings: string[] = [];
@@ -58,6 +56,7 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
     const parsed = parsePythonNumberConstants(constantsResult.value);
     constants = { ...constants, ...parsed };
     constantsPayload = { parsedConstantCount: Object.keys(parsed).length, sourceBytes: constantsResult.value.length };
+    warnings.push(...activeModelWarnings(parsed));
   } else {
     sourceKind = "fallback";
     warnings.push(`Scoring constants fetch failed: ${constantsResult.error}`);
@@ -104,11 +103,29 @@ export function parsePythonNumberConstants(source: string): Record<string, numbe
 }
 
 export function detectActiveModel(constants: Record<string, number>): ScoringModelSnapshotRecord["activeModel"] {
-  if (Number.isFinite(constants.MAX_CODE_DENSITY_MULTIPLIER) && Number.isFinite(constants.MIN_TOKEN_SCORE_FOR_BASE_SCORE)) {
+  if (hasSaturationConstants(constants)) return "pending_saturation_model";
+  if (hasDensityConstants(constants)) {
     return "current_density_model";
   }
-  if (Number.isFinite(constants.SRC_TOK_SATURATION_SCALE)) return "pending_saturation_model";
   return "unknown";
+}
+
+function activeModelWarnings(constants: Record<string, number>): string[] {
+  const hasSaturation = hasSaturationConstants(constants);
+  const hasDensity = hasDensityConstants(constants);
+  if (hasSaturation && hasDensity) {
+    return ["Scoring constants include both exponential saturation and density-era indicators; using exponential saturation as the active model."];
+  }
+  if (!hasSaturation && !hasDensity) return ["Scoring constants did not include a recognized active-model indicator."];
+  return [];
+}
+
+function hasSaturationConstants(constants: Record<string, number>): boolean {
+  return Number.isFinite(constants.SRC_TOK_SATURATION_SCALE);
+}
+
+function hasDensityConstants(constants: Record<string, number>): boolean {
+  return Number.isFinite(constants.MAX_CODE_DENSITY_MULTIPLIER) && Number.isFinite(constants.MIN_TOKEN_SCORE_FOR_BASE_SCORE);
 }
 
 async function fetchText(url: string, token?: string): Promise<{ ok: true; value: string } | { ok: false; error: string }> {

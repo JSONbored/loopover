@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -345,6 +345,57 @@ describe("gittensory-mcp CLI", () => {
     }
   }, 10000);
 
+  it("sends bounded structured validation summaries without local logs", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    const requests: unknown[] = [];
+    const url = await startFixtureServer({ onPacketRequest: (body) => requests.push(body) });
+    await runAsync(
+      [
+        "agent",
+        "packet",
+        "--login",
+        "oktofeesh1",
+        "--cwd",
+        tempDir,
+        "--base",
+        "HEAD",
+        "--validation",
+        "focused|npm run test:unit|1234ms|unit passed raw_trust=0.4 /Users/example/log.txt",
+        "--validation-command",
+        "npm run lint",
+        "--validation-status",
+        "exit 1",
+        "--validation-duration",
+        "2s",
+        "--validation-summary",
+        "lint failed at /tmp/raw.log",
+        "--json",
+      ],
+      {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      },
+    );
+
+    const packet = requests[0] as { validation: Array<{ command: string; status: string; durationMs?: number; exitCode?: number; summary?: string }> };
+    expect(packet.validation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "npm run test:unit", status: "focused", durationMs: 1234, exitCode: 0 }),
+        expect.objectContaining({ command: "npm run lint", status: "failed", durationMs: 2000, exitCode: 1 }),
+      ]),
+    );
+    expect(JSON.stringify(packet.validation)).not.toMatch(/raw_trust|\/Users\/example|\/tmp\/raw/i);
+  });
+
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });
@@ -392,8 +443,8 @@ function git(cwd: string, ...args: string[]) {
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-async function startFixtureServer(options: { latestVersion?: string; minMcpVersion?: string; npmStatus?: number; packetMarkdown?: string } = {}) {
-  server = createServer((request, response) => {
+async function startFixtureServer(options: { latestVersion?: string; minMcpVersion?: string; npmStatus?: number; packetMarkdown?: string; onPacketRequest?: (body: unknown) => void } = {}) {
+  server = createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.url && request.url.includes("gittensory-mcp/latest")) {
       if (options.npmStatus && options.npmStatus >= 400) {
@@ -421,6 +472,7 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
       return;
     }
     if (request.url === "/v1/agent/prepare-pr-packet" && request.method === "POST") {
+      options.onPacketRequest?.(await readJsonRequest(request));
       response.end(JSON.stringify(agentPacketFixture(options.packetMarkdown)));
       return;
     }
@@ -431,6 +483,20 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture server did not bind a TCP port");
   return `http://127.0.0.1:${address.port}`;
+}
+
+function readJsonRequest(request: IncomingMessage) {
+  return new Promise<unknown>((resolve) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+  });
 }
 
 function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Linked Context\n- Closes #39\n\n## Validation\n- passed: npm test (packet tests passed)\n") {

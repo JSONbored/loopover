@@ -27,8 +27,10 @@ export type LocalBranchChangedFile = {
 
 export type LocalBranchValidation = {
   command: string;
-  status: "passed" | "failed" | "not_run";
+  status: "passed" | "failed" | "not_run" | "skipped" | "focused" | "unknown";
   summary?: string | undefined;
+  durationMs?: number | undefined;
+  exitCode?: number | undefined;
 };
 
 export type LocalBranchScorer = {
@@ -640,7 +642,7 @@ function buildPublicSafePrPacket(args: {
   );
   const validationLines =
     args.validationSummary.commands.length > 0
-      ? args.validationSummary.commands.map((entry) => `- ${entry.status}: ${entry.command}${entry.summary ? ` (${entry.summary})` : ""}`)
+      ? args.validationSummary.commands.map((entry) => `- ${entry.status}: ${entry.command}${entry.durationMs !== undefined ? ` [${entry.durationMs}ms]` : ""}${entry.summary ? ` (${entry.summary})` : ""}`)
       : ["- Not supplied yet."];
   const bodySections = [
       {
@@ -699,16 +701,16 @@ function renderPrPacketMarkdown(title: string, sections: Array<{ heading: string
 
 function summarizeValidation(validation: LocalBranchValidation[]): LocalBranchAnalysis["prPacket"]["validationSummary"] {
   return {
-    passed: validation.filter((entry) => entry.status === "passed").length,
+    passed: validation.filter((entry) => entry.status === "passed" || entry.status === "focused").length,
     failed: validation.filter((entry) => entry.status === "failed").length,
-    notRun: validation.filter((entry) => entry.status === "not_run").length,
+    notRun: validation.filter((entry) => entry.status === "not_run" || entry.status === "skipped" || entry.status === "unknown").length,
     commands: validation,
   };
 }
 
 function validationEvidence(validation: LocalBranchValidation[] | undefined): string[] {
   return (validation ?? [])
-    .filter((entry) => entry.status === "passed")
+    .filter((entry) => entry.status === "passed" || entry.status === "focused")
     .map((entry) => entry.command);
 }
 

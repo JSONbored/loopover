@@ -294,6 +294,35 @@ describe("local branch analysis", () => {
     expect(analysis.recommendedRerunCondition).toMatch(/git fetch origin/i);
   });
 
+  it("treats focused validation as evidence and failed validation as actionable", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "internal/entity/model.go", additions: 10, deletions: 2, status: "modified" }],
+        validation: [
+          { command: "go test ./internal/entity", status: "focused", durationMs: 1240, exitCode: 0, summary: "focused regression passed" },
+          { command: "npm run lint", status: "failed", durationMs: 2000, exitCode: 1, summary: "raw_trust=0.4 /Users/example/log.txt" },
+          { command: "npm run e2e", status: "skipped", summary: "not relevant for this fixture" },
+        ],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Entity model edge case", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.validationSummary).toMatchObject({ passed: 1, failed: 1, notRun: 1 });
+    expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("missing_test_evidence");
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "failed_local_validation" })]));
+    expect(analysis.prPacket.markdown).toContain("- focused: go test ./internal/entity [1240ms] (focused regression passed)");
+    expect(analysis.prPacket.markdown).not.toMatch(/raw_trust|\/Users\/example/i);
+  });
+
   it("includes public-safe overlap caution and hides local absolute paths", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

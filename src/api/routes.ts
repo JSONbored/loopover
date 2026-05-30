@@ -144,8 +144,10 @@ const localBranchChangedFileSchema = z
 const localBranchValidationSchema = z
   .object({
     command: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
-    status: z.enum(["passed", "failed", "not_run"]),
+    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
     summary: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
+    durationMs: z.number().int().min(0).optional(),
+    exitCode: z.number().int().min(0).optional(),
   })
   .strict();
 

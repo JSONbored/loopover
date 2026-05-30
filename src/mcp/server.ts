@@ -137,8 +137,10 @@ const localBranchAnalysisShape = {
       z
         .object({
           command: z.string().min(1),
-          status: z.enum(["passed", "failed", "not_run"]),
+          status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
           summary: z.string().optional(),
+          durationMs: z.number().int().min(0).optional(),
+          exitCode: z.number().int().min(0).optional(),
         })
         .strict(),
     )

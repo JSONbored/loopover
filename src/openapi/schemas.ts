@@ -1299,7 +1299,15 @@ export const LocalBranchAnalysisSchema = z
         passed: z.number(),
         failed: z.number(),
         notRun: z.number(),
-        commands: z.array(z.object({ command: z.string(), status: z.enum(["passed", "failed", "not_run"]), summary: z.string().optional() })),
+        commands: z.array(
+          z.object({
+            command: z.string(),
+            status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
+            summary: z.string().optional(),
+            durationMs: z.number().optional(),
+            exitCode: z.number().optional(),
+          }),
+        ),
       }),
       publicSafeWarnings: z.array(z.string()),
     }),

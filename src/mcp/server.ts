@@ -11,6 +11,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getIssue,
   getRepository,
+  listCheckSummaries,
   listContributorRepoStats,
   listContributorIssues,
   listContributorPullRequests,
@@ -137,8 +138,10 @@ const localBranchAnalysisShape = {
       z
         .object({
           command: z.string().min(1),
-          status: z.enum(["passed", "failed", "not_run"]),
+          status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
           summary: z.string().optional(),
+          durationMs: z.number().int().min(0).optional(),
+          exitCode: z.number().int().min(0).optional(),
         })
         .strict(),
     )
@@ -829,6 +832,7 @@ export class GittensoryMcp {
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot: snapshot });
+    const checkSummaries = await this.loadCheckSummariesForPullRequests(input.repoFullName, pullRequests);
     return {
       ...buildLocalBranchAnalysis({
         input,
@@ -838,6 +842,7 @@ export class GittensoryMcp {
         contributorPullRequests: context.contributorPullRequests,
         recentMergedPullRequests,
         repositories: context.repositories,
+        checkSummaries,
         profile: context.profile,
         outcomeHistory: context.outcomeHistory,
         scoringSnapshot: snapshot,
@@ -846,6 +851,11 @@ export class GittensoryMcp {
       }),
       dataQuality: await this.loadRepoDataQuality(input.repoFullName),
     };
+  }
+
+  private async loadCheckSummariesForPullRequests(repoFullName: string, pullRequests: Array<{ number: number; state?: string | null | undefined }>) {
+    const openPulls = pullRequests.filter((pr) => pr.state === "open");
+    return (await Promise.all(openPulls.map((pr) => listCheckSummaries(this.env, repoFullName, pr.number)))).flat();
   }
 
   private async getBountyAdvisory(id: string): Promise<ToolPayload> {

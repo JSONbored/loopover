@@ -109,8 +109,10 @@ const currentBranchShape = {
     .array(
       z.object({
         command: z.string().min(1),
-        status: z.enum(["passed", "failed", "not_run"]),
+        status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
         summary: z.string().optional(),
+        durationMs: z.number().int().min(0).optional(),
+        exitCode: z.number().int().min(0).optional(),
       }),
     )
     .optional(),
@@ -624,7 +626,7 @@ Source upload remains disabled.
 
 function parseOptions(args) {
   const options = {};
-  const repeatable = new Set(["label", "issue", "validation", "validationCommand", "validationStatus", "validationSummary", "scenarioNote"]);
+  const repeatable = new Set(["label", "issue", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -908,27 +910,56 @@ function getApiToken() {
 }
 
 function validationFromOptions(options) {
-  const direct = (options.validation ?? []).map((entry) => {
-    const [statusOrCommand, commandOrSummary, ...summaryParts] = String(entry).split("|");
-    const status = isValidationStatus(statusOrCommand) ? statusOrCommand : "not_run";
-    const command = isValidationStatus(statusOrCommand) ? commandOrSummary : statusOrCommand;
-    return stripUndefined({
-      command: command?.trim(),
-      status,
-      summary: summaryParts.join("|").trim() || (isValidationStatus(statusOrCommand) ? undefined : commandOrSummary?.trim()),
-    });
-  });
+  const direct = (options.validation ?? []).map(parseValidationEntry);
   const commands = options.validationCommand ?? [];
   const statuses = options.validationStatus ?? [];
   const summaries = options.validationSummary ?? [];
+  const durations = options.validationDuration ?? [];
   const expanded = commands.map((command, index) =>
-    stripUndefined({
+    validationEntry({
       command,
-      status: isValidationStatus(statuses[index]) ? statuses[index] : "not_run",
-      summary: summaries[index],
+      statusText: statuses[index],
+      summaryText: summaries[index],
+      durationText: durations[index],
     }),
   );
   return [...direct, ...expanded].filter((entry) => typeof entry.command === "string" && entry.command.length > 0);
+}
+
+function parseValidationEntry(entry) {
+  const parts = String(entry ?? "").split("|").map((part) => part.trim());
+  const explicitStatus = normalizeValidationStatus(parts[0]);
+  const command = explicitStatus ? parts[1] : parts[0];
+  const rest = explicitStatus ? parts.slice(2) : parts.slice(1);
+  const inferredStatusText = !explicitStatus && isValidationStatusLike(rest[0]) ? rest[0] : undefined;
+  const detailParts = inferredStatusText ? rest.slice(1) : rest;
+  const durationMs = parseDurationMs(detailParts[0]);
+  const summaryParts = durationMs !== undefined ? detailParts.slice(1) : detailParts;
+  return validationEntry({
+    command,
+    statusText: explicitStatus ?? inferredStatusText,
+    summaryText: summaryParts.join("|"),
+    durationMs,
+  });
+}
+
+function validationEntry({ command, statusText, summaryText, durationText, durationMs }) {
+  const statusSource = nonEmptyString(statusText);
+  const summarySource = statusSource ? undefined : nonEmptyString(summaryText);
+  const exitCode =
+    inferValidationExitCode(statusSource, { allowBareCode: true, allowGenericStatus: true }) ??
+    inferValidationExitCode(summarySource, { allowBareCode: false, allowGenericStatus: false });
+  const status =
+    normalizeValidationStatus(statusSource) ??
+    normalizeSummaryValidationStatus(summarySource) ??
+    (exitCode !== undefined ? (exitCode === 0 ? "passed" : "failed") : "not_run");
+  return stripUndefined({
+    command: sanitizeValidationText(command, 160),
+    status,
+    summary: sanitizeValidationText(summaryText),
+    durationMs: durationMs ?? parseDurationMs(durationText),
+    exitCode,
+  });
 }
 
 function optionalInteger(value) {
@@ -944,7 +975,84 @@ function optionalNumber(value) {
 }
 
 function isValidationStatus(value) {
-  return value === "passed" || value === "failed" || value === "not_run";
+  return Boolean(normalizeValidationStatus(value));
+}
+
+function normalizeValidationStatus(value) {
+  const text = String(value ?? "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  if (["passed", "pass", "success", "ok", "exit_0", "0"].includes(text)) return "passed";
+  if (["failed", "fail", "failure", "error", "nonzero", "non_zero"].includes(text) || /^exit_[1-9]\d*$/.test(text) || /^[1-9]\d*$/.test(text)) return "failed";
+  if (["not_run", "notrun", "not_ran", "pending"].includes(text)) return "not_run";
+  if (["skipped", "skip"].includes(text)) return "skipped";
+  if (["focused", "focus"].includes(text)) return "focused";
+  if (["unknown", "unclear"].includes(text)) return "unknown";
+  return undefined;
+}
+
+function isValidationStatusLike(value) {
+  return Boolean(
+    normalizeValidationStatus(value) ??
+      inferValidationExitCode(value, { allowBareCode: true, allowGenericStatus: true }),
+  );
+}
+
+function inferValidationExitCode(value, options = {}) {
+  const text = String(value ?? "").trim().toLowerCase();
+  const allowBareCode = options.allowBareCode === true;
+  const allowGenericStatus = options.allowGenericStatus === true;
+  if (allowBareCode && /^\d{1,3}$/.test(text)) return Number(text);
+  const processExitPattern = /\b(?:exit(?:ed)?(?:\s+(?:code|status))?|exitcode|process\s+(?:exit(?:ed)?|status|code)|command\s+(?:exit(?:ed)?|status|code)|shell\s+(?:exit(?:ed)?|status|code))[\s:_-]*(\d{1,3})\b/;
+  const genericStatusPattern = /^(?:status|code)[\s:_-]*(\d{1,3})\b/;
+  const match = text.match(processExitPattern) ?? (allowGenericStatus ? text.match(genericStatusPattern) : null);
+  if (match) return Number(match[1]);
+  if (!allowBareCode && /^\d{1,3}$/.test(text)) return undefined;
+  const status = normalizeValidationStatus(text);
+  if (status === "passed" || status === "focused") return 0;
+  if (status === "failed") return 1;
+  return undefined;
+}
+
+function normalizeSummaryValidationStatus(value) {
+  const text = nonEmptyString(value);
+  if (!text || /^\d{1,3}$/.test(text)) return undefined;
+  return normalizeValidationStatus(text);
+}
+
+function nonEmptyString(value) {
+  const text = String(value ?? "").trim();
+  return text ? text : undefined;
+}
+
+function parseDurationMs(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  const match = text.match(/^(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|m|min|mins)?$/);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return undefined;
+  const unit = match[2] ?? "ms";
+  const multiplier = unit.startsWith("m") && unit !== "ms" ? 60000 : unit.startsWith("s") ? 1000 : 1;
+  return Math.round(amount * multiplier);
+}
+
+function sanitizeValidationText(value, maxLength = 240) {
+  const text = String(value ?? "").replace(/[\r\n\t]+/g, " ").trim();
+  if (!text) return undefined;
+  const redacted = redactPrivateValidationMetrics(redactLocalValidationPaths(text));
+  return redacted.length <= maxLength ? redacted : `${redacted.slice(0, maxLength - 3)}...`;
+}
+
+function redactLocalValidationPaths(text) {
+  const pathSegment = "[^\\\\/\\s\"'`,;)]+(?:\\s+[^\\\\/\\s\"'`,;)]+)*(?=[\\\\/])";
+  const pathTail = "[^\\\\/\\s\"'`,;)]+";
+  const localPathPattern = new RegExp(`(^|[\\s"'\\\`=])((?:~[\\\\/]|[A-Za-z]:[\\\\/]|/)(?:${pathSegment}[\\\\/])*${pathTail})`, "g");
+  return text.replace(localPathPattern, (_, prefix) => `${prefix}<local-path>`);
+}
+
+function redactPrivateValidationMetrics(text) {
+  return text.replace(
+    /\b(?:wallet|hotkey|coldkey|mnemonic|raw[-_\s]?trust|private[-_\s]?reviewability|trust[-_\s]?score)\b(?:\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"'`,;)]+))?/gi,
+    "[redacted]",
+  );
 }
 
 function clientSnippet(client, command) {

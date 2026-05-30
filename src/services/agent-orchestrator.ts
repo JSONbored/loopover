@@ -2,6 +2,7 @@ import {
   createAgentRun,
   getAgentRun,
   getRepository,
+  listCheckSummaries,
   listAgentActions,
   listAgentContextSnapshots,
   listContributorIssues,
@@ -304,6 +305,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
   const outcomeHistory = buildContributorOutcomeHistory({ login: input.login, profile, repositories, pullRequests: contributorPullRequests, issues: contributorIssues, repoStats, cachedRepoStats });
   const fit = buildContributorFit(profile, repositories, [], [], syncStates, repoStats);
   const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot });
+  const checkSummaries = await loadCheckSummariesForPullRequests(env, input.repoFullName, pullRequests);
   return buildLocalBranchAnalysis({
     input,
     repo,
@@ -312,12 +314,18 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     contributorPullRequests,
     recentMergedPullRequests,
     repositories,
+    checkSummaries,
     profile,
     outcomeHistory,
     scoringSnapshot,
     scoringProfile,
     issueQuality: issueQuality?.report,
   });
+}
+
+async function loadCheckSummariesForPullRequests(env: Env, repoFullName: string, pullRequests: Array<{ number: number; state?: string | null | undefined }>) {
+  const openPulls = pullRequests.filter((pr) => pr.state === "open");
+  return (await Promise.all(openPulls.map((pr) => listCheckSummaries(env, repoFullName, pr.number)))).flat();
 }
 
 function buildDecisionActions(run: AgentRunRecord, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentActionRecord[] {

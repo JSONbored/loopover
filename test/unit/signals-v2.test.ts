@@ -11,6 +11,7 @@ import {
   buildContributorScoringProfile,
   buildContributorStrategy,
   buildContributorIntakeHealth,
+  buildIssueDiscoveryLifecycleReport,
   buildIssueQualityReport,
   buildLabelAudit,
   buildLocalDiffPreflightResult,
@@ -473,6 +474,20 @@ describe("v2 signal builders", () => {
       repo.fullName,
     );
     expect(issueQuality.issues.map((issue) => issue.status)).toEqual(expect.arrayContaining(["ready", "needs_proof", "do_not_use"]));
+    expect(issueQuality.issues.find((issue) => issue.number === 22)).toMatchObject({ lifecycle: "stale" });
+    expect(issueQuality.issues.find((issue) => issue.number === 23)).toMatchObject({ lifecycle: "valid_solved", status: "do_not_use" });
+
+    const lifecycle = buildIssueDiscoveryLifecycleReport(
+      { ...repo, registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.5 } },
+      [
+        ...issueSet,
+        { repoFullName: repo.fullName, number: 24, title: "Duplicate", state: "closed", body: "", labels: ["duplicate"], linkedPrs: [] },
+        { repoFullName: repo.fullName, number: 25, title: "Closed without solver", state: "closed", body: "", labels: [], linkedPrs: [] },
+      ],
+      prSet,
+      repo.fullName,
+    );
+    expect(lifecycle.states.map((state) => [state.number, state.state])).toEqual(expect.arrayContaining([[23, "valid_solved"], [24, "duplicate"], [25, "closed_not_solved"]]));
 
     const collisions = buildCollisionReport(repo.fullName, issueSet, prSet);
     const forecast = buildBurdenForecast(repo, issueSet, prSet, collisions, 7);

@@ -888,6 +888,7 @@ export const IssueQualityReportSchema = z
       z.object({
         number: z.number(),
         title: z.string(),
+        lifecycle: z.enum(["open", "closed_not_solved", "solved", "valid_solved", "stale", "duplicate", "invalid"]).optional(),
         status: z.enum(["ready", "needs_proof", "hold", "do_not_use"]),
         score: z.number(),
         reasons: z.array(z.string()),

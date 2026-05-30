@@ -436,10 +436,27 @@ export type IssueQualityReport = {
   issues: Array<{
     number: number;
     title: string;
+    lifecycle?: IssueDiscoveryLifecycleState | undefined;
     status: "ready" | "needs_proof" | "hold" | "do_not_use";
     score: number;
     reasons: string[];
     warnings: string[];
+  }>;
+  summary: string;
+};
+
+export type IssueDiscoveryLifecycleState = "open" | "closed_not_solved" | "solved" | "valid_solved" | "stale" | "duplicate" | "invalid";
+
+export type IssueDiscoveryLifecycleReport = {
+  repoFullName: string;
+  generatedAt: string;
+  lane: LaneAdvice;
+  states: Array<{
+    number: number;
+    title: string;
+    state: IssueDiscoveryLifecycleState;
+    solvedByPullRequests: number[];
+    reasons: string[];
   }>;
   summary: string;
 };
@@ -1895,6 +1912,7 @@ export function buildIssueQualityReport(
 ): IssueQualityReport {
   const lane = buildLaneAdvice(repo, fullName);
   const collisions = prebuiltCollisions ?? buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
+  const lifecycleByIssue = new Map(buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests).states.map((entry) => [entry.number, entry]));
   const reports = issues
     .filter((issue) => issue.state === "open")
     .slice(0, 100)
@@ -1903,6 +1921,7 @@ export function buildIssueQualityReport(
       const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
       const issueCollisions = collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "issue" && item.number === issue.number));
       const age = daysSince(issue.updatedAt ?? issue.createdAt);
+      const lifecycle = lifecycleByIssue.get(issue.number)?.state ?? "open";
       const bodyLength = issue.body?.trim().length ?? 0;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
       const reasons = [
@@ -1917,18 +1936,19 @@ export function buildIssueQualityReport(
         ...(issue.linkedPrs.length > 0 && linkedPrs.length === 0 && linkedMergedPrs.length === 0 ? [`Cached issue metadata already references PR(s): ${issue.linkedPrs.map((number) => `#${number}`).join(", ")}.`] : []),
         ...(issueCollisions.length > 0 ? ["Potential duplicate or overlapping issue/PR context exists."] : []),
         ...(age > 90 ? ["Issue is stale in cached metadata."] : []),
+        ...(lifecycle !== "open" ? [`Issue lifecycle is ${lifecycle.replace(/_/g, " ")}.`] : []),
         ...(lane.lane === "direct_pr" ? ["Repo is direct-PR first; issue filing is not the primary Gittensor lane."] : []),
       ];
       const score = clamp(100 - warnings.length * 18 + reasons.length * 5 - (age > 180 ? 15 : 0), 0, 100);
       const status: IssueQualityReport["issues"][number]["status"] =
-        linkedWorkCount > 0 || issueCollisions.some((cluster) => cluster.risk === "high")
+        linkedWorkCount > 0 || issueCollisions.some((cluster) => cluster.risk === "high") || ["duplicate", "invalid", "solved", "valid_solved"].includes(lifecycle)
           ? "do_not_use"
-          : warnings.some((warning) => /thin|stale|direct-PR/i.test(warning))
+          : warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || lifecycle === "stale"
             ? "needs_proof"
             : score < 45
               ? "hold"
               : "ready";
-      return { number: issue.number, title: issue.title, status, score, reasons, warnings };
+      return { number: issue.number, title: issue.title, lifecycle, status, score, reasons, warnings };
     })
     .sort((left, right) => right.score - left.score || left.number - right.number);
   return {
@@ -1938,6 +1958,70 @@ export function buildIssueQualityReport(
     issues: reports,
     summary: `${reports.length} open issue(s) evaluated; ${reports.filter((report) => report.status === "ready").length} look ready from cached metadata.`,
   };
+}
+
+export function buildIssueDiscoveryLifecycleReport(
+  repo: RepositoryRecord | null,
+  issues: IssueRecord[],
+  pullRequests: PullRequestRecord[],
+  fullName: string,
+  recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
+): IssueDiscoveryLifecycleReport {
+  const lane = buildLaneAdvice(repo, fullName);
+  const states = issues
+    .slice(0, 300)
+    .map((issue) => classifyIssueDiscoveryLifecycle(issue, pullRequests, recentMergedPullRequests, lane))
+    .sort((left, right) => lifecycleRank(left.state) - lifecycleRank(right.state) || left.number - right.number);
+  return {
+    repoFullName: fullName,
+    generatedAt: nowIso(),
+    lane,
+    states,
+    summary: `${states.length} issue lifecycle state(s) classified; ${states.filter((entry) => entry.state === "valid_solved").length} valid solved issue(s), ${states.filter((entry) => entry.state === "closed_not_solved").length} closed without solver evidence.`,
+  };
+}
+
+function classifyIssueDiscoveryLifecycle(
+  issue: IssueRecord,
+  pullRequests: PullRequestRecord[],
+  recentMergedPullRequests: RecentMergedPullRequestRecord[],
+  lane: LaneAdvice,
+): IssueDiscoveryLifecycleReport["states"][number] {
+  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
+  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
+  const solvedByPullRequests = [...new Set([...linkedOpenPrs.filter((pr) => pr.mergedAt || pr.state === "merged").map((pr) => pr.number), ...linkedMergedPrs.map((pr) => pr.number), ...issue.linkedPrs])].sort(
+    (left, right) => left - right,
+  );
+  const labels = issue.labels.map((label) => label.toLowerCase());
+  const stale = daysSince(issue.updatedAt ?? issue.createdAt) > 90;
+  const duplicate = labels.some((label) => /duplicate/.test(label));
+  const invalid = labels.some((label) => /invalid|wontfix|not planned|won't fix/.test(label));
+  const state: IssueDiscoveryLifecycleState = duplicate
+    ? "duplicate"
+    : invalid
+      ? "invalid"
+      : solvedByPullRequests.length > 0
+        ? lane.lane === "issue_discovery" || lane.lane === "split"
+          ? "valid_solved"
+          : "solved"
+        : issue.state !== "open"
+          ? "closed_not_solved"
+          : stale
+            ? "stale"
+            : "open";
+  const reasons = [
+    ...(duplicate ? ["Issue carries duplicate labeling."] : []),
+    ...(invalid ? ["Issue carries invalid or not-planned labeling."] : []),
+    ...(solvedByPullRequests.length > 0 ? [`Linked solver PR(s): ${solvedByPullRequests.map((number) => `#${number}`).join(", ")}.`] : []),
+    ...(issue.state !== "open" && solvedByPullRequests.length === 0 ? ["Issue is closed without cached solver PR evidence."] : []),
+    ...(stale && issue.state === "open" ? ["Issue is stale in cached metadata."] : []),
+    ...(lane.lane === "direct_pr" ? ["Repo is direct-PR first; lifecycle should not encourage issue filing."] : []),
+  ];
+  return { number: issue.number, title: issue.title, state, solvedByPullRequests, reasons: reasons.length > 0 ? reasons : ["Issue is open with no solver or duplicate signal."] };
+}
+
+function lifecycleRank(state: IssueDiscoveryLifecycleState): number {
+  return { valid_solved: 0, solved: 1, open: 2, stale: 3, closed_not_solved: 4, duplicate: 5, invalid: 6 }[state];
 }
 
 function issueQualityFindings(linkedIssues: number[], issueQuality: IssueQualityReport | null | undefined): SignalFinding[] {

@@ -123,6 +123,7 @@ describe("local branch analysis", () => {
         {
           number: 7,
           title: "Cache refresh fails",
+          lifecycle: "valid_solved",
           status: "do_not_use",
           score: 0,
           reasons: [],

@@ -1140,7 +1140,7 @@ describe("api routes", () => {
       fetchedCount: 2,
       expectedCount: 2,
       pageCount: 1,
-      completedAt: "2026-05-23T00:00:00.000Z",
+      completedAt: new Date().toISOString(),
       warnings: [],
     });
     const refreshingReadiness = await app.request("/v1/readiness", { headers: apiHeaders(refreshingEnv) }, refreshingEnv);
@@ -2351,6 +2351,9 @@ async function mcpJson(response: Response): Promise<unknown> {
 }
 
 async function seedSignalData(env: Env): Promise<void> {
+  const freshAt = new Date().toISOString();
+  const previousFreshAt = new Date(Date.now() - 60_000).toISOString();
+
   await upsertInstallation(env, {
     installation: {
       id: 123,
@@ -2371,7 +2374,7 @@ async function seedSignalData(env: Env): Promise<void> {
     missingEvents: [],
     permissions: { metadata: "read", pull_requests: "read", issues: "write" },
     events: ["issues", "pull_request", "repository"],
-    checkedAt: "2026-05-23T00:00:00.000Z",
+    checkedAt: freshAt,
   });
   const snapshot = normalizeRegistryPayload(
     {
@@ -2384,7 +2387,7 @@ async function seedSignalData(env: Env): Promise<void> {
       },
     },
     { kind: "raw-github", url: "https://example.test/master_repositories.json" },
-    "2026-05-23T00:00:00.000Z",
+    freshAt,
   );
   await persistRegistrySnapshot(
     env,
@@ -2399,7 +2402,7 @@ async function seedSignalData(env: Env): Promise<void> {
         },
       },
       { kind: "raw-github", url: "https://example.test/old_master_repositories.json" },
-      "2026-05-22T00:00:00.000Z",
+      previousFreshAt,
     ),
   );
   await persistRegistrySnapshot(env, snapshot);
@@ -2414,7 +2417,7 @@ async function seedSignalData(env: Env): Promise<void> {
     id: "scoring-1",
     sourceKind: "test",
     sourceUrl: "fixture://scoring",
-    fetchedAt: "2026-05-23T00:00:00.000Z",
+    fetchedAt: freshAt,
     activeModel: "current_density_model",
     constants: {
       OSS_EMISSION_SHARE: 0.9,
@@ -2459,7 +2462,7 @@ async function seedSignalData(env: Env): Promise<void> {
     closedUnmergedPullRequestsTotal: 0,
     labelsTotal: 2,
     sourceKind: "github",
-    fetchedAt: "2026-05-23T00:00:00.000Z",
+    fetchedAt: freshAt,
     payload: {},
   });
   await Promise.all(
@@ -2482,7 +2485,7 @@ async function seedSignalData(env: Env): Promise<void> {
         fetchedCount: record.fetchedCount,
         expectedCount: record.expectedCount,
         pageCount: 1,
-        completedAt: "2026-05-23T00:00:00.000Z",
+        completedAt: freshAt,
         warnings: [],
       }),
     ),
@@ -2516,7 +2519,7 @@ async function seedSignalData(env: Env): Promise<void> {
     missingEvents: [],
     permissions: { metadata: "read", pull_requests: "read", issues: "write" },
     events: ["issues", "issue_comment", "pull_request", "repository"],
-    checkedAt: "2026-05-23T00:00:00.000Z",
+    checkedAt: freshAt,
   });
   await upsertIssueFromGitHub(env, "entrius/allways-ui", {
     number: 7,
@@ -2552,10 +2555,10 @@ async function seedSignalData(env: Env): Promise<void> {
     repoFullName: "entrius/allways-ui",
     pullNumber: 12,
     status: "complete",
-    filesSyncedAt: "2026-05-23T00:00:00.000Z",
-    reviewsSyncedAt: "2026-05-23T00:00:00.000Z",
-    checksSyncedAt: "2026-05-23T00:00:00.000Z",
-    lastSyncedAt: "2026-05-23T00:00:00.000Z",
+    filesSyncedAt: freshAt,
+    reviewsSyncedAt: freshAt,
+    checksSyncedAt: freshAt,
+    lastSyncedAt: freshAt,
   });
   await upsertPullRequestFile(env, {
     repoFullName: "entrius/allways-ui",
@@ -2600,10 +2603,10 @@ async function seedSignalData(env: Env): Promise<void> {
     repoFullName: "entrius/allways-ui",
     pullNumber: 13,
     status: "complete",
-    filesSyncedAt: "2026-05-23T00:00:00.000Z",
-    reviewsSyncedAt: "2026-05-23T00:00:00.000Z",
-    checksSyncedAt: "2026-05-23T00:00:00.000Z",
-    lastSyncedAt: "2026-05-23T00:00:00.000Z",
+    filesSyncedAt: freshAt,
+    reviewsSyncedAt: freshAt,
+    checksSyncedAt: freshAt,
+    lastSyncedAt: freshAt,
   });
   await upsertRecentMergedPullRequest(env, {
     repoFullName: "entrius/allways-ui",

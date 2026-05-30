@@ -277,8 +277,9 @@ function buildScenarioPreviews(
 ): ScoreScenarioPreview[] {
   const userPendingCount = nonNegative(input.pendingMergedPrCount) + nonNegative(input.pendingClosedPrCount) + nonNegative(input.approvedPrCount);
   const observedApprovedCount = nonNegative(input.observedApprovedPrCount);
-  const observedCloseCount = nonNegative(input.observedStalePrCount) + nonNegative(input.observedClosedPrCount);
-  const combinedPendingCount = userPendingCount + observedApprovedCount + observedCloseCount;
+  const observedStaleCloseCount = nonNegative(input.observedStalePrCount);
+  const observedClosedCount = nonNegative(input.observedClosedPrCount);
+  const combinedPendingCount = userPendingCount + observedApprovedCount + observedStaleCloseCount;
   const expectedOpenPrCountAfterMerge =
     input.expectedOpenPrCountAfterMerge !== undefined ? nonNegative(input.expectedOpenPrCountAfterMerge) : Math.max(0, current.gates.openPrCount - userPendingCount);
   const projectedCredibility =
@@ -295,7 +296,7 @@ function buildScenarioPreviews(
   };
   const afterStaleInput = {
     ...input,
-    openPrCount: Math.max(0, current.gates.openPrCount - observedCloseCount),
+    openPrCount: Math.max(0, current.gates.openPrCount - observedStaleCloseCount),
     credibility: current.gates.credibilityObserved,
   };
   const cleanGatesInput = {
@@ -363,10 +364,11 @@ function buildScenarioPreviews(
       afterStaleInput,
       computeScoreCore(afterStaleInput, repo, snapshot, contributorEvidence),
       [
-        observedCloseCount > 0
-          ? `${observedCloseCount} GitHub-observed stale or closed PR(s) are treated as no longer open if they close or withdraw.`
-          : "No GitHub-observed stale or closed PRs were available for this scenario.",
-        "Credibility is not increased in this scenario because stale or closed PR cleanup is not the same as merged work.",
+        observedStaleCloseCount > 0
+          ? `${observedStaleCloseCount} GitHub-observed stale open PR(s) are treated as no longer open if they close or withdraw.`
+          : "No GitHub-observed stale open PRs were available for this scenario.",
+        ...(observedClosedCount > 0 ? [`${observedClosedCount} GitHub-observed already-closed PR(s) are excluded because they no longer contribute to open PR pressure.`] : []),
+        "Credibility is not increased in this scenario because stale cleanup is not the same as merged work.",
         ...observedScenarioNotes(input),
       ],
       repo,

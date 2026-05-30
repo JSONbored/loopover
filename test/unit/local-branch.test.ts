@@ -207,7 +207,8 @@ describe("local branch analysis", () => {
 
     expect(analysis.observedPullRequestScenarios).toMatchObject({ approvedOrMergeable: 1, stale: 1, closed: 1, draft: 1, blocked: 1, maintainerLane: 1 });
     expect(analysis.scenarioScorePreview.afterApprovedPrsMerge).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.8 } });
-    expect(analysis.scenarioScorePreview.afterStalePrsClose).toMatchObject({ source: "github_observed", gates: { openPrCount: 4, credibilityObserved: 0.2 } });
+    expect(analysis.scenarioScorePreview.afterStalePrsClose).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.2 } });
+    expect(analysis.scenarioScorePreview.afterStalePrsClose?.assumptions.join(" ")).toMatch(/already-closed PR.*excluded/);
     expect(analysis.scenarioScorePreview.afterApprovedPrsMerge?.assumptions.join(" ")).toMatch(/draft PR.*excluded|blocked PR.*excluded|maintainer-lane PR.*outside-contributor/);
     expect(analysis.scorePreview.effectiveEstimatedScore).toBe(0);
     expect(analysis.scorePreview.underlyingPotentialScore).toBeGreaterThan(0);

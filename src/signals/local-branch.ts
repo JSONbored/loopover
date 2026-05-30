@@ -415,7 +415,7 @@ function observedPullRequestNotes(scenarios: Omit<ObservedPullRequestScenarios, 
   return [
     ...(scenarios.approvedOrMergeable > 0 ? [`${scenarios.approvedOrMergeable} cached approved or mergeable open PR(s) can be modeled as likely-to-land.`] : []),
     ...(scenarios.stale > 0 ? [`${scenarios.stale} cached stale open PR(s) can be modeled as cleanup-first rather than likely-to-land.`] : []),
-    ...(scenarios.closed > 0 ? [`${scenarios.closed} cached closed PR(s) can be modeled as no longer open.`] : []),
+    ...(scenarios.closed > 0 ? [`${scenarios.closed} cached already-closed PR(s) are excluded from open PR pressure projections.`] : []),
   ];
 }
 

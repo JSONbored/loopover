@@ -39,6 +39,9 @@ import {
   scorePreviews,
   scoringModelSnapshots,
   signalSnapshots,
+  upstreamDriftReports,
+  upstreamRulesetSnapshots,
+  upstreamSourceSnapshots,
   webhookEvents,
 } from "./schema";
 import type {
@@ -90,6 +93,13 @@ import type {
   ScorePreviewRecord,
   ScoringModelSnapshotRecord,
   SignalSnapshotRecord,
+  UpstreamDriftArea,
+  UpstreamDriftReportRecord,
+  UpstreamDriftSeverity,
+  UpstreamDriftStatus,
+  UpstreamRulesetSnapshotRecord,
+  UpstreamSourceSnapshotRecord,
+  UpstreamSourceStatus,
 } from "../types";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
@@ -659,6 +669,134 @@ export async function getLatestScoringModelSnapshot(env: Env): Promise<ScoringMo
   const db = getDb(env.DB);
   const [row] = await db.select().from(scoringModelSnapshots).orderBy(desc(scoringModelSnapshots.fetchedAt)).limit(1);
   return row ? toScoringModelSnapshotRecord(row) : null;
+}
+
+export async function persistUpstreamSourceSnapshots(env: Env, snapshots: UpstreamSourceSnapshotRecord[]): Promise<void> {
+  const db = getDb(env.DB);
+  for (const snapshot of snapshots) {
+    await db.insert(upstreamSourceSnapshots).values({
+      id: snapshot.id,
+      sourceKey: snapshot.sourceKey,
+      sourceRepo: snapshot.sourceRepo,
+      sourceRef: snapshot.sourceRef,
+      path: snapshot.path,
+      sourceUrl: snapshot.sourceUrl,
+      commitSha: snapshot.commitSha,
+      blobSha: snapshot.blobSha,
+      contentSha256: snapshot.contentSha256,
+      etag: snapshot.etag,
+      status: snapshot.status,
+      parsedJson: jsonString(snapshot.parsed),
+      warningsJson: jsonString(snapshot.warnings),
+      payloadJson: jsonString(snapshot.payload),
+      fetchedAt: snapshot.fetchedAt,
+    });
+  }
+}
+
+export async function listLatestUpstreamSourceSnapshots(env: Env, limit = 20): Promise<UpstreamSourceSnapshotRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(upstreamSourceSnapshots).orderBy(desc(upstreamSourceSnapshots.fetchedAt)).limit(limit);
+  return rows.map(toUpstreamSourceSnapshotRecord);
+}
+
+export async function listLatestUpstreamSourceSnapshotsByKey(env: Env): Promise<UpstreamSourceSnapshotRecord[]> {
+  const rows = await listLatestUpstreamSourceSnapshots(env, 200);
+  const byKey = new Map<string, UpstreamSourceSnapshotRecord>();
+  for (const row of rows) {
+    if (!byKey.has(row.sourceKey)) byKey.set(row.sourceKey, row);
+  }
+  return [...byKey.values()].sort((left, right) => left.sourceKey.localeCompare(right.sourceKey));
+}
+
+export async function persistUpstreamRulesetSnapshot(env: Env, snapshot: UpstreamRulesetSnapshotRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db.insert(upstreamRulesetSnapshots).values({
+    id: snapshot.id,
+    sourceRepo: snapshot.sourceRepo,
+    sourceRef: snapshot.sourceRef,
+    commitSha: snapshot.commitSha,
+    sourceSnapshotIdsJson: jsonString(snapshot.sourceSnapshotIds),
+    activeModel: snapshot.activeModel,
+    registryRepoCount: snapshot.registryRepoCount,
+    totalEmissionShare: snapshot.totalEmissionShare,
+    semanticHash: snapshot.semanticHash,
+    payloadJson: jsonString(snapshot.payload),
+    warningsJson: jsonString(snapshot.warnings),
+    generatedAt: snapshot.generatedAt,
+  });
+}
+
+export async function getLatestUpstreamRulesetSnapshot(env: Env): Promise<UpstreamRulesetSnapshotRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(upstreamRulesetSnapshots).orderBy(desc(upstreamRulesetSnapshots.generatedAt)).limit(1);
+  return row ? toUpstreamRulesetSnapshotRecord(row) : null;
+}
+
+export async function listLatestUpstreamRulesetSnapshots(env: Env, limit = 2): Promise<UpstreamRulesetSnapshotRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(upstreamRulesetSnapshots).orderBy(desc(upstreamRulesetSnapshots.generatedAt)).limit(limit);
+  return rows.map(toUpstreamRulesetSnapshotRecord);
+}
+
+export async function upsertUpstreamDriftReport(env: Env, report: UpstreamDriftReportRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .insert(upstreamDriftReports)
+    .values({
+      id: report.id,
+      fingerprint: report.fingerprint,
+      severity: report.severity,
+      status: report.status,
+      summary: report.summary,
+      affectedAreasJson: jsonString(report.affectedAreas),
+      previousRulesetId: report.previousRulesetId,
+      currentRulesetId: report.currentRulesetId,
+      issueNumber: report.issueNumber,
+      issueUrl: report.issueUrl,
+      payloadJson: jsonString(report.payload),
+      generatedAt: report.generatedAt,
+      updatedAt: report.updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: upstreamDriftReports.fingerprint,
+      set: {
+        severity: report.severity,
+        status: report.status,
+        summary: report.summary,
+        affectedAreasJson: jsonString(report.affectedAreas),
+        previousRulesetId: report.previousRulesetId,
+        currentRulesetId: report.currentRulesetId,
+        issueNumber: report.issueNumber,
+        issueUrl: report.issueUrl,
+        payloadJson: jsonString(report.payload),
+        updatedAt: report.updatedAt,
+      },
+    });
+}
+
+export async function updateUpstreamDriftReportIssue(env: Env, fingerprint: string, issue: { number: number; url: string }): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(upstreamDriftReports)
+    .set({ issueNumber: issue.number, issueUrl: issue.url, updatedAt: nowIso() })
+    .where(eq(upstreamDriftReports.fingerprint, fingerprint));
+}
+
+export async function listUpstreamDriftReports(env: Env, limit = 20): Promise<UpstreamDriftReportRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(upstreamDriftReports).orderBy(desc(upstreamDriftReports.updatedAt)).limit(limit);
+  return rows.map(toUpstreamDriftReportRecord);
+}
+
+export async function getOpenUpstreamDriftReportByFingerprint(env: Env, fingerprint: string): Promise<UpstreamDriftReportRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select()
+    .from(upstreamDriftReports)
+    .where(and(eq(upstreamDriftReports.fingerprint, fingerprint), eq(upstreamDriftReports.status, "open")))
+    .limit(1);
+  return row ? toUpstreamDriftReportRecord(row) : null;
 }
 
 export async function persistScorePreview(env: Env, preview: ScorePreviewRecord): Promise<void> {
@@ -1908,6 +2046,61 @@ function toScoringModelSnapshotRecord(row: typeof scoringModelSnapshots.$inferSe
   };
 }
 
+function toUpstreamSourceSnapshotRecord(row: typeof upstreamSourceSnapshots.$inferSelect): UpstreamSourceSnapshotRecord {
+  return {
+    id: row.id,
+    sourceKey: row.sourceKey,
+    sourceRepo: row.sourceRepo,
+    sourceRef: row.sourceRef,
+    path: row.path,
+    sourceUrl: row.sourceUrl,
+    commitSha: row.commitSha,
+    blobSha: row.blobSha,
+    contentSha256: row.contentSha256,
+    etag: row.etag,
+    status: parseUpstreamSourceStatus(row.status),
+    parsed: parseJson<Record<string, JsonValue>>(row.parsedJson, {}),
+    warnings: parseJson<string[]>(row.warningsJson, []),
+    payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+    fetchedAt: row.fetchedAt,
+  };
+}
+
+function toUpstreamRulesetSnapshotRecord(row: typeof upstreamRulesetSnapshots.$inferSelect): UpstreamRulesetSnapshotRecord {
+  return {
+    id: row.id,
+    sourceRepo: row.sourceRepo,
+    sourceRef: row.sourceRef,
+    commitSha: row.commitSha,
+    sourceSnapshotIds: parseJson<string[]>(row.sourceSnapshotIdsJson, []),
+    activeModel: parseActiveScoringModel(row.activeModel),
+    registryRepoCount: row.registryRepoCount,
+    totalEmissionShare: row.totalEmissionShare,
+    semanticHash: row.semanticHash,
+    payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+    warnings: parseJson<string[]>(row.warningsJson, []),
+    generatedAt: row.generatedAt,
+  };
+}
+
+function toUpstreamDriftReportRecord(row: typeof upstreamDriftReports.$inferSelect): UpstreamDriftReportRecord {
+  return {
+    id: row.id,
+    fingerprint: row.fingerprint,
+    severity: parseUpstreamDriftSeverity(row.severity),
+    status: parseUpstreamDriftStatus(row.status),
+    summary: row.summary,
+    affectedAreas: parseJson<string[]>(row.affectedAreasJson, []).map(parseUpstreamDriftArea),
+    previousRulesetId: row.previousRulesetId,
+    currentRulesetId: row.currentRulesetId,
+    issueNumber: row.issueNumber,
+    issueUrl: row.issueUrl,
+    payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+    generatedAt: row.generatedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 function toScorePreviewRecord(row: typeof scorePreviews.$inferSelect): ScorePreviewRecord {
   return {
     id: row.id,
@@ -2450,8 +2643,28 @@ function parseScoringSourceKind(value: string): ScoringModelSnapshotRecord["sour
 }
 
 function parseActiveScoringModel(value: string): ScoringModelSnapshotRecord["activeModel"] {
-  if (value === "current_density_model" || value === "pending_saturation_model") return value;
+  if (value === "current_density_model" || value === "pending_saturation_model" || value === "exponential_saturation_model") return value;
   return "unknown";
+}
+
+function parseUpstreamSourceStatus(value: string): UpstreamSourceStatus {
+  if (value === "not_modified" || value === "fallback" || value === "error") return value;
+  return "fetched";
+}
+
+function parseUpstreamDriftSeverity(value: string): UpstreamDriftSeverity {
+  if (value === "medium" || value === "high" || value === "blocking") return value;
+  return "low";
+}
+
+function parseUpstreamDriftStatus(value: string): UpstreamDriftStatus {
+  if (value === "acknowledged" || value === "resolved" || value === "ignored") return value;
+  return "open";
+}
+
+function parseUpstreamDriftArea(value: string): UpstreamDriftArea {
+  if (value === "registry" || value === "scoring_model" || value === "issue_discovery" || value === "mirror_linkage" || value === "language_weights") return value;
+  return "source";
 }
 
 function parseScorePreviewTargetType(value: string): ScorePreviewRecord["targetType"] {

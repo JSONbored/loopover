@@ -49,6 +49,26 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      type: "refresh-upstream-sources";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      type: "build-upstream-ruleset";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      type: "detect-upstream-drift";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      type: "refresh-upstream-drift";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      type: "file-upstream-drift-issues";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       type: "build-contributor-evidence";
       requestedBy: "schedule" | "api" | "test";
       login?: string;
@@ -649,12 +669,67 @@ export type ScoringModelSnapshotRecord = {
   sourceKind: "raw-github" | "api" | "fallback" | "test";
   sourceUrl: string;
   fetchedAt: string;
-  activeModel: "current_density_model" | "pending_saturation_model" | "unknown";
+  activeModel: "current_density_model" | "pending_saturation_model" | "exponential_saturation_model" | "unknown";
   constants: Record<string, number>;
   programmingLanguages: Record<string, JsonValue>;
   registrySnapshotId?: string | null | undefined;
   warnings: string[];
   payload: Record<string, JsonValue>;
+};
+
+export type UpstreamSourceStatus = "fetched" | "not_modified" | "fallback" | "error";
+
+export type UpstreamSourceSnapshotRecord = {
+  id: string;
+  sourceKey: string;
+  sourceRepo: string;
+  sourceRef: string;
+  path: string;
+  sourceUrl: string;
+  commitSha?: string | null | undefined;
+  blobSha?: string | null | undefined;
+  contentSha256?: string | null | undefined;
+  etag?: string | null | undefined;
+  status: UpstreamSourceStatus;
+  parsed: Record<string, JsonValue>;
+  warnings: string[];
+  payload: Record<string, JsonValue>;
+  fetchedAt: string;
+};
+
+export type UpstreamDriftSeverity = "low" | "medium" | "high" | "blocking";
+export type UpstreamDriftStatus = "open" | "acknowledged" | "resolved" | "ignored";
+export type UpstreamDriftArea = "registry" | "scoring_model" | "issue_discovery" | "mirror_linkage" | "language_weights" | "source";
+
+export type UpstreamRulesetSnapshotRecord = {
+  id: string;
+  sourceRepo: string;
+  sourceRef: string;
+  commitSha?: string | null | undefined;
+  sourceSnapshotIds: string[];
+  activeModel: ScoringModelSnapshotRecord["activeModel"];
+  registryRepoCount: number;
+  totalEmissionShare: number;
+  semanticHash: string;
+  payload: Record<string, JsonValue>;
+  warnings: string[];
+  generatedAt: string;
+};
+
+export type UpstreamDriftReportRecord = {
+  id: string;
+  fingerprint: string;
+  severity: UpstreamDriftSeverity;
+  status: UpstreamDriftStatus;
+  summary: string;
+  affectedAreas: UpstreamDriftArea[];
+  previousRulesetId?: string | null | undefined;
+  currentRulesetId?: string | null | undefined;
+  issueNumber?: number | null | undefined;
+  issueUrl?: string | null | undefined;
+  payload: Record<string, JsonValue>;
+  generatedAt: string;
+  updatedAt: string;
 };
 
 export type ScorePreviewRecord = {

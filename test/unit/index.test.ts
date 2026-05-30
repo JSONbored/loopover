@@ -106,6 +106,7 @@ describe("worker entrypoint", () => {
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "refresh-registry", requestedBy: "schedule" },
       { type: "refresh-scoring-model", requestedBy: "schedule" },
+      { type: "refresh-upstream-drift", requestedBy: "schedule" },
     ]);
   });
 
@@ -129,10 +130,12 @@ describe("worker entrypoint", () => {
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "refresh-registry", requestedBy: "schedule" },
       { type: "refresh-scoring-model", requestedBy: "schedule" },
+      { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "generate-signal-snapshots", requestedBy: "schedule" },
       { type: "build-burden-forecasts", requestedBy: "schedule" },
       { type: "build-contributor-evidence", requestedBy: "schedule" },
       { type: "build-contributor-decision-packs", requestedBy: "schedule" },
+      { type: "file-upstream-drift-issues", requestedBy: "schedule" },
     ]);
   });
 });

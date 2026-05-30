@@ -661,6 +661,56 @@ export const InstallationHealthSchema = z
   })
   .openapi("InstallationHealth");
 
+export const UpstreamDriftReportSchema = z
+  .object({
+    id: z.string(),
+    fingerprint: z.string(),
+    severity: z.enum(["low", "medium", "high", "blocking"]),
+    status: z.enum(["open", "acknowledged", "resolved", "ignored"]),
+    summary: z.string(),
+    affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    previousRulesetId: z.string().nullable().optional(),
+    currentRulesetId: z.string().nullable().optional(),
+    issueNumber: z.number().nullable().optional(),
+    issueUrl: z.string().nullable().optional(),
+    payload: z.record(z.unknown()).optional(),
+    generatedAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .openapi("UpstreamDriftReport");
+
+export const UpstreamRulesetSnapshotSchema = z
+  .object({
+    id: z.string(),
+    sourceRepo: z.string(),
+    sourceRef: z.string(),
+    commitSha: z.string().nullable().optional(),
+    sourceSnapshotIds: z.array(z.string()),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
+    registryRepoCount: z.number(),
+    totalEmissionShare: z.number(),
+    semanticHash: z.string(),
+    payload: z.record(z.unknown()),
+    warnings: z.array(z.string()),
+    generatedAt: z.string(),
+  })
+  .openapi("UpstreamRulesetSnapshot");
+
+export const UpstreamStatusSchema = z
+  .object({
+    generatedAt: z.string(),
+    status: z.enum(["current", "drift_detected", "stale", "unavailable"]),
+    latestCommitSha: z.string().nullable().optional(),
+    latestRulesetId: z.string().nullable().optional(),
+    latestRulesetGeneratedAt: z.string().nullable().optional(),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]).nullable().optional(),
+    highestSeverity: z.enum(["low", "medium", "high", "blocking"]).nullable().optional(),
+    affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    openReportCount: z.number(),
+    reports: z.array(UpstreamDriftReportSchema),
+  })
+  .openapi("UpstreamStatus");
+
 export const SyncStatusSchema = z
   .object({
     generatedAt: z.string(),
@@ -678,6 +728,7 @@ export const SyncStatusSchema = z
       warnings: z.array(z.string()),
     }),
     coreSignalFidelity: CoreSignalFidelitySchema,
+    upstreamDrift: UpstreamStatusSchema,
     historyCoverage: z.enum(["sampled", "counts_only", "full"]),
     refreshingRepos: z.array(z.string()),
     waitingForRateLimitRepos: z.array(z.string()),
@@ -710,6 +761,7 @@ export const ReadinessSchema = z
       warnings: z.array(z.string()),
     }),
     coreSignalFidelity: CoreSignalFidelitySchema,
+    upstreamDrift: UpstreamStatusSchema,
     historyCoverage: z.enum(["sampled", "counts_only", "full"]),
     partialRepos: z.array(z.string()),
     cappedRepos: z.array(z.string()),
@@ -730,7 +782,7 @@ export const ReadinessSchema = z
     scoringModel: z
       .object({
         snapshotId: z.string(),
-        activeModel: z.enum(["current_density_model", "pending_saturation_model", "unknown"]),
+        activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
         sourceKind: z.string(),
         fetchedAt: z.string(),
         warningCount: z.number(),
@@ -784,7 +836,7 @@ export const ScoringModelSnapshotSchema = z
     sourceKind: z.enum(["raw-github", "api", "fallback", "test"]),
     sourceUrl: z.string(),
     fetchedAt: z.string(),
-    activeModel: z.enum(["current_density_model", "pending_saturation_model", "unknown"]),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
     constants: z.record(z.number()),
     programmingLanguages: z.record(z.unknown()),
     registrySnapshotId: z.string().nullable().optional(),
@@ -845,7 +897,7 @@ export const ScorePreviewResultSchema = z
     repoFullName: z.string(),
     generatedAt: z.string(),
     scoringModelSnapshotId: z.string(),
-    activeModel: z.enum(["current_density_model", "pending_saturation_model", "unknown"]),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
     privateOnly: z.literal(true),
     laneMath: z.record(z.number()),
     scoreEstimate: ScoreEstimateSchema,

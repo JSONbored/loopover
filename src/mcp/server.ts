@@ -56,6 +56,7 @@ import {
 } from "../signals/engine";
 import { buildLocalBranchAnalysis } from "../signals/local-branch";
 import { buildRepoDataQuality } from "../signals/data-quality";
+import { loadUpstreamStatus } from "../upstream/ruleset";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -317,6 +318,15 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_get_upstream_drift",
+      {
+        description: "Return private upstream Gittensor ruleset drift status, including stale/drift warnings for MCP planning.",
+        inputSchema: {},
+      },
+      async () => this.toolResult(await this.getUpstreamDrift()),
+    );
+
+    server.registerTool(
       "gittensory_get_issue_quality",
       {
         description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
@@ -377,6 +387,7 @@ export class GittensoryMcp {
             supportedTools: [
               "gittensory_get_decision_pack",
               "gittensory_explain_repo_decision",
+              "gittensory_get_upstream_drift",
               "gittensory_preflight_current_branch",
               "gittensory_preview_current_branch_score",
               "gittensory_rank_local_next_actions",
@@ -631,6 +642,22 @@ export class GittensoryMcp {
     return {
       summary: "Gittensory registry changes from latest cached snapshots.",
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getUpstreamDrift(): Promise<ToolPayload> {
+    const status = await loadUpstreamStatus(this.env);
+    const detail =
+      status.status === "current"
+        ? "upstream ruleset is current"
+        : status.status === "drift_detected"
+          ? `upstream drift detected (${status.highestSeverity ?? "unknown"})`
+          : status.status === "stale"
+            ? "upstream ruleset snapshot is stale"
+            : "upstream ruleset snapshot is unavailable";
+    return {
+      summary: `Gittensory upstream drift status: ${detail}.`,
+      data: status as unknown as Record<string, unknown>,
     };
   }
 

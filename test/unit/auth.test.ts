@@ -62,9 +62,11 @@ describe("private-beta auth and rate limiting", () => {
     expect(routeClassForPath("/v1/auth/github/device/start")).toBe("strict");
     expect(routeClassForPath("/v1/local/branch-analysis")).toBe("expensive");
     expect(routeClassForPath("/v1/scoring/preview")).toBe("expensive");
+    expect(routeClassForPath("/v1/upstream/status")).toBe("expensive");
     expect(routeClassForPath("/v1/contributors/jsonbored/decision-pack")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/generate-signal-snapshots")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/build-contributor-decision-packs")).toBe("expensive");
+    expect(routeClassForPath("/v1/internal/jobs/refresh-upstream-drift")).toBe("expensive");
     expect(routeClassForPath("/v1/repos")).toBe("normal");
   });
 

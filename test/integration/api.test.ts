@@ -12,6 +12,7 @@ import {
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
   listLatestSignalSnapshotsByTarget,
+  persistUpstreamRulesetSnapshot,
   upsertRepoLabel,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
@@ -91,6 +92,36 @@ describe("api routes", () => {
 
     const legacyPerRepoDrift = await app.request("/v1/repos/owner/changed/registry-drift", { headers: apiHeaders(env) }, env);
     expect(legacyPerRepoDrift.status).toBe(404);
+  });
+
+  it("serves upstream ruleset status, ruleset snapshots, and drift reports through private APIs", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", upstreamContractFetch());
+
+    const missing = await app.request("/v1/upstream/status", { headers: apiHeaders(env) }, env);
+    expect(missing.status).toBe(200);
+    await expect(missing.json()).resolves.toMatchObject({ status: "unavailable" });
+
+    const refresh = await app.request(
+      "/v1/internal/jobs/refresh-upstream-drift/run",
+      { method: "POST", headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}` } },
+      env,
+    );
+    expect(refresh.status).toBe(200);
+    await expect(refresh.json()).resolves.toMatchObject({ ruleset: { activeModel: "pending_saturation_model", registryRepoCount: 1 }, drift: null });
+
+    const status = await app.request("/v1/upstream/status", { headers: apiHeaders(env) }, env);
+    expect(status.status).toBe(200);
+    await expect(status.json()).resolves.toMatchObject({ status: "current", activeModel: "pending_saturation_model" });
+
+    const ruleset = await app.request("/v1/upstream/ruleset", { headers: apiHeaders(env) }, env);
+    expect(ruleset.status).toBe(200);
+    await expect(ruleset.json()).resolves.toMatchObject({ commitSha: "api-commit", registryRepoCount: 1 });
+
+    const drift = await app.request("/v1/upstream/drift", { headers: apiHeaders(env) }, env);
+    expect(drift.status).toBe(200);
+    await expect(drift.json()).resolves.toMatchObject({ upstreamDrift: { status: "current" }, reports: [] });
   });
 
   it("queues signed GitHub webhooks and rejects invalid signatures", async () => {
@@ -1246,6 +1277,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_preflight_local_diff");
     expect(toolNames).toContain("gittensory_preview_local_pr_score");
     expect(toolNames).toContain("gittensory_get_registry_changes");
+    expect(toolNames).toContain("gittensory_get_upstream_drift");
     expect(toolNames).toContain("gittensory_explain_review_risk");
     expect(toolNames).toContain("gittensory_compare_pr_variants");
     expect(toolNames).toContain("gittensory_local_status");
@@ -1464,6 +1496,7 @@ describe("api routes", () => {
         },
       ],
       ["gittensory_get_registry_changes", {}],
+      ["gittensory_get_upstream_drift", {}],
       [
         "gittensory_preview_local_pr_score",
         {
@@ -2266,6 +2299,37 @@ function apiHeaders(env: Env): Record<string, string> {
   };
 }
 
+function upstreamContractFetch() {
+  const files: Record<string, string> = {
+    "gittensor/constants.py": "SRC_TOK_SATURATION_SCALE = 58\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n",
+    "gittensor/validator/weights/master_repositories.json": JSON.stringify({
+      "JSONbored/gittensory": {
+        emission_share: 0.01,
+        issue_discovery_share: 0,
+        maintainer_cut: 0.3,
+        label_multipliers: { feature: 1.5 },
+        trusted_label_pipeline: true,
+      },
+    }),
+    "gittensor/validator/weights/programming_languages.json": JSON.stringify({ TypeScript: 1 }),
+    "gittensor/validator/oss_contributions/mirror/scoring.py": "score = 1 - exp(-x)\nsolved_by_pr = True\n",
+    "gittensor/validator/issue_discovery/scan.py": "branch eligibility required\n",
+    "gittensor/utils/mirror/models.py": "solved_by_pr: int\n",
+  };
+  return async (input: RequestInfo | URL): Promise<Response> => {
+    const url = input.toString();
+    if (url.includes("/commits/")) return Response.json({ sha: "api-commit" });
+    const path = Object.keys(files).find((candidate) => url.includes(`/contents/${candidate}`));
+    if (!path) return new Response("not found", { status: 404 });
+    return Response.json({
+      content: Buffer.from(files[path]!, "utf8").toString("base64"),
+      encoding: "base64",
+      sha: `api-${path}`,
+      download_url: `https://raw.githubusercontent.com/entrius/gittensor/test/${path}`,
+    });
+  };
+}
+
 function withBurdenForecastReadFailure(env: Env): Env {
   const db = env.DB as unknown as { prepare: (sql: string) => unknown; batch: (statements: unknown[]) => Promise<unknown[]> };
   return {
@@ -2406,6 +2470,42 @@ async function seedSignalData(env: Env): Promise<void> {
     ),
   );
   await persistRegistrySnapshot(env, snapshot);
+  await persistUpstreamRulesetSnapshot(env, {
+    id: "upstream-ruleset-seed",
+    sourceRepo: "entrius/gittensor",
+    sourceRef: "test",
+    commitSha: "seed-commit",
+    sourceSnapshotIds: [],
+    activeModel: "pending_saturation_model",
+    registryRepoCount: 1,
+    totalEmissionShare: 0.01107,
+    semanticHash: "seed-semantic-hash",
+    payload: {
+      registry: {
+        repoCount: 1,
+        totalEmissionShare: 0.01107,
+        repositories: [
+          {
+            repo: "entrius/allways-ui",
+            emissionShare: 0.01107,
+            issueDiscoveryShare: 0,
+            maintainerCut: 0,
+            labelMultipliers: { bug: 1.1, enhancement: 1, feature: 1.25, refactor: 0.5 },
+            trustedLabelPipeline: true,
+            defaultLabelMultiplier: null,
+            eligibilityMode: null,
+          },
+        ],
+      },
+      scoring: { activeModel: "pending_saturation_model", constants: { SRC_TOK_SATURATION_SCALE: 58 }, semanticFlags: { usesExponentialSaturation: true } },
+      issueDiscovery: { branchEligibilityRequired: false },
+      mirrorLinkage: { solvedByPrRequired: true },
+      languageWeights: { count: 1, weights: { TypeScript: 1 }, contentHash: "seed-languages" },
+      sourceSnapshots: [],
+    },
+    warnings: [],
+    generatedAt: freshAt,
+  });
   await upsertRepositoryFromGitHub(env, {
     name: "allways-ui",
     full_name: "entrius/allways-ui",

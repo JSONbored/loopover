@@ -33,6 +33,7 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
+    "test:upstream-contract": "vitest run test/contract/upstream-contract.test.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:coverage": "vitest run --coverage",
     "test:ci": "git diff --check && npm run actionlint && npm run typecheck && npm run test:coverage && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run docs:check && npm run docs:build && npm run docs:smoke && npm audit --audit-level=moderate",

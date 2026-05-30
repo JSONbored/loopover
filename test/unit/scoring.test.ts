@@ -56,7 +56,7 @@ describe("scoring model and previews", () => {
     vi.unstubAllGlobals();
   });
 
-  it("parses known upstream numeric constants and detects the current density model", () => {
+  it("parses known upstream numeric constants and prefers the saturation model when upstream exposes it", () => {
     const parsed = parsePythonNumberConstants(`
 OSS_EMISSION_SHARE = 0.90
 MAX_CODE_DENSITY_MULTIPLIER = 1.15
@@ -66,7 +66,7 @@ IGNORED = "not numeric"
     expect(parsed).toMatchObject({ OSS_EMISSION_SHARE: 0.9, MAX_CODE_DENSITY_MULTIPLIER: 1.15, MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5 });
     expect(parsed).not.toHaveProperty("IGNORED");
     expect(detectActiveModel(parsed)).toBe("current_density_model");
-    expect(detectActiveModel({ SRC_TOK_SATURATION_SCALE: 58 })).toBe("pending_saturation_model");
+    expect(detectActiveModel({ MAX_CODE_DENSITY_MULTIPLIER: 1.15, SRC_TOK_SATURATION_SCALE: 58 })).toBe("pending_saturation_model");
     expect(detectActiveModel({})).toBe("unknown");
   });
 

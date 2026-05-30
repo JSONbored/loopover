@@ -47,12 +47,14 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isHourly) {
     jobs.push({ type: "refresh-registry", requestedBy: "schedule" });
     jobs.push({ type: "refresh-scoring-model", requestedBy: "schedule" });
+    jobs.push({ type: "refresh-upstream-drift", requestedBy: "schedule" });
   }
   if (isFullSyncWindow) {
     jobs.push({ type: "generate-signal-snapshots", requestedBy: "schedule" });
     jobs.push({ type: "build-burden-forecasts", requestedBy: "schedule" });
     jobs.push({ type: "build-contributor-evidence", requestedBy: "schedule" });
     jobs.push({ type: "build-contributor-decision-packs", requestedBy: "schedule" });
+    jobs.push({ type: "file-upstream-drift-issues", requestedBy: "schedule" });
   }
   await Promise.all(jobs.map((job) => env.JOBS.send(job)));
 }

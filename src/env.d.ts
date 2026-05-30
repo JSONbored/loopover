@@ -16,8 +16,13 @@ declare global {
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;
     GITHUB_OAUTH_CLIENT_ID?: string;
+    GITTENSOR_UPSTREAM_REPO?: string;
+    GITTENSOR_UPSTREAM_REF?: string;
     GITTENSOR_REGISTRY_URL: string;
     GITHUB_PUBLIC_TOKEN?: string;
+    GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
+    GITTENSORY_DRIFT_ISSUE_REPO?: string;
+    GITTENSORY_DRIFT_ISSUE_TOKEN?: string;
     GITTENSORY_API_TOKEN: string;
     GITTENSORY_MCP_TOKEN: string;
     INTERNAL_JOB_TOKEN: string;

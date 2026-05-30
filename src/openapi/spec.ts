@@ -61,6 +61,9 @@ import {
   ScoringModelSnapshotSchema,
   SignalFidelitySchema,
   SyncStatusSchema,
+  UpstreamDriftReportSchema,
+  UpstreamRulesetSnapshotSchema,
+  UpstreamStatusSchema,
   WorkboardItemSchema,
 } from "./schemas";
 
@@ -113,6 +116,9 @@ export function buildOpenApiSpec() {
   registry.register("InstallationHealth", InstallationHealthSchema);
   registry.register("SyncStatus", SyncStatusSchema);
   registry.register("Readiness", ReadinessSchema);
+  registry.register("UpstreamStatus", UpstreamStatusSchema);
+  registry.register("UpstreamRulesetSnapshot", UpstreamRulesetSnapshotSchema);
+  registry.register("UpstreamDriftReport", UpstreamDriftReportSchema);
   registry.register("RegistryChangeReport", RegistryChangeReportSchema);
   registry.register("LaneAdvice", LaneAdviceSchema);
   registry.register("ScoringModelSnapshot", ScoringModelSnapshotSchema);
@@ -154,6 +160,39 @@ export function buildOpenApiSpec() {
     path: "/v1/scoring/model",
     responses: {
       200: { description: "Latest private scoring model snapshot", content: { "application/json": { schema: ScoringModelSnapshotSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/upstream/status",
+    responses: {
+      200: { description: "Upstream Gittensor source/ruleset drift status", content: { "application/json": { schema: UpstreamStatusSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/upstream/ruleset",
+    responses: {
+      200: { description: "Latest normalized upstream Gittensor ruleset snapshot", content: { "application/json": { schema: UpstreamRulesetSnapshotSchema } } },
+      404: { description: "No upstream ruleset snapshot has been built yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/upstream/drift",
+    responses: {
+      200: {
+        description: "Open and historical upstream drift reports",
+        content: {
+          "application/json": {
+            schema: z.object({
+              generatedAt: z.string(),
+              upstreamDrift: UpstreamStatusSchema,
+              reports: z.array(UpstreamDriftReportSchema),
+            }),
+          },
+        },
+      },
     },
   });
   registry.registerPath({
@@ -436,6 +475,8 @@ export function buildOpenApiSpec() {
   });
   for (const path of [
     "/v1/internal/jobs/refresh-scoring-model",
+    "/v1/internal/jobs/refresh-upstream-drift",
+    "/v1/internal/jobs/file-upstream-drift-issues",
     "/v1/internal/jobs/build-contributor-evidence",
     "/v1/internal/jobs/build-contributor-decision-packs",
     "/v1/internal/jobs/build-burden-forecasts",

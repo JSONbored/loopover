@@ -447,6 +447,12 @@ describe("api routes", () => {
     expect(fetchedAgentRun.status).toBe(200);
     await expect(fetchedAgentRun.json()).resolves.toMatchObject({ run: { id: agentPlanPayload.run.id }, actions: expect.any(Array) });
 
+    const listedAgentRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1", { headers: apiHeaders(env) }, env);
+    expect(listedAgentRuns.status).toBe(200);
+    await expect(listedAgentRuns.json()).resolves.toMatchObject({
+      runs: expect.arrayContaining([expect.objectContaining({ run: expect.objectContaining({ id: agentPlanPayload.run.id }) })]),
+    });
+
     const missingRepoDecisionSnapshot = await app.request("/v1/contributors/new-user/repos/entrius/allways-ui/decision", { headers: apiHeaders(env) }, env);
     expect(missingRepoDecisionSnapshot.status).toBe(202);
     await expect(missingRepoDecisionSnapshot.json()).resolves.toMatchObject({

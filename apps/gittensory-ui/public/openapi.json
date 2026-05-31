@@ -8415,6 +8415,60 @@
             "description": "Unauthorized"
           }
         }
+      },
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "jsonbored"
+            },
+            "required": true,
+            "description": "GitHub login that owns the agent runs.",
+            "name": "actorLogin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "50"
+            },
+            "required": false,
+            "description": "Maximum run bundles to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent agent run bundles for an authenticated actor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AgentRunBundle"
+                      }
+                    }
+                  },
+                  "required": [
+                    "runs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing actor login"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
       }
     },
     "/v1/agent/runs/{id}": {

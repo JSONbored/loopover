@@ -94,6 +94,20 @@ function extractExample(content: RawResponseContent | undefined): unknown {
   return undefined;
 }
 
+function extractPathParams(path: string, declared: OpenApiParam[]): OpenApiParam[] {
+  const declaredKeys = new Set(declared.map((p) => `${p.in}:${p.name}`));
+  const names = Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1]).filter(Boolean);
+  return names
+    .filter((name) => !declaredKeys.has(`path:${name}`))
+    .map((name) => ({
+      name,
+      in: "path" as const,
+      required: true,
+      description: `Value for {${name}} in ${path}.`,
+      schema: { type: "string" },
+    }));
+}
+
 function build(): OpenApiSpec {
   const raw = specJson as RawOpenApiSpec;
   const ops: OpenApiOperation[] = [];
@@ -104,6 +118,7 @@ function build(): OpenApiSpec {
       if (!op) continue;
       const tag = (op.tags && op.tags[0]) || "Other";
       const requiresAuth = requiresAuthentication(path, op);
+      const declaredParams = (op.parameters ?? []) as OpenApiParam[];
       const responses: OpenApiOperation["responses"] = {};
       for (const [code, r] of Object.entries(op.responses ?? {})) {
         responses[code] = {
@@ -119,7 +134,7 @@ function build(): OpenApiSpec {
         tag,
         summary: op.summary ?? `${method.toUpperCase()} ${path}`,
         description: op.description,
-        parameters: (op.parameters ?? []) as OpenApiParam[],
+        parameters: [...extractPathParams(path, declaredParams), ...declaredParams],
         requiresAuth,
         responses,
       });

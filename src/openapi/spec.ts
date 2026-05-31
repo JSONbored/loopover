@@ -378,6 +378,21 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/agent/runs",
+    request: {
+      query: z.object({
+        actorLogin: z.string().min(1).openapi({
+          param: { description: "GitHub login that owns the agent runs." },
+          example: "jsonbored",
+        }),
+        limit: z
+          .string()
+          .optional()
+          .openapi({
+            param: { description: "Maximum run bundles to return, clamped from 1 to 100." },
+            example: "50",
+          }),
+      }),
+    },
     responses: {
       200: {
         description: "Recent agent run bundles for an authenticated actor",

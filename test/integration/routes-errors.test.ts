@@ -316,6 +316,7 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/preflight/local-diff", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/local/branch-analysis", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/runs/missing-run", { headers: apiHeaders(env) }, env)).status).toBe(404);
+    expect((await app.request("/v1/agent/runs", { headers: apiHeaders(env) }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/runs", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/plan-next-work", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/preflight-branch", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);

@@ -4,6 +4,16 @@ import { GittensoryMcp } from "../../src/mcp/server";
 import type { UpstreamDriftReportRecord, UpstreamRulesetSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
+describe("MCP contributor access", () => {
+  it("blocks session actors from another contributor open-pr monitor", async () => {
+    const env = createTestEnv();
+    const mcp = new GittensoryMcp(env, { kind: "session", actor: "attacker" });
+    await expect((mcp as unknown as { monitorOpenPullRequests(login: string): Promise<unknown> }).monitorOpenPullRequests("victim")).rejects.toThrow(
+      /Forbidden: session can only access the authenticated GitHub login/,
+    );
+  });
+});
+
 describe("MCP upstream drift tool", () => {
   it("summarizes current, drifted, stale, and unavailable upstream states", async () => {
     const currentEnv = createTestEnv();

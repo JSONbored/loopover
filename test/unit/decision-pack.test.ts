@@ -573,6 +573,67 @@ describe("decision-pack service", () => {
     expect(pack.nextActions.length).toBeGreaterThan(0);
   });
 
+  it("merges open PR monitor guidance into pack summary and next actions", () => {
+    const monitor = {
+      login: "jsonbored",
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      openPrCount: 1,
+      registeredRepoCount: 1,
+      cleanupFirst: true,
+      summary: "One open PR needs attention on owner/cleanup.",
+      guidance: ["Close or land owner/cleanup#42 before opening new direct PR work."],
+      pendingScenarios: [],
+      pullRequests: [
+        {
+          repoFullName: "owner/cleanup",
+          number: 42,
+          title: "WIP cleanup",
+          classification: "needs_author" as const,
+          summary: "Changes requested.",
+          reasons: ["Reviewer asked for tests."],
+          nextSteps: ["Add tests and push updates."],
+        },
+      ],
+    };
+    const pack = __decisionPackInternals.buildContributorDecisionPack({
+      login: "jsonbored",
+      profile: {
+        login: "jsonbored",
+        generatedAt: "2026-05-25T00:00:00.000Z",
+        github: {},
+        source: {},
+        gittensor: null,
+        registeredRepoActivity: { reposTouched: ["owner/cleanup"] },
+        trustSignals: {},
+      } as any,
+      outcomeHistory: {
+        login: "jsonbored",
+        generatedAt: "2026-05-25T00:00:00.000Z",
+        source: {},
+        totals: {},
+        repoOutcomes: [
+          { repoFullName: "owner/cleanup", role: "outside_contributor", lane: "direct_pr", maintainerLane: false, openPullRequests: 6, closedPullRequestRate: 0.4, credibility: 0.5, mergedPullRequests: 1, closedPullRequests: 2, validSolvedIssues: 0 },
+        ],
+        successPatterns: [],
+        failurePatterns: [],
+        summary: "fixture",
+      } as any,
+      repositories: [repo("owner/cleanup", 0.03, 0)],
+      syncStates: [
+        { repoFullName: "owner/cleanup", status: "complete", openPullRequestsCount: 30, openIssuesCount: 150, recentMergedPullRequestsCount: 5, warnings: [], lastCompletedAt: "2026-05-25T00:00:00.000Z" },
+      ] as any,
+      syncSegments: [],
+      totals: [],
+      scoringModelSnapshotId: "scoring-1",
+      contributorPullRequests: [{ repoFullName: "owner/cleanup", authorLogin: "jsonbored", authorAssociation: "CONTRIBUTOR" }] as any,
+      contributorIssues: [],
+      openPrMonitor: monitor,
+    });
+    expect(pack.summary).toContain("One open PR needs attention");
+    expect(pack.nextActions[0]).toMatch(/owner\/cleanup#42/);
+    expect(pack.openPrMonitor).toEqual(monitor);
+  });
+
   it("issues repo-specific direct-PR reasoning that names language and label fit", () => {
     const decision = __decisionPackInternals.buildRepoDecision({
       repo: repoWithLabels("owner/direct", 0.04, 0, { bug: 1.2, "good-first-issue": 1.1, perf: 1 }),

@@ -64,6 +64,7 @@ describe("private-beta auth and rate limiting", () => {
     expect(routeClassForPath("/v1/scoring/preview")).toBe("expensive");
     expect(routeClassForPath("/v1/upstream/status")).toBe("expensive");
     expect(routeClassForPath("/v1/contributors/jsonbored/decision-pack")).toBe("expensive");
+    expect(routeClassForPath("/v1/contributors/jsonbored/open-pr-monitor")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/generate-signal-snapshots")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/build-contributor-decision-packs")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/refresh-upstream-drift")).toBe("expensive");

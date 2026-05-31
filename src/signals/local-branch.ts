@@ -15,6 +15,7 @@ import {
   type RoleContext,
 } from "./engine";
 import { buildRepoRewardRisk, type RepoRewardRisk, type RewardRiskAction } from "./reward-risk";
+import { buildLocalWorkspaceIntelligence, type LocalWorkspaceIntelligence } from "./local-workspace-intelligence";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -68,6 +69,8 @@ export type LocalBranchAnalysisInput = {
   expectedOpenPrCountAfterMerge?: number | undefined;
   projectedCredibility?: number | undefined;
   scenarioNotes?: string[] | undefined;
+  pendingCommitCount?: number | undefined;
+  ciStatusHints?: string[] | undefined;
 };
 
 type ObservedPullRequestScenarios = {
@@ -159,6 +162,7 @@ export type LocalBranchAnalysis = {
     publicSafeWarnings: string[];
   };
   nextActions: RewardRiskAction[];
+  workspaceIntelligence: LocalWorkspaceIntelligence;
   summary: string;
 };
 
@@ -321,6 +325,17 @@ export function buildLocalBranchAnalysis(args: {
     },
     prPacket,
     nextActions: withSituationalAction(rewardRisk.actions, branchQualityBlockers, accountStateBlockers, scorePreview).slice(0, 6),
+    workspaceIntelligence: buildLocalWorkspaceIntelligence({
+      input: args.input,
+      analysis: {
+        baseFreshness,
+        branchQualityBlockers,
+        accountStateBlockers,
+        recommendedRerunCondition,
+        prPacket,
+      },
+      changedFiles,
+    }),
     summary: `${args.input.repoFullName}: local branch analysis is ${preflight.status}; ${rewardRisk.actions[0]?.actionKind ?? "no ranked action"} is the top private next action.`,
   };
 }
@@ -588,6 +603,46 @@ function buildLocalFindings(
             severity: "info" as const,
             title: "Binary changes detected",
             detail: "Binary file changes cannot be scored or reviewed from line metadata alone.",
+          },
+        ]
+      : []),
+    ...(changedFiles.some((file) => file.status === "deleted")
+      ? [
+          {
+            code: "deleted_paths_present",
+            severity: "warning" as const,
+            title: "Deleted paths detected",
+            detail: "Deleted files are included in local metadata only; confirm the removal is intentional before submitting the change.",
+          },
+        ]
+      : []),
+    ...(changedFiles.some((file) => file.status === "renamed" || file.previousPath)
+      ? [
+          {
+            code: "renamed_paths_present",
+            severity: "info" as const,
+            title: "Renamed paths detected",
+            detail: "Renamed files are summarized from git metadata; reviewers should confirm history and import paths.",
+          },
+        ]
+      : []),
+    ...((input.validation ?? []).some((entry) => entry.status === "passed") && !changedFiles.some((file) => isTestFile(file.path))
+      ? [
+          {
+            code: "validation_as_test_evidence",
+            severity: "info" as const,
+            title: "Validation commands supplied as test evidence",
+            detail: "Passed local validation commands are treated as test evidence even when no test files changed.",
+          },
+        ]
+      : []),
+    ...(input.localScorer?.warnings?.length
+      ? [
+          {
+            code: "local_scorer_warning",
+            severity: "info" as const,
+            title: "Local scorer diagnostics",
+            detail: input.localScorer.warnings.join(" "),
           },
         ]
       : []),

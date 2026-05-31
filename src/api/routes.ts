@@ -192,6 +192,8 @@ const localBranchAnalysisSchema = z
     expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
     projectedCredibility: z.number().min(0).max(1).optional(),
     scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+    pendingCommitCount: z.number().int().min(0).optional(),
+    ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
   })
   .strict();
 

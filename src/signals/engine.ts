@@ -19,6 +19,7 @@ import type {
 import type { PublicContributorProfile } from "../github/public";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
+import { hasLocalTestEvidence } from "./test-evidence";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -1914,7 +1915,7 @@ export function buildLocalDiffPreflightResult(
       action: "Split unrelated work or clearly explain why the scope needs to stay together.",
     });
   }
-  if (codeFileCount > 0 && testFileCount === 0 && (input.tests ?? []).length === 0) {
+  if (codeFileCount > 0 && testFileCount === 0 && !hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles })) {
     findings.push({
       code: "local_diff_missing_tests",
       severity: "warning",

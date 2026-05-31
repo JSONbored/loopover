@@ -290,7 +290,12 @@ server.registerTool(
   },
   async (input) => {
     const result = await analyzeCurrentBranch(input);
-    return toolResult("Gittensory current-branch preflight.", { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket });
+    return toolResult("Gittensory current-branch preflight.", {
+      local: result.local,
+      preflight: result.analysis.preflight,
+      prPacket: result.analysis.prPacket,
+      workspaceIntelligence: result.analysis.workspaceIntelligence,
+    });
   },
 );
 
@@ -481,29 +486,15 @@ async function runCli(args) {
     validation: validationFromOptions(options),
     scorePreviewCommand: options.scorePreviewCommand,
   });
-  const payload = command === "preflight" ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket } : result;
+  const payload =
+    command === "preflight"
+      ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket, workspaceIntelligence: result.analysis.workspaceIntelligence }
+      : result;
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
-  process.stdout.write(`${result.analysis.summary}\n`);
-  process.stdout.write(`Top action: ${result.analysis.nextActions?.[0]?.actionKind ?? "none"}\n`);
-  if (result.analysis.nextActions?.[0]?.whyThisHelps?.length) {
-    process.stdout.write("Why this helps:\n");
-    for (const line of result.analysis.nextActions[0].whyThisHelps.slice(0, 3)) process.stdout.write(`- ${line}\n`);
-  }
-  if (result.analysis.scoreBlockers?.length) {
-    process.stdout.write("Score blockers:\n");
-    for (const blocker of result.analysis.scoreBlockers.slice(0, 5)) process.stdout.write(`- ${blocker}\n`);
-  }
-  process.stdout.write(`Preflight: ${result.analysis.preflight.status}\n`);
-  process.stdout.write(`Source upload: disabled\n`);
-  if (result.local?.localScorerStatus?.ok === false) {
-    process.stdout.write(`Local scorer: ${result.local.localScorerStatus.code ?? "metadata_only"}\n`);
-    for (const line of result.local.setupGuidance ?? setupGuidanceForLocalScorer(result.local.localScorerStatus)) {
-      process.stdout.write(`- ${line}\n`);
-    }
-  }
+  writeBranchAnalysisCli(result, command);
 }
 
 async function runAgentCli(args) {
@@ -566,11 +557,66 @@ function outputAgentPayload(payload, options, summary) {
     return process.stdout.write(safeMarkdown.endsWith("\n") ? safeMarkdown : `${safeMarkdown}\n`);
   }
   process.stdout.write(`${summary}\n`);
-  const actions = payload.actions ?? [];
+  if (payload.summary && payload.summary !== summary) process.stdout.write(`${payload.summary}\n`);
+  if (payload.recommendedRerunCondition) process.stdout.write(`Rerun when: ${payload.recommendedRerunCondition}\n`);
+  const actions = payload.actions ?? payload.nextActions ?? [];
   for (const action of actions.slice(0, 3)) {
-    process.stdout.write(`- ${action.actionType}: ${action.recommendation}\n`);
+    const label = action.actionType ?? action.actionKind ?? action.recommendation ?? "action";
+    const detail = action.recommendation ?? action.actionKind ?? action.summary ?? label;
+    process.stdout.write(`- ${label}: ${detail}\n`);
     if (action.rerunWhen) process.stdout.write(`  rerun: ${action.rerunWhen}\n`);
   }
+}
+
+function writeBranchAnalysisCli(result, command) {
+  const analysis = result.analysis;
+  const intelligence = analysis.workspaceIntelligence;
+  process.stdout.write(`${analysis.summary}\n`);
+  process.stdout.write(`Top action: ${analysis.nextActions?.[0]?.actionKind ?? "none"}\n`);
+  if (analysis.nextActions?.[0]?.whyThisHelps?.length) {
+    process.stdout.write("Why this helps:\n");
+    for (const line of analysis.nextActions[0].whyThisHelps.slice(0, 3)) process.stdout.write(`- ${line}\n`);
+  }
+  if (intelligence) writeWorkspaceIntelligenceCli(intelligence);
+  if (command === "analyze-branch" && analysis.scoreBlockers?.length) {
+    process.stdout.write("Score blockers:\n");
+    for (const blocker of analysis.scoreBlockers.slice(0, 5)) process.stdout.write(`- ${blocker}\n`);
+  }
+  process.stdout.write(`Preflight: ${analysis.preflight.status}\n`);
+  process.stdout.write(`Source upload: disabled\n`);
+  if (result.local?.localScorerStatus?.ok === false) {
+    process.stdout.write(`Local scorer: ${result.local.localScorerStatus.code ?? "metadata_only"}\n`);
+    for (const line of result.local.setupGuidance ?? setupGuidanceForLocalScorer(result.local.localScorerStatus)) {
+      process.stdout.write(`- ${line}\n`);
+    }
+  }
+}
+
+function writeWorkspaceIntelligenceCli(intelligence) {
+  process.stdout.write(`Workspace intelligence v${intelligence.version}:\n`);
+  const files = intelligence.changedFiles;
+  process.stdout.write(`- Changed files: ${files.total} (${files.binary} binary, ${files.deleted} deleted, ${files.renamed} renamed)\n`);
+  process.stdout.write(`- Test evidence: ${intelligence.testEvidence.level}\n`);
+  if (intelligence.branch.pendingCommitCount > 0) {
+    process.stdout.write(`- Pending commits ahead of base: ${intelligence.branch.pendingCommitCount}\n`);
+  }
+  if (intelligence.baseFreshness.status !== "fresh") {
+    process.stdout.write(`- Base freshness: ${intelligence.baseFreshness.status}\n`);
+    for (const warning of intelligence.baseFreshness.warnings.slice(0, 2)) process.stdout.write(`  ${warning}\n`);
+  }
+  if (intelligence.blockers.branchQuality.length) {
+    process.stdout.write("- Branch-quality blockers:\n");
+    for (const blocker of intelligence.blockers.branchQuality.slice(0, 4)) process.stdout.write(`  - ${blocker}\n`);
+  }
+  if (intelligence.blockers.accountState.length) {
+    process.stdout.write("- Account/queue blockers:\n");
+    for (const blocker of intelligence.blockers.accountState.slice(0, 4)) process.stdout.write(`  - ${blocker}\n`);
+  }
+  if (intelligence.ciStatusHints.length) {
+    process.stdout.write("- CI hints:\n");
+    for (const hint of intelligence.ciStatusHints.slice(0, 3)) process.stdout.write(`  - ${hint}\n`);
+  }
+  process.stdout.write(`- Rerun when: ${intelligence.rerunWhen}\n`);
 }
 
 function requirePublicSafePacketMarkdown(markdown) {

@@ -25,6 +25,8 @@ gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
 ```
 
+`--print mcp` prints the same JSON snippet for other stdio MCP hosts that use the `mcpServers` shape.
+
 These commands print config only. They do not mutate your local client files.
 
 ## Codex

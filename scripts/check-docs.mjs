@@ -58,6 +58,21 @@ for (const required of ["SUPPORT.md", "site/security/privacy.md", "site/security
   }
 }
 
+const contributing = readFileSync(join(root, "CONTRIBUTING.md"), "utf8");
+for (const phrase of ["npm run test:ci", "npm run test:coverage", "95%", "96%+ branch coverage"]) {
+  if (!contributing.includes(phrase)) failures.push(`CONTRIBUTING.md: missing contributor testing phrase ${JSON.stringify(phrase)}`);
+}
+
+const submissionTemplate = readFileSync(join(root, ".github/pull_request_template.md"), "utf8");
+for (const phrase of ["npm run test:ci", "npm run test:coverage", "95%", "sanitizer boundaries"]) {
+  if (!submissionTemplate.includes(phrase)) failures.push(`.github/pull_request_template.md: missing submission checklist phrase ${JSON.stringify(phrase)}`);
+}
+
+const featureTemplate = readFileSync(join(root, ".github/ISSUE_TEMPLATE/feature_request.yml"), "utf8");
+for (const phrase of ["Test scenarios", "public/private safety", "forbidden language"]) {
+  if (!featureTemplate.includes(phrase)) failures.push(`.github/ISSUE_TEMPLATE/feature_request.yml: missing feature template phrase ${JSON.stringify(phrase)}`);
+}
+
 if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exit(1);

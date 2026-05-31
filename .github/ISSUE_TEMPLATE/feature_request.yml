@@ -18,6 +18,13 @@ body:
       description: Describe the backend behavior, signal, or API shape.
     validations:
       required: true
+  - type: textarea
+    id: test_scenarios
+    attributes:
+      label: Test scenarios
+      description: List unit/integration cases for new branches, fallback paths, sanitizer rules, and regressions. Call out public/private safety boundaries if GitHub comments or MCP output changes.
+    validations:
+      required: true
   - type: checkboxes
     id: boundaries
     attributes:
@@ -27,3 +34,4 @@ body:
         - label: This does not require storing user PATs.
         - label: This does not expose wallet details, raw trust scores, or private rankings publicly.
         - label: This does not auto-close, auto-merge, rewrite contributor work, or label PRs outside the confirmed-miner policy.
+        - label: Public GitHub output will be tested against forbidden language (wallet, hotkey, raw trust score, payout, reward estimate, farming, private reviewability, public score estimate).

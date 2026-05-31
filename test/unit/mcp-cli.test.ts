@@ -26,6 +26,12 @@ describe("gittensory-mcp CLI", () => {
     const claude = JSON.parse(run(["init-client", "--print", "claude", "--json"])) as { snippet: string };
     expect(claude.snippet).toContain('"mcpServers"');
     expect(claude.snippet).toContain('"gittensory"');
+
+    const cursor = JSON.parse(run(["init-client", "--print", "cursor", "--json"])) as { snippet: string };
+    expect(cursor.snippet).toBe(claude.snippet);
+
+    const generic = JSON.parse(run(["init-client", "--print", "mcp", "--json"])) as { snippet: string };
+    expect(generic.snippet).toBe(claude.snippet);
   });
 
   it("runs doctor against a local health/session fixture", async () => {

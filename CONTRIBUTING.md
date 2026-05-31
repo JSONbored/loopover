@@ -25,19 +25,20 @@ Out of scope:
 
 ## Quality Bar
 
-- Run `npm run test:ci` before opening a PR.
-- Add or update tests for behavior changes.
+- Run `npm run test:ci` before submitting changes.
+- Run `npm run test:coverage` locally when you change behavior. CI enforces **95%** global coverage for lines, statements, functions, and branches.
+- Aim for **96%+ branch coverage** locally so small CI variance does not fail near the threshold.
+- Add or update tests for every behavior change: new branches, fallback paths, sanitizer rules, and regressions.
+- Add invariant or property-style tests when behavior depends on sorting, gating, public/private boundaries, scoring, queue pressure, or source-upload safety.
+- Keep changes backend-only.
+- Tests must cover new behavior or regressions, including fallback paths and sanitizer boundaries when touched.
+- Public GitHub comments must be tested against forbidden language when comment text changes (wallet, hotkey, raw trust score, payout, reward estimate, farming, private reviewability, public score estimate).
 - Keep API and MCP responses structured and machine-readable.
 - Keep public GitHub comments advisory, sanitized, and non-spammy.
 - Keep GitHub App labels limited to configured labels for officially confirmed Gittensor miner PRs.
+- Public surfaces must not expose secrets, wallet details, raw trust scores, or private rankings.
+- Public text must avoid compensation-seeking or optimization-tactic language.
+- OpenAPI and MCP schemas must stay aligned with behavior.
 - Prefer deterministic, evidence-based rules over opaque scoring.
 - Use Conventional Commit style for release-quality changelog output.
-- Do not update changelogs in ordinary PRs unless the PR is explicitly preparing a release.
-
-## Pull Request Checklist
-
-- The change is backend-only.
-- Tests cover the new behavior or regression.
-- Public surfaces do not expose secrets, wallet details, raw trust scores, or private rankings.
-- Public text avoids compensation-seeking or optimization-tactic language.
-- OpenAPI and MCP schemas stay aligned with behavior.
+- Do not update changelogs unless you are explicitly preparing a release.

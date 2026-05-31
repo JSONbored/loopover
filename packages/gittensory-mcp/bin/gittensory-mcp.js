@@ -592,7 +592,7 @@ function printHelp() {
   gittensory-mcp status [--json]
   gittensory-mcp changelog [--json]
   gittensory-mcp doctor [--cwd path] [--json]
-  gittensory-mcp init-client --print codex|claude|cursor [--json]
+  gittensory-mcp init-client --print codex|claude|cursor|mcp [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
@@ -842,7 +842,7 @@ async function doctor(options) {
 
   const commandPath = findExecutable("gittensory-mcp");
   if (commandPath) add("client_path", "pass", "gittensory-mcp is visible on PATH.");
-  else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in Codex, Claude, or MCP client config.");
+  else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in your MCP client config.");
 
   const scorerCommand = resolveScorePreviewCommand();
   if (!scorerCommand) {
@@ -887,7 +887,7 @@ async function doctor(options) {
 
 function initClient(options) {
   const client = String(options.print ?? options.client ?? "").toLowerCase();
-  if (!client) throw new Error("Pass --print codex, --print claude, or --print cursor.");
+  if (!client) throw new Error("Pass --print codex, --print claude, --print cursor, or --print mcp.");
   const command = options.command ?? "gittensory-mcp";
   const snippet = clientSnippet(client, command);
   const payload = {
@@ -1057,7 +1057,7 @@ function redactPrivateValidationMetrics(text) {
 
 function clientSnippet(client, command) {
   if (client === "codex") return `[mcp_servers.gittensory]\ncommand = ${JSON.stringify(command)}\nargs = ["--stdio"]`;
-  if (client === "claude" || client === "cursor") {
+  if (client === "claude" || client === "cursor" || client === "mcp") {
     return JSON.stringify(
       {
         mcpServers: {
@@ -1071,7 +1071,7 @@ function clientSnippet(client, command) {
       2,
     );
   }
-  throw new Error(`Unsupported client: ${client}. Use codex, claude, or cursor.`);
+  throw new Error(`Unsupported client: ${client}. Use codex, claude, cursor, or mcp.`);
 }
 
 function findExecutable(name) {

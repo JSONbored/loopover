@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:cloudflare": "npm --prefix ../.. run ui:build",
     "build:dev": "vite build --mode development",
+    "deploy:built": "wrangler deploy --config dist/server/wrangler.json",
     "preview": "vite preview",
+    "version:built": "wrangler versions upload --config dist/server/wrangler.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write ."

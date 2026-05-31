@@ -45,12 +45,6 @@
 ## mcp-v0.1.4 - 2026-05-26
 
 
-### CI
-
-- Fix mcp publish tarball allowlist
-
-
-
 ### Features
 
 - Add public registration polish gates

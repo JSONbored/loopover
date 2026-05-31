@@ -171,6 +171,8 @@ export interface AgentRun {
   signal_fidelity: "ready" | "degraded" | "stale" | "blocked";
   boundary: Boundary;
   created_at: string;
+  summary?: string;
+  recommendations?: string[];
 }
 
 export const mockRuns: AgentRun[] = [

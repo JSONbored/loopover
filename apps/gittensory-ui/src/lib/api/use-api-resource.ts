@@ -8,7 +8,17 @@ type ResourceState<T> =
   | { status: "ready"; data: T; error: null }
   | { status: "error"; data: null; error: string };
 
-export function useApiResource<T>(path: string, label: string, token?: string) {
+type UseApiResourceOptions = {
+  enabled?: boolean;
+};
+
+export function useApiResource<T>(
+  path: string,
+  label: string,
+  token?: string,
+  options: UseApiResourceOptions = {},
+) {
+  const enabled = options.enabled ?? true;
   const [state, setState] = useState<ResourceState<T>>({
     status: "loading",
     data: null,
@@ -16,6 +26,10 @@ export function useApiResource<T>(path: string, label: string, token?: string) {
   });
 
   const load = useCallback(async () => {
+    if (!enabled) {
+      setState({ status: "error", data: null, error: "disabled" });
+      return;
+    }
     setState({ status: "loading", data: null, error: null });
     const headers: Record<string, string> = { Accept: "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -28,11 +42,15 @@ export function useApiResource<T>(path: string, label: string, token?: string) {
     } else {
       setState({ status: "error", data: null, error: result.message });
     }
-  }, [label, path, token]);
+  }, [enabled, label, path, token]);
 
   useEffect(() => {
+    if (!enabled) {
+      setState({ status: "error", data: null, error: "disabled" });
+      return;
+    }
     void load();
-  }, [load]);
+  }, [enabled, load]);
 
   return { ...state, reload: load };
 }

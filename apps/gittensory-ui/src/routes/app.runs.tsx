@@ -18,6 +18,8 @@ import { toast } from "sonner";
 
 import { BoundaryBadge, StatusPill, type Status } from "@/components/site/control-primitives";
 import { mockRuns, type AgentRun } from "@/lib/api/mock";
+import { useApiResource } from "@/lib/api/use-api-resource";
+import { useSession } from "@/lib/api/session";
 import { EmptyState } from "@/components/site/state-views";
 import { useLocalStorage } from "@/lib/use-local-storage";
 import { cn } from "@/lib/utils";
@@ -40,6 +42,36 @@ const KIND_FILTERS = [
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 type KindFilter = (typeof KIND_FILTERS)[number];
 
+type AgentRunBundleResponse = {
+  runs: AgentRunBundle[];
+};
+
+type AgentRunBundle = {
+  run: {
+    id: string;
+    objective: string;
+    actorLogin: string;
+    surface: "mcp" | "github_comment" | "api";
+    status: "queued" | "running" | "completed" | "failed" | "needs_snapshot_refresh";
+    dataQualityStatus: "complete" | "degraded" | "blocked" | "unknown";
+    errorSummary?: string | null;
+    payload?: Record<string, unknown>;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+  };
+  actions: Array<{
+    actionType: string;
+    targetRepoFullName?: string | null;
+    recommendation?: string | null;
+  }>;
+  contextSnapshots: Array<{
+    scoringModelId?: string | null;
+    decisionPackVersion?: string | null;
+    freshnessWarnings?: string[];
+  }>;
+  summary: string;
+};
+
 const searchSchema = z.object({
   status: z.enum(STATUS_FILTERS).optional(),
   kind: z.enum(KIND_FILTERS).optional(),
@@ -55,13 +87,31 @@ export const Route = createFileRoute("/app/runs")({
 function AgentRuns() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const { session } = useSession();
+  const actorLogin = session?.login?.trim();
+  const canUseLiveRuns = Boolean(
+    session?.token && !session.token.startsWith("demo_") && actorLogin,
+  );
+  const liveRuns = useApiResource<AgentRunBundleResponse>(
+    `/v1/agent/runs?actorLogin=${encodeURIComponent(actorLogin ?? "")}&limit=100`,
+    "Agent runs",
+    session?.token,
+    { enabled: canUseLiveRuns },
+  );
+  const runs = useMemo(
+    () =>
+      canUseLiveRuns && liveRuns.status === "ready"
+        ? liveRuns.data.runs.map(mapAgentRunBundle)
+        : mockRuns,
+    [canUseLiveRuns, liveRuns.data, liveRuns.status],
+  );
   const status: StatusFilter = search.status ?? "all";
   const kind: KindFilter = search.kind ?? "all";
   const q = search.q ?? "";
   const selectedId = search.selected;
   const selected = useMemo(
-    () => (selectedId ? (mockRuns.find((r) => r.id === selectedId) ?? null) : null),
-    [selectedId],
+    () => (selectedId ? (runs.find((r) => r.id === selectedId) ?? null) : null),
+    [runs, selectedId],
   );
 
   const setSelected = (id: string | null) =>
@@ -100,16 +150,28 @@ function AgentRuns() {
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return mockRuns.filter((r) => {
+    return runs.filter((r) => {
       if (status !== "all" && r.signal_fidelity !== status) return false;
       if (kind !== "all" && r.kind !== kind) return false;
       if (term && !`${r.id} ${r.kind} ${r.repo} ${r.source}`.toLowerCase().includes(term))
         return false;
       return true;
     });
-  }, [status, kind, q]);
+  }, [runs, status, kind, q]);
 
   const grouped = useMemo(() => groupByDate(filtered), [filtered]);
+  const sourceStatus: Status =
+    canUseLiveRuns && liveRuns.status === "ready"
+      ? "ready"
+      : canUseLiveRuns && liveRuns.status === "loading"
+        ? "info"
+        : "warn";
+  const sourceLabel =
+    canUseLiveRuns && liveRuns.status === "ready"
+      ? "Live API"
+      : canUseLiveRuns && liveRuns.status === "loading"
+        ? "Loading live API"
+        : "Preview data";
 
   // Keyboard navigation: ←/→ to cycle through filtered runs while drawer is open.
   useEffect(() => {
@@ -147,7 +209,14 @@ function AgentRuns() {
             and a public/private boundary.
           </p>
         </div>
+        <StatusPill status={sourceStatus}>{sourceLabel}</StatusPill>
       </header>
+
+      {canUseLiveRuns && liveRuns.status === "error" && liveRuns.error !== "disabled" && (
+        <div className="rounded-token border border-warning/30 bg-warning/5 p-3 text-token-xs text-warning">
+          Live runs are unavailable right now ({liveRuns.error}). Showing preview data instead.
+        </div>
+      )}
 
       <div className="rounded-token border border-border bg-transparent p-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -200,7 +269,7 @@ function AgentRuns() {
       />
 
       <div className="text-token-2xs text-muted-foreground">
-        Showing {filtered.length} of {mockRuns.length}
+        Showing {filtered.length} of {runs.length}
       </div>
 
       {filtered.length === 0 ? (
@@ -280,13 +349,75 @@ function AgentRuns() {
         onSelect={(id) => setSelected(id)}
         onClose={() => setSelected(null)}
         onRerun={() => {
-          toast.success("Run queued for retry", {
-            description: `${selected?.id ?? "This run"} will re-run with the same inputs when the live API is connected.`,
+          toast("Open the workbench to rerun", {
+            description: `${selected?.id ?? "This run"} can be recreated from the Playground with the same repo and action type.`,
           });
         }}
       />
     </div>
   );
+}
+
+function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
+  const payload = bundle.run.payload ?? {};
+  const input = recordValue(payload.input);
+  const repo =
+    stringValue(bundle.actions[0]?.targetRepoFullName) ??
+    stringValue(payload.repoFullName) ??
+    stringValue(input?.repoFullName) ??
+    "unknown";
+  const scoringSnapshot =
+    bundle.contextSnapshots[0]?.scoringModelId ??
+    bundle.contextSnapshots[0]?.decisionPackVersion ??
+    "live";
+  return {
+    id: bundle.run.id,
+    source: bundle.run.surface === "github_comment" ? "github-command" : bundle.run.surface,
+    kind: mapAgentRunKind(stringValue(payload.kind)),
+    repo,
+    ranked_actions: bundle.actions.length,
+    ruleset_snapshot: scoringSnapshot,
+    signal_fidelity: mapSignalFidelity(bundle.run.dataQualityStatus),
+    boundary:
+      bundle.run.surface === "github_comment"
+        ? "public"
+        : bundle.run.surface === "mcp"
+          ? "private-mcp"
+          : "private-api",
+    created_at: bundle.run.createdAt ?? bundle.run.updatedAt ?? new Date().toISOString(),
+    summary: bundle.summary,
+    recommendations: bundle.actions.map((action) => action.recommendation).filter(isString),
+  };
+}
+
+function mapAgentRunKind(kind: string | null): AgentRun["kind"] {
+  if (kind === "preflight_branch") return "preflight-branch";
+  if (kind === "prepare_pr_packet") return "prepare-pr-packet";
+  if (kind === "explain_blockers" || kind === "explain_branch_blockers") return "explain-blockers";
+  return "plan-next-work";
+}
+
+function mapSignalFidelity(
+  status: AgentRunBundle["run"]["dataQualityStatus"],
+): AgentRun["signal_fidelity"] {
+  if (status === "complete") return "ready";
+  if (status === "degraded") return "degraded";
+  if (status === "blocked") return "blocked";
+  return "stale";
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function groupByDate(runs: AgentRun[]) {
@@ -619,9 +750,16 @@ function DrawerSurface({
             Evidence
           </div>
           <ul className="mt-2 space-y-1 text-token-sm text-foreground/90">
-            <li>Decision pack snapshot hash matched.</li>
-            <li>Linked-issue policy evaluated against current ruleset.</li>
-            <li>Queue capacity sampled at run start.</li>
+            {(run.recommendations?.length
+              ? [run.summary, ...run.recommendations].filter(isString)
+              : [
+                  "Decision pack snapshot hash matched.",
+                  "Linked-issue policy evaluated against current ruleset.",
+                  "Queue capacity sampled at run start.",
+                ]
+            ).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
           </ul>
         </div>
       </motion.div>

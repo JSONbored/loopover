@@ -30,6 +30,7 @@ import {
   listInstallations,
   listIssues,
   listIssueSignalSample,
+  listAgentRunsForActor,
   listOpenPullRequests,
   listPullRequestFiles,
   listPullRequestReviews,
@@ -846,6 +847,18 @@ export function createApp() {
     if (unauthorized) return unauthorized;
     const bundle = await startAgentRun(c.env, parsed.data);
     return c.json(bundle, 202);
+  });
+
+  app.get("/v1/agent/runs", async (c) => {
+    const actorLogin = c.req.query("actorLogin") ?? "";
+    if (!actorLogin) return c.json({ error: "actor_login_required" }, 400);
+    const unauthorized = await requireContributorAccess(c, actorLogin);
+    if (unauthorized) return unauthorized;
+    const rawLimit = Number(c.req.query("limit") ?? "50");
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
+    const runs = await listAgentRunsForActor(c.env, actorLogin, limit);
+    const bundles = await Promise.all(runs.map((run) => getAgentRunBundle(c.env, run.id)));
+    return c.json({ runs: bundles.filter((bundle): bundle is NonNullable<typeof bundle> => Boolean(bundle)) });
   });
 
   app.get("/v1/agent/runs/:id", async (c) => {

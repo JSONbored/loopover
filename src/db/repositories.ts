@@ -1752,6 +1752,12 @@ export async function getAgentRun(env: Env, runId: string): Promise<AgentRunReco
   return row ? toAgentRunRecord(row) : null;
 }
 
+export async function listAgentRunsForActor(env: Env, actorLogin: string, limit = 50): Promise<AgentRunRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(agentRuns).where(eq(agentRuns.actorLogin, actorLogin)).orderBy(desc(agentRuns.updatedAt)).limit(limit);
+  return rows.map(toAgentRunRecord);
+}
+
 export async function listAgentActions(env: Env, runId: string): Promise<AgentActionRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(agentActions).where(eq(agentActions.runId, runId)).orderBy(agentActions.createdAt).limit(100);

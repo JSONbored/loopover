@@ -377,6 +377,22 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/agent/runs",
+    responses: {
+      200: {
+        description: "Recent agent run bundles for an authenticated actor",
+        content: {
+          "application/json": {
+            schema: z.object({ runs: z.array(AgentRunBundleSchema) }),
+          },
+        },
+      },
+      400: { description: "Missing actor login" },
+      401: { description: "Unauthorized" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/agent/runs/{id}",
     responses: {
       200: { description: "Persisted agent run bundle", content: { "application/json": { schema: AgentRunBundleSchema } } },

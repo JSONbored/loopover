@@ -56,7 +56,7 @@ describe("scoring model and previews", () => {
     vi.unstubAllGlobals();
   });
 
-  it("parses known upstream numeric constants and detects the current density model", () => {
+  it("parses known upstream numeric constants and prefers the saturation model when upstream exposes it", () => {
     const parsed = parsePythonNumberConstants(`
 OSS_EMISSION_SHARE = 0.90
 MAX_CODE_DENSITY_MULTIPLIER = 1.15
@@ -66,8 +66,102 @@ IGNORED = "not numeric"
     expect(parsed).toMatchObject({ OSS_EMISSION_SHARE: 0.9, MAX_CODE_DENSITY_MULTIPLIER: 1.15, MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5 });
     expect(parsed).not.toHaveProperty("IGNORED");
     expect(detectActiveModel(parsed)).toBe("current_density_model");
-    expect(detectActiveModel({ SRC_TOK_SATURATION_SCALE: 58 })).toBe("pending_saturation_model");
+    expect(detectActiveModel({ MAX_CODE_DENSITY_MULTIPLIER: 1.15, SRC_TOK_SATURATION_SCALE: 58 })).toBe("pending_saturation_model");
     expect(detectActiveModel({})).toBe("unknown");
+  });
+
+  it("prefers exponential saturation when mixed upstream constants are present", () => {
+    const parsed = parsePythonNumberConstants(`
+MERGED_PR_BASE_SCORE = 25
+MAX_CONTRIBUTION_BONUS = 5
+CONTRIBUTION_SCORE_FOR_FULL_BONUS = 1500
+SRC_TOK_SATURATION_SCALE = 58.0
+MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5
+MAX_CODE_DENSITY_MULTIPLIER = 1.15
+`);
+    expect(parsed).toMatchObject({ SRC_TOK_SATURATION_SCALE: 58, MAX_CONTRIBUTION_BONUS: 5 });
+    expect(detectActiveModel(parsed)).toBe("pending_saturation_model");
+  });
+
+  it("detects the active model from fetched constants before default fallback constants", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) {
+        return new Response("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
+      }
+      if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    expect(refreshed.activeModel).toBe("current_density_model");
+    expect(refreshed.constants.MAX_CONTRIBUTION_BONUS).toBe(25);
+    expect(refreshed.constants.SRC_TOK_SATURATION_SCALE).toBe(58);
+    expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
+  });
+
+  it("uses saturation math as the active private preview model", () => {
+    const saturationSnapshot: ScoringModelSnapshotRecord = {
+      ...snapshot,
+      activeModel: "pending_saturation_model",
+      constants: {
+        ...snapshot.constants,
+        MAX_CONTRIBUTION_BONUS: 25,
+        SRC_TOK_SATURATION_SCALE: 58,
+      },
+    };
+    const preview = buildScorePreview({
+      repo,
+      snapshot: saturationSnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        labels: ["bug"],
+        linkedIssueMode: "standard",
+        sourceTokenScore: 58,
+        totalTokenScore: 1500,
+        sourceLines: 120,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+
+    expect(preview.activeModel).toBe("pending_saturation_model");
+    expect(preview.scoreEstimate.baseScore).toBeCloseTo(20.803, 3);
+    expect(preview.scoreEstimate.contributionBonus).toBe(5);
+    expect(preview.scoreEstimate.pendingSaturationScore).toBe(preview.scoreEstimate.baseScore);
+    expect(preview.scoreEstimate.estimatedMergedScore).toBeCloseTo(33.2016, 3);
+    expect(preview.gates.baseTokenGatePassed).toBe(true);
+    expect(JSON.stringify(preview.scoreEstimate)).not.toMatch(/reward estimate|wallet|hotkey|farming|payout/i);
+  });
+
+  it("keeps pending saturation projection bonus capped for density-era snapshots", () => {
+    const densitySnapshot: ScoringModelSnapshotRecord = {
+      ...snapshot,
+      activeModel: "current_density_model",
+      constants: {
+        ...snapshot.constants,
+        MAX_CONTRIBUTION_BONUS: 25,
+        SRC_TOK_SATURATION_SCALE: 58,
+      },
+    };
+    const preview = buildScorePreview({
+      repo,
+      snapshot: densitySnapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 58,
+        totalTokenScore: 1500,
+        sourceLines: 120,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+
+    expect(preview.scoreEstimate.contributionBonus).toBe(25);
+    expect(preview.scoreEstimate.pendingSaturationScore).toBeCloseTo(20.803, 3);
+    expect(preview.underlyingPotentialScore).toBeLessThan(30);
   });
 
   it("keeps lane math tied to the recorded model snapshot and clamps score gates", () => {
@@ -163,6 +257,7 @@ IGNORED = "not numeric"
         projectedCredibility: 0.5,
         observedApprovedPrCount: 1,
         observedStalePrCount: 1,
+        observedClosedPrCount: 1,
         observedDraftPrCount: 1,
         observedBlockedPrCount: 1,
         observedMaintainerPrCount: 1,
@@ -171,10 +266,13 @@ IGNORED = "not numeric"
     const userSupplied = preview.scenarioPreviews.find((scenario) => scenario.name === "afterPendingMerges");
     const approved = preview.scenarioPreviews.find((scenario) => scenario.name === "afterApprovedPrsMerge");
     const stale = preview.scenarioPreviews.find((scenario) => scenario.name === "afterStalePrsClose");
+    const bestReasonable = preview.scenarioPreviews.find((scenario) => scenario.name === "bestReasonableCase");
 
     expect(userSupplied).toMatchObject({ source: "user_supplied", gates: { openPrCount: 4, credibilityObserved: 0.5 } });
     expect(approved).toMatchObject({ source: "github_observed", gates: { openPrCount: 4, credibilityObserved: 0.8 } });
     expect(stale).toMatchObject({ source: "github_observed", gates: { openPrCount: 4, credibilityObserved: 0.2 } });
+    expect(stale?.assumptions.join(" ")).toMatch(/already-closed PR.*excluded/);
+    expect(bestReasonable?.gates.openPrCount).toBe(2);
     expect(approved?.assumptions.join(" ")).toMatch(/draft PR.*excluded|blocked PR.*excluded|maintainer-lane PR.*outside-contributor/);
     expect(preview.effectiveEstimatedScore).toBe(0);
     expect(preview.underlyingPotentialScore).toBeGreaterThan(0);
@@ -254,7 +352,7 @@ IGNORED = "not numeric"
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("constants.py")) {
-        return new Response("OSS_EMISSION_SHARE = 0.90\nMIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
+        return new Response("OSS_EMISSION_SHARE = 0.90\nMERGED_PR_BASE_SCORE = 25\nSRC_TOK_SATURATION_SCALE = 58\nMIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
       }
       if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1, Python: 0.8 });
       return new Response("not found", { status: 404 });
@@ -262,7 +360,8 @@ IGNORED = "not numeric"
 
     const refreshed = await refreshScoringModelSnapshot(env);
     expect(refreshed.sourceKind).toBe("raw-github");
-    expect(refreshed.activeModel).toBe("current_density_model");
+    expect(refreshed.activeModel).toBe("pending_saturation_model");
+    expect(refreshed.warnings.join(" ")).toMatch(/density-era indicators/i);
     expect(refreshed.programmingLanguages).toMatchObject({ TypeScript: 1 });
     await expect(getLatestScoringModelSnapshot(env)).resolves.toMatchObject({ id: refreshed.id });
 
@@ -270,6 +369,7 @@ IGNORED = "not numeric"
     vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
     const fallback = await refreshScoringModelSnapshot(fallbackEnv);
     expect(fallback.sourceKind).toBe("fallback");
+    expect(fallback.activeModel).toBe("unknown");
     expect(fallback.warnings.join(" ")).toMatch(/fetch failed/i);
     expect(fallback.constants.OSS_EMISSION_SHARE).toBe(0.9);
 
@@ -278,5 +378,6 @@ IGNORED = "not numeric"
     });
     const thrownFallback = await refreshScoringModelSnapshot(createTestEnv());
     expect(thrownFallback.sourceKind).toBe("fallback");
+    expect(thrownFallback.activeModel).toBe("unknown");
   });
 });

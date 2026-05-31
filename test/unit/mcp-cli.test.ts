@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,7 +90,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("reports a current install without upgrade guidance", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ latestVersion: "0.2.0" });
+    const url = await startFixtureServer({ latestVersion: "0.3.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -98,17 +98,27 @@ describe("gittensory-mcp CLI", () => {
         GITTENSORY_TOKEN: "session-token",
         GITTENSORY_CONFIG_DIR: tempDir,
       }),
-    ) as { package: { state: string; updateAvailable: boolean; upgradeCommand?: string } };
+    ) as {
+      package: { state: string; updateAvailable: boolean; upgradeCommand?: string };
+      apiCompatibility: { status: string; source: string; minVersion: string; latestRecommendedVersion: string; apiVersion: string };
+    };
 
     expect(payload.package.state).toBe("current");
     expect(payload.package.updateAvailable).toBe(false);
     expect(payload.package.upgradeCommand).toBeUndefined();
+    expect(payload.apiCompatibility).toMatchObject({
+      status: "compatible",
+      source: "compatibility_endpoint",
+      minVersion: "0.2.0",
+      latestRecommendedVersion: "0.3.0",
+      apiVersion: "0.1.0",
+    });
   });
 
   it("orders prerelease npm versions correctly (release outranks prerelease of the same core)", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    // Local 0.2.0 (release) vs latest 0.2.0-rc.1 (prerelease) -> local is ahead, not stale.
-    const aheadUrl = await startFixtureServer({ latestVersion: "0.2.0-rc.1" });
+    // Local 0.3.0 (release) vs latest 0.3.0-rc.1 (prerelease) -> local is ahead, not stale.
+    const aheadUrl = await startFixtureServer({ latestVersion: "0.3.0-rc.1" });
     const ahead = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: aheadUrl,
@@ -120,8 +130,8 @@ describe("gittensory-mcp CLI", () => {
     expect(ahead.package).toMatchObject({ state: "ahead", updateAvailable: false });
     await new Promise<void>((resolve) => server?.close(() => resolve()));
 
-    // Local 0.2.0 vs a higher-core prerelease 0.3.0-rc.1 -> stale.
-    const staleUrl = await startFixtureServer({ latestVersion: "0.3.0-rc.1" });
+    // Local 0.3.0 vs a higher-core prerelease 0.4.0-rc.1 -> stale.
+    const staleUrl = await startFixtureServer({ latestVersion: "0.4.0-rc.1" });
     const stale = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: staleUrl,
@@ -135,7 +145,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("treats an unavailable npm registry as a warning, not a hard failure", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ npmStatus: 500 });
+    const url = await startFixtureServer({ npmStatus: 500, compatibilityStatus: 404 });
     const status = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -178,7 +188,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("reports API compatibility as unavailable when the API does not advertise a minimum version", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer();
+    const url = await startFixtureServer({ compatibilityStatus: 404 });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -188,6 +198,49 @@ describe("gittensory-mcp CLI", () => {
       }),
     ) as { apiCompatibility: { status: string } };
     expect(payload.apiCompatibility.status).toBe("unavailable");
+
+    const doctor = JSON.parse(
+      await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as { checks: Array<{ name: string; status: string }> };
+    expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "api_compatibility", status: "warn" })]));
+  });
+
+  it("falls back to legacy health compatibility when the endpoint is unavailable", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.2.0" });
+    const payload = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as { apiCompatibility: { status: string; source: string; minVersion: string } };
+    expect(payload.apiCompatibility).toMatchObject({ status: "compatible", source: "health", minVersion: "0.2.0" });
+  });
+
+  it("uses API recommended package metadata when the npm registry is unavailable", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.4.0" });
+    const payload = JSON.parse(
+      await runAsync(["status", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_NPM_REGISTRY_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      }),
+    ) as { package: { state: string; latestStatus: string; latestVersion: string; upgradeCommand: string } };
+    expect(payload.package).toMatchObject({
+      state: "stale",
+      latestStatus: "api",
+      latestVersion: "0.4.0",
+      upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
+    });
   });
 
   it("flags API compatibility mismatches with upgrade guidance", async () => {
@@ -255,12 +308,12 @@ describe("gittensory-mcp CLI", () => {
       }),
     ) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
 
-    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.2.0", latestStatus: "skipped" });
+    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.3.0", latestStatus: "skipped" });
     expect(status.api.status).toBe("ok");
     expect(status.auth.login).toBe("JSONbored");
 
     const changelog = JSON.parse(run(["changelog", "--json"])) as { package: { version: string }; changelog: string };
-    expect(changelog.package.version).toBe("0.2.0");
+    expect(changelog.package.version).toBe("0.3.0");
     expect(changelog.changelog).toContain("# Changelog");
   });
 
@@ -345,6 +398,158 @@ describe("gittensory-mcp CLI", () => {
     }
   }, 10000);
 
+  it("sends bounded structured validation summaries without local logs", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    const requests: unknown[] = [];
+    const url = await startFixtureServer({ onPacketRequest: (body) => requests.push(body) });
+    await runAsync(
+      [
+        "agent",
+        "packet",
+        "--login",
+        "oktofeesh1",
+        "--cwd",
+        tempDir,
+        "--base",
+        "HEAD",
+        "--validation",
+        "focused|npm run test:unit|1234ms|unit passed raw_trust=0.4 /Users/example/log.txt",
+        "--validation-command",
+        "npm run lint",
+        "--validation-status",
+        "exit code 1",
+        "--validation-duration",
+        "2s",
+        "--validation-summary",
+        "lint failed at C:/Users/alice/raw.log and /tmp/raw.log",
+        "--json",
+      ],
+      {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      },
+    );
+
+    const packet = requests[0] as { validation: Array<{ command: string; status: string; durationMs?: number; exitCode?: number; summary?: string }> };
+    expect(packet.validation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "npm run test:unit", status: "focused", durationMs: 1234, exitCode: 0 }),
+        expect.objectContaining({ command: "npm run lint", status: "failed", durationMs: 2000, exitCode: 1 }),
+      ]),
+    );
+    expect(JSON.stringify(packet.validation)).not.toMatch(/raw_trust|\/Users\/example|\/tmp\/raw/i);
+    expect(JSON.stringify(packet.validation)).not.toMatch(/C:\/Users|alice/i);
+  });
+
+  it("classifies nonzero validation status phrases as failed", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    const requests: unknown[] = [];
+    const url = await startFixtureServer({ onPacketRequest: (body) => requests.push(body) });
+    await runAsync(
+      [
+        "agent",
+        "packet",
+        "--login",
+        "oktofeesh1",
+        "--cwd",
+        tempDir,
+        "--base",
+        "HEAD",
+        "--validation-command",
+        "npm test",
+        "--validation-status",
+        "status: 2",
+        "--json",
+      ],
+      {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+      },
+    );
+
+    const packet = requests[0] as { validation: Array<{ command: string; status: string; exitCode?: number }> };
+    expect(packet.validation).toEqual(expect.arrayContaining([expect.objectContaining({ command: "npm test", status: "failed", exitCode: 2 })]));
+  });
+
+  it("classifies bare nonzero validation statuses as failed", async () => {
+    tempDir = createPacketRepo();
+    const validation = await capturePacketValidation(tempDir, [
+      "--validation",
+      "npm test|1",
+      "--validation-command",
+      "npm run lint",
+      "--validation-status",
+      "2",
+    ]);
+
+    expect(validation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "npm test", status: "failed", exitCode: 1 }),
+        expect.objectContaining({ command: "npm run lint", status: "failed", exitCode: 2 }),
+      ]),
+    );
+  });
+
+  it("does not infer HTTP status summaries as process exit codes", async () => {
+    tempDir = createPacketRepo();
+    const validation = await capturePacketValidation(tempDir, ["--validation", "npm run e2e|HTTP status 200 OK"]);
+
+    expect(validation).toEqual(
+      expect.arrayContaining([expect.objectContaining({ command: "npm run e2e", status: "not_run", summary: "HTTP status 200 OK" })]),
+    );
+    expect(validation[0]).not.toHaveProperty("exitCode");
+  });
+
+  it("infers expanded validation failures from summaries when status is absent", async () => {
+    tempDir = createPacketRepo();
+    const validation = await capturePacketValidation(tempDir, ["--validation-command", "npm test", "--validation-summary", "exit code 1"]);
+
+    expect(validation).toEqual(
+      expect.arrayContaining([expect.objectContaining({ command: "npm test", status: "failed", exitCode: 1, summary: "exit code 1" })]),
+    );
+  });
+
+  it("redacts space-containing local paths and private metric values from validation text", async () => {
+    tempDir = createPacketRepo();
+    const validation = await capturePacketValidation(tempDir, [
+      "--validation-command",
+      "node /Users/Alice Smith/project/run.js",
+      "--validation-status",
+      "failed",
+      "--validation-summary",
+      "log=C:\\Users\\Alice Smith\\raw.log raw_trust=0.72 private_reviewability=ready",
+    ]);
+
+    expect(validation).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          command: "node <local-path>",
+          status: "failed",
+          summary: "log=<local-path> [redacted] [redacted]",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(validation)).not.toMatch(/Alice Smith|Smith[\\/]|raw\.log|0\.72|ready|\[redacted\]=/);
+  });
+
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });
@@ -392,8 +597,45 @@ function git(cwd: string, ...args: string[]) {
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-async function startFixtureServer(options: { latestVersion?: string; minMcpVersion?: string; npmStatus?: number; packetMarkdown?: string } = {}) {
-  server = createServer((request, response) => {
+function createPacketRepo() {
+  const cwd = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+  git(cwd, "init");
+  git(cwd, "config", "user.email", "test@example.com");
+  git(cwd, "config", "user.name", "Gittensory Test");
+  git(cwd, "config", "commit.gpgsign", "false");
+  git(cwd, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+  writeFileSync(join(cwd, "README.md"), "fixture\n");
+  git(cwd, "add", "README.md");
+  git(cwd, "commit", "-m", "initial commit");
+  return cwd;
+}
+
+async function capturePacketValidation(tempDir: string, validationArgs: string[]) {
+  const requests: unknown[] = [];
+  const url = await startFixtureServer({ onPacketRequest: (body) => requests.push(body) });
+  await runAsync(
+    ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD", ...validationArgs, "--json"],
+    {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    },
+  );
+  return (requests[0] as { validation: Array<{ command: string; status: string; exitCode?: number; summary?: string }> }).validation;
+}
+
+async function startFixtureServer(
+  options: {
+    latestVersion?: string;
+    latestRecommendedMcpVersion?: string;
+    minMcpVersion?: string;
+    compatibilityStatus?: number;
+    npmStatus?: number;
+    packetMarkdown?: string;
+    onPacketRequest?: (body: unknown) => void;
+  } = {},
+) {
+  server = createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.url && request.url.includes("gittensory-mcp/latest")) {
       if (options.npmStatus && options.npmStatus >= 400) {
@@ -401,7 +643,36 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
         response.end(JSON.stringify({ error: "registry_error" }));
         return;
       }
-      response.end(JSON.stringify({ version: options.latestVersion ?? "0.2.0" }));
+      response.end(JSON.stringify({ version: options.latestVersion ?? "0.3.0" }));
+      return;
+    }
+    if (request.url === "/v1/mcp/compatibility") {
+      if (options.compatibilityStatus && options.compatibilityStatus >= 400) {
+        response.statusCode = options.compatibilityStatus;
+        response.end(JSON.stringify({ error: "compatibility_unavailable" }));
+        return;
+      }
+      const minimumSupportedVersion = options.minMcpVersion ?? "0.2.0";
+      const latestRecommendedVersion = options.latestRecommendedMcpVersion ?? options.latestVersion ?? "0.3.0";
+      response.end(
+        JSON.stringify({
+          status: "ok",
+          service: "gittensory-api",
+          apiVersion: "0.1.0",
+          mcp: {
+            packageName: "@jsonbored/gittensory-mcp",
+            minimumSupportedVersion,
+            latestRecommendedVersion,
+            latestPackageVersion: latestRecommendedVersion,
+            supportedVersionRange: `>=${minimumSupportedVersion}`,
+            upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
+            npxFallbackCommand: "npx @jsonbored/gittensory-mcp@latest <command>",
+          },
+          compatibilityWarnings: [],
+          breakingChanges: [],
+          generatedAt: "2026-05-30T00:00:00.000Z",
+        }),
+      );
       return;
     }
     if (request.url === "/health") {
@@ -421,6 +692,7 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
       return;
     }
     if (request.url === "/v1/agent/prepare-pr-packet" && request.method === "POST") {
+      options.onPacketRequest?.(await readJsonRequest(request));
       response.end(JSON.stringify(agentPacketFixture(options.packetMarkdown)));
       return;
     }
@@ -431,6 +703,20 @@ async function startFixtureServer(options: { latestVersion?: string; minMcpVersi
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture server did not bind a TCP port");
   return `http://127.0.0.1:${address.port}`;
+}
+
+function readJsonRequest(request: IncomingMessage) {
+  return new Promise<unknown>((resolve) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+  });
 }
 
 function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Linked Context\n- Closes #39\n\n## Validation\n- passed: npm test (packet tests passed)\n") {

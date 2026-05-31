@@ -10,10 +10,11 @@ import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadat
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
 const packageName = "@jsonbored/gittensory-mcp";
-const packageVersion = "0.2.0";
+const packageVersion = "0.3.0";
 const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
 const upgradeCommand = `npm install -g ${packageName}@latest`;
 const npxFallbackCommand = `npx ${packageName}@latest <command>`;
+const compatibilityPath = "/v1/mcp/compatibility";
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
@@ -109,8 +110,10 @@ const currentBranchShape = {
     .array(
       z.object({
         command: z.string().min(1),
-        status: z.enum(["passed", "failed", "not_run"]),
+        status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
         summary: z.string().optional(),
+        durationMs: z.number().int().min(0).optional(),
+        exitCode: z.number().int().min(0).optional(),
       }),
     )
     .optional(),
@@ -624,7 +627,7 @@ Source upload remains disabled.
 
 function parseOptions(args) {
   const options = {};
-  const repeatable = new Set(["label", "issue", "validation", "validationCommand", "validationStatus", "validationSummary", "scenarioNote"]);
+  const repeatable = new Set(["label", "issue", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -715,12 +718,14 @@ async function status(options) {
   } catch (error) {
     health = { status: "unreachable", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "health_check_failed") };
   }
-  const pkg = await inspectInstallVersion();
-  const apiCompatibility = evaluateApiCompatibility(health);
+  const compatibility = await inspectApiCompatibility(health);
+  const pkg = await inspectInstallVersion(compatibilityLatestRecommendedVersion(compatibility.report) ?? compatibilityLatestRecommendedVersion(health));
+  const apiCompatibility = compatibility.evaluation;
   const payload = {
     apiUrl,
     package: pkg,
     apiCompatibility,
+    compatibility: compatibility.report,
     api: health,
     auth,
     config: { configured: existsSync(configPath) },
@@ -742,6 +747,10 @@ async function status(options) {
     }
     if (apiCompatibility.status === "incompatible") {
       process.stdout.write(`API requires at least ${packageName}@${apiCompatibility.minVersion}. Upgrade with:\n  ${apiCompatibility.upgradeCommand}\n`);
+    } else if (apiCompatibility.status === "compatible") {
+      process.stdout.write(`API compatibility: compatible (minimum ${packageName}@${apiCompatibility.minVersion}).\n`);
+    } else if (apiCompatibility.status === "unavailable") {
+      process.stdout.write(`API compatibility: unavailable (${apiCompatibility.reason ?? "unknown"}).\n`);
     }
   }
 }
@@ -780,7 +789,8 @@ async function doctor(options) {
     add("api_health", "fail", error instanceof Error ? error.message : "health_check_failed", "Check GITTENSORY_API_URL or network access.");
   }
 
-  const pkg = await inspectInstallVersion();
+  const compatibility = await inspectApiCompatibility(health);
+  const pkg = await inspectInstallVersion(compatibilityLatestRecommendedVersion(compatibility.report) ?? compatibilityLatestRecommendedVersion(health));
   if (pkg.state === "stale") {
     add("version", "warn", `Installed ${packageVersion} is behind npm latest ${pkg.latestVersion}.`, `${pkg.upgradeCommand} (no-install fallback: ${pkg.npxFallback})`);
   } else if (pkg.state === "unavailable") {
@@ -795,13 +805,15 @@ async function doctor(options) {
     add("version", "pass", `Installed ${packageVersion} matches npm latest ${pkg.latestVersion}.`);
   }
 
-  const apiCompatibility = evaluateApiCompatibility(health);
+  const apiCompatibility = compatibility.evaluation;
   if (apiCompatibility.status === "incompatible") {
     add("api_compatibility", "fail", `API requires at least ${packageName}@${apiCompatibility.minVersion}; local is ${packageVersion}.`, apiCompatibility.upgradeCommand);
   } else if (apiCompatibility.status === "compatible") {
     add("api_compatibility", "pass", `Local ${packageVersion} meets the API minimum ${apiCompatibility.minVersion}.`);
   } else if (apiCompatibility.reason === "api_unreachable") {
     add("api_compatibility", "warn", "API compatibility check was unavailable because API health was unreachable.");
+  } else if (apiCompatibility.reason === "compatibility_endpoint_unavailable") {
+    add("api_compatibility", "warn", "API compatibility endpoint was unavailable; compatibility could not be confirmed.");
   } else if (apiCompatibility.status === "unknown") {
     add("api_compatibility", "warn", `API reported an unsupported minimum client version (${apiCompatibility.minVersion}).`);
   } else {
@@ -908,27 +920,56 @@ function getApiToken() {
 }
 
 function validationFromOptions(options) {
-  const direct = (options.validation ?? []).map((entry) => {
-    const [statusOrCommand, commandOrSummary, ...summaryParts] = String(entry).split("|");
-    const status = isValidationStatus(statusOrCommand) ? statusOrCommand : "not_run";
-    const command = isValidationStatus(statusOrCommand) ? commandOrSummary : statusOrCommand;
-    return stripUndefined({
-      command: command?.trim(),
-      status,
-      summary: summaryParts.join("|").trim() || (isValidationStatus(statusOrCommand) ? undefined : commandOrSummary?.trim()),
-    });
-  });
+  const direct = (options.validation ?? []).map(parseValidationEntry);
   const commands = options.validationCommand ?? [];
   const statuses = options.validationStatus ?? [];
   const summaries = options.validationSummary ?? [];
+  const durations = options.validationDuration ?? [];
   const expanded = commands.map((command, index) =>
-    stripUndefined({
+    validationEntry({
       command,
-      status: isValidationStatus(statuses[index]) ? statuses[index] : "not_run",
-      summary: summaries[index],
+      statusText: statuses[index],
+      summaryText: summaries[index],
+      durationText: durations[index],
     }),
   );
   return [...direct, ...expanded].filter((entry) => typeof entry.command === "string" && entry.command.length > 0);
+}
+
+function parseValidationEntry(entry) {
+  const parts = String(entry ?? "").split("|").map((part) => part.trim());
+  const explicitStatus = normalizeValidationStatus(parts[0]);
+  const command = explicitStatus ? parts[1] : parts[0];
+  const rest = explicitStatus ? parts.slice(2) : parts.slice(1);
+  const inferredStatusText = !explicitStatus && isValidationStatusLike(rest[0]) ? rest[0] : undefined;
+  const detailParts = inferredStatusText ? rest.slice(1) : rest;
+  const durationMs = parseDurationMs(detailParts[0]);
+  const summaryParts = durationMs !== undefined ? detailParts.slice(1) : detailParts;
+  return validationEntry({
+    command,
+    statusText: explicitStatus ?? inferredStatusText,
+    summaryText: summaryParts.join("|"),
+    durationMs,
+  });
+}
+
+function validationEntry({ command, statusText, summaryText, durationText, durationMs }) {
+  const statusSource = nonEmptyString(statusText);
+  const summarySource = statusSource ? undefined : nonEmptyString(summaryText);
+  const exitCode =
+    inferValidationExitCode(statusSource, { allowBareCode: true, allowGenericStatus: true }) ??
+    inferValidationExitCode(summarySource, { allowBareCode: false, allowGenericStatus: false });
+  const status =
+    normalizeValidationStatus(statusSource) ??
+    normalizeSummaryValidationStatus(summarySource) ??
+    (exitCode !== undefined ? (exitCode === 0 ? "passed" : "failed") : "not_run");
+  return stripUndefined({
+    command: sanitizeValidationText(command, 160),
+    status,
+    summary: sanitizeValidationText(summaryText),
+    durationMs: durationMs ?? parseDurationMs(durationText),
+    exitCode,
+  });
 }
 
 function optionalInteger(value) {
@@ -944,7 +985,84 @@ function optionalNumber(value) {
 }
 
 function isValidationStatus(value) {
-  return value === "passed" || value === "failed" || value === "not_run";
+  return Boolean(normalizeValidationStatus(value));
+}
+
+function normalizeValidationStatus(value) {
+  const text = String(value ?? "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  if (["passed", "pass", "success", "ok", "exit_0", "0"].includes(text)) return "passed";
+  if (["failed", "fail", "failure", "error", "nonzero", "non_zero"].includes(text) || /^exit_[1-9]\d*$/.test(text) || /^[1-9]\d*$/.test(text)) return "failed";
+  if (["not_run", "notrun", "not_ran", "pending"].includes(text)) return "not_run";
+  if (["skipped", "skip"].includes(text)) return "skipped";
+  if (["focused", "focus"].includes(text)) return "focused";
+  if (["unknown", "unclear"].includes(text)) return "unknown";
+  return undefined;
+}
+
+function isValidationStatusLike(value) {
+  return Boolean(
+    normalizeValidationStatus(value) ??
+      inferValidationExitCode(value, { allowBareCode: true, allowGenericStatus: true }),
+  );
+}
+
+function inferValidationExitCode(value, options = {}) {
+  const text = String(value ?? "").trim().toLowerCase();
+  const allowBareCode = options.allowBareCode === true;
+  const allowGenericStatus = options.allowGenericStatus === true;
+  if (allowBareCode && /^\d{1,3}$/.test(text)) return Number(text);
+  const processExitPattern = /\b(?:exit(?:ed)?(?:\s+(?:code|status))?|exitcode|process\s+(?:exit(?:ed)?|status|code)|command\s+(?:exit(?:ed)?|status|code)|shell\s+(?:exit(?:ed)?|status|code))[\s:_-]*(\d{1,3})\b/;
+  const genericStatusPattern = /^(?:status|code)[\s:_-]*(\d{1,3})\b/;
+  const match = text.match(processExitPattern) ?? (allowGenericStatus ? text.match(genericStatusPattern) : null);
+  if (match) return Number(match[1]);
+  if (!allowBareCode && /^\d{1,3}$/.test(text)) return undefined;
+  const status = normalizeValidationStatus(text);
+  if (status === "passed" || status === "focused") return 0;
+  if (status === "failed") return 1;
+  return undefined;
+}
+
+function normalizeSummaryValidationStatus(value) {
+  const text = nonEmptyString(value);
+  if (!text || /^\d{1,3}$/.test(text)) return undefined;
+  return normalizeValidationStatus(text);
+}
+
+function nonEmptyString(value) {
+  const text = String(value ?? "").trim();
+  return text ? text : undefined;
+}
+
+function parseDurationMs(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  const match = text.match(/^(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|m|min|mins)?$/);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return undefined;
+  const unit = match[2] ?? "ms";
+  const multiplier = unit.startsWith("m") && unit !== "ms" ? 60000 : unit.startsWith("s") ? 1000 : 1;
+  return Math.round(amount * multiplier);
+}
+
+function sanitizeValidationText(value, maxLength = 240) {
+  const text = String(value ?? "").replace(/[\r\n\t]+/g, " ").trim();
+  if (!text) return undefined;
+  const redacted = redactPrivateValidationMetrics(redactLocalValidationPaths(text));
+  return redacted.length <= maxLength ? redacted : `${redacted.slice(0, maxLength - 3)}...`;
+}
+
+function redactLocalValidationPaths(text) {
+  const pathSegment = "[^\\\\/\\s\"'`,;)]+(?:\\s+[^\\\\/\\s\"'`,;)]+)*(?=[\\\\/])";
+  const pathTail = "[^\\\\/\\s\"'`,;)]+";
+  const localPathPattern = new RegExp(`(^|[\\s"'\\\`=])((?:~[\\\\/]|[A-Za-z]:[\\\\/]|/)(?:${pathSegment}[\\\\/])*${pathTail})`, "g");
+  return text.replace(localPathPattern, (_, prefix) => `${prefix}<local-path>`);
+}
+
+function redactPrivateValidationMetrics(text) {
+  return text.replace(
+    /\b(?:wallet|hotkey|coldkey|mnemonic|raw[-_\s]?trust|private[-_\s]?reviewability|trust[-_\s]?score)\b(?:\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"'`,;)]+))?/gi,
+    "[redacted]",
+  );
 }
 
 function clientSnippet(client, command) {
@@ -1121,12 +1239,15 @@ function classifyVersionState(latestStatus, latestVersion, comparison) {
 
 // Shared by `status` and `doctor`: compares the local install against npm latest and
 // produces deterministic upgrade guidance. Never throws and never returns sensitive data.
-async function inspectInstallVersion() {
+async function inspectInstallVersion(apiRecommendedVersion) {
   let latest;
   try {
     latest = await fetchLatestPackageVersion();
   } catch (error) {
     latest = { status: "unavailable", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "npm_version_check_failed") };
+  }
+  if (latest.status === "unavailable" && typeof apiRecommendedVersion === "string" && apiRecommendedVersion.length > 0) {
+    latest = { status: "api", version: apiRecommendedVersion };
   }
   const latestVersion = typeof latest.version === "string" ? latest.version : null;
   const comparison = latestVersion ? compareSemver(packageVersion, latestVersion) : null;
@@ -1145,18 +1266,57 @@ async function inspectInstallVersion() {
   });
 }
 
-// Optional API compatibility check. The backend MAY advertise a minimum supported client
-// version via `minMcpVersion`/`minClientVersion` on /health; when it does not, this degrades
-// gracefully to "unavailable" instead of failing.
-function evaluateApiCompatibility(health) {
-  if (!health || health.status === "unreachable") return { status: "unavailable", reason: "api_unreachable" };
-  const minVersion =
-    typeof health.minMcpVersion === "string" ? health.minMcpVersion : typeof health.minClientVersion === "string" ? health.minClientVersion : null;
-  if (!minVersion) return { status: "unavailable", reason: "not_reported" };
+async function inspectApiCompatibility(health) {
+  try {
+    const report = await apiFetch(compatibilityPath, { method: "GET" }, { auth: false, timeoutMs: 5000 });
+    return { report, evaluation: evaluateApiCompatibility(report, "compatibility_endpoint") };
+  } catch (error) {
+    const report = {
+      status: "unavailable",
+      reason: "compatibility_endpoint_unavailable",
+      error: sanitizeDiagnosticText(error instanceof Error ? error.message : "compatibility_check_failed"),
+    };
+    const fallback = evaluateApiCompatibility(health, "health");
+    return {
+      report,
+      evaluation: fallback.reason === "not_reported" ? evaluateApiCompatibility(report, "compatibility_endpoint") : fallback,
+    };
+  }
+}
+
+// Prefer the first-class compatibility endpoint, but keep supporting older APIs that only
+// advertise `minMcpVersion`/`minClientVersion` on /health.
+function evaluateApiCompatibility(report, source) {
+  if (!report || report.status === "unreachable") return { status: "unavailable", reason: "api_unreachable", source };
+  if (report.status === "unavailable") {
+    return stripUndefined({ status: "unavailable", reason: report.reason ?? "compatibility_unavailable", source, detail: report.error });
+  }
+  const minVersion = compatibilityMinimumVersion(report);
+  if (!minVersion) return { status: "unavailable", reason: "not_reported", source };
   const comparison = compareSemver(packageVersion, minVersion);
-  if (comparison === null) return { status: "unknown", minVersion };
-  if (comparison < 0) return stripUndefined({ status: "incompatible", minVersion, upgradeCommand });
-  return { status: "compatible", minVersion };
+  const latestRecommendedVersion = compatibilityLatestRecommendedVersion(report);
+  const apiVersion = typeof report.apiVersion === "string" ? report.apiVersion : undefined;
+  const warnings = Array.isArray(report.compatibilityWarnings) ? report.compatibilityWarnings : Array.isArray(report.warnings) ? report.warnings : [];
+  const breakingChanges = Array.isArray(report.breakingChanges) ? report.breakingChanges : [];
+  if (comparison === null) return stripUndefined({ status: "unknown", source, minVersion, latestRecommendedVersion, apiVersion, warnings, breakingChanges });
+  if (comparison < 0) return stripUndefined({ status: "incompatible", source, minVersion, latestRecommendedVersion, apiVersion, warnings, breakingChanges, upgradeCommand });
+  return stripUndefined({ status: "compatible", source, minVersion, latestRecommendedVersion, apiVersion, warnings, breakingChanges });
+}
+
+function compatibilityMinimumVersion(report) {
+  if (typeof report?.mcp?.minimumSupportedVersion === "string") return report.mcp.minimumSupportedVersion;
+  if (typeof report?.minimumSupportedMcpVersion === "string") return report.minimumSupportedMcpVersion;
+  if (typeof report?.minMcpVersion === "string") return report.minMcpVersion;
+  if (typeof report?.minClientVersion === "string") return report.minClientVersion;
+  return null;
+}
+
+function compatibilityLatestRecommendedVersion(report) {
+  if (typeof report?.mcp?.latestRecommendedVersion === "string") return report.mcp.latestRecommendedVersion;
+  if (typeof report?.mcp?.latestPackageVersion === "string") return report.mcp.latestPackageVersion;
+  if (typeof report?.latestRecommendedMcpVersion === "string") return report.latestRecommendedMcpVersion;
+  if (typeof report?.latestPackageVersion === "string") return report.latestPackageVersion;
+  return null;
 }
 
 async function analyzeCurrentBranch(input) {

@@ -2,6 +2,7 @@ import {
   createAgentRun,
   getAgentRun,
   getRepository,
+  listCheckSummaries,
   listAgentActions,
   listAgentContextSnapshots,
   listContributorIssues,
@@ -24,7 +25,7 @@ import { loadContributorDecisionPackForServing, repoDecisionFromPack, type Contr
 import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
-import { buildLocalBranchAnalysis, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
+import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import type {
   AgentActionRecord,
   AgentActionStatus,
@@ -301,9 +302,10 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     ]);
   const repoStats = contributorRepoStatsFromGittensor(gittensorSnapshot).length > 0 ? contributorRepoStatsFromGittensor(gittensorSnapshot) : cachedRepoStats;
   const profile = buildContributorProfile(input.login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
-  const outcomeHistory = buildContributorOutcomeHistory({ login: input.login, profile, repositories, pullRequests: contributorPullRequests, issues: contributorIssues, repoStats });
+  const outcomeHistory = buildContributorOutcomeHistory({ login: input.login, profile, repositories, pullRequests: contributorPullRequests, issues: contributorIssues, repoStats, cachedRepoStats });
   const fit = buildContributorFit(profile, repositories, [], [], syncStates, repoStats);
   const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot });
+  const checkSummaries = await loadCheckSummariesForPullRequests(env, input.repoFullName, input, pullRequests);
   return buildLocalBranchAnalysis({
     input,
     repo,
@@ -312,12 +314,18 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     contributorPullRequests,
     recentMergedPullRequests,
     repositories,
+    checkSummaries,
     profile,
     outcomeHistory,
     scoringSnapshot,
     scoringProfile,
     issueQuality: issueQuality?.report,
   });
+}
+
+async function loadCheckSummariesForPullRequests(env: Env, repoFullName: string, input: Parameters<typeof findCurrentBranchPullRequest>[0], pullRequests: Parameters<typeof findCurrentBranchPullRequest>[1]) {
+  const currentPullRequest = findCurrentBranchPullRequest(input, pullRequests);
+  return currentPullRequest ? listCheckSummaries(env, repoFullName, currentPullRequest.number) : [];
 }
 
 function buildDecisionActions(run: AgentRunRecord, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentActionRecord[] {

@@ -608,6 +608,77 @@ export const registryDriftEvents = sqliteTable("registry_drift_events", {
   generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
 });
 
+export const upstreamSourceSnapshots = sqliteTable(
+  "upstream_source_snapshots",
+  {
+    id: text("id").primaryKey(),
+    sourceKey: text("source_key").notNull(),
+    sourceRepo: text("source_repo").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    path: text("path").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    commitSha: text("commit_sha"),
+    blobSha: text("blob_sha"),
+    contentSha256: text("content_sha256"),
+    etag: text("etag"),
+    status: text("status").notNull().default("fetched"),
+    parsedJson: text("parsed_json").notNull().default("{}"),
+    warningsJson: text("warnings_json").notNull().default("[]"),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    fetchedAt: text("fetched_at").notNull(),
+  },
+  (table) => ({
+    keyFetched: index("upstream_source_snapshots_key_fetched_idx").on(table.sourceKey, table.fetchedAt),
+    commit: index("upstream_source_snapshots_commit_idx").on(table.commitSha),
+  }),
+);
+
+export const upstreamRulesetSnapshots = sqliteTable(
+  "upstream_ruleset_snapshots",
+  {
+    id: text("id").primaryKey(),
+    sourceRepo: text("source_repo").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    commitSha: text("commit_sha"),
+    sourceSnapshotIdsJson: text("source_snapshot_ids_json").notNull().default("[]"),
+    activeModel: text("active_model").notNull(),
+    registryRepoCount: integer("registry_repo_count").notNull().default(0),
+    totalEmissionShare: real("total_emission_share").notNull().default(0),
+    semanticHash: text("semantic_hash").notNull(),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    warningsJson: text("warnings_json").notNull().default("[]"),
+    generatedAt: text("generated_at").notNull(),
+  },
+  (table) => ({
+    generated: index("upstream_ruleset_snapshots_generated_idx").on(table.generatedAt),
+    semantic: index("upstream_ruleset_snapshots_semantic_idx").on(table.semanticHash),
+  }),
+);
+
+export const upstreamDriftReports = sqliteTable(
+  "upstream_drift_reports",
+  {
+    id: text("id").primaryKey(),
+    fingerprint: text("fingerprint").notNull(),
+    severity: text("severity").notNull(),
+    status: text("status").notNull().default("open"),
+    summary: text("summary").notNull(),
+    affectedAreasJson: text("affected_areas_json").notNull().default("[]"),
+    previousRulesetId: text("previous_ruleset_id"),
+    currentRulesetId: text("current_ruleset_id"),
+    issueNumber: integer("issue_number"),
+    issueUrl: text("issue_url"),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    generatedAt: text("generated_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    fingerprint: uniqueIndex("upstream_drift_reports_fingerprint_unique").on(table.fingerprint),
+    severityStatus: index("upstream_drift_reports_severity_status_idx").on(table.severity, table.status),
+    updated: index("upstream_drift_reports_updated_idx").on(table.updatedAt),
+  }),
+);
+
 export const bountyLifecycleEvents = sqliteTable("bounty_lifecycle_events", {
   id: text("id").primaryKey(),
   bountyId: text("bounty_id").notNull(),
@@ -637,6 +708,24 @@ export const authSessions = sqliteTable(
     login: index("auth_sessions_login_idx").on(table.login),
     expires: index("auth_sessions_expires_idx").on(table.expiresAt),
     revoked: index("auth_sessions_revoked_idx").on(table.revokedAt),
+  }),
+);
+
+export const digestSubscriptions = sqliteTable(
+  "digest_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    email: text("email").notNull(),
+    status: text("status").notNull().default("active"),
+    source: text("source").notNull().default("app"),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    loginEmail: uniqueIndex("digest_subscriptions_login_email_unique").on(table.login, table.email),
+    login: index("digest_subscriptions_login_idx").on(table.login),
+    status: index("digest_subscriptions_status_idx").on(table.status),
   }),
 );
 

@@ -19,9 +19,9 @@ Gittensory is not a Gittensor frontend, not a public leaderboard, and not an aut
 ## Surfaces
 
 - Worker API: Cloudflare Workers + Hono + D1 + Queues.
+- Frontend Worker: Lovable/TanStack Start app under `apps/gittensory-ui`, deployed at `https://gittensory.aethereal.dev/`.
 - MCP package: `@jsonbored/gittensory-mcp`, a local stdio wrapper for coding agents and the first-class base-agent surface.
 - GitHub App: quiet PR inspection, public-safe sticky comments, maintainer-configured labels, and explicit `@gittensory` commands on installed repos.
-- Docs site: VitePress under `site/`, deployed at `https://gittensory.aethereal.dev/`.
 
 ## AI Posture
 
@@ -99,14 +99,15 @@ Cloudflare secrets:
 wrangler secret put GITHUB_WEBHOOK_SECRET
 wrangler secret put GITHUB_APP_PRIVATE_KEY
 wrangler secret put GITHUB_PUBLIC_TOKEN
-wrangler secret put GITHUB_OAUTH_CLIENT_ID
-wrangler secret put ADMIN_GITHUB_LOGINS
+wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
 wrangler secret put GITTENSORY_API_TOKEN
 wrangler secret put GITTENSORY_MCP_TOKEN
 wrangler secret put INTERNAL_JOB_TOKEN
 ```
 
 `GITHUB_PUBLIC_TOKEN` is a server-side token used to raise public GitHub API rate limits during registered-repo backfill. It is not a contributor token.
+
+`GITHUB_OAUTH_CLIENT_ID`, `ADMIN_GITHUB_LOGINS`, `PUBLIC_API_ORIGIN`, and `PUBLIC_SITE_ORIGIN` are API Worker runtime vars in `wrangler.jsonc`. `GITHUB_OAUTH_CLIENT_SECRET` is an API Worker runtime secret. Do not put the OAuth client secret on the UI Worker.
 
 `ADMIN_GITHUB_LOGINS` is a comma- or whitespace-separated allowlist of GitHub logins that may exchange GitHub OAuth/device-flow credentials for Gittensory API sessions. Leave it unset to disable OAuth session issuance.
 
@@ -175,15 +176,17 @@ If GitHub shows `Installation target`, select it. Gittensory should not block in
 
 Default GitHub App behavior is low-noise: non-miner, bot, and maintainer-associated PR authors produce no public output. Confirmed Gittensor miners get one sticky public-safe PR comment and the configured label, defaulting to `gittensor`. Maintainers and authorized PR authors can explicitly invoke public-safe `@gittensory` commands. Private reviewability, scoring, wallet, hotkey, and reward/risk context never appears in public GitHub comments or checks.
 
-## Docs
+## Frontend
 
 ```sh
-npm run docs:dev
-npm run docs:build
-npm run docs:preview
+npm run ui:dev
+npm run ui:build
+npm run ui:preview
 ```
 
-The Pages workflow builds the docs on `main` for `https://gittensory.aethereal.dev/`, but deploys only when the repository variable `GITTENSORY_DOCS_DEPLOY` is set to `true`.
+The frontend is a TanStack Start app imported from the Lovable `gittensory-docs` project. It is deployed as the separate `gittensory-ui` Cloudflare Worker on `https://gittensory.aethereal.dev/`. The backend remains the `gittensory-api` Worker on `https://gittensory-api.aethereal.dev`.
+
+Cloudflare Workers Builds owns automatic frontend deployments from GitHub. The `.github/workflows/ui-deploy.yml` workflow is a manual validation fallback only.
 
 ## Changelog And Releases
 
@@ -212,5 +215,4 @@ npm run test:ci
 
 - Public support: `SUPPORT.md`
 - Security policy: `SECURITY.md`
-- Privacy posture: `site/security/privacy.md`
-- Terms: `site/security/terms.md`
+- Privacy and terms: `apps/gittensory-ui/src/routes/docs.privacy-security.tsx`

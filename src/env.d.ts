@@ -5,6 +5,7 @@ declare global {
     RATE_LIMITER?: DurableObjectNamespace;
     AI?: Ai;
     PUBLIC_API_ORIGIN?: string;
+    PUBLIC_SITE_ORIGIN?: string;
     AI_SUMMARIES_ENABLED?: string;
     AI_PUBLIC_COMMENTS_ENABLED?: string;
     WORKERS_AI_SUMMARY_MODEL?: string;
@@ -16,8 +17,14 @@ declare global {
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;
     GITHUB_OAUTH_CLIENT_ID?: string;
+    GITHUB_OAUTH_CLIENT_SECRET?: string;
+    GITTENSOR_UPSTREAM_REPO?: string;
+    GITTENSOR_UPSTREAM_REF?: string;
     GITTENSOR_REGISTRY_URL: string;
     GITHUB_PUBLIC_TOKEN?: string;
+    GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
+    GITTENSORY_DRIFT_ISSUE_REPO?: string;
+    GITTENSORY_DRIFT_ISSUE_TOKEN?: string;
     GITTENSORY_API_TOKEN: string;
     GITTENSORY_MCP_TOKEN: string;
     INTERNAL_JOB_TOKEN: string;

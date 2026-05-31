@@ -11,6 +11,7 @@ import {
   buildContributorScoringProfile,
   buildContributorStrategy,
   buildContributorIntakeHealth,
+  buildIssueDiscoveryLifecycleReport,
   buildIssueQualityReport,
   buildLabelAudit,
   buildLocalDiffPreflightResult,
@@ -458,11 +459,23 @@ describe("v2 signal builders", () => {
         repoFullName: repo.fullName,
         number: 44,
         title: "Fix already solved report",
-        state: "open",
+        state: "merged",
+        mergedAt: "2026-05-01T00:00:00.000Z",
         linkedIssues: [23],
         labels: ["bug"],
         authorLogin: "oktofeesh1",
         body: "Fixes #23",
+        updatedAt: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        repoFullName: repo.fullName,
+        number: 45,
+        title: "Stale contributor branch",
+        state: "open",
+        linkedIssues: [],
+        labels: ["bug"],
+        authorLogin: "oktofeesh1",
+        body: "",
         updatedAt: "2025-01-01T00:00:00.000Z",
       },
     ];
@@ -473,6 +486,28 @@ describe("v2 signal builders", () => {
       repo.fullName,
     );
     expect(issueQuality.issues.map((issue) => issue.status)).toEqual(expect.arrayContaining(["ready", "needs_proof", "do_not_use"]));
+    expect(issueQuality.issues.find((issue) => issue.number === 22)).toMatchObject({ lifecycle: "stale" });
+    expect(issueQuality.issues.find((issue) => issue.number === 23)).toMatchObject({ lifecycle: "valid_solved", status: "do_not_use" });
+
+    const lifecycle = buildIssueDiscoveryLifecycleReport(
+      { ...repo, registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.5 } },
+      [
+        ...issueSet,
+        { repoFullName: repo.fullName, number: 24, title: "Duplicate", state: "closed", body: "", labels: ["duplicate"], linkedPrs: [] },
+        { repoFullName: repo.fullName, number: 25, title: "Closed without solver", state: "closed", body: "", labels: [], linkedPrs: [] },
+      ],
+      prSet,
+      repo.fullName,
+    );
+    expect(lifecycle.states.map((state) => [state.number, state.state])).toEqual(expect.arrayContaining([[23, "valid_solved"], [24, "duplicate"], [25, "closed_not_solved"]]));
+
+    const unverifiedMentionLifecycle = buildIssueDiscoveryLifecycleReport(
+      { ...repo, registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.5 } },
+      [{ repoFullName: repo.fullName, number: 26, title: "Mentioned PR", state: "closed", body: "Maybe PR #123 helps.", labels: [], linkedPrs: [123] }],
+      [],
+      repo.fullName,
+    );
+    expect(unverifiedMentionLifecycle.states[0]).toMatchObject({ number: 26, state: "closed_not_solved", solvedByPullRequests: [] });
 
     const collisions = buildCollisionReport(repo.fullName, issueSet, prSet);
     const forecast = buildBurdenForecast(repo, issueSet, prSet, collisions, 7);
@@ -635,6 +670,14 @@ describe("v2 signal builders", () => {
     expect(role).toMatchObject({ role: "owner", maintainerLane: true, normalContributorEvidenceAllowed: false });
     expect(history.repoOutcomes.filter((outcome) => outcome.repoFullName.toLowerCase() === "jsonbored/awesome-claude")).toHaveLength(1);
     expect(history.repoOutcomes.find((outcome) => outcome.repoFullName === "jsonbored/awesome-claude")).toMatchObject({ successLevel: "maintainer_context" });
+    expect(history.reconciliation).toMatchObject({ officialAuthoritative: true, totals: { effective: { pullRequests: 63, mergedPullRequests: 46 } } });
+    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName.toLowerCase() === "jsonbored/awesome-claude")).toMatchObject({
+      maintainerLane: true,
+      discrepancyReasons: expect.arrayContaining([
+        expect.stringContaining("Official PR total"),
+        expect.stringContaining("Maintainer-owned repo history"),
+      ]),
+    });
     expect(buildContributorPatternReport(history, "failure").patterns.map((pattern) => pattern.title)).toContain("Raw issue activity is not solved discovery evidence");
     expect(strategy.maintainerLaneRepos).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "jsonbored/awesome-claude" })]));
     expect(recommendation.recommendation).toBe("maintainer_lane");
@@ -643,6 +686,139 @@ describe("v2 signal builders", () => {
     expect(cut.recommendedAction).toEqual(expect.stringMatching(/consider_small_cut|fix_config_first|leave_disabled|review_existing_cut/));
     expect(review.recommendation).toBe("maintainer_lane");
     expect(JSON.stringify({ strategy, review })).not.toMatch(/wallet|farming|reward/i);
+  });
+
+  it("labels GitHub-only contributor reconciliation as context", () => {
+    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, pullRequests, issues);
+    const history = buildContributorOutcomeHistory({
+      login: "oktofeesh1",
+      profile,
+      repositories: [repo],
+      pullRequests,
+      issues,
+      repoStats: [{ login: "oktofeesh1", repoFullName: repo.fullName, pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1, issues: 1, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["feature"], lastActivityAt: "2026-05-30T00:00:00.000Z" }],
+    });
+
+    expect(history.reconciliation).toMatchObject({ officialAuthoritative: false, source: "github_cache" });
+    expect(history.reconciliation?.findings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "official_source_unavailable" })]));
+    expect(history.reconciliation?.repos[0]?.discrepancyReasons).toEqual(expect.arrayContaining([expect.stringContaining("Official source unavailable")]));
+  });
+
+  it("keeps cached reconciliation stats separate from official profile counts", () => {
+    const profile = buildContributorProfile(
+      "jsonbored",
+      { login: "JSONbored", topLanguages: ["TypeScript"], source: "github" },
+      [],
+      [],
+      [
+        {
+          login: "jsonbored",
+          repoFullName: "JSONbored/awesome-claude",
+          pullRequests: 10,
+          mergedPullRequests: 8,
+          openPullRequests: 1,
+          issues: 5,
+          stalePullRequests: 0,
+          unlinkedPullRequests: 0,
+          dominantLabels: ["feature"],
+        },
+      ],
+      {
+        source: "gittensor_api",
+        githubId: "49853598",
+        githubUsername: "JSONbored",
+        isEligible: true,
+        credibility: 1,
+        eligibleRepoCount: 1,
+        issueDiscoveryScore: 0,
+        issueTokenScore: 0,
+        issueCredibility: 1,
+        isIssueEligible: true,
+        issueEligibleRepoCount: 1,
+        alphaPerDay: 0,
+        taoPerDay: 0,
+        usdPerDay: 0,
+        totals: { pullRequests: 10, mergedPullRequests: 8, openPullRequests: 1, closedPullRequests: 1, openIssues: 3, closedIssues: 2, solvedIssues: 1, validSolvedIssues: 1 },
+        repositories: [
+          {
+            repoFullName: "JSONbored/awesome-claude",
+            pullRequests: 10,
+            mergedPullRequests: 8,
+            openPullRequests: 1,
+            closedPullRequests: 1,
+            openIssues: 3,
+            closedIssues: 2,
+            solvedIssues: 1,
+            validSolvedIssues: 1,
+            isEligible: true,
+            isIssueEligible: true,
+            credibility: 1,
+            issueCredibility: 1,
+            totalScore: 10,
+            baseTotalScore: 10,
+          },
+        ],
+        pullRequests: [],
+        issueLabels: ["feature"],
+      },
+    );
+    const officialStats: ContributorRepoStatRecord[] = [
+      { login: "jsonbored", repoFullName: "JSONbored/awesome-claude", pullRequests: 10, mergedPullRequests: 8, openPullRequests: 1, issues: 5, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["feature"] },
+    ];
+    const cachedRepoStats: ContributorRepoStatRecord[] = [
+      { login: "jsonbored", repoFullName: "jsonbored/Awesome-Claude", pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1, issues: 4, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["bug"] },
+      { login: "jsonbored", repoFullName: "entrius/gittensor", pullRequests: 1, mergedPullRequests: 0, openPullRequests: 1, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["bug"] },
+    ];
+    const history = buildContributorOutcomeHistory({
+      login: "jsonbored",
+      profile,
+      repositories: [],
+      pullRequests: [
+        { ...pullRequests[0]!, repoFullName: "JSONbored/awesome-claude", number: 1, authorLogin: "jsonbored", state: "closed", mergedAt: "2026-05-01T00:00:00.000Z" },
+        { ...pullRequests[0]!, repoFullName: "jsonbored/Awesome-Claude", number: 2, authorLogin: "jsonbored", state: "open", mergedAt: null },
+        { ...pullRequests[0]!, repoFullName: "entrius/gittensor", number: 3, authorLogin: "jsonbored", state: "open", mergedAt: null },
+      ],
+      issues: [{ ...issues[0]!, repoFullName: "JSONbored/awesome-claude", number: 3, authorLogin: "jsonbored", authorAssociation: "OWNER", state: "open" }],
+      repoStats: officialStats,
+      cachedRepoStats,
+    });
+
+    const matchingRepos = history.reconciliation?.repos.filter((entry) => entry.repoFullName.toLowerCase() === "jsonbored/awesome-claude") ?? [];
+    expect(matchingRepos).toHaveLength(1);
+    expect(matchingRepos[0]).toMatchObject({
+      maintainerLane: true,
+      official: { pullRequests: 10, mergedPullRequests: 8, openPullRequests: 1, closedPullRequests: 1, issues: 5, openIssues: 3, closedIssues: 2, solvedIssues: 1, validSolvedIssues: 1 },
+      cached: { pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1, closedPullRequests: 0, issues: 4, openIssues: 1, closedIssues: 3 },
+    });
+    expect(matchingRepos[0]?.discrepancyReasons).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Official PR total"),
+        expect.stringContaining("Official merged PR total"),
+        expect.stringContaining("Official issue total"),
+        expect.stringContaining("Official open issue count"),
+        expect.stringContaining("Official valid-solved issue count"),
+        expect.stringContaining("Maintainer-owned repo history"),
+      ]),
+    );
+    expect(history.reconciliation?.totals.cached).toMatchObject({ pullRequests: 3, mergedPullRequests: 1, openPullRequests: 2, closedPullRequests: 0, issues: 4, openIssues: 1, closedIssues: 3 });
+    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName === "entrius/gittensor")).toMatchObject({
+      official: undefined,
+      cached: { pullRequests: 1, openPullRequests: 1 },
+      effective: { pullRequests: 0, openPullRequests: 0 },
+      discrepancyReasons: expect.arrayContaining([expect.stringContaining("Official source omits this repo")]),
+    });
+  });
+
+  it("uses cached issue associations for reconciliation maintainer lanes", () => {
+    const issueOnly: IssueRecord = { repoFullName: "entrius/allways", number: 88, title: "Maintainer filed issue", state: "open", authorLogin: "memberdev", authorAssociation: "MEMBER", labels: ["bug"], linkedPrs: [] };
+    const profile = buildContributorProfile("memberdev", { login: "memberdev", topLanguages: ["TypeScript"], source: "github" }, [], [issueOnly]);
+    const history = buildContributorOutcomeHistory({ login: "memberdev", profile, repositories: [], pullRequests: [], issues: [issueOnly], repoStats: [] });
+
+    expect(history.reconciliation?.repos[0]).toMatchObject({
+      repoFullName: "entrius/allways",
+      maintainerLane: true,
+      discrepancyReasons: expect.arrayContaining([expect.stringContaining("Maintainer-owned repo history")]),
+    });
   });
 
   it("classifies role context from GitHub associations, official activity, cache activity, and unknown state", () => {

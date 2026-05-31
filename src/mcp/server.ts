@@ -2,7 +2,7 @@ import { createMcpHandler } from "agents/mcp";
 import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { authenticatePrivateToken, extractBearerToken } from "../auth/security";
+import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -11,6 +11,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getIssue,
   getRepository,
+  listCheckSummaries,
   listContributorRepoStats,
   listContributorIssues,
   listContributorPullRequests,
@@ -53,8 +54,9 @@ import {
   buildRegistryChangeReport,
   buildRoleContext,
 } from "../signals/engine";
-import { buildLocalBranchAnalysis } from "../signals/local-branch";
+import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoDataQuality } from "../signals/data-quality";
+import { loadUpstreamStatus } from "../upstream/ruleset";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -137,8 +139,10 @@ const localBranchAnalysisShape = {
       z
         .object({
           command: z.string().min(1),
-          status: z.enum(["passed", "failed", "not_run"]),
+          status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
           summary: z.string().optional(),
+          durationMs: z.number().int().min(0).optional(),
+          exitCode: z.number().int().min(0).optional(),
         })
         .strict(),
     )
@@ -222,14 +226,18 @@ const variantsShape = {
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
-  if (!(await isAuthorizedMcpRequest(c))) return c.json({ error: "unauthorized" }, 401);
+  const identity = await authenticateMcpRequest(c);
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
 
-  const server = new GittensoryMcp(c.env).createServer();
+  const server = new GittensoryMcp(c.env, identity).createServer();
   return createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
 }
 
 export class GittensoryMcp {
-  constructor(private readonly env: Env) {}
+  constructor(
+    private readonly env: Env,
+    private readonly identity: AuthIdentity = { kind: "static", actor: "mcp" },
+  ) {}
 
   createServer(): McpServer {
     const server = new McpServer({
@@ -310,6 +318,15 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_get_upstream_drift",
+      {
+        description: "Return private upstream Gittensor ruleset drift status, including stale/drift warnings for MCP planning.",
+        inputSchema: {},
+      },
+      async () => this.toolResult(await this.getUpstreamDrift()),
+    );
+
+    server.registerTool(
       "gittensory_get_issue_quality",
       {
         description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
@@ -370,6 +387,7 @@ export class GittensoryMcp {
             supportedTools: [
               "gittensory_get_decision_pack",
               "gittensory_explain_repo_decision",
+              "gittensory_get_upstream_drift",
               "gittensory_preflight_current_branch",
               "gittensory_preview_current_branch_score",
               "gittensory_rank_local_next_actions",
@@ -483,6 +501,12 @@ export class GittensoryMcp {
     return server;
   }
 
+  private requireContributorAccess(login: string): void {
+    if (this.identity.kind === "session" && this.identity.actor.toLowerCase() !== login.toLowerCase()) {
+      throw new Error("Forbidden: session can only access the authenticated GitHub login.");
+    }
+  }
+
   private async getRepoContext(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts] = await Promise.all([
@@ -571,6 +595,7 @@ export class GittensoryMcp {
   }
 
   private async getDecisionPack(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
     const serving = await loadContributorDecisionPackForServing(this.env, login);
     if (serving.kind === "ready") {
       return {
@@ -585,6 +610,7 @@ export class GittensoryMcp {
   }
 
   private async explainRepoDecision(input: { login: string; owner: string; repo: string }): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const fullName = `${input.owner}/${input.repo}`;
     const serving = await loadContributorDecisionPackForServing(this.env, input.login);
     if (serving.kind === "needs_refresh") {
@@ -619,6 +645,22 @@ export class GittensoryMcp {
     };
   }
 
+  private async getUpstreamDrift(): Promise<ToolPayload> {
+    const status = await loadUpstreamStatus(this.env);
+    const detail =
+      status.status === "current"
+        ? "upstream ruleset is current"
+        : status.status === "drift_detected"
+          ? `upstream drift detected (${status.highestSeverity ?? "unknown"})`
+          : status.status === "stale"
+            ? "upstream ruleset snapshot is stale"
+            : "upstream ruleset snapshot is unavailable";
+    return {
+      summary: `Gittensory upstream drift status: ${detail}.`,
+      data: status as unknown as Record<string, unknown>,
+    };
+  }
+
   private async preflightPr(input: z.infer<z.ZodObject<typeof preflightShape>>): Promise<ToolPayload> {
     const [repo, issues, pullRequests, issueQuality] = await Promise.all([
       getRepository(this.env, input.repoFullName),
@@ -646,6 +688,7 @@ export class GittensoryMcp {
   }
 
   private async previewScore(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+    if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     const [repo, snapshot, evidence] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
@@ -659,6 +702,7 @@ export class GittensoryMcp {
   }
 
   private async explainReviewRisk(input: z.infer<z.ZodObject<typeof preflightShape>>): Promise<ToolPayload> {
+    if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     const [repo, issues, pullRequests] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       listIssues(this.env, input.repoFullName),
@@ -745,6 +789,7 @@ export class GittensoryMcp {
   }
 
   private async agentPlanNextWork(input: z.infer<z.ZodObject<typeof agentPlanShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const bundle = await planNextWork(this.env, { ...input, surface: "mcp" });
     return {
       summary: `Gittensory base-agent plan for ${input.login}.`,
@@ -753,6 +798,7 @@ export class GittensoryMcp {
   }
 
   private async agentStartRun(input: z.infer<z.ZodObject<typeof agentRunShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.actorLogin);
     const bundle = await startAgentRun(this.env, {
       objective: input.objective,
       actorLogin: input.actorLogin,
@@ -772,6 +818,7 @@ export class GittensoryMcp {
   private async agentGetRun(runId: string): Promise<ToolPayload> {
     const bundle = await getAgentRunBundle(this.env, runId);
     if (!bundle) throw new Error("Agent run not found.");
+    this.requireContributorAccess(bundle.run.actorLogin);
     return {
       summary: `Gittensory base-agent run ${runId}.`,
       data: bundle as unknown as Record<string, unknown>,
@@ -779,6 +826,7 @@ export class GittensoryMcp {
   }
 
   private async agentExplainNextAction(input: z.infer<z.ZodObject<typeof agentPlanShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const bundle = await explainBlockersWithAgent(this.env, { ...input, surface: "mcp" });
     return {
       summary: `Gittensory base-agent next-action explanation for ${input.login}.`,
@@ -790,6 +838,7 @@ export class GittensoryMcp {
   }
 
   private async agentPreparePrPacket(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
     const bundle = await preparePrPacketWithAgent(this.env, input, "mcp");
     return {
       summary: `Gittensory base-agent public-safe PR packet for ${input.repoFullName}.`,
@@ -798,6 +847,7 @@ export class GittensoryMcp {
   }
 
   private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
+    this.requireContributorAccess(input.login);
     const [context, repo, issues, pullRequests, recentMergedPullRequests, snapshot, issueQuality] = await Promise.all([
       this.loadContributorFastContext(input.login),
       getRepository(this.env, input.repoFullName),
@@ -809,6 +859,7 @@ export class GittensoryMcp {
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot: snapshot });
+    const checkSummaries = await this.loadCheckSummariesForPullRequests(input.repoFullName, input, pullRequests);
     return {
       ...buildLocalBranchAnalysis({
         input,
@@ -818,6 +869,7 @@ export class GittensoryMcp {
         contributorPullRequests: context.contributorPullRequests,
         recentMergedPullRequests,
         repositories: context.repositories,
+        checkSummaries,
         profile: context.profile,
         outcomeHistory: context.outcomeHistory,
         scoringSnapshot: snapshot,
@@ -826,6 +878,11 @@ export class GittensoryMcp {
       }),
       dataQuality: await this.loadRepoDataQuality(input.repoFullName),
     };
+  }
+
+  private async loadCheckSummariesForPullRequests(repoFullName: string, input: Parameters<typeof findCurrentBranchPullRequest>[0], pullRequests: Parameters<typeof findCurrentBranchPullRequest>[1]) {
+    const currentPullRequest = findCurrentBranchPullRequest(input, pullRequests);
+    return currentPullRequest ? listCheckSummaries(this.env, repoFullName, currentPullRequest.number) : [];
   }
 
   private async getBountyAdvisory(id: string): Promise<ToolPayload> {
@@ -857,6 +914,7 @@ export class GittensoryMcp {
       pullRequests: contributorPullRequests,
       issues: contributorIssues,
       repoStats,
+      cachedRepoStats,
     });
     return {
       profile,
@@ -909,8 +967,8 @@ function authoritativeContributorRepoStats(
   return officialRepoStats.length > 0 ? officialRepoStats : cachedRepoStats;
 }
 
-async function isAuthorizedMcpRequest(c: AppContext): Promise<boolean> {
-  return Boolean(await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization"))));
+async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {
+  return authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
 }
 
 function getExecutionContext(c: AppContext): ExecutionContext<unknown> {

@@ -29,6 +29,7 @@ import {
   type RoleContext,
 } from "../signals/engine";
 import { buildSignalFidelity } from "../signals/data-quality";
+import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { loadIssueQualityReportMap } from "./issue-quality";
 import type { ContributorRepoStatRecord, JsonValue, RepositoryRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord, SignalSnapshotRecord } from "../types";
 import { nowIso } from "../utils/json";
@@ -74,6 +75,7 @@ export type ContributorDecisionPack = {
   };
   summary: string;
   nextActions: string[];
+  openPrMonitor?: ContributorOpenPrMonitor | undefined;
 };
 
 export type DecisionPackRefreshNeeded = {
@@ -266,6 +268,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
   });
   const fit = buildContributorFit(profile, repositories, [], [], syncStates, repoStats);
   const scoringProfile = buildContributorScoringProfile({ login, fit, scoringSnapshot });
+  const openPrMonitor = await buildContributorOpenPrMonitor(env, login);
   const pack = buildContributorDecisionPack({
     login,
     profile,
@@ -278,6 +281,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     contributorPullRequests,
     contributorIssues,
     issueQualityByRepo,
+    openPrMonitor,
   });
 
   await upsertContributorEvidence(env, {
@@ -327,6 +331,7 @@ function buildContributorDecisionPack(args: {
   contributorPullRequests: Parameters<typeof buildRoleContext>[0]["pullRequests"];
   contributorIssues: Parameters<typeof buildRoleContext>[0]["issues"];
   issueQualityByRepo?: Map<string, IssueQualityReport> | undefined;
+  openPrMonitor: ContributorOpenPrMonitor;
 }): ContributorDecisionPack {
   const registeredRepositories = args.repositories.filter((repo) => repo.isRegistered);
   const syncByRepo = new Map(args.syncStates.map((state) => [state.repoFullName.toLowerCase(), state]));
@@ -368,6 +373,10 @@ function buildContributorDecisionPack(args: {
   const dataQuality = {
     signalFidelity: buildSignalFidelity(registeredRepositories.length, args.syncStates, args.syncSegments),
   };
+  const monitor = args.openPrMonitor;
+  const monitorNextSteps = monitor.guidance.slice(0, 6);
+  const packNextActions = [...new Set([...monitorNextSteps, ...topActions.flatMap((action) => action.nextActions)])].slice(0, 12);
+  const monitorSummary = monitor.openPrCount > 0 ? ` ${monitor.summary}` : "";
   return {
     status: "ready",
     source: "computed",
@@ -395,8 +404,9 @@ function buildContributorDecisionPack(args: {
     maintainerLaneRepos: repoDecisions.filter((decision) => decision.recommendation === "maintainer_lane").slice(0, 8),
     scoreBlockers,
     dataQuality,
-    summary: `${args.login} has ${topActions.length} ranked action(s), ${scoreBlockers.length} scoreability blocker(s), and ${repoDecisions.length} registered repo decision(s).`,
-    nextActions: [...new Set(topActions.flatMap((action) => action.nextActions))].slice(0, 10),
+    summary: `${args.login} has ${topActions.length} ranked action(s), ${scoreBlockers.length} scoreability blocker(s), and ${repoDecisions.length} registered repo decision(s).${monitorSummary}`,
+    nextActions: packNextActions,
+    openPrMonitor: monitor,
   };
 }
 

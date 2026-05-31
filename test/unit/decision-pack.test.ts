@@ -560,6 +560,7 @@ describe("decision-pack service", () => {
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [{ repoFullName: "owner/cleanup", authorLogin: "jsonbored", authorAssociation: "CONTRIBUTOR" }] as any,
       contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
     });
 
     expect(pack.repoDecisions).toHaveLength(6);
@@ -806,6 +807,7 @@ describe("decision-pack service", () => {
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [],
       contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
     });
     const tsDecision = pack.repoDecisions.find((d) => d.repoFullName === "owner/ts")!;
     expect(tsDecision.languageMatch).toEqual({ language: "TypeScript", match: true });
@@ -968,6 +970,7 @@ describe("decision-pack service", () => {
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [],
       contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
     });
     const packA = __decisionPackInternals.buildContributorDecisionPack(fixedArgs());
     const packB = __decisionPackInternals.buildContributorDecisionPack(fixedArgs());
@@ -977,6 +980,20 @@ describe("decision-pack service", () => {
     expect(packA.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`)).toEqual(packB.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`));
   });
 });
+
+function emptyOpenPrMonitor(login: string) {
+  return {
+    login,
+    generatedAt: "2026-05-25T00:00:00.000Z",
+    openPrCount: 0,
+    registeredRepoCount: 0,
+    cleanupFirst: false,
+    summary: "No open PRs on registered repos.",
+    guidance: [],
+    pendingScenarios: [],
+    pullRequests: [],
+  };
+}
 
 function noStructuralCountLeak(lines: string[]): boolean {
   const joined = lines.join(" | ");

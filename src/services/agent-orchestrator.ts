@@ -25,6 +25,7 @@ import { loadContributorDecisionPackForServing, repoDecisionFromPack, type Contr
 import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
+import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import type {
   AgentActionRecord,
@@ -219,7 +220,10 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
     });
     return (await getAgentRunBundle(env, run.id))!;
   }
-  const pack = serving.pack;
+  const pack = {
+    ...serving.pack,
+    openPrMonitor: serving.pack.openPrMonitor ?? (await buildContributorOpenPrMonitor(env, login)),
+  };
   const isStale = pack.freshness !== "fresh";
   const decisions = repoFullName ? pack.repoDecisions.filter((decision) => sameRepo(decision.repoFullName, repoFullName)) : pack.repoDecisions;
   const allowCrossRepoFallback = !repoFullName || run.surface !== "github_comment";
@@ -330,12 +334,60 @@ async function loadCheckSummariesForPullRequests(env: Env, repoFullName: string,
 
 function buildDecisionActions(run: AgentRunRecord, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentActionRecord[] {
   const decisionByRepo = new Map(decisions.map((decision) => [decision.repoFullName, decision]));
+  const monitorActions = buildOpenPrMonitorActions(run, pack, decisions);
   const candidateActions = pack.topActions
     .filter((action) => decisionByRepo.has(action.repoFullName))
     .slice(0, 8)
-    .map((action, index) => actionFromDecisionAction(run, action, decisionByRepo.get(action.repoFullName)!, index));
-  if (candidateActions.length > 0) return candidateActions;
-  return decisions.slice(0, 5).map((decision, index) => actionFromRepoDecision(run, decision, index));
+    .map((action, index) => actionFromDecisionAction(run, action, decisionByRepo.get(action.repoFullName)!, monitorActions.length + index));
+  if (candidateActions.length > 0) return [...monitorActions, ...candidateActions].slice(0, 8);
+  const fallback = decisions.slice(0, 5).map((decision, index) => actionFromRepoDecision(run, decision, monitorActions.length + index));
+  return [...monitorActions, ...fallback].slice(0, 8);
+}
+
+function buildOpenPrMonitorActions(run: AgentRunRecord, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentActionRecord[] {
+  const monitor = pack.openPrMonitor;
+  if (!monitor || monitor.pullRequests.length === 0) return [];
+  const decisionByRepo = new Map(decisions.map((decision) => [decision.repoFullName.toLowerCase(), decision]));
+  const urgentClassifications = new Set<ContributorOpenPrMonitor["pullRequests"][number]["classification"]>([
+    "needs_author",
+    "failing_checks",
+    "duplicate_prone",
+    "stale",
+    "should_close_or_withdraw",
+    "blocked",
+  ]);
+  return monitor.pullRequests
+    .filter((packet) => urgentClassifications.has(packet.classification))
+    .slice(0, 4)
+    .map((packet, index) => {
+      const decision = decisionByRepo.get(packet.repoFullName.toLowerCase());
+      const actionType: AgentActionType =
+        packet.classification === "approved" || packet.classification === "reviewable" ? "monitor_existing_pr" : "cleanup_existing_prs";
+      return actionRecord({
+        run,
+        actionType,
+        index,
+        targetRepoFullName: packet.repoFullName,
+        targetPullNumber: packet.number,
+        status: packet.classification === "approved" ? "recommended" : "blocked",
+        recommendation: packet.nextSteps[0] ?? packet.summary,
+        why: packet.reasons.slice(0, 4),
+        scoreabilityImpact: monitor.cleanupFirst
+          ? "Resolving open PR queue pressure can unblock scoreability before opening new work."
+          : "Open PR hygiene affects maintainer review load and lane fit.",
+        riskImpact: packet.classification === "duplicate_prone" ? "Duplicate or overlapping PRs increase collision risk." : "Stale or failing PRs consume review bandwidth.",
+        maintainerImpact: "Focused cleanup reduces maintainer queue noise before new submissions.",
+        blockedBy: [packet.classification],
+        rerunWhen: "Rerun after this PR merges, closes, or passes checks and review.",
+        publicSafeSummary: sanitizePublicSummary(`${packet.repoFullName}#${packet.number}: ${packet.summary}`),
+        payload: {
+          openPrPacket: packet as unknown as JsonValue,
+          decision: (decision ?? null) as unknown as JsonValue,
+        },
+        safetyClass: "public_safe",
+        approvalRequired: false,
+      });
+    });
 }
 
 function buildBlockerActions(
@@ -549,6 +601,7 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       source: pack.source,
       selectedRepos: decisions.map((decision) => decision.repoFullName),
       dataQuality: pack.dataQuality as unknown as JsonValue,
+      openPrMonitor: (pack.openPrMonitor ?? null) as unknown as JsonValue,
     },
   };
 }
@@ -627,6 +680,7 @@ function sameRepo(left: string, right: string): boolean {
 
 export const __agentOrchestratorInternals = {
   buildDecisionActions,
+  buildOpenPrMonitorActions,
   buildBlockerActions,
   buildLocalBranchActions,
   buildLocalBlockerActions,

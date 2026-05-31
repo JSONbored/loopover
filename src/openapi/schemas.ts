@@ -277,6 +277,65 @@ export const ContributorProfileSchema = z
   })
   .openapi("ContributorProfile");
 
+export const ContributorOpenPrNextStepPacketSchema = z
+  .object({
+    repoFullName: z.string(),
+    number: z.number(),
+    title: z.string(),
+    classification: z.enum([
+      "approved",
+      "blocked",
+      "stale",
+      "needs_author",
+      "failing_checks",
+      "missing_tests",
+      "duplicate_prone",
+      "reviewable",
+      "should_close_or_withdraw",
+      "maintainer_lane",
+      "draft",
+    ]),
+    summary: z.string(),
+    reasons: z.array(z.string()),
+    nextSteps: z.array(z.string()),
+  })
+  .openapi("ContributorOpenPrNextStepPacket");
+
+export const ContributorOpenPrMonitorSchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    openPrCount: z.number(),
+    registeredRepoCount: z.number(),
+    cleanupFirst: z.boolean(),
+    summary: z.string(),
+    guidance: z.array(z.string()),
+    pendingScenarios: z.array(
+      z.object({
+        repoFullName: z.string(),
+        detection: z.object({
+          source: z.enum(["github_observed", "user_supplied"]),
+          pendingMergedPrCount: z.number(),
+          pendingClosedPrCount: z.number(),
+          approvedPrCount: z.number(),
+          expectedOpenPrCountAfterMerge: z.number().optional(),
+          scenarioNotes: z.array(z.string()),
+          classified: z.array(
+            z.object({
+              repoFullName: z.string(),
+              number: z.number(),
+              title: z.string(),
+              classification: z.string(),
+              reasons: z.array(z.string()),
+            }),
+          ),
+        }),
+      }),
+    ),
+    pullRequests: z.array(ContributorOpenPrNextStepPacketSchema),
+  })
+  .openapi("ContributorOpenPrMonitor");
+
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),
@@ -1182,6 +1241,7 @@ export const ContributorDecisionPackSchema = z
     dataQuality: z.record(z.unknown()),
     summary: z.string(),
     nextActions: z.array(z.string()),
+    openPrMonitor: ContributorOpenPrMonitorSchema.optional(),
   })
   .openapi("ContributorDecisionPack");
 

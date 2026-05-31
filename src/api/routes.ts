@@ -721,7 +721,7 @@ export function createApp() {
     const owner = c.req.query("owner") ?? "";
     const repoName = c.req.query("repo") ?? "";
     const pullNumber = Number(c.req.query("pullNumber") ?? "");
-    if (!owner || !repoName || !Number.isFinite(pullNumber)) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
+    if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
     const fullName = `${owner}/${repoName}`;
     const [repo, pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
       getRepository(c.env, fullName),

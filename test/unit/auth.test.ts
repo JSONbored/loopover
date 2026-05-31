@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../../src/auth/github-oauth";
 import { enforceRateLimit, RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
-import { authenticatePrivateToken, createSessionForGitHubUser, revokeSession } from "../../src/auth/security";
+import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, isAuthorizedGitHubSessionLogin, revokeSession, timingSafeEqual } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
 describe("private-beta auth and rate limiting", () => {
@@ -25,6 +25,22 @@ describe("private-beta auth and rate limiting", () => {
     const expired = await createSessionForGitHubUser(env, { login: "expired-user" });
     await env.DB.prepare("update auth_sessions set expires_at = ? where login = ?").bind("2020-01-01T00:00:00.000Z", "expired-user").run();
     await expect(authenticatePrivateToken(env, expired.token)).resolves.toBeNull();
+  });
+
+  it("handles auth helper fallbacks for cookies, login lists, and token comparison", async () => {
+    await expect(timingSafeEqual(undefined, "expected")).resolves.toBe(false);
+    await expect(timingSafeEqual("short", "shorter")).resolves.toBe(false);
+    const noAdminEnv = createTestEnv();
+    delete (noAdminEnv as Partial<Env>).ADMIN_GITHUB_LOGINS;
+    expect(isAuthorizedGitHubSessionLogin(noAdminEnv, "jsonbored")).toBe(false);
+
+    const localhostCookie = buildBrowserSessionCookie("token", "http://localhost/v1/auth/session");
+    expect(localhostCookie).toContain("HttpOnly");
+    expect(localhostCookie).not.toContain("Secure");
+    expect(buildBrowserSessionCookie("token", "http://127.0.0.1/v1/auth/session")).not.toContain("Secure");
+
+    const malformedUrlCookie = buildBrowserSessionCookie("token", "not-a-url");
+    expect(malformedUrlCookie).toContain("Secure");
   });
 
   it("enforces burst limits inside the Durable Object bucket", async () => {
@@ -213,6 +229,109 @@ describe("private-beta auth and rate limiting", () => {
         cookieState: started.state,
       }),
     ).rejects.toThrow(/bad code/);
+  });
+
+  it("normalizes GitHub web OAuth fallbacks and rejects malformed callback state", async () => {
+    const env = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+      ADMIN_GITHUB_LOGINS: "jsonbored",
+    });
+    delete (env as Partial<Env>).PUBLIC_API_ORIGIN;
+    delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
+
+    const invalidReturnTo = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", "https://evil.example/app");
+    expect(invalidReturnTo.returnTo).toBe("https://gittensory.aethereal.dev/app");
+    expect(invalidReturnTo.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fpreview.example.workers.dev%2Fv1%2Fauth%2Fgithub%2Fcallback");
+
+    const localhostReturnTo = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", "http://localhost:5173/app");
+    expect(localhostReturnTo.returnTo).toBe("http://localhost:5173/app");
+
+    await expect(
+      completeGitHubWebOAuth(createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" }), "https://gittensory-api.aethereal.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/not_configured/);
+
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: "missing-signature",
+        cookieState: "missing-signature",
+      }),
+    ).rejects.toThrow(/state_invalid/);
+
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: "encoded.bad-signature",
+        cookieState: "encoded.bad-signature",
+      }),
+    ).rejects.toThrow(/state_invalid/);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-05-31T00:00:00.000Z"));
+      const started = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", undefined);
+      vi.setSystemTime(new Date("2026-05-31T00:11:00.000Z"));
+      await expect(
+        completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+          code: "code",
+          state: started.state,
+          cookieState: started.state,
+        }),
+      ).rejects.toThrow(/state_invalid/);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({}, { status: 502 });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/token_exchange_failed/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({});
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/access_token_missing/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({ error: "bad_verification_code" });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/bad_verification_code/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/user") return Response.json({ login: "jsonbored" });
+      return Response.json({});
+    });
+    await expect(createSessionFromGitHubToken(env, "github-token")).resolves.toMatchObject({ login: "jsonbored", scopes: [] });
   });
 
   it("polls GitHub device flow and creates a session only after authorization", async () => {

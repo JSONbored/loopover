@@ -107,6 +107,15 @@ describe("api route guards and error branches", () => {
     const denied = await app.request("/v1/auth/github/callback?error=access_denied", {}, env);
     expect(denied.status).toBe(302);
     expect(denied.headers.get("location")).toContain("access_denied");
+
+    const missingCodeEnv = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
+    delete (missingCodeEnv as Partial<Env>).PUBLIC_SITE_ORIGIN;
+    const missingCode = await app.request("/v1/auth/github/callback?state=state-only", {}, missingCodeEnv);
+    expect(missingCode.status).toBe(302);
+    expect(missingCode.headers.get("location")).toContain("github_oauth_callback_invalid");
+    const missingState = await app.request("/v1/auth/github/callback?code=code-only", {}, env);
+    expect(missingState.status).toBe(302);
+    expect(missingState.headers.get("location")).toContain("github_oauth_callback_invalid");
   });
 
   it("limits GitHub-backed sessions to their own private contributor advisory data", async () => {

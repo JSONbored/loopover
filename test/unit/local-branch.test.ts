@@ -197,6 +197,7 @@ describe("local branch analysis", () => {
         { ...basePr, repoFullName: otherRepo.fullName, number: 3, title: "Needs changes", state: "open", reviewDecision: "CHANGES_REQUESTED" },
         { ...basePr, repoFullName: otherRepo.fullName, number: 4, title: "Stale branch", state: "open", updatedAt: "2020-01-01T00:00:00.000Z" },
         { ...basePr, repoFullName: otherRepo.fullName, number: 5, title: "Closed branch", state: "closed" },
+        { ...basePr, repoFullName: otherRepo.fullName, number: 8, title: "Already merged branch", state: "closed", mergedAt: "2026-05-20T00:00:00.000Z" },
         { ...basePr, repoFullName: repo.fullName, number: 6, title: "Maintainer lane", state: "open", authorAssociation: "OWNER" },
         { ...basePr, repoFullName: repo.fullName, number: 7, title: "Someone else's approved PR", state: "open", authorLogin: "someone-else", reviewDecision: "APPROVED" },
       ],
@@ -570,6 +571,51 @@ describe("local branch analysis", () => {
     });
 
     expect(analysis.githubBranchStatus).toMatchObject({ status: "approved", pullNumber: 31 });
+  });
+
+  it("matches current-branch checks by head SHA when GitHub omits pull numbers", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        branchName: "shared-head",
+        headSha: "head-only-sha",
+        changedFiles: [{ path: "src/checks.ts", additions: 10, deletions: 0, status: "modified" }],
+      },
+      repo,
+      issues: [],
+      pullRequests: [
+        {
+          repoFullName: repo.fullName,
+          number: 44,
+          title: "Current branch",
+          state: "open",
+          authorLogin: "oktofeesh1",
+          authorAssociation: "CONTRIBUTOR",
+          headSha: "head-only-sha",
+          headRef: "shared-head",
+          labels: [],
+          linkedIssues: [],
+        },
+      ],
+      checkSummaries: [
+        {
+          id: "check-head-only",
+          repoFullName: repo.fullName,
+          headSha: "head-only-sha",
+          name: "validate",
+          status: "completed",
+          conclusion: "failure",
+          payload: {},
+        },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.githubBranchStatus).toMatchObject({ status: "failing_checks", pullNumber: 44 });
   });
 
   it("selects only the current branch PR before status checks are loaded", () => {

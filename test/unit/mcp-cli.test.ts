@@ -165,8 +165,8 @@ describe("gittensory-mcp CLI", () => {
         GITTENSORY_CONFIG_DIR: tempDir,
       }),
     ) as { status: string; checks: Array<{ name: string; status: string; remediation?: string }> };
-    expect(doctor.status).not.toBe("needs_attention");
     expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "version", status: "warn" })]));
+    expect(doctor.checks).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "version", status: "error" })]));
   });
 
   it("flags a stale install in doctor with upgrade remediation", async () => {

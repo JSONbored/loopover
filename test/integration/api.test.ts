@@ -42,6 +42,12 @@ describe("api routes", () => {
 
     const preflight = await app.request("/v1/repos", { method: "OPTIONS", headers: { origin: "https://gittensory.aethereal.dev" } }, env);
     expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("https://gittensory.aethereal.dev");
+
+    const dynamicOriginEnv = createTestEnv({ PUBLIC_SITE_ORIGIN: "https://preview.gittensory.test/app", PUBLIC_API_ORIGIN: "not a url" });
+    const dynamicPreflight = await app.request("/v1/repos", { method: "OPTIONS", headers: { origin: "https://preview.gittensory.test" } }, dynamicOriginEnv);
+    expect(dynamicPreflight.status).toBe(204);
+    expect(dynamicPreflight.headers.get("access-control-allow-origin")).toBe("https://preview.gittensory.test");
 
     const health = await app.request("/health", {}, env);
     expect(health.status).toBe(200);
@@ -1225,6 +1231,125 @@ describe("api routes", () => {
       pullNumber: 99,
       panels: expect.arrayContaining([expect.objectContaining({ label: "Contributor", badge: "unknown" })]),
     });
+  });
+
+  it("covers live app auth, validation, and internal job queue edge routes", async () => {
+    const app = createApp();
+    const sent: Array<{ message: unknown; options?: unknown }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: unknown, options?: unknown) {
+          sent.push({ message, options });
+        },
+      } as unknown as Queue,
+    });
+    const internalHeaders = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
+
+    const oauthNotConfigured = await app.request("/v1/auth/github/start", {}, env);
+    expect(oauthNotConfigured.status).toBe(503);
+    await expect(oauthNotConfigured.json()).resolves.toMatchObject({ error: "github_oauth_not_configured" });
+
+    const oauthDenied = await app.request("/v1/auth/github/callback?error=access_denied", {}, env);
+    expect(oauthDenied.status).toBe(302);
+    expect(oauthDenied.headers.get("location")).toContain("reason=access_denied");
+    expect(oauthDenied.headers.get("set-cookie")).toContain("gittensory_oauth_state=");
+    const oauthMissingCode = await app.request("/v1/auth/github/callback?state=state-only", {}, env);
+    expect(oauthMissingCode.status).toBe(302);
+    expect(oauthMissingCode.headers.get("location")).toContain("github_oauth_callback_invalid");
+
+    const invalidDevicePoll = await app.request("/v1/auth/github/device/poll", { method: "POST", body: "{" }, env);
+    expect(invalidDevicePoll.status).toBe(400);
+    const invalidGitHubSession = await app.request("/v1/auth/github/session", { method: "POST", body: "{" }, env);
+    expect(invalidGitHubSession.status).toBe(400);
+
+    const { token: noIdToken } = await createSessionForGitHubUser(env, { login: "jsonbored" });
+    const noIdSession = await app.request("/v1/auth/session", { headers: { cookie: `gittensory_session=${noIdToken}` } }, env);
+    expect(noIdSession.status).toBe(200);
+    await expect(noIdSession.json()).resolves.toMatchObject({
+      status: "authenticated",
+      login: "jsonbored",
+      githubId: null,
+      github_id: null,
+      roles: ["miner", "maintainer", "owner", "operator"],
+    });
+
+    for (const [path, error] of [
+      ["/v1/scoring/preview", "invalid_scoring_preview_request"],
+      ["/v1/agent/runs", "invalid_agent_run_request"],
+      ["/v1/agent/plan-next-work", "invalid_agent_plan_request"],
+      ["/v1/agent/preflight-branch", "invalid_agent_preflight_branch_request"],
+      ["/v1/agent/prepare-pr-packet", "invalid_agent_prepare_pr_packet_request"],
+      ["/v1/agent/explain-blockers", "invalid_agent_explain_blockers_request"],
+    ] as const) {
+      const response = await app.request(path, { method: "POST", headers: apiHeaders(env), body: "{" }, env);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error });
+    }
+
+    const invalidCommandPreview = await app.request("/v1/app/commands/preview", { method: "POST", headers: apiHeaders(env), body: "{" }, env);
+    expect(invalidCommandPreview.status).toBe(400);
+
+    const invalidDigestJson = await app.request("/v1/app/digest/subscriptions", { method: "POST", headers: { cookie: `gittensory_session=${noIdToken}` }, body: "{" }, env);
+    expect(invalidDigestJson.status).toBe(400);
+
+    const queuedBackfillAll = await app.request("/v1/internal/jobs/backfill-registered-repos", { method: "POST", headers: internalHeaders, body: "{" }, env);
+    expect(queuedBackfillAll.status).toBe(202);
+    await expect(queuedBackfillAll.json()).resolves.toMatchObject({ ok: true, status: "queued", force: false, mode: "light" });
+
+    const queuedBackfillResume = await app.request(
+      "/v1/internal/jobs/backfill-registered-repos",
+      { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", force: true, mode: "resume" }) },
+      env,
+    );
+    expect(queuedBackfillResume.status).toBe(202);
+    await expect(queuedBackfillResume.json()).resolves.toMatchObject({ repoFullName: "owner/repo", force: true, mode: "resume" });
+
+    expect((await app.request("/v1/internal/jobs/backfill-repo-segment", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/backfill-repo-segment", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", segment: "metadata" }) }, env)).status).toBe(400);
+    const queuedSegment = await app.request(
+      "/v1/internal/jobs/backfill-repo-segment",
+      { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", segment: "labels", mode: "resume", force: true, cursor: "page-2" }) },
+      env,
+    );
+    expect(queuedSegment.status).toBe(202);
+    await expect(queuedSegment.json()).resolves.toMatchObject({ repoFullName: "owner/repo", segment: "labels", mode: "resume" });
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ type: "backfill-repo-segment", repoFullName: "owner/repo", segment: "labels", cursor: "page-2", force: true }),
+        }),
+      ]),
+    );
+
+    expect((await app.request("/v1/internal/jobs/backfill-repo-segment/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/backfill-repo-segment/run", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", segment: "metadata" }) }, env)).status).toBe(400);
+
+    expect((await app.request("/v1/internal/jobs/backfill-pr-details", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+    const queuedPrDetails = await app.request(
+      "/v1/internal/jobs/backfill-pr-details",
+      { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo", mode: "resume", cursor: "5" }) },
+      env,
+    );
+    expect(queuedPrDetails.status).toBe(202);
+    expect(sent).toEqual(expect.arrayContaining([expect.objectContaining({ message: expect.objectContaining({ type: "backfill-pr-details", cursor: 5 }) })]));
+    expect((await app.request("/v1/internal/jobs/backfill-pr-details/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+
+    expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/internal/jobs/refresh-contributor-activity", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+    const queuedContributorRefresh = await app.request(
+      "/v1/internal/jobs/refresh-contributor-activity",
+      { method: "POST", headers: internalHeaders, body: JSON.stringify({ login: "jsonbored", repoFullName: "owner/repo" }) },
+      env,
+    );
+    expect(queuedContributorRefresh.status).toBe(202);
+    await expect(queuedContributorRefresh.json()).resolves.toMatchObject({ login: "jsonbored", repoFullName: "owner/repo" });
+    expect((await app.request("/v1/internal/jobs/refresh-contributor-activity/run", { method: "POST", headers: internalHeaders, body: "{}" }, env)).status).toBe(400);
+
+    const queuedBurden = await app.request("/v1/internal/jobs/build-burden-forecasts", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo" }) }, env);
+    expect(queuedBurden.status).toBe(202);
+    const queuedSignals = await app.request("/v1/internal/jobs/generate-signal-snapshots", { method: "POST", headers: internalHeaders, body: JSON.stringify({ repoFullName: "owner/repo" }) }, env);
+    expect(queuedSignals.status).toBe(202);
+    expect((await app.request("/v1/internal/repos/owner/repo/settings", { method: "POST", headers: internalHeaders, body: JSON.stringify({ commentMode: "bad" }) }, env)).status).toBe(400);
   });
 
   it("settings-preview never mutates GitHub state", async () => {

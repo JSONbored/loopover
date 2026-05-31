@@ -1661,6 +1661,118 @@ describe("GitHub backfill", () => {
     }
   });
 
+  it("supplements REST undercounts from sparse GraphQL open-data payloads", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("GittensoryRepoTotals")) {
+          return githubTotalsResponse({ openIssues: 2, openPullRequests: 2, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+        }
+        if (query.includes("GittensoryOpenIssuesSupplement") && query.includes("after:")) {
+          return Response.json({ data: { repository: { issues: undefined } } });
+        }
+        if (query.includes("GittensoryOpenIssuesSupplement")) {
+          return Response.json({
+            data: {
+              repository: {
+                issues: {
+                  pageInfo: { hasNextPage: true, endCursor: "issue-cursor" },
+                  nodes: [
+                    null,
+                    {
+                      number: 201,
+                      title: null,
+                      state: null,
+                      url: null,
+                      createdAt: undefined,
+                      updatedAt: undefined,
+                      author: null,
+                      body: undefined,
+                      labels: { nodes: [null, { name: "bug" }] },
+                    },
+                  ],
+                },
+              },
+            },
+          });
+        }
+        if (query.includes("GittensoryOpenPullRequestsSupplement") && query.includes("after:")) {
+          return Response.json({ data: { repository: { pullRequests: undefined } } });
+        }
+        if (query.includes("GittensoryOpenPullRequestsSupplement")) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequests: {
+                  pageInfo: { hasNextPage: true, endCursor: "pr-cursor" },
+                  nodes: [
+                    null,
+                    {
+                      number: 301,
+                      title: null,
+                      state: null,
+                      url: null,
+                      createdAt: undefined,
+                      updatedAt: undefined,
+                      body: undefined,
+                      isDraft: undefined,
+                      mergeable: undefined,
+                      reviewDecision: undefined,
+                      author: null,
+                      authorAssociation: null,
+                      headRefOid: undefined,
+                      headRefName: undefined,
+                      baseRefName: undefined,
+                      labels: { nodes: [null, { name: "bug" }] },
+                    },
+                  ],
+                },
+              },
+            },
+          });
+        }
+      }
+      if (url.includes("/issues?") || url.includes("/pulls?state=open")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const issuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "full", force: true });
+    const pullRequestsResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_pull_requests", mode: "full", force: true });
+
+    expect(issuesResult).toMatchObject({ status: "partial", fetchedCount: 1, expectedCount: 2 });
+    expect(pullRequestsResult).toMatchObject({ status: "partial", fetchedCount: 1, expectedCount: 2 });
+    expect(await listIssues(env, "JSONbored/gittensory")).toEqual(expect.arrayContaining([expect.objectContaining({ number: 201, title: "Issue #201", labels: ["bug"] })]));
+    expect(await listPullRequests(env, "JSONbored/gittensory")).toEqual(expect.arrayContaining([expect.objectContaining({ number: 301, title: "Pull request #301", labels: ["bug"] })]));
+  });
+
+  it("keeps unauthenticated open-data undercounts partial when GraphQL supplements are unavailable", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env);
+    await env.DB.prepare(
+      `insert into repo_github_totals_snapshots (
+        id, repo_full_name, open_issues_total, open_pull_requests_total, merged_pull_requests_total,
+        closed_unmerged_pull_requests_total, labels_total, source_kind, fetched_at, payload_json
+      ) values ('totals-unauth', 'JSONbored/gittensory', 1, 1, 0, 0, 0, 'github', '2026-05-25T00:00:00.000Z', '{}')`,
+    ).run();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      expect(url).not.toBe("https://api.github.com/graphql");
+      if (url.includes("/issues?") || url.includes("/pulls?state=open")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const issuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "full", force: true });
+    const pullRequestsResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_pull_requests", mode: "full", force: true });
+
+    expect(issuesResult).toMatchObject({ status: "partial", fetchedCount: 0, expectedCount: 1 });
+    expect(pullRequestsResult).toMatchObject({ status: "partial", fetchedCount: 0, expectedCount: 1 });
+    expect(issuesResult.warnings.join("\n")).toContain("below expected total");
+    expect(pullRequestsResult.warnings.join("\n")).toContain("below expected total");
+  });
+
   it("skips missing repositories and preserves segment progress while waiting for rate-limit recovery", async () => {
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({

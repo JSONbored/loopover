@@ -78,7 +78,7 @@ const BUILT_TITLES = new Set<string>([
 const LINK_MAP: Record<string, { to: string; label: string }> = {
   "@gittensory GitHub command agent": { to: "/app/commands", label: "Open command simulator" },
   "Product usage analytics": { to: "/app/analytics", label: "Open analytics" },
-  "Browser extension PR overlays": { to: "/extension", label: "See the overlay demo" },
+  "Browser extension PR overlays": { to: "/extension", label: "Open extension page" },
   "PWA maintainer digest": { to: "/app/digest", label: "Preview the digest" },
   "Optional AI summaries": { to: "/docs/ai-summaries", label: "Read the policy" },
 };

@@ -24,12 +24,126 @@
           },
           "time": {
             "type": "string"
+          },
+          "minMcpVersion": {
+            "type": "string"
+          },
+          "latestRecommendedMcpVersion": {
+            "type": "string"
           }
         },
         "required": [
           "status",
           "service",
-          "time"
+          "time",
+          "minMcpVersion",
+          "latestRecommendedMcpVersion"
+        ]
+      },
+      "McpCompatibility": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "enum": [
+              "gittensory-api"
+            ]
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "mcp": {
+            "type": "object",
+            "properties": {
+              "packageName": {
+                "type": "string"
+              },
+              "minimumSupportedVersion": {
+                "type": "string"
+              },
+              "latestRecommendedVersion": {
+                "type": "string"
+              },
+              "latestPackageVersion": {
+                "type": "string"
+              },
+              "supportedVersionRange": {
+                "type": "string"
+              },
+              "upgradeCommand": {
+                "type": "string"
+              },
+              "npxFallbackCommand": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "packageName",
+              "minimumSupportedVersion",
+              "latestRecommendedVersion",
+              "latestPackageVersion",
+              "supportedVersionRange",
+              "upgradeCommand",
+              "npxFallbackCommand"
+            ]
+          },
+          "compatibilityWarnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            }
+          },
+          "breakingChanges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "mitigation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version",
+                "summary"
+              ]
+            }
+          },
+          "generatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "service",
+          "apiVersion",
+          "mcp",
+          "compatibilityWarnings",
+          "breakingChanges",
+          "generatedAt"
         ]
       },
       "RegistryRepo": {
@@ -7876,6 +7990,22 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mcp/compatibility": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Public-safe API and MCP compatibility metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpCompatibility"
                 }
               }
             }

@@ -45,7 +45,30 @@ describe("api routes", () => {
 
     const health = await app.request("/health", {}, env);
     expect(health.status).toBe(200);
-    await expect(health.json()).resolves.toMatchObject({ status: "ok", service: "gittensory-api" });
+    await expect(health.json()).resolves.toMatchObject({
+      status: "ok",
+      service: "gittensory-api",
+      minMcpVersion: "0.2.0",
+      latestRecommendedMcpVersion: "0.3.0",
+    });
+
+    const compatibility = await app.request("/v1/mcp/compatibility", {}, env);
+    expect(compatibility.status).toBe(200);
+    const compatibilityPayload = await compatibility.json();
+    expect(compatibilityPayload).toMatchObject({
+      status: "ok",
+      service: "gittensory-api",
+      apiVersion: "0.1.0",
+      mcp: {
+        packageName: "@jsonbored/gittensory-mcp",
+        minimumSupportedVersion: "0.2.0",
+        latestRecommendedVersion: "0.3.0",
+        latestPackageVersion: "0.3.0",
+      },
+      compatibilityWarnings: [],
+      breakingChanges: [],
+    });
+    expect(JSON.stringify(compatibilityPayload)).not.toMatch(/token|admin|wallet|hotkey|raw trust|scoreability|private repo|local-path/i);
 
     const unauthenticatedSpec = await app.request("/openapi.json", {}, env);
     expect(unauthenticatedSpec.status).toBe(200);

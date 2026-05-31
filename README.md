@@ -99,14 +99,15 @@ Cloudflare secrets:
 wrangler secret put GITHUB_WEBHOOK_SECRET
 wrangler secret put GITHUB_APP_PRIVATE_KEY
 wrangler secret put GITHUB_PUBLIC_TOKEN
-wrangler secret put GITHUB_OAUTH_CLIENT_ID
-wrangler secret put ADMIN_GITHUB_LOGINS
+wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
 wrangler secret put GITTENSORY_API_TOKEN
 wrangler secret put GITTENSORY_MCP_TOKEN
 wrangler secret put INTERNAL_JOB_TOKEN
 ```
 
 `GITHUB_PUBLIC_TOKEN` is a server-side token used to raise public GitHub API rate limits during registered-repo backfill. It is not a contributor token.
+
+`GITHUB_OAUTH_CLIENT_ID`, `ADMIN_GITHUB_LOGINS`, `PUBLIC_API_ORIGIN`, and `PUBLIC_SITE_ORIGIN` are API Worker runtime vars in `wrangler.jsonc`. `GITHUB_OAUTH_CLIENT_SECRET` is an API Worker runtime secret. Do not put the OAuth client secret on the UI Worker.
 
 `ADMIN_GITHUB_LOGINS` is a comma- or whitespace-separated allowlist of GitHub logins that may exchange GitHub OAuth/device-flow credentials for Gittensory API sessions. Leave it unset to disable OAuth session issuance.
 
@@ -185,7 +186,7 @@ npm run ui:preview
 
 The frontend is a TanStack Start app imported from the Lovable `gittensory-docs` project. It is deployed as the separate `gittensory-ui` Cloudflare Worker on `https://gittensory.aethereal.dev/`. The backend remains the `gittensory-api` Worker on `https://gittensory-api.aethereal.dev`.
 
-The UI Worker deploy workflow runs on `main` only when `GITTENSORY_UI_DEPLOY` is set to `true`, or when manually dispatched.
+Cloudflare Workers Builds owns automatic frontend deployments from GitHub. The `.github/workflows/ui-deploy.yml` workflow is a manual validation fallback only.
 
 ## Changelog And Releases
 

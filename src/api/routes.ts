@@ -102,6 +102,11 @@ import {
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import {
+  buildMcpCompatibilityMetadata,
+  LATEST_RECOMMENDED_MCP_VERSION,
+  MINIMUM_SUPPORTED_MCP_VERSION,
+} from "../services/mcp-compatibility";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
@@ -352,7 +357,16 @@ export function createApp() {
     return next();
   });
 
-  app.get("/health", (c) => c.json({ status: "ok", service: "gittensory-api", time: nowIso() }));
+  app.get("/health", (c) =>
+    c.json({
+      status: "ok",
+      service: "gittensory-api",
+      time: nowIso(),
+      minMcpVersion: MINIMUM_SUPPORTED_MCP_VERSION,
+      latestRecommendedMcpVersion: LATEST_RECOMMENDED_MCP_VERSION,
+    }),
+  );
+  app.get("/v1/mcp/compatibility", (c) => c.json(buildMcpCompatibilityMetadata(nowIso())));
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
 
@@ -2060,6 +2074,7 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
 
 function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
+  if (path === "/v1/mcp/compatibility") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   if (path.startsWith("/v1/auth/")) return false;
@@ -2069,15 +2084,14 @@ function requiresApiToken(path: string): boolean {
 }
 
 const DEFAULT_CORS_ORIGINS = [
-    "https://gittensory.aethereal.dev",
-    "https://gittensory-ui.zeronode.workers.dev",
-    "http://localhost:3000",
-    "http://localhost:4173",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:4173",
-    "http://127.0.0.1:5173",
-  ] as const;
+  "https://gittensory.aethereal.dev",
+  "http://localhost:3000",
+  "http://localhost:4173",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:4173",
+  "http://127.0.0.1:5173",
+] as const;
 
 function allowedCorsOrigin(env: Env, origin: string | undefined): string | null {
   if (!origin) return null;

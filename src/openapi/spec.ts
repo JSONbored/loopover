@@ -34,6 +34,7 @@ import {
   MaintainerCutReadinessSchema,
   MaintainerLaneReportSchema,
   MaintainerNoiseReportSchema,
+  McpCompatibilitySchema,
   PullRequestMaintainerPacketSchema,
   PullRequestReviewIntelligenceSchema,
   PullRequestReviewabilitySchema,
@@ -70,6 +71,7 @@ import {
 export function buildOpenApiSpec() {
   const registry = new OpenAPIRegistry();
   registry.register("Health", HealthSchema);
+  registry.register("McpCompatibility", McpCompatibilitySchema);
   registry.register("RegistrySnapshot", RegistrySnapshotSchema);
   registry.register("Repository", RepositorySchema);
   registry.register("Advisory", AdvisorySchema);
@@ -139,6 +141,13 @@ export function buildOpenApiSpec() {
     path: "/health",
     responses: {
       200: { description: "Service health", content: { "application/json": { schema: HealthSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/mcp/compatibility",
+    responses: {
+      200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
     },
   });
   registry.registerPath({
@@ -638,7 +647,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
 }
 
 function isProtectedPath(path: string): boolean {
-  if (path === "/health" || path === "/openapi.json" || path === "/mcp") return false;
+  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility") return false;
   if (path.startsWith("/v1/auth/")) return path === "/v1/auth/extension/session";
   if (path === "/v1/github/webhook") return false;
   return path.startsWith("/v1/");

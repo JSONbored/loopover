@@ -214,7 +214,7 @@ function OverlayDemo() {
             </div>
             <div className="rounded-token border border-border/50 bg-background/40 p-2 text-[12px] text-muted-foreground">
               <div className="text-foreground/80">
-                demo-miner wants to merge 1 commit into main from feat/queue-copy
+                jsonbored wants to merge 1 commit into main from feat/queue-copy
               </div>
               <div className="mt-2 grid grid-cols-3 gap-1 text-center font-mono text-token-2xs">
                 <div className="rounded bg-success/10 py-1 text-success">+12</div>

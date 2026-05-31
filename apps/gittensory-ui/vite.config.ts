@@ -7,9 +7,35 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 const shouldBuildNitro = process.env.npm_lifecycle_event?.startsWith("build") ?? false;
+const vendorChunks = [
+  ["react-vendor", ["/node_modules/react", "/node_modules/react-dom"]],
+  ["tanstack-vendor", ["/node_modules/@tanstack"]],
+  ["motion-vendor", ["/node_modules/framer-motion", "/node_modules/motion"]],
+  [
+    "ui-vendor",
+    ["/node_modules/@radix-ui", "/node_modules/cmdk", "/node_modules/sonner", "/node_modules/vaul"],
+  ],
+  [
+    "charts-vendor",
+    ["/node_modules/recharts", "/node_modules/d3-", "/node_modules/victory-vendor"],
+  ],
+] as const;
+
+function manualChunks(id: string) {
+  const normalized = id.replaceAll("\\", "/");
+  const match = vendorChunks.find(([, paths]) => paths.some((path) => normalized.includes(path)));
+  return match?.[0];
+}
 
 export default defineConfig({
   nitro: shouldBuildNitro,
+  vite: {
+    build: {
+      rollupOptions: {
+        output: { manualChunks },
+      },
+    },
+  },
   tanstackStart: {
     client: { entry: "client" },
     // Redirect production SSR builds through src/server.ts, which wraps catastrophic errors.

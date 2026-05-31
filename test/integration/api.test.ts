@@ -1160,6 +1160,25 @@ describe("api routes", () => {
     const extensionSessionBody = (await extensionSession.json()) as { token: string; login: string; scopes: string[] };
     expect(extensionSessionBody).toMatchObject({ login: "oktofeesh1", scopes: ["extension:pull_context"] });
 
+    const remintedExtensionSession = await app.request(
+      "/v1/auth/extension/session",
+      { method: "POST", headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
+      env,
+    );
+    expect(remintedExtensionSession.status).toBe(403);
+
+    const extensionDecisionPack = await app.request(
+      "/v1/contributors/oktofeesh1/decision-pack",
+      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
+      env,
+    );
+    expect(extensionDecisionPack.status).toBe(403);
+    await expect(extensionDecisionPack.json()).resolves.toMatchObject({ error: "insufficient_scope" });
+
+    const extensionOverview = await app.request("/v1/app/overview", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
+    expect(extensionOverview.status).toBe(403);
+    await expect(extensionOverview.json()).resolves.toMatchObject({ error: "insufficient_scope" });
+
     const fallbackOriginEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" });
     delete (fallbackOriginEnv as Partial<Env>).PUBLIC_API_ORIGIN;
     const { token: noIdToken } = await createSessionForGitHubUser(fallbackOriginEnv, { login: "oktofeesh1" });

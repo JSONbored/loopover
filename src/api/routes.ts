@@ -349,6 +349,7 @@ export function createApp() {
     if (!requiresApiToken(c.req.path)) return next();
     const identity = await authenticateRequestIdentity(c);
     if (!identity) return c.json({ error: "unauthorized" }, 401);
+    if (isExtensionScopedSession(identity) && c.req.path !== EXTENSION_PULL_CONTEXT_PATH) return c.json({ error: "insufficient_scope" }, 403);
     return next();
   });
 
@@ -468,12 +469,13 @@ export function createApp() {
   app.post("/v1/auth/extension/session", async (c) => {
     const identity = await authenticateRequestIdentity(c);
     if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
+    if (isExtensionScopedSession(identity)) return c.json({ error: "browser_session_required" }, 403);
     const githubUser = identity.session.githubUserId === undefined ? { login: identity.session.login } : { login: identity.session.login, id: identity.session.githubUserId };
     const { token, session } = await createSessionForGitHubUser(
       c.env,
       githubUser,
       {
-        scopes: ["extension:pull_context"],
+        scopes: [EXTENSION_PULL_CONTEXT_SCOPE],
         metadata: {
           source: "browser_extension",
           parentSessionId: identity.session.id,
@@ -2031,11 +2033,18 @@ function contributorEvidenceFromProfile(profile: {
   };
 }
 
+const EXTENSION_PULL_CONTEXT_PATH = "/v1/extension/pull-context";
+const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";
+
 type ProtectedRouteContext = {
   env: Env;
   req: { header: (name: string) => string | undefined | null };
   json: (object: { error: string }, status?: number) => Response;
 };
+
+function isExtensionScopedSession(identity: AuthIdentity): boolean {
+  return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
+}
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
   const bearer = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));

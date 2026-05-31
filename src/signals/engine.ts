@@ -1823,8 +1823,24 @@ export function buildPreflightResult(
 ): PreflightResult {
   const lane = buildLaneAdvice(repo, input.repoFullName);
   const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(input.body ?? "")])].sort((left, right) => left - right);
+  // Flag an existing open-work cluster as a possible duplicate when it shares a
+  // linked issue, OR when its title/body meaningfully overlaps the planned
+  // contribution. The previous check used `item.title.includes(input.title)`,
+  // which only matched when an existing item's title contained the *entire*
+  // planned title — so a typical (longer, more descriptive) planned PR title
+  // never matched a shorter duplicate issue, silently suppressing the warning,
+  // while a short planned title spuriously matched unrelated items. Use the same
+  // symmetric term-overlap heuristic `buildCollisionReport` uses between items
+  // (>=2 shared meaningful terms), which is direction-independent.
+  const plannedTerms = plannedContributionTerms(input);
   const collisions = buildCollisionReport(input.repoFullName, issues, pullRequests).clusters.filter((cluster) =>
-    cluster.items.some((item) => linkedIssues.includes(item.number) || item.title.toLowerCase().includes(input.title.toLowerCase())),
+    cluster.items.some((item) => {
+      if (linkedIssues.includes(item.number)) {
+        return true;
+      }
+      const overlap = termOverlap(plannedTerms, collisionTerms(item));
+      return overlap.shared >= 2 && overlap.score >= 0.5;
+    }),
   );
   const findings: SignalFinding[] = [];
   if (lane.lane === "unknown" || lane.lane === "inactive") {
@@ -2723,6 +2739,17 @@ type CollisionTerms = {
 
 function collisionTerms(item: CollisionItem): CollisionTerms {
   const terms = new Set(tokenize(collisionItemText(item)));
+  return { terms, size: terms.size };
+}
+
+/**
+ * Tokenized terms for the planned contribution, used to detect overlap with
+ * existing open work. Mirrors `collisionTerms` so the planned PR is compared to
+ * collision items with the same term-overlap heuristic `buildCollisionReport`
+ * uses between items, rather than a one-direction substring test.
+ */
+function plannedContributionTerms(input: PreflightInput): CollisionTerms {
+  const terms = new Set(tokenize([input.title, input.body ?? ""].join(" ")));
   return { terms, size: terms.size };
 }
 

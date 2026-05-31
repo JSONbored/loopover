@@ -511,6 +511,53 @@ describe("signal coverage edge cases", () => {
     expect(issueCleanup.actions.map((action) => action.actionKind)).not.toContain("land_existing_prs");
   });
 
+  it("flags possible duplicate work when the planned title overlaps an existing cluster", () => {
+    // Regression: previously the preflight used `item.title.includes(input.title)`,
+    // so a longer/more descriptive planned title never matched a shorter existing
+    // duplicate and the `possible_duplicate_work` warning was silently dropped.
+    const directRepo = repo("owner/direct");
+    const issues = [issue(directRepo.fullName, 41, "Login redirect loop on OAuth callback fails")];
+    const pullRequests = [
+      pr(directRepo.fullName, 42, "Fix login redirect loop OAuth callback", { authorLogin: "dev", linkedIssues: [] }),
+    ];
+
+    const preflight = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        // Longer than either existing item's title and not linked to them — only
+        // direction-independent term overlap can flag it.
+        title: "Resolve the login redirect loop happening at the OAuth callback",
+        body: "",
+        changedFiles: ["src/auth.ts"],
+        linkedIssues: [],
+      },
+      directRepo,
+      issues,
+      pullRequests,
+    );
+
+    expect(preflight.findings.map((finding) => finding.code)).toContain("possible_duplicate_work");
+  });
+
+  it("does not flag duplicate work for a short planned title that merely shares one word", () => {
+    // The symmetric overlap requires >=2 shared meaningful terms, so a one-word
+    // planned title no longer spuriously matches unrelated open work.
+    const directRepo = repo("owner/direct");
+    const issues = [issue(directRepo.fullName, 51, "Login page refactor with new theme system")];
+    const pullRequests = [
+      pr(directRepo.fullName, 52, "Login page redesign and theme cleanup", { authorLogin: "dev", linkedIssues: [] }),
+    ];
+
+    const preflight = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: "Login", body: "", changedFiles: ["src/cache.ts"], linkedIssues: [] },
+      directRepo,
+      issues,
+      pullRequests,
+    );
+
+    expect(preflight.findings.map((finding) => finding.code)).not.toContain("possible_duplicate_work");
+  });
+
   it("sanitizes public PR comments and supports minimal public signal level", () => {
     const directRepo = repo("owner/direct");
     const prRecord = pr(directRepo.fullName, 55, "Fix cache", { authorLogin: "miner", linkedIssues: [] });

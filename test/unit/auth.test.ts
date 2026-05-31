@@ -132,6 +132,15 @@ describe("private-beta auth and rate limiting", () => {
     const deniedWithTokenResponse = await enforceRateLimit(deniedWithToken, "expensive");
     expect(deniedWithTokenResponse?.headers.get("retry-after")).toBe("17");
     expect(deniedWithTokenResponse?.headers.get("x-ratelimit-reset")).toBe("2026-05-25T00:03:00.000Z");
+    const deniedWithoutReset = fakeContext(
+      createTestEnv({
+        RATE_LIMITER: rateLimiterNamespace({ status: 429, body: { limit: 20, remaining: 0 } }) as unknown as DurableObjectNamespace,
+      }),
+      "/v1/local/branch-analysis",
+      { authorization: "Bearer session-token" },
+    );
+    const deniedWithoutResetResponse = await enforceRateLimit(deniedWithoutReset, "expensive");
+    expect(deniedWithoutResetResponse?.headers.get("x-ratelimit-reset")).toBeNull();
     const tokenAudit = await deniedWithTokenEnv.DB.prepare("select actor, metadata_json from audit_events where event_type = ?").bind("rate_limit.denied").first<{
       actor: string;
       metadata_json: string;

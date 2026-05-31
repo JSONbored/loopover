@@ -263,6 +263,23 @@ describe("api route guards and error branches", () => {
     );
     expect(frontendPreflight.headers.get("access-control-allow-origin")).toBe("https://gittensory.aethereal.dev");
 
+    const customOriginEnv = createTestEnv({
+      PUBLIC_API_ORIGIN: "not a url",
+      PUBLIC_SITE_ORIGIN: "https://preview.example/app",
+    });
+    const customOriginPreflight = await app.request(
+      "/v1/repos",
+      {
+        method: "OPTIONS",
+        headers: { origin: "https://preview.example", "access-control-request-method": "GET" },
+      },
+      customOriginEnv,
+    );
+    expect(customOriginPreflight.headers.get("access-control-allow-origin")).toBe("https://preview.example");
+
+    const noOriginPreflight = await app.request("/v1/repos", { method: "OPTIONS" }, env);
+    expect(noOriginPreflight.headers.get("access-control-allow-origin")).toBeNull();
+
     const limitedEnv = createTestEnv({ RATE_LIMITER: denyAllRateLimiter() as unknown as DurableObjectNamespace });
     const limited = await app.request("/v1/auth/github/device/start", { method: "POST" }, limitedEnv);
     expect(limited.status).toBe(429);
@@ -460,6 +477,8 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/internal/jobs/generate-signal-snapshots", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/refresh-scoring-model", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/refresh-scoring-model/run", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/refresh-upstream-drift", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/file-upstream-drift-issues", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/build-contributor-evidence", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs/run", { method: "POST" }, env)).status).toBe(401);
@@ -589,6 +608,10 @@ describe("api route guards and error branches", () => {
 
     const queuedScoring = await app.request("/v1/internal/jobs/refresh-scoring-model", { method: "POST", headers: internalHeaders(env) }, env);
     expect(queuedScoring.status).toBe(202);
+    const queuedUpstreamDrift = await app.request("/v1/internal/jobs/refresh-upstream-drift", { method: "POST", headers: internalHeaders(env) }, env);
+    expect(queuedUpstreamDrift.status).toBe(202);
+    const queuedUpstreamDriftIssues = await app.request("/v1/internal/jobs/file-upstream-drift-issues", { method: "POST", headers: internalHeaders(env) }, env);
+    expect(queuedUpstreamDriftIssues.status).toBe(202);
     const queuedEvidence = await app.request("/v1/internal/jobs/build-contributor-evidence", {
       method: "POST",
       headers: internalHeaders(env),
@@ -631,6 +654,8 @@ describe("api route guards and error branches", () => {
     expect(queued).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "refresh-scoring-model" }),
+        expect.objectContaining({ type: "refresh-upstream-drift" }),
+        expect.objectContaining({ type: "file-upstream-drift-issues" }),
         expect.objectContaining({ type: "build-contributor-evidence", login: "oktofeesh1" }),
         expect.objectContaining({ type: "build-contributor-decision-packs", login: "oktofeesh1" }),
         expect.objectContaining({ type: "refresh-contributor-activity", login: "jsonbored", repoFullName: "JSONbored/gittensory" }),

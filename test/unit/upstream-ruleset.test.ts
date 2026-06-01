@@ -406,8 +406,32 @@ describe("upstream ruleset drift tracking", () => {
 
     const updateEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "yes", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(updateEnv, driftReport("existing-fingerprint"));
-    vi.stubGlobal("fetch", githubIssueFetch({ existing: { number: 88, url: "https://github.com/JSONbored/gittensory/issues/88", fingerprint: "existing-fingerprint" } }));
+    const updateCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        existing: { number: 88, url: "https://github.com/JSONbored/gittensory/issues/88", fingerprint: "existing-fingerprint" },
+        update: { number: 88, url: "https://github.com/JSONbored/gittensory/issues/88" },
+        calls: updateCalls,
+      }),
+    );
     await expect(fileUpstreamDriftIssues(updateEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+    expect(updateCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ method: "GET", url: "https://api.github.com/repos/JSONbored/gittensory/issues?state=open&labels=signals&per_page=50" }),
+        expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/88" }),
+      ]),
+    );
+    const updateBody = updateCalls.find((call) => call.method === "PATCH")?.body;
+    expect(updateBody).toMatchObject({
+      title: "chore(upstream): reconcile Gittensor drift existing",
+      labels: ["signals", "scoring", "data", "high-impact"],
+      assignees: ["jsonbored"],
+    });
+    expect(String(updateBody?.body)).toContain("<!-- gittensory-upstream-drift:existing-fingerprint -->");
+    expect(String(updateBody?.body)).toContain("## Suggested Tests");
+    expect(String(updateBody?.body)).toContain("gittensor/constants.py");
+    expect(String(updateBody?.body)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
 
     const failingEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "on", GITHUB_PUBLIC_TOKEN: "token" });
     await upsertUpstreamDriftReport(failingEnv, driftReport("failing-fingerprint"));
@@ -421,6 +445,20 @@ describe("upstream ruleset drift tracking", () => {
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 91, url: "https://github.com/JSONbored/gittensory/issues/91" } }));
     await expect(fileUpstreamDriftIssues(defaultRepoEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
 
+    const areaSourceEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(
+      areaSourceEnv,
+      driftReport("area-source-paths", { severity: "medium", affectedAreas: ["registry", "issue_discovery", "mirror_linkage", "language_weights"] }),
+    );
+    const areaSourceCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 95, url: "https://github.com/JSONbored/gittensory/issues/95" }, calls: areaSourceCalls }));
+    await expect(fileUpstreamDriftIssues(areaSourceEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    const areaSourceBody = String(areaSourceCalls.find((call) => call.method === "POST")?.body?.body);
+    expect(areaSourceBody).toContain("gittensor/validator/weights/master_repositories.json");
+    expect(areaSourceBody).toContain("gittensor/validator/issue_discovery/scan.py");
+    expect(areaSourceBody).toContain("gittensor/utils/mirror/models.py");
+    expect(areaSourceBody).toContain("gittensor/validator/weights/programming_languages.json");
+
     const missingPayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(missingPayloadEnv, driftReport("missing-payload", { currentRulesetId: null, previousRulesetId: null }));
     vi.stubGlobal("fetch", githubIssueFetch({ createPayload: {} }));
@@ -430,6 +468,23 @@ describe("upstream ruleset drift tracking", () => {
     await upsertUpstreamDriftReport(throwingListEnv, driftReport("throwing-list"));
     vi.stubGlobal("fetch", githubIssueFetch({ throwOnList: true, create: { number: 92, url: "https://github.com/JSONbored/gittensory/issues/92" } }));
     await expect(fileUpstreamDriftIssues(throwingListEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+
+    const linkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(linkedEnv, driftReport("linked-fingerprint", { issueNumber: 93, issueUrl: "https://github.com/JSONbored/gittensory/issues/93" }));
+    const linkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ update: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93" }, calls: linkedCalls }));
+    await expect(fileUpstreamDriftIssues(linkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+    expect(linkedCalls).toEqual([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" })]);
+
+    const failingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(failingLinkedEnv, driftReport("failing-linked", { issueNumber: 94, issueUrl: "https://github.com/JSONbored/gittensory/issues/94" }));
+    vi.stubGlobal("fetch", githubIssueFetch({ updateStatus: 500 }));
+    await expect(fileUpstreamDriftIssues(failingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+
+    const missingUpdatePayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(missingUpdatePayloadEnv, driftReport("missing-update-payload", { issueNumber: 96, issueUrl: "https://github.com/JSONbored/gittensory/issues/96" }));
+    vi.stubGlobal("fetch", githubIssueFetch({ updatePayload: {} }));
+    await expect(fileUpstreamDriftIssues(missingUpdatePayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const disabledEnv = createTestEnv();
     delete (disabledEnv as Partial<Env>).GITTENSORY_AUTO_FILE_DRIFT_ISSUES;
@@ -559,16 +614,32 @@ function upstreamFailedFetch() {
   };
 }
 
+type GitHubIssueFetchCall = {
+  url: string;
+  method: string;
+  body: Record<string, unknown> | null;
+};
+
 function githubIssueFetch(options: {
   existing?: { number: number; url: string; fingerprint: string };
   create?: { number: number; url: string };
   createPayload?: Record<string, unknown>;
+  update?: { number: number; url: string };
+  updatePayload?: Record<string, unknown>;
   listStatus?: number;
   createStatus?: number;
+  updateStatus?: number;
   throwOnList?: boolean;
+  calls?: GitHubIssueFetchCall[];
 }) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = input.toString();
+    const method = init?.method ?? "GET";
+    options.calls?.push({
+      url,
+      method,
+      body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null,
+    });
     if (url.endsWith("/issues?state=open&labels=signals&per_page=50")) {
       if (options.throwOnList) throw new Error("list failed");
       if (options.listStatus) return new Response("list failed", { status: options.listStatus });
@@ -578,7 +649,14 @@ function githubIssueFetch(options: {
           : [],
       );
     }
-    if (url.endsWith("/issues") && init?.method === "POST") {
+    const issueMatch = url.match(/\/issues\/(\d+)$/);
+    if (issueMatch && method === "PATCH") {
+      if (options.updateStatus) return new Response("update failed", { status: options.updateStatus });
+      if (options.updatePayload) return Response.json(options.updatePayload);
+      const number = options.update?.number ?? Number(issueMatch[1]);
+      return Response.json({ number, html_url: options.update?.url ?? `https://github.com/JSONbored/gittensory/issues/${number}` });
+    }
+    if (url.endsWith("/issues") && method === "POST") {
       if (options.createStatus) return new Response("create failed", { status: options.createStatus });
       if (options.createPayload) return Response.json(options.createPayload);
       return Response.json({ number: options.create?.number ?? 99, html_url: options.create?.url ?? "https://github.com/JSONbored/gittensory/issues/99" });

@@ -1,6 +1,6 @@
 import type { ScorePreviewInput, ScorePreviewResult } from "../scoring/preview";
 import { buildScorePreview } from "../scoring/preview";
-import type { CheckSummaryRecord, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
+import type { BountyRecord, CheckSummaryRecord, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { nowIso } from "../utils/json";
 import {
   buildLaneAdvice,
@@ -169,6 +169,7 @@ export function buildLocalBranchAnalysis(args: {
   pullRequests: PullRequestRecord[];
   contributorPullRequests?: PullRequestRecord[] | undefined;
   recentMergedPullRequests?: RecentMergedPullRequestRecord[] | undefined;
+  bounties?: BountyRecord[] | undefined;
   repositories?: RepositoryRecord[] | undefined;
   checkSummaries?: CheckSummaryRecord[] | undefined;
   profile: ContributorProfile;
@@ -200,6 +201,7 @@ export function buildLocalBranchAnalysis(args: {
     args.repo,
     args.issues,
     args.pullRequests,
+    args.bounties ?? [],
     args.issueQuality,
   );
   const roleContext = buildRoleContext({

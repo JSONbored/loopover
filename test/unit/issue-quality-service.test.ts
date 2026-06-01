@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { persistSignalSnapshot, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { loadIssueQualityReportMap, loadOrComputeIssueQualityResponse } from "../../src/services/issue-quality";
 import { createTestEnv } from "../helpers/d1";
 
@@ -57,6 +57,43 @@ describe("issue-quality service", () => {
     await expect(loadOrComputeIssueQualityResponse(env, "owner/cached")).resolves.toMatchObject({ source: "snapshot", generatedAt: "2026-05-30T00:00:00.000Z" });
     await expect(loadOrComputeIssueQualityResponse(env, "owner/computed")).resolves.toMatchObject({ source: "computed", repoFullName: "owner/computed" });
     await expect(loadOrComputeIssueQualityResponse(env, "owner/missing")).resolves.toBeNull();
+  });
+
+  it("feeds real bounty state into the computed issue-quality report", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, {
+      name: "bountied",
+      full_name: "owner/bountied",
+      private: false,
+      owner: { login: "owner" },
+      default_branch: "main",
+    });
+    await upsertIssueFromGitHub(env, "owner/bountied", {
+      number: 7,
+      title: "Dashboard cache refresh fails after reconnect",
+      state: "open",
+      html_url: "https://github.com/owner/bountied/issues/7",
+      user: { login: "reporter" },
+      labels: [{ name: "bug" }],
+      body: "Cache refresh fails after reconnect. ".repeat(12),
+    });
+    await upsertBounty(env, {
+      id: "bounty-7",
+      repoFullName: "owner/bountied",
+      issueNumber: 7,
+      status: "Completed",
+      amountText: "0.0000",
+      sourceUrl: "contract://issues/7",
+      payload: { target_alpha: "5.0000", bounty_alpha: "0.0000" },
+    });
+
+    const response = await loadOrComputeIssueQualityResponse(env, "owner/bountied");
+    expect(response?.source).toBe("computed");
+    const issue = response?.report.issues.find((entry) => entry.number === 7);
+    // A completed bounty must block the issue as a contribution opportunity — proves bounties are
+    // actually wired into the computed report (regression guard: callers previously passed []).
+    expect(issue?.status).toBe("do_not_use");
+    expect(issue?.warnings).toEqual(expect.arrayContaining([expect.stringContaining("completed bounty")]));
   });
 
   it("falls back to payload or current timestamps for sparse cached snapshots", async () => {

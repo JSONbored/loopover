@@ -258,9 +258,9 @@ describe("signal coverage edge cases", () => {
     expect(burden.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["queue_growth_risk"]));
     expect(buildBurdenForecast(directRepo, [], Array.from({ length: 5 }, (_, index) => pr(directRepo.fullName, index + 300, `Medium PR ${index}`, { linkedIssues: [index] })), buildCollisionReport(directRepo.fullName, [], []), 7).level).toBe("medium");
     expect(buildBurdenForecast(directRepo, [], Array.from({ length: 12 }, (_, index) => pr(directRepo.fullName, index + 400, `High PR ${index}`, { linkedIssues: [index] })), buildCollisionReport(directRepo.fullName, [], []), 7).level).toBe("high");
-    expect(historicalBounty).toMatchObject({ lifecycle: "historical", fundingStatus: "target_only", consensusRisk: "low" });
-    expect(activeBounty).toMatchObject({ lifecycle: "active", fundingStatus: "funded", consensusRisk: "low" });
-    expect(historicalBounty.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["historical_bounty", "bounty_repo_unregistered", "bounty_issue_not_cached"]));
+    expect(historicalBounty).toMatchObject({ lifecycle: "cancelled", isActiveOpportunity: false, fundingStatus: "target_only", consensusRisk: "low" });
+    expect(activeBounty).toMatchObject({ lifecycle: "active", isActiveOpportunity: true, fundingStatus: "funded", consensusRisk: "low" });
+    expect(historicalBounty.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["cancelled_bounty", "bounty_repo_unregistered", "bounty_issue_not_cached"]));
 
     const stalePr = pr(directRepo.fullName, 20, "Misc refactor cleanup various things", {
       linkedIssues: [],
@@ -511,6 +511,53 @@ describe("signal coverage edge cases", () => {
     expect(issueCleanup.actions.map((action) => action.actionKind)).not.toContain("land_existing_prs");
   });
 
+  it("flags possible duplicate work when the planned title overlaps an existing cluster", () => {
+    // Regression: previously the preflight used `item.title.includes(input.title)`,
+    // so a longer/more descriptive planned title never matched a shorter existing
+    // duplicate and the `possible_duplicate_work` warning was silently dropped.
+    const directRepo = repo("owner/direct");
+    const issues = [issue(directRepo.fullName, 41, "Login redirect loop on OAuth callback fails")];
+    const pullRequests = [
+      pr(directRepo.fullName, 42, "Fix login redirect loop OAuth callback", { authorLogin: "dev", linkedIssues: [] }),
+    ];
+
+    const preflight = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        // Longer than either existing item's title and not linked to them — only
+        // direction-independent term overlap can flag it.
+        title: "Resolve the login redirect loop happening at the OAuth callback",
+        body: "",
+        changedFiles: ["src/auth.ts"],
+        linkedIssues: [],
+      },
+      directRepo,
+      issues,
+      pullRequests,
+    );
+
+    expect(preflight.findings.map((finding) => finding.code)).toContain("possible_duplicate_work");
+  });
+
+  it("does not flag duplicate work for a short planned title that merely shares one word", () => {
+    // The symmetric overlap requires >=2 shared meaningful terms, so a one-word
+    // planned title no longer spuriously matches unrelated open work.
+    const directRepo = repo("owner/direct");
+    const issues = [issue(directRepo.fullName, 51, "Login page refactor with new theme system")];
+    const pullRequests = [
+      pr(directRepo.fullName, 52, "Login page redesign and theme cleanup", { authorLogin: "dev", linkedIssues: [] }),
+    ];
+
+    const preflight = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: "Login", body: "", changedFiles: ["src/cache.ts"], linkedIssues: [] },
+      directRepo,
+      issues,
+      pullRequests,
+    );
+
+    expect(preflight.findings.map((finding) => finding.code)).not.toContain("possible_duplicate_work");
+  });
+
   it("sanitizes public PR comments and supports minimal public signal level", () => {
     const directRepo = repo("owner/direct");
     const prRecord = pr(directRepo.fullName, 55, "Fix cache", { authorLogin: "miner", linkedIssues: [] });
@@ -580,6 +627,43 @@ describe("signal coverage edge cases", () => {
 
     expect(audit.observedLabels.slice(0, 2).map((label) => label.name)).toEqual(["bug", "feature"]);
     expect(audit.findings.map((finding) => finding.code)).toContain("suspicious_configured_labels");
+  });
+
+  it("awards the personalFit language bonus only on a real repo-language match", () => {
+    const targetRepo = repo("owner/lang-fit");
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const history = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [targetRepo],
+      pullRequests: [],
+      issues: [],
+      repoStats: [],
+    });
+    const fit = buildContributorFit(profile, [targetRepo], [], [], [], []);
+    const scoringProfile = buildContributorScoringProfile({ login: "dev", fit, scoringSnapshot: scoringSnapshot() });
+    const base = {
+      login: "dev",
+      repo: targetRepo,
+      repoFullName: targetRepo.fullName,
+      profile,
+      outcomeHistory: history,
+      scoringSnapshot: scoringSnapshot(),
+      scoringProfile,
+      issues: [],
+      pullRequests: [],
+    };
+
+    // Match is case-insensitive ("TypeScript" vs the contributor's "typescript").
+    const matched = buildRepoRewardRisk({ ...base, repoLanguage: "TypeScript" });
+    // Off-language repo: the contributor does not work in Rust, so no bonus.
+    const offLanguage = buildRepoRewardRisk({ ...base, repoLanguage: "Rust" });
+    // Unknown repo language: nothing to compare, so no bonus (must not fall back to a presence-only check).
+    const unknownLanguage = buildRepoRewardRisk({ ...base, repoLanguage: null });
+
+    const fitOf = (result: ReturnType<typeof buildRepoRewardRisk>) => result.actions[0]?.personalFitScore;
+    expect(fitOf(matched)).toBe((fitOf(offLanguage) ?? 0) + 10);
+    expect(fitOf(unknownLanguage)).toBe(fitOf(offLanguage));
   });
 });
 

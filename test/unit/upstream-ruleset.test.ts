@@ -445,6 +445,20 @@ describe("upstream ruleset drift tracking", () => {
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 91, url: "https://github.com/JSONbored/gittensory/issues/91" } }));
     await expect(fileUpstreamDriftIssues(defaultRepoEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
 
+    const areaSourceEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(
+      areaSourceEnv,
+      driftReport("area-source-paths", { severity: "medium", affectedAreas: ["registry", "issue_discovery", "mirror_linkage", "language_weights"] }),
+    );
+    const areaSourceCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 95, url: "https://github.com/JSONbored/gittensory/issues/95" }, calls: areaSourceCalls }));
+    await expect(fileUpstreamDriftIssues(areaSourceEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    const areaSourceBody = String(areaSourceCalls.find((call) => call.method === "POST")?.body?.body);
+    expect(areaSourceBody).toContain("gittensor/validator/weights/master_repositories.json");
+    expect(areaSourceBody).toContain("gittensor/validator/issue_discovery/scan.py");
+    expect(areaSourceBody).toContain("gittensor/utils/mirror/models.py");
+    expect(areaSourceBody).toContain("gittensor/validator/weights/programming_languages.json");
+
     const missingPayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(missingPayloadEnv, driftReport("missing-payload", { currentRulesetId: null, previousRulesetId: null }));
     vi.stubGlobal("fetch", githubIssueFetch({ createPayload: {} }));
@@ -466,6 +480,11 @@ describe("upstream ruleset drift tracking", () => {
     await upsertUpstreamDriftReport(failingLinkedEnv, driftReport("failing-linked", { issueNumber: 94, issueUrl: "https://github.com/JSONbored/gittensory/issues/94" }));
     vi.stubGlobal("fetch", githubIssueFetch({ updateStatus: 500 }));
     await expect(fileUpstreamDriftIssues(failingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+
+    const missingUpdatePayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(missingUpdatePayloadEnv, driftReport("missing-update-payload", { issueNumber: 96, issueUrl: "https://github.com/JSONbored/gittensory/issues/96" }));
+    vi.stubGlobal("fetch", githubIssueFetch({ updatePayload: {} }));
+    await expect(fileUpstreamDriftIssues(missingUpdatePayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const disabledEnv = createTestEnv();
     delete (disabledEnv as Partial<Env>).GITTENSORY_AUTO_FILE_DRIFT_ISSUES;

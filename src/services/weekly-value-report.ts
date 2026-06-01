@@ -144,12 +144,20 @@ export function buildWeeklyValueReport(args: WeeklyValueReportInputs): WeeklyVal
     activeSessions: args.activeSessions ?? 0,
     digestSubscriptions: args.digestSubscriptions ?? 0,
   });
-  const summary = [
-    `Adoption: ${args.usageSummary.activeActors} active user(s), ${aggregate.activeRepos} active repo(s), ${aggregate.totalEvents} product event(s) in the last ${days} day(s).`,
-    `Usage: ${aggregate.mcpEvents} MCP event(s), ${aggregate.githubCommandEvents} GitHub command event(s), ${aggregate.prPreflights} PR preflight event(s), and ${aggregate.prPackets} PR packet event(s).`,
-    `Maintainer value: ${aggregate.quietSkips} quiet skip(s), ${aggregate.maintainerSignals} maintainer-value signal(s), and ${aggregate.driftDetections} open drift report(s).`,
-    `Coverage: ${registeredRepos} registered repo(s), ${installedRepos} installed repo(s), ${args.installations.length} GitHub App installation(s).`,
-  ].map(sanitizeReportText);
+  const summary = (
+    variant === "public"
+      ? [
+          `Adoption: ${args.usageSummary.activeActors} active user(s) and ${aggregate.activeRepos} active repo(s) in the last ${days} day(s).`,
+          `Usage: ${aggregate.mcpEvents} MCP event(s), ${aggregate.githubCommandEvents} GitHub command event(s), ${aggregate.prPreflights} PR preflight event(s), and ${aggregate.prPackets} PR packet event(s).`,
+          `Maintainer value: ${aggregate.quietSkips} quiet skip(s), ${aggregate.maintainerSignals} maintainer-value signal(s), and ${aggregate.driftDetections} open drift report(s).`,
+        ]
+      : [
+          `Adoption: ${args.usageSummary.activeActors} active user(s), ${aggregate.activeRepos} active repo(s), ${aggregate.totalEvents} product event(s) in the last ${days} day(s).`,
+          `Usage: ${aggregate.mcpEvents} MCP event(s), ${aggregate.githubCommandEvents} GitHub command event(s), ${aggregate.prPreflights} PR preflight event(s), and ${aggregate.prPackets} PR packet event(s).`,
+          `Maintainer value: ${aggregate.quietSkips} quiet skip(s), ${aggregate.maintainerSignals} maintainer-value signal(s), and ${aggregate.driftDetections} open drift report(s).`,
+          `Coverage: ${registeredRepos} registered repo(s), ${installedRepos} installed repo(s), ${args.installations.length} GitHub App installation(s).`,
+        ]
+  ).map(sanitizeReportText);
   return {
     generatedAt: args.generatedAt,
     variant,

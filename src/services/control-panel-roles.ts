@@ -3,7 +3,7 @@ import { getFreshOfficialMinerDetection, listAllPullRequests, listInstallations,
 import type { ControlPanelRoleCard, ControlPanelRoleName, ControlPanelRoleSummary, InstallationRecord, PullRequestRecord, RepositoryRecord } from "../types";
 import { nowIso } from "../utils/json";
 
-type RoleSummaryInputs = {
+export type RoleSummaryInputs = {
   login: string;
   generatedAt: string;
   confirmedMiner: boolean;
@@ -12,6 +12,26 @@ type RoleSummaryInputs = {
   installations: InstallationRecord[];
   pullRequests: PullRequestRecord[];
 };
+
+export type ControlPanelAccessScope = {
+  operator: boolean;
+  repositoryFullNames: string[];
+  installationIds: number[];
+  accountLogins: string[];
+};
+
+export async function loadControlPanelAccessScope(env: Env, login: string): Promise<ControlPanelAccessScope> {
+  const [repositories, installations, pullRequests] = await Promise.all([listRepositories(env), listInstallations(env), listAllPullRequests(env)]);
+  return buildControlPanelAccessScope({
+    login,
+    generatedAt: nowIso(),
+    confirmedMiner: false,
+    operator: isAuthorizedGitHubSessionLogin(env, login),
+    repositories,
+    installations,
+    pullRequests,
+  });
+}
 
 export async function loadControlPanelRoleSummary(env: Env, login: string): Promise<ControlPanelRoleSummary> {
   const [miner, repositories, installations, pullRequests] = await Promise.all([
@@ -29,6 +49,33 @@ export async function loadControlPanelRoleSummary(env: Env, login: string): Prom
     installations,
     pullRequests,
   });
+}
+
+export function buildControlPanelAccessScope(args: RoleSummaryInputs): ControlPanelAccessScope {
+  const installedRepos = args.repositories.filter((repo) => repo.isInstalled);
+  const accountInstallations = args.installations.filter((installation) => !installation.suspendedAt && sameLogin(installation.accountLogin, args.login));
+  const accountInstallationIds = new Set(accountInstallations.map((installation) => installation.id));
+  const ownedInstalledRepos = installedRepos.filter((repo) => sameLogin(repo.owner, args.login) || (repo.installationId !== undefined && repo.installationId !== null && accountInstallationIds.has(repo.installationId)));
+  const maintainerRepos = uniqueRepoNames(
+    args.pullRequests
+      .filter((pull) => sameLogin(pull.authorLogin, args.login) && isMaintainerAssociation(pull.authorAssociation))
+      .map((pull) => pull.repoFullName)
+      .filter((repoFullName) => installedRepos.some((repo) => sameRepo(repo.fullName, repoFullName))),
+  );
+  const scopedRepoNames = uniqueRepoNames([...ownedInstalledRepos.map((repo) => repo.fullName), ...maintainerRepos]);
+  const scopedInstallationIds = new Set(accountInstallations.map((installation) => installation.id));
+  for (const repo of installedRepos) {
+    if (scopedRepoNames.some((repoFullName) => sameRepo(repo.fullName, repoFullName)) && repo.installationId !== undefined && repo.installationId !== null) {
+      scopedInstallationIds.add(repo.installationId);
+    }
+  }
+  const scopedAccountLogins = uniqueLogins(accountInstallations.map((installation) => installation.accountLogin));
+  return {
+    operator: args.operator,
+    repositoryFullNames: scopedRepoNames,
+    installationIds: [...scopedInstallationIds],
+    accountLogins: scopedAccountLogins,
+  };
 }
 
 export function buildControlPanelRoleSummary(args: RoleSummaryInputs): ControlPanelRoleSummary {
@@ -181,7 +228,15 @@ function roleCard(role: ControlPanelRoleName, status: ControlPanelRoleCard["stat
 }
 
 function uniqueRepos(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean).map(sanitizeRoleText))].sort((a, b) => a.localeCompare(b));
+  return uniqueRepoNames(values).map(sanitizeRoleText);
+}
+
+function uniqueRepoNames(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function uniqueLogins(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
 function sameLogin(value: string | null | undefined, login: string): boolean {

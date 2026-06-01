@@ -12,6 +12,7 @@ import {
   upsertRecentMergedPullRequest,
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
+  recordProductUsageEvent,
   recordGitHubRateLimitObservation,
   listProductUsageEvents,
   listLatestSignalSnapshotsByTarget,
@@ -24,6 +25,7 @@ import {
   persistScoringModelSnapshot,
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
+  createAgentRun,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
@@ -1005,12 +1007,13 @@ describe("api routes", () => {
 
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
     const app = createApp();
-    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other" });
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other", PRODUCT_USAGE_HASH_SALT: "usage-adoption-test-salt" });
     await seedSignalData(env);
     stubOktofeeshFetch();
 
     const { token: browserToken } = await createSessionForGitHubUser(env, { login: "oktofeesh1", id: 12345 });
     const cookieHeaders = { cookie: `gittensory_session=${browserToken}`, "content-type": "application/json" };
+    const internalHeaders = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
 
     const overviewPreflight = await app.request("/v1/app/overview", { method: "OPTIONS", headers: { origin: "https://gittensory.aethereal.dev" } }, env);
     expect(overviewPreflight.status).toBe(204);
@@ -1094,6 +1097,9 @@ describe("api routes", () => {
     expect(unknownOverview.status).toBe(200);
     await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/analytics/daily-rollups", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/analytics/weekly-value-report", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/contributors/new-user/decision-pack", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/auth/extension/session", { method: "POST", headers: unknownHeaders }, unknownEnv)).status).toBe(403);
 
@@ -1118,6 +1124,14 @@ describe("api routes", () => {
     });
     expect((await app.request("/v1/app/maintainer-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(200);
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    const ownerWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerWeeklyReport.status).toBe(200);
+    const ownerWeeklyReportBody = await ownerWeeklyReport.json();
+    expect(ownerWeeklyReportBody).toMatchObject({ variant: "public", publicSafe: true });
+    expect(ownerWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    expect((await app.request("/v1/app/analytics/weekly-value-report?variant=operator", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
     expect(ownerExtensionSession.status).toBe(201);
     const ownerExtensionSessionBody = (await ownerExtensionSession.json()) as { token: string; login: string; scopes: string[] };
@@ -1282,7 +1296,7 @@ describe("api routes", () => {
     await expect(operator.json()).resolves.toMatchObject({
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Active sessions" }), expect.objectContaining({ label: "Digest subscriptions" })]),
       noiseReduction: expect.any(Array),
-      weeklyReport: expect.arrayContaining([expect.stringContaining("registered repos")]),
+      weeklyReport: expect.arrayContaining([expect.stringContaining("registered repo")]),
     });
 
     const commands = await app.request("/v1/app/commands", { headers: apiHeaders(env) }, env);
@@ -1452,6 +1466,24 @@ describe("api routes", () => {
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Install issues", delta: "needs attention" })]),
       rateLimits: expect.arrayContaining([expect.objectContaining({ id: "rate-limit-rest" })]),
     });
+    await createAgentRun(env, {
+      id: "completed-overview-run",
+      objective: "Show completed overview run",
+      actorLogin: "oktofeesh1",
+      surface: "api",
+      mode: "copilot",
+      status: "completed",
+      dataQualityStatus: "complete",
+      payload: { kind: "plan_next_work" },
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:05:00.000Z",
+    });
+    const overviewWithRuns = await app.request("/v1/app/overview", { headers: cookieHeaders }, env);
+    expect(overviewWithRuns.status).toBe(200);
+    await expect(overviewWithRuns.json()).resolves.toMatchObject({
+      metrics: expect.arrayContaining([expect.objectContaining({ label: "Agent runs", total: 1 })]),
+      recentRuns: expect.arrayContaining([expect.objectContaining({ run: expect.objectContaining({ id: "completed-overview-run", status: "completed" }) })]),
+    });
 
     const forbiddenRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(forbiddenRuns.status).toBe(403);
@@ -1476,10 +1508,25 @@ describe("api routes", () => {
       env,
     );
     expect(queuedIssueAgentRun.status).toBe(202);
+    const overviewWithQueuedRuns = await app.request("/v1/app/overview", { headers: cookieHeaders }, env);
+    expect(overviewWithQueuedRuns.status).toBe(200);
+    await expect(overviewWithQueuedRuns.json()).resolves.toMatchObject({
+      metrics: expect.arrayContaining([expect.objectContaining({ label: "Agent runs", total: 4 })]),
+      recentRuns: expect.arrayContaining([expect.objectContaining({ run: expect.objectContaining({ actorLogin: "oktofeesh1" }) })]),
+    });
 
     const localAnalysis = await app.request(
       "/v1/local/branch-analysis",
-      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }) },
+      {
+        method: "POST",
+        headers: {
+          ...apiHeaders(env),
+          "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
+          "x-gittensory-mcp-version": "0.3.0",
+          "x-gittensory-mcp-client": "gittensory-mcp-cli",
+        },
+        body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }),
+      },
       env,
     );
     expect(localAnalysis.status).toBe(200);
@@ -1602,6 +1649,51 @@ describe("api routes", () => {
     expect(revokedExtensionContext.status).toBe(401);
     await expect(revokedExtensionContext.json()).resolves.toMatchObject({ error: "unauthorized" });
 
+    await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_tool_called",
+      actor: "mcp-user",
+      sessionId: "mcp-session",
+      outcome: "success",
+      clientName: "gittensory-mcp",
+      clientVersion: "0.2.1",
+      metadata: {
+        toolName: "gittensory_local_status",
+        protocolVersion: "2025-03-26",
+        compatibilityStatus: "stale",
+        token: "github_pat_secret",
+        localPath: "/Users/example/private-repo",
+      },
+      occurredAt: "2026-05-28T00:00:00.000Z",
+    });
+    await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_request",
+      actor: "old-mcp-user",
+      sessionId: "old-mcp-session",
+      outcome: "success",
+      clientName: "gittensory-mcp",
+      clientVersion: "0.1.0",
+      metadata: {
+        protocolVersion: "2024-11-05",
+        compatibilityStatus: "incompatible",
+      },
+      occurredAt: "2026-05-28T00:00:00.000Z",
+    });
+    await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_request",
+      actor: "current-mcp-user",
+      sessionId: "current-mcp-session",
+      outcome: "success",
+      clientName: "gittensory-mcp",
+      clientVersion: "0.3.0",
+      metadata: {
+        protocolVersion: "2025-03-26",
+      },
+      occurredAt: "2026-05-28T00:00:00.000Z",
+    });
+
     const productUsageEvents = await listProductUsageEvents(env, { limit: 20 });
     expect(productUsageEvents).toEqual(
       expect.arrayContaining([
@@ -1609,20 +1701,150 @@ describe("api routes", () => {
         expect.objectContaining({ surface: "control_panel", eventName: "digest_subscription_stored", outcome: "success" }),
         expect.objectContaining({ surface: "browser_extension", eventName: "extension_session_created", outcome: "success" }),
         expect.objectContaining({ surface: "browser_extension", eventName: "pull_context_viewed", outcome: "success" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_tool_called", clientVersion: "0.2.1", metadata: expect.objectContaining({ compatibilityStatus: "stale" }) }),
       ]),
     );
-    expect(JSON.stringify(productUsageEvents)).not.toMatch(/oktofeesh1|operator@example.com|gittensory_session|\/Users|github_pat|ghp_|source code|raw trust|wallet|hotkey/i);
+    expect(JSON.stringify(productUsageEvents)).not.toMatch(/oktofeesh1|operator@example.com|gittensory_session|\/Users|github_pat|ghp_|source code|raw trust|wallet|hotkey|private-repo/i);
+
+    const usageRollupRun = await app.request(
+      "/v1/internal/jobs/rollup-product-usage/run",
+      { method: "POST", headers: internalHeaders, body: JSON.stringify({ day: "2026-05-28" }) },
+      env,
+    );
+    expect(usageRollupRun.status).toBe(200);
+    await expect(usageRollupRun.json()).resolves.toMatchObject({
+      rollups: [expect.objectContaining({ day: "2026-05-28", status: "partial", totalEvents: productUsageEvents.length })],
+    });
+
+    const dailyRollups = await app.request("/v1/app/analytics/daily-rollups?limit=3", { headers: apiHeaders(env) }, env);
+    expect(dailyRollups.status).toBe(200);
+    await expect(dailyRollups.json()).resolves.toMatchObject({
+      status: expect.objectContaining({ status: "partial", latestRollupDay: "2026-05-28" }),
+      rollups: [expect.objectContaining({ day: "2026-05-28", activation: expect.any(Object) })],
+    });
+    const fallbackLimitRollups = await app.request("/v1/app/analytics/daily-rollups?limit=invalid", { headers: apiHeaders(env) }, env);
+    expect(fallbackLimitRollups.status).toBe(200);
+    await expect(fallbackLimitRollups.json()).resolves.toMatchObject({
+      status: expect.objectContaining({ latestRollupDay: "2026-05-28" }),
+      rollups: [expect.objectContaining({ day: "2026-05-28" })],
+    });
+    const defaultLimitRollups = await app.request("/v1/app/analytics/daily-rollups", { headers: apiHeaders(env) }, env);
+    expect(defaultLimitRollups.status).toBe(200);
+    await expect(defaultLimitRollups.json()).resolves.toMatchObject({
+      status: expect.objectContaining({ latestRollupDay: "2026-05-28" }),
+      rollups: [expect.objectContaining({ day: "2026-05-28" })],
+    });
 
     const usageOperator = await app.request("/v1/app/operator-dashboard", { headers: apiHeaders(env) }, env);
     expect(usageOperator.status).toBe(200);
-    const usageOperatorBody = (await usageOperator.json()) as { metrics: Array<{ label: string; value: string }>; usageSummary: { totalEvents: number } };
+    const usageOperatorBody = (await usageOperator.json()) as {
+      metrics: Array<{ label: string; value: string }>;
+      usageSummary: { totalEvents: number };
+      usageRollups: Array<{ day: string }>;
+      usageRollupStatus: { status: string };
+      mcpCompatibilityAdoption: {
+        totalEvents: number;
+        activeActors: number;
+        staleEvents: number;
+        incompatibleEvents: number;
+        byClientVersion: Array<{ key: string; count: number }>;
+        byProtocolVersion: Array<{ key: string; count: number }>;
+        byCompatibilityStatus: Array<{ status: string; count: number }>;
+      };
+      weeklyValueReport: {
+        variant: string;
+        summary: string[];
+        metrics: Array<{ id: string; value: number; visibility: string }>;
+        operatorDetails?: { daily: Array<{ day: string }>; topRouteClasses: Array<{ key: string; count: number }> };
+        warnings: string[];
+      };
+    };
     expect(usageOperatorBody.metrics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Product events", value: String(productUsageEvents.length) }),
         expect.objectContaining({ label: "Active users" }),
+        expect.objectContaining({ label: "Activation rollups", value: "partial" }),
+        expect.objectContaining({ label: "MCP stale clients", value: "2" }),
       ]),
     );
     expect(usageOperatorBody.usageSummary.totalEvents).toBe(productUsageEvents.length);
+    expect(usageOperatorBody.usageRollups).toEqual([expect.objectContaining({ day: "2026-05-28" })]);
+    expect(usageOperatorBody.usageRollupStatus.status).toBe("partial");
+    expect(usageOperatorBody.mcpCompatibilityAdoption).toMatchObject({
+      totalEvents: 4,
+      activeActors: 4,
+      staleEvents: 1,
+      incompatibleEvents: 1,
+      byClientVersion: expect.arrayContaining([
+        { key: "0.1.0", count: 1 },
+        { key: "0.2.1", count: 1 },
+        { key: "0.3.0", count: 2 },
+      ]),
+      byProtocolVersion: expect.arrayContaining([
+        { key: "2024-11-05", count: 1 },
+        { key: "2025-03-26", count: 2 },
+      ]),
+      byCompatibilityStatus: expect.arrayContaining([
+        { status: "current", count: 2 },
+        { status: "incompatible", count: 1 },
+        { status: "stale", count: 1 },
+      ]),
+    });
+
+    const mcpCompatibility = await app.request("/v1/app/analytics/mcp-compatibility?days=7", { headers: apiHeaders(env) }, env);
+    expect(mcpCompatibility.status).toBe(200);
+    const mcpCompatibilityBody = await mcpCompatibility.json();
+    expect(mcpCompatibilityBody).toMatchObject({
+      adoption: expect.objectContaining({
+        minimumSupportedVersion: "0.2.0",
+        latestRecommendedVersion: "0.3.0",
+        staleEvents: 1,
+        incompatibleEvents: 1,
+        totalEvents: 4,
+      }),
+    });
+    expect(JSON.stringify(mcpCompatibilityBody)).not.toMatch(/github_pat|\/Users|private-repo|mcp-user|old-mcp-user|current-mcp-user/i);
+    await expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 7 });
+    await expect((await app.request("/v1/app/analytics/mcp-compatibility?days=invalid", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 7 });
+    await expect((await app.request("/v1/app/analytics/mcp-compatibility?days=999", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 90 });
+    await expect((await app.request("/v1/app/analytics/mcp-compatibility?days=-5", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 1 });
+
+    expect(usageOperatorBody.weeklyValueReport).toMatchObject({
+      variant: "operator",
+      summary: expect.arrayContaining([expect.stringContaining("active user"), expect.stringContaining("PR packet")]),
+      metrics: expect.arrayContaining([
+        expect.objectContaining({ id: "active_users", visibility: "public" }),
+        expect.objectContaining({ id: "product_events", value: productUsageEvents.length, visibility: "operator" }),
+      ]),
+      operatorDetails: expect.objectContaining({
+        daily: [expect.objectContaining({ day: "2026-05-28" })],
+        topRouteClasses: expect.any(Array),
+      }),
+    });
+
+    const publicWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report?variant=public&days=999", { headers: apiHeaders(env) }, env);
+    expect(publicWeeklyReport.status).toBe(200);
+    const publicWeeklyReportBody = await publicWeeklyReport.json();
+    expect(publicWeeklyReportBody).toMatchObject({
+      variant: "public",
+      publicSafe: true,
+      period: expect.objectContaining({ days: 31 }),
+      metrics: expect.arrayContaining([expect.objectContaining({ id: "active_users", visibility: "public" })]),
+    });
+    expect(publicWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    expect(JSON.stringify(publicWeeklyReportBody)).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|private reviewability|public score estimate|\/Users|github_pat|ghp_/i);
+
+    const defaultWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: apiHeaders(env) }, env);
+    expect(defaultWeeklyReport.status).toBe(200);
+    await expect(defaultWeeklyReport.json()).resolves.toMatchObject({ variant: "public", publicSafe: true });
+
+    const operatorWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report?variant=operator&days=invalid", { headers: apiHeaders(env) }, env);
+    expect(operatorWeeklyReport.status).toBe(200);
+    await expect(operatorWeeklyReport.json()).resolves.toMatchObject({
+      variant: "operator",
+      period: expect.objectContaining({ days: 7 }),
+      operatorDetails: expect.any(Object),
+    });
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {
@@ -2836,6 +3058,18 @@ describe("api routes", () => {
     const missingBountyPayload = await mcpJson(missingBounty);
     expect(JSON.stringify(missingBountyPayload)).toMatch(/Bounty not found|error|isError/i);
 
+    const missingAgentRun = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-agent-run", method: "tools/call", params: { name: "gittensory_agent_get_run", arguments: { runId: "missing" } } }),
+      },
+      env,
+    );
+    expect(missingAgentRun.status).toBe(200);
+    expect(JSON.stringify(await mcpJson(missingAgentRun))).toMatch(/Agent run not found|error|isError/i);
+
     const sessionEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" });
     const { token: mcpSessionToken } = await createSessionForGitHubUser(sessionEnv, { login: "oktofeesh1", id: 12345 });
     const forbiddenSessionTool = await app.request(
@@ -2853,8 +3087,21 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success" }),
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_tool_called", outcome: "success", metadata: expect.objectContaining({ toolName: "gittensory_get_bounty_advisory" }) }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.3.0" }),
+        expect.objectContaining({
+          surface: "mcp",
+          eventName: "mcp_tool_called",
+          outcome: "success",
+          clientName: "gittensory-mcp-cli",
+          clientVersion: "0.3.0",
+          metadata: expect.objectContaining({
+            toolName: "gittensory_get_bounty_advisory",
+            protocolVersion: "2025-03-26",
+            compatibilityStatus: "current",
+            minimumSupportedVersion: "0.2.0",
+            latestRecommendedVersion: "0.3.0",
+          }),
+        }),
       ]),
     );
     expect(JSON.stringify(mcpUsageEvents)).not.toMatch(/oktofeesh1|\/Users|github_pat|ghp_|source code|wallet|hotkey|raw trust/i);
@@ -3315,6 +3562,10 @@ function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
     authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`,
     accept: "application/json, text/event-stream",
     "content-type": "application/json",
+    "mcp-protocol-version": "2025-03-26",
+    "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
+    "x-gittensory-mcp-version": "0.3.0",
+    "x-gittensory-mcp-client": "gittensory-mcp-cli",
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
   };
 }

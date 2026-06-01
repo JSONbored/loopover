@@ -42,6 +42,7 @@ import {
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -245,7 +246,8 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   const identity = await authenticateMcpRequest(c);
   if (!identity) return c.json({ error: "unauthorized" }, 401);
 
-  const usageMetadata = await describeMcpUsageRequest(c.req.raw);
+  const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { defaultClientName: "mcp" })!;
+  const usageMetadata = await describeMcpUsageRequest(c.req.raw, telemetry.metadata);
   const startedAt = Date.now();
   const server = new GittensoryMcp(c.env, identity).createServer();
   try {
@@ -258,8 +260,8 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
       sessionId: identity.kind === "session" ? identity.session.id : undefined,
       outcome: response.status >= 400 ? "error" : "success",
       latencyMs: Date.now() - startedAt,
-      clientName: "mcp",
-      clientVersion: c.req.header("mcp-protocol-version"),
+      clientName: telemetry.clientName,
+      clientVersion: telemetry.clientVersion,
       metadata: usageMetadata,
     }).catch(() => undefined);
     return response;
@@ -272,17 +274,17 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
       sessionId: identity.kind === "session" ? identity.session.id : undefined,
       outcome: "error",
       latencyMs: Date.now() - startedAt,
-      clientName: "mcp",
-      clientVersion: c.req.header("mcp-protocol-version"),
+      clientName: telemetry.clientName,
+      clientVersion: telemetry.clientVersion,
       metadata: usageMetadata,
     }).catch(() => undefined);
     throw error;
   }
 }
 
-async function describeMcpUsageRequest(request: Request): Promise<Record<string, unknown>> {
+async function describeMcpUsageRequest(request: Request, telemetryMetadata: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
   const body = await request.clone().json().catch(() => null);
-  if (!body || typeof body !== "object") return { transport: "http", method: request.method };
+  if (!body || typeof body !== "object") return { transport: "http", method: request.method, ...telemetryMetadata };
   const envelope = body as { method?: unknown; params?: { name?: unknown } };
   const rpcMethod = typeof envelope.method === "string" ? envelope.method : undefined;
   const toolName = envelope.params && typeof envelope.params.name === "string" ? envelope.params.name : undefined;
@@ -290,6 +292,7 @@ async function describeMcpUsageRequest(request: Request): Promise<Record<string,
     transport: "http",
     rpcMethod,
     toolName,
+    ...telemetryMetadata,
   };
 }
 

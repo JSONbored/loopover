@@ -37,6 +37,7 @@ import {
   getRepositorySettings,
   recordAuditEvent,
   getContributorEvidence,
+  getProductUsageRollupStatus,
   listAllPullRequestDetailSyncStates,
   listCheckSummaries,
   listBounties,
@@ -53,6 +54,7 @@ import {
   listIssueSignalSample,
   listAgentRunsForActor,
   listDigestSubscriptionsForLogin,
+  listProductUsageDailyRollups,
   listOpenPullRequests,
   listPullRequestFiles,
   listPullRequestReviews,
@@ -70,6 +72,8 @@ import {
   persistScorePreview,
   persistSignalSnapshot,
   recordProductUsageEvent,
+  rollupProductUsageDaily,
+  summarizeMcpCompatibilityAdoption,
   summarizeProductUsageEvents,
   upsertDigestSubscription,
   upsertBounty,
@@ -103,6 +107,7 @@ import {
   preflightBranchWithAgent,
   startAgentRun,
 } from "../services/agent-orchestrator";
+import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildAndPersistContributorDecisionPack,
   loadContributorDecisionPackForServing,
@@ -117,6 +122,7 @@ import {
   LATEST_RECOMMENDED_MCP_VERSION,
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
+import { buildWeeklyValueReport, generateWeeklyValueReport, loadWeeklyValueReport } from "../services/weekly-value-report";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
@@ -157,10 +163,8 @@ import type {
   JsonValue,
   ProductUsageOutcome,
   ProductUsageSurface,
-  RegistrySnapshot,
   RepoSyncSegmentRecord,
   RepositoryRecord,
-  ScoringModelSnapshotRecord,
 } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -184,6 +188,7 @@ async function recordRouteProductUsage(
     metadata?: Record<string, unknown> | null | undefined;
   },
 ): Promise<void> {
+  const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { requireGittensoryHeader: true });
   await recordProductUsageEvent(c.env, {
     surface: event.surface,
     eventName: event.eventName,
@@ -194,9 +199,9 @@ async function recordRouteProductUsage(
     targetKey: event.targetKey,
     outcome: event.outcome,
     latencyMs: event.latencyMs,
-    clientName: event.clientName,
-    clientVersion: event.clientVersion,
-    metadata: event.metadata,
+    clientName: event.clientName ?? telemetry?.clientName,
+    clientVersion: event.clientVersion ?? telemetry?.clientVersion,
+    metadata: telemetry ? Object.assign({}, event.metadata, telemetry.metadata) : event.metadata,
   }).catch(() => undefined);
 }
 
@@ -754,7 +759,21 @@ export function createApp() {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
     const usageSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [repositories, installations, health, registry, scoring, upstreamDrift, activeSessions, digestSubscriptions, rateLimits, usageSummary] = await Promise.all([
+    const [
+      repositories,
+      installations,
+      health,
+      registry,
+      scoring,
+      upstreamDrift,
+      activeSessions,
+      digestSubscriptions,
+      rateLimits,
+      usageSummary,
+      usageRollups,
+      usageRollupStatus,
+      mcpCompatibilityAdoption,
+    ] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
       listInstallationHealth(c.env),
@@ -765,7 +784,26 @@ export function createApp() {
       countActiveDigestSubscriptions(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
       summarizeProductUsageEvents(c.env, usageSince),
+      listProductUsageDailyRollups(c.env, { limit: 14 }),
+      getProductUsageRollupStatus(c.env),
+      summarizeMcpCompatibilityAdoption(c.env, usageSince),
     ]);
+    const weeklyValueReport = buildWeeklyValueReport({
+      generatedAt: nowIso(),
+      variant: "operator",
+      days: 7,
+      repositories,
+      installations,
+      health,
+      registry,
+      scoring,
+      upstreamDrift,
+      usageSummary,
+      usageRollups,
+      usageRollupStatus,
+      activeSessions,
+      digestSubscriptions,
+    });
     const installedRepos = repositories.filter((repo) => repo.isInstalled).length;
     const registeredRepos = repositories.filter((repo) => repo.isRegistered).length;
     return c.json({
@@ -777,6 +815,8 @@ export function createApp() {
         { label: "Digest subscriptions", value: String(digestSubscriptions), delta: "store-only" },
         { label: "Product events", value: String(usageSummary.totalEvents), delta: "last 7 days" },
         { label: "Active users", value: String(usageSummary.activeActors), delta: "hashed, last 7 days" },
+        { label: "Activation rollups", value: usageRollupStatus.status, delta: usageRollupStatus.latestRollupDay ?? "not generated" },
+        { label: "MCP stale clients", value: String(mcpCompatibilityAdoption.staleEvents + mcpCompatibilityAdoption.incompatibleEvents), delta: `${mcpCompatibilityAdoption.totalEvents} MCP event(s)` },
         { label: "Install issues", value: String(health.filter((record) => record.status !== "healthy").length), delta: "current health cache" },
         { label: "Rate-limit events", value: String(rateLimits.length), delta: "latest observations" },
       ],
@@ -785,12 +825,41 @@ export function createApp() {
         { label: "Registered coverage", value: registeredRepos, spark: sparklineFromCounts(registeredRepos, Math.max(repositories.length, 1)) },
         { label: "Installed coverage", value: installedRepos, spark: sparklineFromCounts(installedRepos, Math.max(repositories.length, 1)) },
       ],
-      weeklyReport: buildOperatorWeeklyReport({ repositories, installations, health, registry, scoring, upstreamDrift }),
+      weeklyReport: weeklyValueReport.summary,
+      weeklyValueReport,
       usageSummary,
+      usageRollups,
+      usageRollupStatus,
+      mcpCompatibilityAdoption,
       registry,
       scoringModel: scoring,
       upstreamDrift,
     });
+  });
+
+  app.get("/v1/app/analytics/mcp-compatibility", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    const days = Math.max(1, Math.min(90, Number(c.req.query("days") ?? 7) || 7));
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    return c.json({ generatedAt: nowIso(), days, adoption: await summarizeMcpCompatibilityAdoption(c.env, since) });
+  });
+
+  app.get("/v1/app/analytics/daily-rollups", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    const limit = Math.max(1, Math.min(90, Number(c.req.query("limit") ?? 14) || 14));
+    const [rollups, status] = await Promise.all([listProductUsageDailyRollups(c.env, { limit }), getProductUsageRollupStatus(c.env)]);
+    return c.json({ generatedAt: nowIso(), status, rollups });
+  });
+
+  app.get("/v1/app/analytics/weekly-value-report", async (c) => {
+    const variant = c.req.query("variant") === "operator" ? "operator" : "public";
+    const allowedRoles: ControlPanelRoleName[] = variant === "operator" ? ["operator"] : ["miner", "maintainer", "owner", "operator"];
+    const forbidden = await requireAppRole(c, allowedRoles);
+    if (forbidden) return forbidden;
+    const days = Math.max(1, Math.min(31, Number(c.req.query("days") ?? 7) || 7));
+    return c.json(await loadWeeklyValueReport(c.env, { variant, days }));
   });
 
   app.get("/v1/app/commands", async (c) =>
@@ -1712,6 +1781,24 @@ export function createApp() {
     return c.json({ ok: true, status: "queued", repoFullName }, 202);
   });
 
+  app.post("/v1/internal/jobs/rollup-product-usage", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const day = typeof body?.day === "string" ? body.day : undefined;
+    const days = Number.isFinite(Number(body?.days)) ? Math.max(1, Math.min(31, Math.round(Number(body.days)))) : undefined;
+    const message: JobMessage = { type: "rollup-product-usage", requestedBy: "api", ...(day ? { day } : {}), ...(days === undefined ? {} : { days }) };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", day, days }, 202);
+  });
+
+  app.post("/v1/internal/jobs/generate-weekly-value-report", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const days = Number.isFinite(Number(body?.days)) ? Math.max(1, Math.min(31, Math.round(Number(body.days)))) : undefined;
+    const variant = body?.variant === "public" ? "public" : "operator";
+    const message: JobMessage = { type: "generate-weekly-value-report", requestedBy: "api", variant, ...(days === undefined ? {} : { days }) };
+    await c.env.JOBS.send(message);
+    return c.json({ ok: true, status: "queued", variant, days }, 202);
+  });
+
   app.post("/v1/internal/jobs/repair-data-fidelity", async (c) => {
     const message: JobMessage = { type: "repair-data-fidelity", requestedBy: "api" };
     await c.env.JOBS.send(message);
@@ -1723,6 +1810,20 @@ export function createApp() {
     const repoFullName = typeof body?.repoFullName === "string" ? body.repoFullName : undefined;
     await generateSignalSnapshots(c.env, repoFullName);
     return c.json({ ok: true, status: "completed", repoFullName });
+  });
+
+  app.post("/v1/internal/jobs/rollup-product-usage/run", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const day = typeof body?.day === "string" ? body.day : undefined;
+    const days = Number.isFinite(Number(body?.days)) ? Math.max(1, Math.min(31, Math.round(Number(body.days)))) : undefined;
+    return c.json(await rollupProductUsageDaily(c.env, { ...(day ? { day } : {}), ...(days === undefined ? {} : { days }) }));
+  });
+
+  app.post("/v1/internal/jobs/generate-weekly-value-report/run", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const days = Number.isFinite(Number(body?.days)) ? Math.max(1, Math.min(31, Math.round(Number(body.days)))) : undefined;
+    const variant = body?.variant === "public" ? "public" : "operator";
+    return c.json(await generateWeeklyValueReport(c.env, { variant, ...(days === undefined ? {} : { days }) }));
   });
 
   app.post("/v1/internal/jobs/refresh-installation-health/run", async (c) => {
@@ -1998,26 +2099,6 @@ function buildDigestItems(args: {
     });
   }
   return items;
-}
-
-function buildOperatorWeeklyReport(args: {
-  repositories: RepositoryRecord[];
-  installations: Awaited<ReturnType<typeof listInstallations>>;
-  health: InstallationHealthRecord[];
-  registry: RegistrySnapshot | null;
-  scoring: ScoringModelSnapshotRecord | null;
-  upstreamDrift: Awaited<ReturnType<typeof loadUpstreamStatus>>;
-}): string[] {
-  const registered = args.repositories.filter((repo) => repo.isRegistered).length;
-  const installed = args.repositories.filter((repo) => repo.isInstalled).length;
-  const unhealthy = args.health.filter((record) => record.status !== "healthy").length;
-  return [
-    `${registered} registered repos tracked; ${installed} have installation coverage in the local cache.`,
-    `${args.installations.length} GitHub App installation(s), ${unhealthy} needing attention.`,
-    args.registry ? `Latest registry snapshot has ${args.registry.repoCount} repos and ${args.registry.warnings.length} warning(s).` : "Registry snapshot is missing.",
-    args.scoring ? `Scoring model ${args.scoring.activeModel} is loaded from ${args.scoring.sourceKind}.` : "Scoring model snapshot is missing.",
-    `Upstream drift status is ${args.upstreamDrift.status}.`,
-  ];
 }
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {

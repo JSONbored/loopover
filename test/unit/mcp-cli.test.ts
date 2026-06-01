@@ -323,6 +323,31 @@ describe("gittensory-mcp CLI", () => {
     expect(changelog.changelog).toContain("# Changelog");
   });
 
+  it("sends redacted MCP package telemetry headers to the API", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; headers: IncomingMessage["headers"] }> = [];
+    const url = await startFixtureServer({ onApiRequest: (request) => requests.push({ url: request.url, headers: request.headers }) });
+
+    await runAsync(["status", "--json"], {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    });
+
+    const sessionRequest = requests.find((request) => request.url === "/v1/auth/session");
+    expect(sessionRequest?.headers["x-gittensory-mcp-package"]).toBe("@jsonbored/gittensory-mcp");
+    expect(sessionRequest?.headers["x-gittensory-mcp-version"]).toBe("0.3.0");
+    expect(sessionRequest?.headers["x-gittensory-mcp-client"]).toBe("gittensory-mcp-cli");
+    const telemetryHeaders = JSON.stringify({
+      package: sessionRequest?.headers["x-gittensory-mcp-package"],
+      version: sessionRequest?.headers["x-gittensory-mcp-version"],
+      client: sessionRequest?.headers["x-gittensory-mcp-client"],
+    });
+    expect(telemetryHeaders).not.toContain("session-token");
+    expect(telemetryHeaders).not.toContain(tempDir);
+  });
+
   it("runs base-agent CLI commands against API fixtures", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -639,9 +664,11 @@ async function startFixtureServer(
     npmStatus?: number;
     packetMarkdown?: string;
     onPacketRequest?: (body: unknown) => void;
+    onApiRequest?: (request: IncomingMessage) => void;
   } = {},
 ) {
   server = createServer(async (request, response) => {
+    options.onApiRequest?.(request);
     response.setHeader("content-type", "application/json");
     if (request.url && request.url.includes("gittensory-mcp/latest")) {
       if (options.npmStatus && options.npmStatus >= 400) {

@@ -3,6 +3,8 @@ export const GITTENSORY_MCP_PACKAGE_NAME = "@jsonbored/gittensory-mcp";
 export const MINIMUM_SUPPORTED_MCP_VERSION = "0.2.0";
 export const LATEST_RECOMMENDED_MCP_VERSION = "0.3.0";
 
+export type McpCompatibilityStatus = "current" | "stale" | "incompatible" | "unknown";
+
 export type CompatibilityWarning = {
   code: string;
   message: string;
@@ -50,4 +52,38 @@ export function buildMcpCompatibilityMetadata(generatedAt: string): McpCompatibi
     breakingChanges: [],
     generatedAt,
   };
+}
+
+export function classifyMcpClientVersion(version: string | null | undefined): McpCompatibilityStatus {
+  if (!version) return "unknown";
+  const minimumComparison = compareMcpSemver(version, MINIMUM_SUPPORTED_MCP_VERSION);
+  if (minimumComparison === null) return "unknown";
+  if (minimumComparison < 0) return "incompatible";
+  const latestComparison = compareMcpSemver(version, LATEST_RECOMMENDED_MCP_VERSION)!;
+  return latestComparison < 0 ? "stale" : "current";
+}
+
+function parseSemver(version: string) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(version.trim());
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4] ?? null,
+  };
+}
+
+export function compareMcpSemver(leftVersion: string, rightVersion: string): number | null {
+  const left = parseSemver(leftVersion);
+  const right = parseSemver(rightVersion);
+  if (!left || !right) return null;
+  for (const part of ["major", "minor", "patch"] as const) {
+    if (left[part] !== right[part]) return left[part] < right[part] ? -1 : 1;
+  }
+  if (left.prerelease === right.prerelease) return 0;
+  if (!left.prerelease) return 1;
+  if (!right.prerelease) return -1;
+  const prereleaseComparison = left.prerelease.localeCompare(right.prerelease, undefined, { numeric: true, sensitivity: "base" });
+  return prereleaseComparison === 0 ? 0 : prereleaseComparison < 0 ? -1 : 1;
 }

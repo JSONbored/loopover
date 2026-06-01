@@ -9,11 +9,13 @@ import {
   getLatestUpstreamRulesetSnapshot,
   listUpstreamDriftReports,
   listInstallationHealth,
+  listProductUsageDailyRollups,
   listProductUsageEvents,
   listPullRequests,
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
+  recordProductUsageEvent,
   upsertRepoSyncSegment,
   upsertInstallation,
   upsertPullRequestFromGitHub,
@@ -105,6 +107,25 @@ describe("queue processors", () => {
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }],
       },
     });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "installation-added-single-repo",
+      eventName: "installation",
+      payload: {
+        action: "added",
+        installation: { account: { login: "JSONbored", id: 1, type: "User" } } as never,
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "installation-added-empty",
+      eventName: "installation",
+      payload: {
+        action: "added",
+        installation: { id: 789, account: { login: "JSONbored", id: 1, type: "User" } },
+      },
+    });
 
     expect(await listRepoSyncStates(env)).toMatchObject([{ repoFullName: "JSONbored/gittensory", status: "success" }]);
     expect(await listCollisionEdges(env, "JSONbored/gittensory")).not.toHaveLength(0);
@@ -118,6 +139,12 @@ describe("queue processors", () => {
     const persistedBurden = await getBurdenForecast(env, "JSONbored/gittensory");
     expect(persistedBurden).toMatchObject({ repoFullName: "JSONbored/gittensory" });
     expect(persistedBurden?.payload).toMatchObject({ level: expect.any(String), summary: expect.any(String) });
+    expect(await listProductUsageEvents(env, { limit: 10 })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventName: "github_installation_created", repoFullName: "<redacted-actor>/gittensory", metadata: expect.objectContaining({ action: "created" }) }),
+        expect.objectContaining({ eventName: "github_installation_created", repoFullName: "<redacted-actor>/gittensory", metadata: expect.objectContaining({ action: "added" }) }),
+      ]),
+    );
   });
 
   it("runs queued agent jobs through the queue processor", async () => {
@@ -146,6 +173,46 @@ describe("queue processors", () => {
 
     await expect(getAgentRun(env, "agent-run-queue")).resolves.toMatchObject({ status: "needs_snapshot_refresh" });
     expect(queued).toContainEqual({ type: "build-contributor-decision-packs", requestedBy: "api", login: "oktofeesh1" });
+  });
+
+  it("runs product usage rollups through the queue processor", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "agent_plan_next_work_completed",
+      actor: "oktofeesh1",
+      repoFullName: "JSONbored/gittensory",
+      outcome: "success",
+      occurredAt: "2026-05-27T12:00:00.000Z",
+    });
+
+    await processJob(env, { type: "rollup-product-usage", requestedBy: "test", day: "2026-05-27" });
+    await processJob(env, { type: "rollup-product-usage", requestedBy: "test", days: 1 });
+
+    await expect(listProductUsageDailyRollups(env)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        day: "2026-05-27",
+        totalEvents: 1,
+        activeActors: 1,
+        activation: expect.objectContaining({ firstUsefulActionActors: 1 }),
+      }),
+    ]));
+  });
+
+  it("runs weekly value report generation through the queue processor", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    await processJob(env, { type: "generate-weekly-value-report", requestedBy: "test", variant: "operator", days: 7 });
+    await processJob(env, { type: "generate-weekly-value-report", requestedBy: "test" });
+
+    const row = await env.DB.prepare("select event_type, target_key, outcome from audit_events where event_type = ? order by created_at limit 1").bind("weekly_value_report_generated").first();
+    expect(row).toMatchObject({
+      event_type: "weekly_value_report_generated",
+      target_key: "weekly-value-report:operator:7",
+      outcome: "success",
+    });
+    const auditCount = await env.DB.prepare("select count(*) as count from audit_events where event_type = ?").bind("weekly_value_report_generated").first<{ count: number }>();
+    expect(auditCount?.count).toBe(2);
   });
 
   it("routes upstream drift jobs through queue processors", async () => {

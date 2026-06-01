@@ -1951,7 +1951,9 @@ const APP_COMMANDS = [
     description: "Preview the public-safe summary that may be posted to a PR thread.",
     endpoint: "/v1/app/commands/preview",
   },
-  ...GITTENSORY_MENTION_COMMAND_CATALOG.filter((command) => !["help", "preflight", "blockers", "packet"].includes(command.id)).map((command) => ({
+  ...GITTENSORY_MENTION_COMMAND_CATALOG.filter(
+    (command) => !["help", "preflight", "blockers", "packet", "queue-summary", "review-now", "needs-author", "confirmed-miners", "duplicate-clusters"].includes(command.id),
+  ).map((command) => ({
     id: command.id,
     command: `@gittensory ${command.id}`,
     audience: "public-safe",
@@ -1959,6 +1961,46 @@ const APP_COMMANDS = [
     description: command.description,
     endpoint: "GitHub issue comment",
   })),
+  {
+    id: "queue-summary",
+    command: "@gittensory queue-summary",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "Post a maintainer-only queue digest from cached GitHub metadata.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "review-now",
+    command: "@gittensory review-now",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List cached PRs that look ready for maintainer review.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "needs-author",
+    command: "@gittensory needs-author",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List cached PRs that need author cleanup before detailed review.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "confirmed-miners",
+    command: "@gittensory confirmed-miners",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List open PRs whose authors are confirmed in the official-miner cache.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "duplicate-clusters",
+    command: "@gittensory duplicate-clusters",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List duplicate or WIP clusters visible from cached GitHub metadata.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
 ] as const;
 
 function authRedirectWithError(env: Env, reason: string): string {

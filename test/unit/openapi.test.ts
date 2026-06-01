@@ -5,6 +5,7 @@ describe("OpenAPI contract", () => {
   it("exports the modern private-beta backend contract only", () => {
     const spec = buildOpenApiSpec();
     expect(spec.paths["/health"]).toBeDefined();
+    expect(spec.paths["/v1/mcp/compatibility"]).toBeDefined();
     expect(spec.paths["/v1/registry/snapshot"]).toBeDefined();
     expect(spec.paths["/v1/registry/changes"]).toBeDefined();
     expect(spec.paths["/v1/readiness"]).toBeDefined();
@@ -34,6 +35,18 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/upstream/drift"]).toBeDefined();
     expect(spec.paths["/v1/bounties/{id}/advisory"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/settings-preview"]).toBeDefined();
+    expect(spec.paths["/v1/app/overview"]).toBeDefined();
+    expect(spec.paths["/v1/app/miner-dashboard"]).toBeDefined();
+    expect(spec.paths["/v1/app/maintainer-dashboard"]).toBeDefined();
+    expect(spec.paths["/v1/app/operator-dashboard"]).toBeDefined();
+    expect(spec.paths["/v1/app/commands"]).toBeDefined();
+    expect(spec.paths["/v1/app/commands/preview"]).toBeDefined();
+    expect(spec.paths["/v1/app/digest"]).toBeDefined();
+    expect(spec.paths["/v1/app/digest/subscriptions"]).toBeDefined();
+    expect(spec.paths["/v1/auth/github/start"]).toBeDefined();
+    expect(spec.paths["/v1/auth/github/callback"]).toBeDefined();
+    expect(spec.paths["/v1/auth/extension/session"]).toBeDefined();
+    expect(spec.paths["/v1/extension/pull-context"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/device/start"]).toBeDefined();
     expect(spec.paths["/v1/auth/session"]).toBeDefined();
     expect(spec.paths["/v1/internal/jobs/repair-data-fidelity"]).toBeDefined();
@@ -63,6 +76,7 @@ describe("OpenAPI contract", () => {
     }
 
     expect(spec.components?.schemas?.ContributorProfile).toBeDefined();
+    expect(spec.components?.schemas?.McpCompatibility).toBeDefined();
     expect(spec.components?.schemas?.ContributorDecisionPack).toBeDefined();
     expect(spec.components?.schemas?.DecisionPackRefreshNeeded).toBeDefined();
     expect(spec.components?.schemas?.RepoDecisionResponse).toBeDefined();
@@ -83,5 +97,19 @@ describe("OpenAPI contract", () => {
     expect(JSON.stringify(spec.components?.schemas?.ContributorOutcomeHistory)).toContain("reconciliation");
     expect(JSON.stringify(spec.components?.schemas?.LocalBranchAnalysis)).toContain("baseFreshness");
     expect(JSON.stringify(spec.components?.schemas?.LocalBranchAnalysis)).toContain("recommendedRerunCondition");
+    expect(JSON.stringify(spec.components?.schemas?.Health)).toContain("minMcpVersion");
+    expect(JSON.stringify(spec.components?.schemas?.Health)).toContain("latestRecommendedMcpVersion");
+    expect(JSON.stringify(spec.components?.schemas?.McpCompatibility)).toContain("minimumSupportedVersion");
+    expect(JSON.stringify(spec.components?.schemas?.McpCompatibility)).toContain("compatibilityWarnings");
+    expect(spec.components?.securitySchemes?.GittensoryBearer).toBeDefined();
+    expect(spec.components?.securitySchemes?.GittensorySessionCookie).toBeDefined();
+    expect(spec.paths["/health"]?.get?.security).toBeUndefined();
+    expect(spec.paths["/v1/mcp/compatibility"]?.get?.security).toBeUndefined();
+    expect(spec.paths["/v1/auth/github/start"]?.get?.security).toBeUndefined();
+    expect(spec.paths["/v1/repos"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
+    expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
+    expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
+    expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
+    expect(spec.paths["/v1/auth/extension/session"]?.post?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
   });
 });

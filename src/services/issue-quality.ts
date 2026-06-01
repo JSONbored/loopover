@@ -1,4 +1,4 @@
-import { getRepository, listIssueSignalSample, listOpenPullRequests, listRecentMergedPullRequests, listSignalSnapshots } from "../db/repositories";
+import { getRepository, listBountiesByRepo, listIssueSignalSample, listOpenPullRequests, listRecentMergedPullRequests, listSignalSnapshots } from "../db/repositories";
 import { buildIssueQualityReport, type IssueQualityReport } from "../signals/engine";
 
 export type IssueQualityResponse = {
@@ -13,7 +13,7 @@ export async function loadOrComputeIssueQualityResponse(env: Env, fullName: stri
   const cached = (await listSignalSnapshots(env, "issue-quality", fullName))[0];
   if (cached) {
     const payload = cached.payload as unknown as IssueQualityReport;
-    const generatedAt = cached.generatedAt ?? (payload.generatedAt as string | undefined) ?? new Date().toISOString();
+    const generatedAt = cached.generatedAt || (payload.generatedAt as string | undefined) || new Date().toISOString();
     return {
       status: "ready",
       source: "snapshot",
@@ -24,8 +24,13 @@ export async function loadOrComputeIssueQualityResponse(env: Env, fullName: stri
   }
   const repo = await getRepository(env, fullName);
   if (!repo) return null;
-  const [issues, pullRequests, recentMergedPullRequests] = await Promise.all([listIssueSignalSample(env, fullName), listOpenPullRequests(env, fullName), listRecentMergedPullRequests(env, fullName)]);
-  const report = buildIssueQualityReport(repo, issues, pullRequests, fullName, undefined, recentMergedPullRequests);
+  const [issues, pullRequests, recentMergedPullRequests, bounties] = await Promise.all([
+    listIssueSignalSample(env, fullName),
+    listOpenPullRequests(env, fullName),
+    listRecentMergedPullRequests(env, fullName),
+    listBountiesByRepo(env, fullName),
+  ]);
+  const report = buildIssueQualityReport(repo, issues, pullRequests, fullName, bounties, undefined, recentMergedPullRequests);
   return {
     status: "ready",
     source: "computed",

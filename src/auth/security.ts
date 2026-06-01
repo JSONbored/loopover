@@ -12,11 +12,73 @@ export type AuthIdentity =
   | { kind: "static"; actor: "api" | "mcp" | "internal" }
   | { kind: "session"; actor: string; session: AuthSessionRecord };
 
-const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const BROWSER_SESSION_COOKIE = "gittensory_session";
+export const GITHUB_OAUTH_STATE_COOKIE = "gittensory_oauth_state";
+export const GITHUB_OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 export function extractBearerToken(header: string | null | undefined): string | undefined {
   const match = /^Bearer\s+(.+)$/i.exec(header ?? "");
   return match?.[1]?.trim() || undefined;
+}
+
+export function extractCookieValue(header: string | null | undefined, name: string): string | undefined {
+  const cookies = (header ?? "").split(";");
+  for (const cookie of cookies) {
+    const [rawKey, ...rawValue] = cookie.trim().split("=");
+    if (rawKey === name) {
+      try {
+        return decodeURIComponent(rawValue.join("="));
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function extractBrowserSessionToken(cookieHeader: string | null | undefined): string | undefined {
+  return extractCookieValue(cookieHeader, BROWSER_SESSION_COOKIE);
+}
+
+export function buildBrowserSessionCookie(token: string, requestUrl: string): string {
+  return serializeCookie(BROWSER_SESSION_COOKIE, token, {
+    maxAge: SESSION_TTL_SECONDS,
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookie(requestUrl),
+  });
+}
+
+export function buildClearedBrowserSessionCookie(requestUrl: string): string {
+  return serializeCookie(BROWSER_SESSION_COOKIE, "", {
+    maxAge: 0,
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookie(requestUrl),
+  });
+}
+
+export function buildGitHubOAuthStateCookie(state: string, requestUrl: string): string {
+  return serializeCookie(GITHUB_OAUTH_STATE_COOKIE, state, {
+    maxAge: GITHUB_OAUTH_STATE_TTL_SECONDS,
+    path: "/v1/auth/github",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookie(requestUrl),
+  });
+}
+
+export function buildClearedGitHubOAuthStateCookie(requestUrl: string): string {
+  return serializeCookie(GITHUB_OAUTH_STATE_COOKIE, "", {
+    maxAge: 0,
+    path: "/v1/auth/github",
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookie(requestUrl),
+  });
 }
 
 export async function timingSafeEqual(actual: string | undefined, expected: string | undefined): Promise<boolean> {
@@ -73,6 +135,35 @@ function parseGitHubLoginList(value: string | undefined): Set<string> {
       .map((login) => login.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+type CookieOptions = {
+  maxAge: number;
+  path: string;
+  httpOnly: boolean;
+  sameSite: "Lax" | "Strict" | "None";
+  secure: boolean;
+};
+
+function serializeCookie(name: string, value: string, options: CookieOptions): string {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    `Max-Age=${options.maxAge}`,
+    `Path=${options.path}`,
+    `SameSite=${options.sameSite}`,
+  ];
+  if (options.httpOnly) parts.push("HttpOnly");
+  if (options.secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function shouldUseSecureCookie(requestUrl: string): boolean {
+  try {
+    const hostname = new URL(requestUrl).hostname;
+    return hostname !== "localhost" && hostname !== "127.0.0.1";
+  } catch {
+    return true;
+  }
 }
 
 export async function createSessionForGitHubUser(

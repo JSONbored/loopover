@@ -120,6 +120,7 @@ describe("decision-pack service", () => {
       profile: { login: "jsonbored", github: {}, source: {}, officialStats: null, registeredRepoActivity: {}, trustSignals: {} },
       outcomeHistory: { login: "jsonbored", generatedAt: "2026-05-24T00:00:00.000Z", totals: {}, repoOutcomes: [] },
       roleContexts: [],
+      opportunities: [],
       repoDecisions: [{ repoFullName: "JSONbored/awesome-claude", recommendation: "maintainer_lane" }],
       topActions: [],
       cleanupFirst: [],
@@ -557,6 +558,18 @@ describe("decision-pack service", () => {
       ] as any,
       syncSegments: [],
       totals: [{ repoFullName: "owner/pursue", openPullRequestsTotal: 2, openIssuesTotal: 3, mergedPullRequestsTotal: 4, closedUnmergedPullRequestsTotal: 1 }] as any,
+      opportunities: [
+        {
+          repoFullName: "owner/pursue",
+          issueNumber: 7,
+          title: "Fresh funded task",
+          fit: "good",
+          score: 82,
+          lane: "split",
+          reasons: ["Active bounty context is available."],
+          warnings: [],
+        },
+      ],
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [{ repoFullName: "owner/cleanup", authorLogin: "jsonbored", authorAssociation: "CONTRIBUTOR" }] as any,
       contributorIssues: [],
@@ -569,6 +582,7 @@ describe("decision-pack service", () => {
     expect(pack.avoidRepos.map((decision) => decision.repoFullName)).toEqual(expect.arrayContaining(["owner/inactive", "owner/unconfigured"]));
     expect(pack.topActions.map((action) => action.actionKind)).toEqual(expect.arrayContaining(["maintainer_lane_improve_repo", "cleanup_existing_prs", "open_new_direct_pr", "file_issue_discovery"]));
     expect(pack.roleContexts.map((role) => role.repoFullName)).not.toContain("owner/unconfigured");
+    expect(pack.opportunities).toEqual([expect.objectContaining({ repoFullName: "owner/pursue", issueNumber: 7, fit: "good" })]);
     expect(pack.nextActions.length).toBeGreaterThan(0);
   });
 

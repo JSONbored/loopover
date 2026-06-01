@@ -1,21 +1,48 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBountyAdvisory,
+  buildBurdenForecast,
+  classifyBountyLifecycle,
   buildCollisionReport,
   buildConfigQuality,
   buildContributorOpportunities,
   buildContributorFit,
+  buildContributorIntakeHealth,
+  buildContributorOutcomeHistory,
   buildContributorProfile,
   buildContributorScoringProfile,
+  buildContributorStrategy,
+  buildIssueDiscoveryLifecycleReport,
+  buildIssueQualityReport,
   buildLabelAudit,
   buildLaneAdvice,
+  buildLocalDiffPreflightResult,
+  buildMaintainerCutReadiness,
+  buildMaintainerLaneReport,
   buildPreflightResult,
+  buildPullRequestMaintainerPacket,
+  buildPullRequestReviewIntelligence,
   buildPublicPrIntelligenceComment,
   buildQueueHealth,
+  buildRegistryChangeReport,
+  buildRepoFitRecommendation,
   detectGittensorContributor,
   shouldPublishPrIntelligenceComment,
 } from "../../src/signals/engine";
-import type { BountyRecord, ContributorRepoStatRecord, IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings, ScoringModelSnapshotRecord } from "../../src/types";
+import type {
+  BountyRecord,
+  CheckSummaryRecord,
+  ContributorRepoStatRecord,
+  IssueRecord,
+  PullRequestFileRecord,
+  PullRequestRecord,
+  PullRequestReviewRecord,
+  RecentMergedPullRequestRecord,
+  RegistrySnapshot,
+  RepositoryRecord,
+  RepositorySettings,
+  ScoringModelSnapshotRecord,
+} from "../../src/types";
 
 const repo: RepositoryRecord = {
   fullName: "entrius/allways-ui",
@@ -440,8 +467,263 @@ describe("world-class backend signals", () => {
     };
     const linkedIssue: IssueRecord = { ...issues[0]!, linkedPrs: [12, 13] };
 
-    expect(buildBountyAdvisory(active, repo, null)).toMatchObject({ lifecycle: "active", fundingStatus: "funded", consensusRisk: "high" });
-    expect(buildBountyAdvisory(historical, null, linkedIssue)).toMatchObject({ lifecycle: "historical", fundingStatus: "target_only", consensusRisk: "medium" });
+    expect(buildBountyAdvisory(active, repo, null)).toMatchObject({ lifecycle: "active", isActiveOpportunity: true, fundingStatus: "funded", consensusRisk: "high" });
+    expect(buildBountyAdvisory(historical, null, linkedIssue)).toMatchObject({ lifecycle: "completed", isActiveOpportunity: false, fundingStatus: "target_only", consensusRisk: "medium" });
+  });
+
+  it("classifies the full bounty lifecycle: active, historical, completed, cancelled, stale, ambiguous", () => {
+    const base = { repoFullName: repo.fullName, issueNumber: 7, payload: { bounty_amount: "1.0000" } };
+    const openIssue: IssueRecord = { ...issues[0]!, state: "open", linkedPrs: [] };
+    const closedIssue: IssueRecord = { ...issues[0]!, state: "closed", linkedPrs: [] };
+
+    const active: BountyRecord = { ...base, id: "active", status: "Open", updatedAt: new Date().toISOString() };
+    const historical: BountyRecord = { ...base, id: "historical", status: "Archived" };
+    const completed: BountyRecord = { ...base, id: "completed", status: "Paid out" };
+    const cancelled: BountyRecord = { ...base, id: "cancelled", status: "Withdrawn" };
+    const stale: BountyRecord = { ...base, id: "stale", status: "Active", updatedAt: "2020-01-01T00:00:00.000Z" };
+    const ambiguousStatus: BountyRecord = { ...base, id: "ambiguous-status", status: "Pending triage" };
+
+    expect(classifyBountyLifecycle(active, openIssue)).toBe("active");
+    expect(classifyBountyLifecycle(historical, openIssue)).toBe("historical");
+    expect(classifyBountyLifecycle(completed, openIssue)).toBe("completed");
+    expect(classifyBountyLifecycle(cancelled, openIssue)).toBe("cancelled");
+    expect(classifyBountyLifecycle(stale, openIssue)).toBe("stale");
+    expect(classifyBountyLifecycle(ambiguousStatus, openIssue)).toBe("ambiguous");
+    // An active-looking bounty on a closed issue is a conflicting signal, not a live opportunity.
+    expect(classifyBountyLifecycle(active, closedIssue)).toBe("ambiguous");
+
+    // A bounty that advertises a reward/award is an active offer, not completed work; only past-tense payout phrasing completes it.
+    expect(classifyBountyLifecycle({ ...base, id: "reward-open", status: "Reward available" }, openIssue)).toBe("active");
+    expect(classifyBountyLifecycle({ ...base, id: "award-open", status: "Award open" }, openIssue)).toBe("active");
+    expect(classifyBountyLifecycle({ ...base, id: "rewarded", status: "Rewarded" }, openIssue)).toBe("completed");
+    expect(classifyBountyLifecycle({ ...base, id: "awarded", status: "Awarded to solver" }, openIssue)).toBe("completed");
+    // Empty/whitespace status is a sparse-cache fallback that cannot be classified.
+    expect(classifyBountyLifecycle({ ...base, id: "blank", status: "   " }, openIssue)).toBe("unknown");
+
+    expect(buildBountyAdvisory(historical, repo, openIssue).findings.map((finding) => finding.code)).toContain("historical_bounty");
+    expect(buildBountyAdvisory(completed, repo, openIssue).findings.map((finding) => finding.code)).toContain("completed_bounty");
+    expect(buildBountyAdvisory(cancelled, repo, openIssue).findings.map((finding) => finding.code)).toContain("cancelled_bounty");
+    expect(buildBountyAdvisory(stale, repo, openIssue).findings.map((finding) => finding.code)).toContain("stale_bounty");
+    expect(buildBountyAdvisory(ambiguousStatus, repo, openIssue).findings.map((finding) => finding.code)).toContain("ambiguous_bounty");
+    expect(buildBountyAdvisory(stale, repo, openIssue).isActiveOpportunity).toBe(false);
+    expect(buildBountyAdvisory({ ...base, id: "target-only", status: "Open", payload: { target_bounty: 1, bounty_amount: "0.0000" } }, repo, openIssue).fundingStatus).toBe("target_only");
+    expect(buildBountyAdvisory({ ...base, id: "unknown-funding", status: "Open", payload: {} }, repo, openIssue).fundingStatus).toBe("unknown");
+
+    const stalePreflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Fix cache", body: "Fixes #7" }, repo, [openIssue], [], [stale]);
+    const ambiguousPreflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Fix cache", body: "Fixes #7" }, repo, [openIssue], [], [ambiguousStatus]);
+    expect(stalePreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_unverified");
+    expect(ambiguousPreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_unverified");
+  });
+
+  it("includes linked PR validity when PR records are available", () => {
+    const issueWithPrs: IssueRecord = { ...issues[0]!, number: 7, state: "open", linkedPrs: [12, 99] };
+    const fundedActive: BountyRecord = { id: "linked", repoFullName: repo.fullName, issueNumber: 7, status: "Open", payload: { bounty_amount: "2.0000" }, updatedAt: new Date().toISOString() };
+
+    const advisory = buildBountyAdvisory(fundedActive, repo, issueWithPrs, pullRequests);
+    expect(advisory.linkedPrs).toEqual([
+      { number: 12, state: "open", isActive: true },
+      { number: 13, state: "open", isActive: true },
+      { number: 99, state: "unknown", isActive: false },
+    ]);
+    expect(advisory.findings.map((finding) => finding.code)).toContain("bounty_has_active_pr");
+
+    // Cover merged/closed linked-PR states and cross-linked discovery (PRs referencing the issue via linkedIssues only).
+    const mixedPrs: PullRequestRecord[] = [
+      { ...pullRequests[0]!, number: 50, state: "merged", mergedAt: "2026-05-01T00:00:00.000Z", linkedIssues: [7] },
+      { ...pullRequests[0]!, number: 51, state: "closed", mergedAt: undefined, linkedIssues: [7] },
+    ];
+    const mixedAdvisory = buildBountyAdvisory(fundedActive, repo, { ...issueWithPrs, linkedPrs: [] }, mixedPrs);
+    expect(mixedAdvisory.linkedPrs).toEqual([
+      { number: 50, state: "merged", isActive: false },
+      { number: 51, state: "closed", isActive: false },
+    ]);
+  });
+
+  it("scores linked-PR risk by state, not raw count", () => {
+    const openIssue: IssueRecord = { ...issues[0]!, number: 7, state: "open", linkedPrs: [] };
+    const fundedActive: BountyRecord = { id: "risk-bounty", repoFullName: repo.fullName, issueNumber: 7, status: "Open", payload: { bounty_amount: "2.0000" }, updatedAt: new Date().toISOString() };
+    const linkedOpen = (number: number): PullRequestRecord => ({ ...pullRequests[0]!, number, state: "open", mergedAt: undefined, linkedIssues: [7] });
+    const linkedMerged = (number: number): PullRequestRecord => ({ ...pullRequests[0]!, number, state: "merged", mergedAt: "2026-05-01T00:00:00.000Z", linkedIssues: [7] });
+    const linkedClosed = (number: number): PullRequestRecord => ({ ...pullRequests[0]!, number, state: "closed", mergedAt: undefined, linkedIssues: [7] });
+
+    // Multiple OPEN linked PRs => elevated active-overlap risk.
+    const manyOpen = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedOpen(60), linkedOpen(61)]);
+    expect(manyOpen.consensusRisk).toBe("high");
+    const overlapFinding = manyOpen.findings.find((finding) => finding.code === "bounty_has_active_pr");
+    expect(overlapFinding?.severity).toBe("warning");
+    expect(overlapFinding?.detail).toContain("duplicating active");
+    expect(manyOpen.findings.map((finding) => finding.code)).not.toContain("bounty_linked_pr_merged");
+    expect(manyOpen.findings.map((finding) => finding.code)).not.toContain("bounty_linked_pr_closed_history");
+
+    // A MERGED linked PR => possible solved/resolution warning, not active overlap.
+    const merged = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedMerged(62)]);
+    expect(merged.consensusRisk).toBe("medium");
+    const mergedFinding = merged.findings.find((finding) => finding.code === "bounty_linked_pr_merged");
+    expect(mergedFinding?.severity).toBe("warning");
+    expect(mergedFinding?.detail).toMatch(/already be solved/i);
+    expect(merged.findings.map((finding) => finding.code)).not.toContain("bounty_has_active_pr");
+
+    // Only CLOSED-unmerged linked PRs => historical caution/ambiguity, distinct from active-overlap wording.
+    const severalClosed = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedClosed(63), linkedClosed(64)]);
+    expect(severalClosed.consensusRisk).toBe("medium");
+    const closedFinding = severalClosed.findings.find((finding) => finding.code === "bounty_linked_pr_closed_history");
+    expect(closedFinding?.severity).toBe("warning");
+    expect(closedFinding?.detail).toMatch(/historical attempts, not active competing work/i);
+    expect(severalClosed.findings.map((finding) => finding.code)).not.toContain("bounty_has_active_pr");
+    expect(severalClosed.findings.map((finding) => finding.code)).not.toContain("bounty_linked_pr_merged");
+
+    // A single closed-unmerged attempt is not elevated like concurrent active overlap.
+    const oneClosed = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedClosed(65)]);
+    expect(oneClosed.consensusRisk).toBe("low");
+    expect(oneClosed.findings.find((finding) => finding.code === "bounty_linked_pr_closed_history")?.severity).toBe("info");
+  });
+
+  it("feeds bounty state into issue quality scoring", () => {
+    const completedBounty: BountyRecord = { id: "q1", repoFullName: repo.fullName, issueNumber: 7, status: "Completed", payload: {} };
+    const cancelledBounty: BountyRecord = { id: "q2", repoFullName: repo.fullName, issueNumber: 8, status: "Cancelled", payload: {} };
+    const activeBounty: BountyRecord = { id: "q3", repoFullName: repo.fullName, issueNumber: 7, status: "Active", payload: {}, updatedAt: new Date().toISOString() };
+    const report = buildIssueQualityReport(repo, issues, [], repo.fullName, [completedBounty, cancelledBounty]);
+    const activeReport = buildIssueQualityReport(repo, issues, [], repo.fullName, [activeBounty]);
+    const issue7 = report.issues.find((entry) => entry.number === 7)!;
+    const issue8 = report.issues.find((entry) => entry.number === 8)!;
+    expect(issue7.status).toBe("do_not_use");
+    expect(issue8.status).toBe("do_not_use");
+    expect(issue8.warnings.some((warning) => /cancelled bounty/i.test(warning))).toBe(true);
+    expect(activeReport.issues.find((entry) => entry.number === 7)?.reasons).toContain("Active bounty context is attached (contribution context, not guaranteed payout).");
+
+    // Historical / stale / ambiguous bounty states surface distinct issue-quality warnings.
+    const lifecycleIssues: IssueRecord[] = [
+      { ...issues[0]!, number: 30, title: "Historical bounty issue", linkedPrs: [] },
+      { ...issues[0]!, number: 31, title: "Stale bounty issue", linkedPrs: [] },
+      { ...issues[0]!, number: 32, title: "Ambiguous bounty issue", linkedPrs: [] },
+    ];
+    const lifecycleReport = buildIssueQualityReport(repo, lifecycleIssues, [], repo.fullName, [
+      { id: "h", repoFullName: repo.fullName, issueNumber: 30, status: "Archived", payload: {} },
+      { id: "s", repoFullName: repo.fullName, issueNumber: 31, status: "Open", payload: {}, updatedAt: "2020-01-01T00:00:00.000Z" },
+      { id: "a", repoFullName: repo.fullName, issueNumber: 32, status: "Pending triage", payload: {} },
+    ]);
+    expect(lifecycleReport.issues.find((entry) => entry.number === 30)?.warnings.some((warning) => /historical bounty context/i.test(warning))).toBe(true);
+    expect(lifecycleReport.issues.find((entry) => entry.number === 31)?.warnings.some((warning) => /bounty context for this issue looks stale/i.test(warning))).toBe(true);
+    expect(lifecycleReport.issues.find((entry) => entry.number === 32)?.warnings.some((warning) => /bounty state for this issue is ambiguous/i.test(warning))).toBe(true);
+  });
+
+  it("surfaces linked-issue quality findings in preflight", () => {
+    const qualityReport = {
+      repoFullName: repo.fullName,
+      generatedAt: new Date().toISOString(),
+      lane: buildLaneAdvice(repo, repo.fullName),
+      issues: [
+        { number: 7, title: "Ready", status: "ready" as const, score: 90, reasons: [], warnings: [] },
+        { number: 8, title: "Needs proof", status: "needs_proof" as const, score: 40, reasons: [], warnings: ["Issue body is thin."] },
+        { number: 9, title: "Already covered", status: "do_not_use" as const, score: 0, reasons: [], warnings: [] },
+      ],
+      summary: "",
+    };
+    const preflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Quality preflight", linkedIssues: [7, 8, 9] }, repo, issues, [], [], qualityReport);
+    const codes = preflight.findings.map((finding) => finding.code);
+    expect(codes).toContain("issue_quality_needs_proof");
+    expect(codes).toContain("issue_quality_do_not_use");
+  });
+
+  it("keeps stale and ambiguous bounties out of strong opportunity ranking", () => {
+    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, pullRequests, []);
+    const repoWithoutOpenPrs = { ...repo, fullName: "owner/bounty-fit", registryConfig: { ...repo.registryConfig!, repo: "owner/bounty-fit" } };
+    const bountyIssues: IssueRecord[] = [
+      { ...issues[0]!, repoFullName: repoWithoutOpenPrs.fullName, number: 1, title: "Fresh funded task", linkedPrs: [] },
+      { ...issues[0]!, repoFullName: repoWithoutOpenPrs.fullName, number: 2, title: "Stale funded task", linkedPrs: [] },
+      { ...issues[0]!, repoFullName: repoWithoutOpenPrs.fullName, number: 3, title: "Completed funded task", linkedPrs: [] },
+      { ...issues[0]!, repoFullName: repoWithoutOpenPrs.fullName, number: 4, title: "Ambiguous funded task", linkedPrs: [] },
+    ];
+    const bounties: BountyRecord[] = [
+      { id: "active-fit", repoFullName: repoWithoutOpenPrs.fullName, issueNumber: 1, status: "Active", payload: { bounty_alpha: "1.0000" }, updatedAt: new Date().toISOString() },
+      { id: "stale-fit", repoFullName: repoWithoutOpenPrs.fullName, issueNumber: 2, status: "Active", payload: { bounty_alpha: "1.0000" }, updatedAt: "2020-01-01T00:00:00.000Z" },
+      { id: "completed-fit", repoFullName: repoWithoutOpenPrs.fullName, issueNumber: 3, status: "Completed", payload: { bounty_alpha: "1.0000" } },
+      { id: "ambiguous-fit", repoFullName: repoWithoutOpenPrs.fullName, issueNumber: 4, status: "Pending triage", payload: { bounty_alpha: "1.0000" } },
+    ];
+
+    const opportunities = buildContributorOpportunities(profile, [repoWithoutOpenPrs], bountyIssues, [], bounties);
+
+    expect(opportunities.map((opportunity) => opportunity.issueNumber)).toEqual([1, 2, 4]);
+    expect(opportunities.find((opportunity) => opportunity.issueNumber === 1)?.reasons).toContain("An active bounty is attached as contribution context (not guaranteed payout).");
+    expect(opportunities.find((opportunity) => opportunity.issueNumber === 2)?.fit).not.toBe("good");
+    expect(opportunities.find((opportunity) => opportunity.issueNumber === 2)?.warnings).toContain("Attached bounty context looks stale; confirm it is still active before acting.");
+    expect(opportunities.find((opportunity) => opportunity.issueNumber === 4)?.fit).not.toBe("good");
+    expect(opportunities.find((opportunity) => opportunity.issueNumber === 4)?.warnings).toContain("Attached bounty state is ambiguous; verify it before acting.");
+
+    const strongProfile = buildContributorProfile(
+      "oktofeesh1",
+      { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" },
+      [],
+      [],
+      [
+        {
+          login: "oktofeesh1",
+          repoFullName: repoWithoutOpenPrs.fullName,
+          pullRequests: 4,
+          mergedPullRequests: 3,
+          openPullRequests: 0,
+          issues: 1,
+          stalePullRequests: 0,
+          unlinkedPullRequests: 0,
+          dominantLabels: ["bug", "feature", "enhancement", "refactor", "docs"],
+        },
+      ],
+    );
+    const highSignalStaleIssue: IssueRecord = { ...bountyIssues[1]!, labels: ["bug", "feature", "enhancement", "refactor", "docs"] };
+    const highSignalStale = buildContributorOpportunities(strongProfile, [repoWithoutOpenPrs], [highSignalStaleIssue], [], [bounties[1]!]);
+    expect(highSignalStale[0]).toMatchObject({ fit: "caution", score: 70 });
+  });
+
+  it("drops completed, cancelled, and historical bounty issues from opportunities entirely", () => {
+    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, pullRequests, []);
+    const deadRepo = { ...repo, fullName: "owner/dead-bounties", registryConfig: { ...repo.registryConfig!, repo: "owner/dead-bounties" } };
+    const deadIssues: IssueRecord[] = [
+      { ...issues[0]!, repoFullName: deadRepo.fullName, number: 1, title: "Completed work", linkedPrs: [] },
+      { ...issues[0]!, repoFullName: deadRepo.fullName, number: 2, title: "Cancelled work", linkedPrs: [] },
+      { ...issues[0]!, repoFullName: deadRepo.fullName, number: 3, title: "Historical work", linkedPrs: [] },
+      { ...issues[0]!, repoFullName: deadRepo.fullName, number: 4, title: "Active work", linkedPrs: [] },
+    ];
+    const deadBounties: BountyRecord[] = [
+      { id: "d1", repoFullName: deadRepo.fullName, issueNumber: 1, status: "Completed", payload: { bounty_alpha: "1.0000" } },
+      { id: "d2", repoFullName: deadRepo.fullName, issueNumber: 2, status: "Cancelled", payload: { bounty_alpha: "1.0000" } },
+      { id: "d3", repoFullName: deadRepo.fullName, issueNumber: 3, status: "Archived", payload: { bounty_alpha: "1.0000" } },
+      { id: "d4", repoFullName: deadRepo.fullName, issueNumber: 4, status: "Active", payload: { bounty_alpha: "1.0000" }, updatedAt: new Date().toISOString() },
+    ];
+    const numbers = buildContributorOpportunities(profile, [deadRepo], deadIssues, [], deadBounties).map((opportunity) => opportunity.issueNumber);
+    expect(numbers).not.toContain(1);
+    expect(numbers).not.toContain(2);
+    expect(numbers).not.toContain(3);
+    expect(numbers).toContain(4);
+  });
+
+  it("keeps bounty-aware opportunity and issue-quality work bounded for large bounty/issue sets", () => {
+    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, pullRequests, []);
+    // 10 registered repos x 600 issues each = 6000 issues, each with a bounty (even issues completed, odd active).
+    const bigRepos = Array.from({ length: 10 }, (_, index) => ({
+      ...repo,
+      fullName: `owner/huge-${index}`,
+      registryConfig: { ...repo.registryConfig!, repo: `owner/huge-${index}` },
+    }));
+    const bigIssues: IssueRecord[] = bigRepos.flatMap((bigRepo) =>
+      Array.from({ length: 600 }, (_, index) => ({ ...issues[0]!, repoFullName: bigRepo.fullName, number: index + 1, title: `Issue ${index + 1}`, linkedPrs: [] })),
+    );
+    const bigBounties: BountyRecord[] = bigIssues.map((issue, index) => ({
+      id: `big-${index}`,
+      repoFullName: issue.repoFullName,
+      issueNumber: issue.number,
+      status: issue.number % 2 === 0 ? "Completed" : "Active",
+      payload: { bounty_alpha: "1.0000" },
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const opportunities = buildContributorOpportunities(profile, bigRepos, bigIssues, [], bigBounties);
+    // Output is bounded by the 25-opportunity cap even with thousands of candidates...
+    expect(opportunities.length).toBeLessThanOrEqual(25);
+    // ...and completed bounties (even issue numbers) are never surfaced as opportunities.
+    expect(opportunities.every((opportunity) => (opportunity.issueNumber ?? 0) % 2 === 1)).toBe(true);
+
+    const quality = buildIssueQualityReport(bigRepos[0]!, bigIssues.filter((issue) => issue.repoFullName === bigRepos[0]!.fullName), [], bigRepos[0]!.fullName, bigBounties);
+    expect(quality.issues.length).toBeLessThanOrEqual(100);
   });
 
   it("covers contributor fit and label audit warning boundaries", () => {
@@ -494,6 +776,247 @@ describe("world-class backend signals", () => {
 
     expect(detection).toMatchObject({ detected: true, priorPullRequests: 1, priorMergedPullRequests: 0 });
   });
+
+  it("builds private contributor outcome and strategy reports across maintainer and cleanup lanes", () => {
+    const ownerRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "jsonbored/gittensory",
+      owner: "jsonbored",
+      name: "gittensory",
+      registryConfig: { ...repo.registryConfig!, repo: "jsonbored/gittensory", maintainerCut: 0.1 },
+    };
+    const riskyRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "owner/risky",
+      owner: "owner",
+      name: "risky",
+      registryConfig: { ...repo.registryConfig!, repo: "owner/risky" },
+    };
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "owner/issues",
+      owner: "owner",
+      name: "issues",
+      registryConfig: { ...repo.registryConfig!, repo: "owner/issues", issueDiscoveryShare: 1 },
+    };
+    const profile = buildContributorProfile("jsonbored", { login: "JSONbored", topLanguages: ["TypeScript"], source: "github" }, [], [], [], {
+      source: "gittensor_api",
+      githubId: "49853598",
+      githubUsername: "JSONbored",
+      uid: 29,
+      hotkey: "hotkey",
+      evaluatedAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      isEligible: true,
+      credibility: 0.76,
+      eligibleRepoCount: 2,
+      issueDiscoveryScore: 12,
+      issueTokenScore: 3,
+      issueCredibility: 0.7,
+      isIssueEligible: true,
+      issueEligibleRepoCount: 1,
+      alphaPerDay: 12,
+      taoPerDay: 0.05,
+      usdPerDay: 18,
+      totals: {
+        pullRequests: 10,
+        mergedPullRequests: 2,
+        openPullRequests: 5,
+        closedPullRequests: 3,
+        openIssues: 12,
+        closedIssues: 2,
+        solvedIssues: 1,
+        validSolvedIssues: 1,
+      },
+      repositories: [
+        {
+          repoFullName: ownerRepo.fullName,
+          pullRequests: 1,
+          mergedPullRequests: 1,
+          openPullRequests: 0,
+          closedPullRequests: 0,
+          openIssues: 0,
+          closedIssues: 0,
+          solvedIssues: 0,
+          validSolvedIssues: 0,
+          isEligible: true,
+          isIssueEligible: false,
+          credibility: 0.95,
+          issueCredibility: 0,
+          totalScore: 10,
+          baseTotalScore: 10,
+        },
+        {
+          repoFullName: riskyRepo.fullName,
+          pullRequests: 8,
+          mergedPullRequests: 1,
+          openPullRequests: 5,
+          closedPullRequests: 2,
+          openIssues: 12,
+          closedIssues: 1,
+          solvedIssues: 0,
+          validSolvedIssues: 0,
+          isEligible: true,
+          isIssueEligible: false,
+          credibility: 0.4,
+          issueCredibility: 0.1,
+          totalScore: 6,
+          baseTotalScore: 20,
+        },
+        {
+          repoFullName: issueDiscoveryRepo.fullName,
+          pullRequests: 1,
+          mergedPullRequests: 0,
+          openPullRequests: 0,
+          closedPullRequests: 1,
+          openIssues: 0,
+          closedIssues: 1,
+          solvedIssues: 1,
+          validSolvedIssues: 1,
+          isEligible: false,
+          isIssueEligible: true,
+          credibility: 0.9,
+          issueCredibility: 0.95,
+          totalScore: 3,
+          baseTotalScore: 4,
+        },
+      ],
+      pullRequests: [{ repoFullName: riskyRepo.fullName, number: 44, title: "Risky PR", state: "OPEN", label: "bug", score: 1, baseScore: 1, tokenScore: 1 }],
+      issueLabels: ["bug", "feature"],
+    });
+    const contributorPrs: PullRequestRecord[] = [
+      { ...pullRequests[0]!, repoFullName: ownerRepo.fullName, authorLogin: "jsonbored", authorAssociation: "OWNER", number: 1, state: "merged", mergedAt: "2026-05-20T00:00:00.000Z" },
+      ...Array.from({ length: 5 }, (_, index): PullRequestRecord => ({
+        ...pullRequests[0]!,
+        repoFullName: riskyRepo.fullName,
+        authorLogin: "jsonbored",
+        authorAssociation: "NONE",
+        number: 10 + index,
+        state: "open",
+        linkedIssues: [100 + index],
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      })),
+    ];
+    const contributorIssues: IssueRecord[] = Array.from({ length: 12 }, (_, index): IssueRecord => ({
+      repoFullName: riskyRepo.fullName,
+      number: 100 + index,
+      title: `Risky issue ${index}`,
+      state: "open",
+      authorLogin: "jsonbored",
+      labels: ["bug"],
+      linkedPrs: [],
+    }));
+    const repoStats: ContributorRepoStatRecord[] = [
+      { login: "jsonbored", repoFullName: riskyRepo.fullName, pullRequests: 8, mergedPullRequests: 1, openPullRequests: 5, issues: 12, stalePullRequests: 1, unlinkedPullRequests: 1, dominantLabels: ["bug"], lastActivityAt: "2026-05-25T00:00:00.000Z" },
+      { login: "jsonbored", repoFullName: ownerRepo.fullName, pullRequests: 1, mergedPullRequests: 1, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["feature"], lastActivityAt: "2026-05-25T00:00:00.000Z" },
+    ];
+
+    const repositories = [ownerRepo, riskyRepo, issueDiscoveryRepo];
+    const history = buildContributorOutcomeHistory({ login: "jsonbored", profile, repositories, pullRequests: contributorPrs, issues: contributorIssues, repoStats });
+    const fit = buildContributorFit(
+      profile,
+      repositories,
+      [{ ...issues[0]!, repoFullName: riskyRepo.fullName, number: 100, title: "Risky issue" }],
+      contributorPrs,
+      [{ repoFullName: riskyRepo.fullName, status: "success", sourceKind: "github", openIssuesCount: 12, openPullRequestsCount: 5, recentMergedPullRequestsCount: 0, primaryLanguage: "TypeScript", warnings: [] }],
+      repoStats,
+    );
+    const scoring = buildContributorScoringProfile({ login: "jsonbored", fit, scoringSnapshot: scoringModelSnapshot() });
+    const strategy = buildContributorStrategy({ login: "jsonbored", fit, scoringProfile: scoring, scoringSnapshot: scoringModelSnapshot(), outcomeHistory: history });
+    const ownerRecommendation = buildRepoFitRecommendation({ login: "jsonbored", repo: ownerRepo, repoFullName: ownerRepo.fullName, profile, issues: [], pullRequests: contributorPrs, outcomeHistory: history });
+    const riskyRecommendation = buildRepoFitRecommendation({ login: "jsonbored", repo: riskyRepo, repoFullName: riskyRepo.fullName, profile, issues: contributorIssues, pullRequests: contributorPrs, outcomeHistory: history });
+
+    expect(history.reconciliation?.officialAuthoritative).toBe(true);
+    expect(history.failurePatterns.map((pattern) => pattern.title)).toEqual(expect.arrayContaining(["Open PR pressure", "Raw issue activity is not solved discovery evidence"]));
+    expect(strategy.cleanupFirst.map((entry) => entry.repoFullName)).toContain(riskyRepo.fullName);
+    expect(strategy.maintainerLaneRepos.map((entry) => entry.repoFullName)).toContain(ownerRepo.fullName);
+    expect(strategy.avoidRepos.map((entry) => entry.repoFullName)).toContain(riskyRepo.fullName);
+    expect(ownerRecommendation.recommendation).toBe("maintainer_lane");
+    expect(riskyRecommendation.recommendation).toBe("cleanup_first");
+  });
+
+  it("covers issue lifecycle, review intelligence, registry diffs, and maintainer forecast boundaries", () => {
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 1, maintainerCut: 0 },
+    };
+    const staleIso = "2025-01-01T00:00:00.000Z";
+    const lifecycleIssues: IssueRecord[] = [
+      { ...issues[0]!, number: 21, title: "Duplicate report", labels: ["duplicate"], body: "Duplicate body".repeat(20), linkedPrs: [], updatedAt: staleIso },
+      { ...issues[0]!, number: 22, title: "Invalid report", labels: ["not planned"], body: "Invalid body".repeat(20), linkedPrs: [], updatedAt: "2026-05-20T00:00:00.000Z" },
+      { ...issues[0]!, number: 23, title: "Solved issue", labels: ["bug"], body: "Detailed solved body ".repeat(20), linkedPrs: [33], updatedAt: "2026-05-20T00:00:00.000Z" },
+      { ...issues[0]!, number: 24, title: "Closed stale issue", state: "closed", labels: ["feature"], body: "Closed body".repeat(20), linkedPrs: [], updatedAt: staleIso },
+      { ...issues[0]!, number: 25, title: "Ready issue", labels: ["feature"], body: "This issue includes a complete reproduction, expected result, actual result, and scoped acceptance criteria. ".repeat(3), linkedPrs: [], updatedAt: "2026-05-20T00:00:00.000Z" },
+    ];
+    const reviewPr: PullRequestRecord = {
+      ...pullRequests[0]!,
+      repoFullName: repo.fullName,
+      number: 33,
+      title: "Fix solved issue",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      linkedIssues: [23],
+      labels: ["bug"],
+      body: "Fixes #23",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    };
+    const recentMerged: RecentMergedPullRequestRecord[] = [
+      { repoFullName: repo.fullName, number: 33, title: "Fix solved issue", authorLogin: "oktofeesh1", mergedAt: "2026-05-25T00:00:00.000Z", labels: ["bug"], linkedIssues: [23], changedFiles: ["src/fix.ts"], payload: {} },
+    ];
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 33, path: "src/fix.ts", status: "modified", additions: 20, deletions: 2, changes: 22, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 33, path: "README.md", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} },
+    ];
+    const reviews: PullRequestReviewRecord[] = [{ id: "review-1", repoFullName: repo.fullName, pullNumber: 33, reviewerLogin: "maintainer", state: "APPROVED", authorAssociation: "MEMBER", submittedAt: "2026-05-25T00:00:00.000Z", payload: {} }];
+    const failedChecks: CheckSummaryRecord[] = [{ id: "check-1", repoFullName: repo.fullName, pullNumber: 33, headSha: "sha", name: "test", status: "completed", conclusion: "failure", payload: {} }];
+    const lifecycle = buildIssueDiscoveryLifecycleReport(issueDiscoveryRepo, lifecycleIssues, [reviewPr], repo.fullName, recentMerged);
+    const quality = buildIssueQualityReport(issueDiscoveryRepo, lifecycleIssues, [reviewPr], repo.fullName, [], undefined, recentMerged);
+    const localPreflight = buildLocalDiffPreflightResult(
+      { repoFullName: repo.fullName, title: "Fix solved issue", body: "Fixes #23", changedFiles: ["src/fix.ts"], testFiles: [], changedLineCount: 900, commitMessage: "fix: close #23" },
+      issueDiscoveryRepo,
+      lifecycleIssues,
+      [reviewPr],
+      [],
+      quality,
+    );
+    const maintainerPacket = buildPullRequestMaintainerPacket({ repo: repo, pullRequest: reviewPr, issues: lifecycleIssues, pullRequests: [reviewPr], files, reviews, checks: failedChecks, recentMergedPullRequests: recentMerged, repoFullName: repo.fullName, pullNumber: 33 });
+    const reviewIntel = buildPullRequestReviewIntelligence({ repo, pullRequest: reviewPr, issues: lifecycleIssues, pullRequests: [reviewPr], files, reviews, checks: failedChecks, recentMergedPullRequests: recentMerged, repoFullName: repo.fullName, pullNumber: 33 });
+    const missingPacket = buildPullRequestMaintainerPacket({ repo, pullRequest: null, issues: lifecycleIssues, pullRequests: [reviewPr], files: [], reviews: [], checks: [], recentMergedPullRequests: [], repoFullName: repo.fullName, pullNumber: 999 });
+    const manyOpenPrs = Array.from({ length: 20 }, (_, index): PullRequestRecord => ({
+      ...reviewPr,
+      number: 100 + index,
+      title: `Unlinked queue item ${index}`,
+      linkedIssues: [],
+      updatedAt: staleIso,
+    }));
+    const collisions = buildCollisionReport(repo.fullName, lifecycleIssues, manyOpenPrs);
+    const forecast = buildBurdenForecast(repo, lifecycleIssues, manyOpenPrs, collisions, 7);
+    const readiness = buildMaintainerCutReadiness({ ...repo, registryConfig: { ...repo.registryConfig!, maintainerCut: 0 } }, lifecycleIssues, manyOpenPrs, repo.fullName, { openPullRequests: 20 });
+    const maintainerReport = buildMaintainerLaneReport({ ...repo, registryConfig: { ...repo.registryConfig!, maintainerCut: 0 } }, lifecycleIssues, manyOpenPrs, repo.fullName, collisions, { openPullRequests: 20 });
+    const intake = buildContributorIntakeHealth(repo, lifecycleIssues, manyOpenPrs, repo.fullName, collisions, { openPullRequests: 20 });
+    const previous: RegistrySnapshot = registrySnapshot("previous", [
+      { ...repo.registryConfig!, repo: "owner/changed", emissionShare: 0.1, issueDiscoveryShare: 0, maintainerCut: 0, trustedLabelPipeline: null, labelMultipliers: { bug: 1 }, raw: {} },
+      { ...repo.registryConfig!, repo: "owner/removed", raw: {} },
+    ]);
+    const current: RegistrySnapshot = registrySnapshot("current", [
+      { ...repo.registryConfig!, repo: "owner/changed", emissionShare: 0.2, issueDiscoveryShare: 0.5, maintainerCut: 0.1, trustedLabelPipeline: true, labelMultipliers: { feature: 2 }, raw: {} },
+      { ...repo.registryConfig!, repo: "owner/added", raw: {} },
+    ]);
+    const changeReport = buildRegistryChangeReport([current, previous]);
+
+    expect(lifecycle.states.map((state) => state.state)).toEqual(expect.arrayContaining(["duplicate", "invalid", "valid_solved", "closed_not_solved", "open"]));
+    expect(quality.issues.map((issue) => issue.status)).toEqual(expect.arrayContaining(["ready", "do_not_use"]));
+    expect(localPreflight.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["large_local_diff", "local_diff_missing_tests", "issue_quality_do_not_use"]));
+    expect(maintainerPacket.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["checks_need_attention", "missing_test_files"]));
+    expect(missingPacket.findings.map((finding) => finding.code)).toContain("pr_not_cached");
+    expect(reviewIntel.recommendation).toBe("likely_duplicate");
+    expect(forecast.level).toBe("critical");
+    expect(readiness.recommendedAction).toBe("fix_config_first");
+    expect(maintainerReport.findings.map((finding) => finding.code)).toContain("maintainer_cut_not_configured");
+    expect(intake.level).toBe("blocked");
+    expect(changeReport).toMatchObject({ addedRepos: ["owner/added"], removedRepos: ["owner/removed"] });
+    expect(changeReport.changedRepos[0]?.changes).toEqual(expect.arrayContaining(["label_multipliers changed", "trusted_label_pipeline false -> true"]));
+  });
 });
 
 function scoringModelSnapshot(): ScoringModelSnapshotRecord {
@@ -507,5 +1030,18 @@ function scoringModelSnapshot(): ScoringModelSnapshotRecord {
     programmingLanguages: {},
     warnings: [],
     payload: {},
+  };
+}
+
+function registrySnapshot(id: string, repositories: RegistrySnapshot["repositories"]): RegistrySnapshot {
+  return {
+    id,
+    generatedAt: "2026-05-25T00:00:00.000Z",
+    fetchedAt: "2026-05-25T00:00:00.000Z",
+    source: { kind: "raw-github", url: `fixture://${id}` },
+    repoCount: repositories.length,
+    totalEmissionShare: repositories.reduce((sum, record) => sum + record.emissionShare, 0),
+    warnings: [],
+    repositories,
   };
 }

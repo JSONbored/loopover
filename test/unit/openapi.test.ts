@@ -43,6 +43,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/app/operator-dashboard"]).toBeDefined();
     expect(spec.paths["/v1/app/commands"]).toBeDefined();
     expect(spec.paths["/v1/app/commands/preview"]).toBeDefined();
+    expect(spec.paths["/v1/app/commands/usefulness"]).toBeDefined();
+    expect(spec.paths["/v1/app/commands/feedback"]).toBeDefined();
     expect(spec.paths["/v1/app/digest"]).toBeDefined();
     expect(spec.paths["/v1/app/digest/subscriptions"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/start"]).toBeDefined();

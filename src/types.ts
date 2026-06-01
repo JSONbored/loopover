@@ -131,9 +131,17 @@ export type GitHubWebhookPayload = {
   pull_request?: GitHubPullRequestPayload;
   issue?: GitHubIssuePayload;
   comment?: GitHubIssueCommentPayload;
+  reaction?: GitHubReactionPayload;
+  sender?: GitHubWebhookUserPayload;
   label?: {
     name?: string;
   };
+};
+
+export type GitHubWebhookUserPayload = {
+  login?: string;
+  type?: string;
+  id?: number;
 };
 
 export type GitHubRepositoryPayload = {
@@ -192,6 +200,13 @@ export type GitHubIssuePayload = {
   labels?: Array<{ name?: string }>;
   body?: string | null;
   pull_request?: unknown;
+};
+
+export type GitHubReactionPayload = {
+  id?: number;
+  content?: string;
+  user?: GitHubWebhookUserPayload;
+  created_at?: string | null;
 };
 
 export type GitHubIssueCommentPayload = {
@@ -860,6 +875,55 @@ export type DigestSubscriptionRecord = {
   source: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CommandFeedbackVote = "useful" | "not_useful";
+export type CommandFeedbackSource = "github_reaction" | "app";
+
+export type AgentCommandAnswerRecord = {
+  id: string;
+  repoFullName: string;
+  issueNumber: number;
+  command: string;
+  requestCommentId?: number | null | undefined;
+  responseCommentId?: number | null | undefined;
+  responseUrl?: string | null | undefined;
+  actorKind: "maintainer" | "author";
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+  metadata: Record<string, JsonValue>;
+};
+
+export type AgentCommandFeedbackRecord = {
+  id?: string | undefined;
+  answerId: string;
+  repoFullName: string;
+  issueNumber: number;
+  command: string;
+  actorLogin: string;
+  vote: CommandFeedbackVote;
+  source: CommandFeedbackSource;
+  actorKind: "maintainer" | "author";
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+  metadata?: Record<string, JsonValue> | undefined;
+};
+
+export type CommandUsefulnessBucket = {
+  command: string;
+  feedbackCount: number;
+  usefulCount: number;
+  notUsefulCount: number;
+  answerCount: number;
+  usefulnessRate: number | null;
+  latestFeedbackAt?: string | null | undefined;
+};
+
+export type CommandUsefulnessSummary = {
+  windowDays: number;
+  generatedAt: string;
+  totals: Omit<CommandUsefulnessBucket, "command">;
+  commands: CommandUsefulnessBucket[];
 };
 
 export type AuditEventRecord = {

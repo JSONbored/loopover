@@ -28,6 +28,9 @@ import {
   countActiveAuthSessions,
   countActiveDigestSubscriptions,
   getBounty,
+  getAgentCommandAnswer,
+  getCommandUsefulnessSummary,
+  getFreshOfficialMinerDetection,
   getIssue,
   getInstallationHealth,
   getLatestRepoGithubTotalsSnapshot,
@@ -71,6 +74,7 @@ import {
   persistBountyLifecycleEvent,
   persistScorePreview,
   persistSignalSnapshot,
+  recordAgentCommandFeedback,
   recordProductUsageEvent,
   rollupProductUsageDaily,
   summarizeMcpCompatibilityAdoption,
@@ -396,6 +400,13 @@ const commandPreviewSchema = z
     repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     pullNumber: z.number().int().positive().optional(),
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+  })
+  .strict();
+
+const commandFeedbackSchema = z
+  .object({
+    answerId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_.:-]+$/),
+    vote: z.enum(["useful", "not_useful"]),
   })
   .strict();
 
@@ -775,6 +786,7 @@ export function createApp() {
       usageRollups,
       usageRollupStatus,
       mcpCompatibilityAdoption,
+      commandUsefulness,
     ] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
@@ -789,6 +801,7 @@ export function createApp() {
       listProductUsageDailyRollups(c.env, { limit: 14 }),
       getProductUsageRollupStatus(c.env),
       summarizeMcpCompatibilityAdoption(c.env, usageSince),
+      getCommandUsefulnessSummary(c.env),
     ]);
     const weeklyValueReport = buildWeeklyValueReport({
       generatedAt: nowIso(),
@@ -819,6 +832,7 @@ export function createApp() {
         { label: "Active users", value: String(usageSummary.activeActors), delta: "hashed, last 7 days" },
         { label: "Activation rollups", value: usageRollupStatus.status, delta: usageRollupStatus.latestRollupDay ?? "not generated" },
         { label: "MCP stale clients", value: String(mcpCompatibilityAdoption.staleEvents + mcpCompatibilityAdoption.incompatibleEvents), delta: `${mcpCompatibilityAdoption.totalEvents} MCP event(s)` },
+        { label: "Command usefulness", value: `${commandUsefulness.totals.usefulCount}/${commandUsefulness.totals.feedbackCount}`, delta: usefulnessDelta(commandUsefulness.totals.usefulnessRate) },
         { label: "Install issues", value: String(health.filter((record) => record.status !== "healthy").length), delta: "current health cache" },
         { label: "Rate-limit events", value: String(rateLimits.length), delta: "latest observations" },
       ],
@@ -833,6 +847,7 @@ export function createApp() {
       usageRollups,
       usageRollupStatus,
       mcpCompatibilityAdoption,
+      commandUsefulness,
       registry,
       scoringModel: scoring,
       upstreamDrift,
@@ -936,6 +951,53 @@ export function createApp() {
       command,
       request: parsed.data,
       preview,
+    });
+  });
+
+  app.get("/v1/app/commands/usefulness", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const days = Number(c.req.query("days") ?? 30);
+    return c.json(await getCommandUsefulnessSummary(c.env, { windowDays: clampInteger(days, 1, 180) }));
+  });
+
+  app.post("/v1/app/commands/feedback", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const body = await c.req.json().catch(() => null);
+    const parsed = commandFeedbackSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_command_feedback", issues: parsed.error.issues }, 400);
+    const answer = await getAgentCommandAnswer(c.env, parsed.data.answerId);
+    if (!answer) return c.json({ error: "command_answer_not_found" }, 404);
+    const actorLogin = identity.actor;
+    await recordAgentCommandFeedback(c.env, {
+      answerId: answer.id,
+      repoFullName: answer.repoFullName,
+      issueNumber: answer.issueNumber,
+      command: answer.command,
+      actorLogin,
+      vote: parsed.data.vote,
+      source: "app",
+      actorKind: "maintainer",
+      metadata: { surface: "app", identityKind: identity.kind },
+    });
+    await recordAuditEvent(c.env, {
+      eventType: "github_app.agent_command_feedback_recorded",
+      actor: actorLogin,
+      targetKey: `${answer.repoFullName}#${answer.issueNumber}`,
+      outcome: "completed",
+      metadata: { answerId: answer.id, command: answer.command, vote: parsed.data.vote, source: "app", identityKind: identity.kind },
+    });
+    return c.json({
+      ok: true,
+      generatedAt: nowIso(),
+      answer: {
+        id: answer.id,
+        repoFullName: answer.repoFullName,
+        issueNumber: answer.issueNumber,
+        command: answer.command,
+      },
+      vote: parsed.data.vote,
     });
   });
 
@@ -2151,6 +2213,15 @@ function buildCommandPreview(command: (typeof APP_COMMANDS)[number], request: z.
     endpoint: command.endpoint,
     body: `${command.command} will call ${command.endpoint} for ${target}${request.login ? ` as ${request.login}` : ""}.`,
   };
+}
+
+function usefulnessDelta(rate: number | null): string {
+  return rate === null ? "no feedback yet" : `${Math.round(rate * 100)}% useful over 30 days`;
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 function buildDigestItems(args: {

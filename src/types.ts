@@ -805,6 +805,16 @@ export type AuthSessionRecord = {
   metadata: Record<string, JsonValue>;
 };
 
+export type DigestSubscriptionRecord = {
+  id: string;
+  login: string;
+  email: string;
+  status: "active" | "paused";
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AuditEventRecord = {
   id?: string | undefined;
   eventType: string;

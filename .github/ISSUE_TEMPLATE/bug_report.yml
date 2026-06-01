@@ -1,14 +1,19 @@
 name: Bug report
-description: Report a backend, API, MCP, GitHub App, or signal issue.
+description: Report a UI, API, MCP, GitHub App, deploy, or signal issue.
 title: "[Bug]: "
 labels:
   - bug
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include secrets, tokens, wallet details, hotkeys, coldkeys, private maintainer evidence, private scoring output, or local absolute paths.
+        Security issues must be reported privately through GitHub Security Advisories.
   - type: textarea
     id: summary
     attributes:
       label: Summary
-      description: What is wrong?
+      description: What is wrong, and what user or maintainer workflow does it affect?
     validations:
       required: true
   - type: dropdown
@@ -16,9 +21,12 @@ body:
     attributes:
       label: Area
       options:
+        - Frontend UI
         - REST API
         - MCP
         - GitHub App
+        - Auth/session
+        - Cloudflare deploy/runtime
         - Registry sync
         - GitHub backfill
         - Signal logic
@@ -30,18 +38,34 @@ body:
     id: expected
     attributes:
       label: Expected behavior
+      description: What should have happened?
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
       label: Actual behavior
+      description: What happened instead?
     validations:
       required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Include exact route, endpoint, command, sanitized request shape, or GitHub App event path.
+    validations:
+      required: false
   - type: textarea
     id: validation
     attributes:
       label: Validation
-      description: Include commands, status codes, or sanitized logs. Do not include secrets, wallet details, or private tokens.
+      description: Include commands, status codes, screenshots, or sanitized logs. Remove secrets, tokens, and local paths.
     validations:
       required: false
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Public-safety check
+      options:
+        - label: I removed secrets, tokens, wallet details, private keys, local paths, and private scoring output.
+          required: true

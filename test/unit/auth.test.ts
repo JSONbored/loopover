@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow } from "../../src/auth/github-oauth";
+import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../../src/auth/github-oauth";
 import { enforceRateLimit, RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
-import { authenticatePrivateToken, createSessionForGitHubUser, revokeSession } from "../../src/auth/security";
+import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, extractCookieValue, isAuthorizedGitHubSessionLogin, revokeSession, timingSafeEqual } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
 describe("private-beta auth and rate limiting", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -27,6 +28,23 @@ describe("private-beta auth and rate limiting", () => {
     await expect(authenticatePrivateToken(env, expired.token)).resolves.toBeNull();
   });
 
+  it("handles auth helper fallbacks for cookies, login lists, and token comparison", async () => {
+    await expect(timingSafeEqual(undefined, "expected")).resolves.toBe(false);
+    await expect(timingSafeEqual("short", "shorter")).resolves.toBe(false);
+    const noAdminEnv = createTestEnv();
+    delete (noAdminEnv as Partial<Env>).ADMIN_GITHUB_LOGINS;
+    expect(isAuthorizedGitHubSessionLogin(noAdminEnv, "jsonbored")).toBe(false);
+
+    const localhostCookie = buildBrowserSessionCookie("token", "http://localhost/v1/auth/session");
+    expect(localhostCookie).toContain("HttpOnly");
+    expect(localhostCookie).not.toContain("Secure");
+    expect(buildBrowserSessionCookie("token", "http://127.0.0.1/v1/auth/session")).not.toContain("Secure");
+
+    const malformedUrlCookie = buildBrowserSessionCookie("token", "not-a-url");
+    expect(malformedUrlCookie).toContain("Secure");
+    expect(extractCookieValue("gittensory_session=%E0%A4%A", "gittensory_session")).toBeUndefined();
+  });
+
   it("enforces burst limits inside the Durable Object bucket", async () => {
     const state = memoryDurableObjectState();
     const limiter = new RateLimiter(state as unknown as DurableObjectState, createTestEnv());
@@ -39,6 +57,8 @@ describe("private-beta auth and rate limiting", () => {
 
     const invalid = await limiter.fetch(new Request("https://rate-limit/check", { method: "POST", body: "{}" }));
     expect(invalid.status).toBe(400);
+    const invalidJson = await limiter.fetch(new Request("https://rate-limit/check", { method: "POST", body: "{" }));
+    expect(invalidJson.status).toBe(400);
   });
 
   it("resets Durable Object buckets after the configured window expires", async () => {
@@ -85,6 +105,14 @@ describe("private-beta auth and rate limiting", () => {
     expect(fallbackHeaders.res.headers.get("x-ratelimit-remaining")).toBe("120");
     expect(fallbackHeaders.res.headers.get("x-ratelimit-reset")).toBeNull();
 
+    const malformedDecision = fakeContext(
+      createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: "not-json" }) as unknown as DurableObjectNamespace }),
+      "/v1/repos/JSONbored/gittensory",
+    );
+    await expect(enforceRateLimit(malformedDecision, "normal")).resolves.toBeNull();
+    expect(malformedDecision.res.headers.get("x-ratelimit-limit")).toBe("120");
+    expect(malformedDecision.res.headers.get("x-ratelimit-remaining")).toBe("120");
+
     const allowed = fakeContext(
       createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: { limit: 3, remaining: 2, resetAt: "2026-05-25T00:01:00.000Z" } }) as unknown as DurableObjectNamespace }),
       "/v1/repos/JSONbored/gittensory/pulls/123/reviewability",
@@ -116,6 +144,15 @@ describe("private-beta auth and rate limiting", () => {
     const deniedWithTokenResponse = await enforceRateLimit(deniedWithToken, "expensive");
     expect(deniedWithTokenResponse?.headers.get("retry-after")).toBe("17");
     expect(deniedWithTokenResponse?.headers.get("x-ratelimit-reset")).toBe("2026-05-25T00:03:00.000Z");
+    const deniedWithoutReset = fakeContext(
+      createTestEnv({
+        RATE_LIMITER: rateLimiterNamespace({ status: 429, body: { limit: 20, remaining: 0 } }) as unknown as DurableObjectNamespace,
+      }),
+      "/v1/local/branch-analysis",
+      { authorization: "Bearer session-token" },
+    );
+    const deniedWithoutResetResponse = await enforceRateLimit(deniedWithoutReset, "expensive");
+    expect(deniedWithoutResetResponse?.headers.get("x-ratelimit-reset")).toBeNull();
     const tokenAudit = await deniedWithTokenEnv.DB.prepare("select actor, metadata_json from audit_events where event_type = ?").bind("rate_limit.denied").first<{
       actor: string;
       metadata_json: string;
@@ -144,6 +181,9 @@ describe("private-beta auth and rate limiting", () => {
     vi.stubGlobal("fetch", async () => Response.json({}, { status: 502 }));
     await expect(startGitHubDeviceFlow(env)).rejects.toThrow(/github_device_flow_start_failed/);
 
+    vi.stubGlobal("fetch", async () => new Response("{", { status: 502 }));
+    await expect(startGitHubDeviceFlow(env)).rejects.toThrow(/github_device_flow_start_failed/);
+
     vi.stubGlobal("fetch", async () => Response.json({ device_code: "missing" }));
     await expect(startGitHubDeviceFlow(env)).rejects.toThrow(/response_invalid/);
     await expect(startGitHubDeviceFlow(createTestEnv())).rejects.toThrow(/not_configured/);
@@ -157,6 +197,178 @@ describe("private-beta auth and rate limiting", () => {
       }),
     );
     await expect(startGitHubDeviceFlow(env)).resolves.not.toHaveProperty("interval");
+  });
+
+  it("starts and completes GitHub web OAuth with signed state", async () => {
+    const env = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+      ADMIN_GITHUB_LOGINS: "jsonbored",
+    });
+    const started = await startGitHubWebOAuth(
+      env,
+      "https://gittensory-api.aethereal.dev/v1/auth/github/start",
+      "https://gittensory.aethereal.dev/app/workbench",
+    );
+    expect(started.returnTo).toBe("https://gittensory.aethereal.dev/app/workbench");
+    expect(started.authorizationUrl).toContain("https://github.com/login/oauth/authorize");
+    expect(started.authorizationUrl).toContain("client_id=client-id");
+    expect(started.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fgittensory-api.aethereal.dev%2Fv1%2Fauth%2Fgithub%2Fcallback");
+
+    await expect(
+      startGitHubWebOAuth(createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" }), "https://gittensory-api.aethereal.dev/v1/auth/github/start", undefined),
+    ).rejects.toThrow(/not_configured/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({ access_token: "gh-token", scope: "read:user" });
+      if (url === "https://api.github.com/user") return Response.json({ login: "jsonbored", id: 42 });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/callback", {
+        code: "code",
+        state: started.state,
+        cookieState: started.state,
+      }),
+    ).resolves.toMatchObject({ login: "jsonbored", scopes: ["read:user"], returnTo: "https://gittensory.aethereal.dev/app/workbench" });
+
+    await expect(
+      completeGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/callback", {
+        code: "code",
+        state: started.state,
+        cookieState: "wrong-state",
+      }),
+    ).rejects.toThrow(/state_invalid/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({ error: "bad_verification_code", error_description: "bad code" });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://gittensory-api.aethereal.dev/v1/auth/github/callback", {
+        code: "code",
+        state: started.state,
+        cookieState: started.state,
+      }),
+    ).rejects.toThrow(/bad code/);
+  });
+
+  it("normalizes GitHub web OAuth fallbacks and rejects malformed callback state", async () => {
+    const env = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+      ADMIN_GITHUB_LOGINS: "jsonbored",
+    });
+    delete (env as Partial<Env>).PUBLIC_API_ORIGIN;
+    delete (env as Partial<Env>).PUBLIC_SITE_ORIGIN;
+
+    const invalidReturnTo = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", "https://evil.example/app");
+    expect(invalidReturnTo.returnTo).toBe("https://gittensory.aethereal.dev/app");
+    expect(invalidReturnTo.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fpreview.example.workers.dev%2Fv1%2Fauth%2Fgithub%2Fcallback");
+
+    const localhostReturnTo = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", "http://localhost:5173/app");
+    expect(localhostReturnTo.returnTo).toBe("http://localhost:5173/app");
+
+    await expect(
+      completeGitHubWebOAuth(createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" }), "https://gittensory-api.aethereal.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/not_configured/);
+
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: "missing-signature",
+        cookieState: "missing-signature",
+      }),
+    ).rejects.toThrow(/state_invalid/);
+
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: "encoded.bad-signature",
+        cookieState: "encoded.bad-signature",
+      }),
+    ).rejects.toThrow(/state_invalid/);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-05-31T00:00:00.000Z"));
+      const started = await startGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/start", undefined);
+      vi.setSystemTime(new Date("2026-05-31T00:11:00.000Z"));
+      await expect(
+        completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+          code: "code",
+          state: started.state,
+          cookieState: started.state,
+        }),
+      ).rejects.toThrow(/state_invalid/);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({}, { status: 502 });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/token_exchange_failed/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return new Response("{", { status: 502 });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/token_exchange_failed/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({});
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/access_token_missing/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({ error: "bad_verification_code" });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/bad_verification_code/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/user") return Response.json({ login: "jsonbored" });
+      return Response.json({});
+    });
+    await expect(createSessionFromGitHubToken(env, "github-token")).resolves.toMatchObject({ login: "jsonbored", scopes: [] });
   });
 
   it("polls GitHub device flow and creates a session only after authorization", async () => {
@@ -205,6 +417,13 @@ describe("private-beta auth and rate limiting", () => {
       return Response.json({});
     });
     await expect(pollGitHubDeviceFlow(env, "device-code")).rejects.toThrow(/access_token_missing/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return new Response("{");
+      return Response.json({});
+    });
+    await expect(pollGitHubDeviceFlow(env, "device-code")).rejects.toThrow(/access_token_missing/);
     await expect(pollGitHubDeviceFlow(createTestEnv(), "device-code")).rejects.toThrow(/not_configured/);
   });
 
@@ -242,7 +461,7 @@ function memoryDurableObjectState() {
   };
 }
 
-function rateLimiterNamespace(decision: { status: number; body: Record<string, unknown> }) {
+function rateLimiterNamespace(decision: { status: number; body: Record<string, unknown> | string }) {
   return {
     idFromName(name: string) {
       expect(name).toMatch(/^(normal|expensive):/);
@@ -253,6 +472,7 @@ function rateLimiterNamespace(decision: { status: number; body: Record<string, u
         async fetch(_url: string, init?: RequestInit) {
           expect(init?.method).toBe("POST");
           expect(JSON.parse(String(init?.body ?? "{}"))).toEqual(expect.objectContaining({ key: expect.any(String), limit: expect.any(Number), windowSeconds: expect.any(Number) }));
+          if (typeof decision.body === "string") return new Response(decision.body, { status: decision.status });
           return Response.json(decision.body, { status: decision.status });
         },
       };

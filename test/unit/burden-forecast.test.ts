@@ -90,6 +90,25 @@ describe("loadOrComputeBurdenForecastResponse", () => {
     expect(response?.ageSeconds).toBeLessThan(Math.floor((BURDEN_FORECAST_MAX_AGE_MS + 120_000) / 1000));
   });
 
+  it("treats malformed cached forecast timestamps as stale", async () => {
+    const env = createTestEnv();
+    await upsertBurdenForecast(env, {
+      repoFullName: "owner/malformed-time",
+      payload: { repoFullName: "owner/malformed-time", level: "medium", summary: "bad timestamp fixture" } as unknown as Record<string, JsonValue>,
+      generatedAt: "not-a-date",
+    });
+
+    const response = await loadOrComputeBurdenForecastResponse(env, "owner/malformed-time");
+
+    expect(response).toMatchObject({
+      status: "ready",
+      source: "snapshot",
+      repoFullName: "owner/malformed-time",
+      freshness: "stale",
+    });
+    expect(response?.ageSeconds).toBe(Number.POSITIVE_INFINITY);
+  });
+
   it("falls back to a computed forecast when no snapshot exists but the repo is known", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "owner/uncached", private: false, owner: { login: "owner" }, default_branch: "main" });

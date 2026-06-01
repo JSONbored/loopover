@@ -95,6 +95,7 @@ export async function enforceRateLimit(c: Context<{ Bindings: Env }>, routeClass
 }
 
 export function routeClassForPath(path: string): RateLimitClass {
+  if (path === "/v1/auth/session" || path === "/v1/auth/logout") return "normal";
   if (path.startsWith("/v1/auth/")) return "strict";
   if (
     path.includes("/branch-analysis") ||

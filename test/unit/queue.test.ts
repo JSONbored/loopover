@@ -166,6 +166,8 @@ describe("queue processors", () => {
     });
 
     await processJob(env, { type: "refresh-upstream-drift", requestedBy: "test" });
+    await processJob(env, { type: "refresh-upstream-sources", requestedBy: "test" });
+    await processJob(env, { type: "build-upstream-ruleset", requestedBy: "test" });
     await processJob(env, { type: "detect-upstream-drift", requestedBy: "test" });
     await processJob(env, { type: "file-upstream-drift-issues", requestedBy: "test" });
 

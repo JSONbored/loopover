@@ -13,6 +13,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    testTimeout: 15000,
     include: ["test/**/*.test.ts"],
     exclude: ["test/workers/**/*.test.ts"],
     coverage: {
@@ -20,10 +21,10 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/env.d.ts"],
       thresholds: {
-        lines: 95,
-        functions: 95,
-        branches: 95,
-        statements: 95,
+        lines: 97,
+        functions: 97,
+        branches: 97,
+        statements: 97,
       },
     },
   },

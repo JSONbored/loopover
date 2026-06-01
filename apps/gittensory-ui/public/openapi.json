@@ -1910,6 +1910,192 @@
           "missing"
         ]
       },
+      "ContributorOpenPrNextStepPacket": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "number": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "blocked",
+              "stale",
+              "needs_author",
+              "failing_checks",
+              "missing_tests",
+              "duplicate_prone",
+              "reviewable",
+              "should_close_or_withdraw",
+              "maintainer_lane",
+              "draft"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "nextSteps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "repoFullName",
+          "number",
+          "title",
+          "classification",
+          "summary",
+          "reasons",
+          "nextSteps"
+        ]
+      },
+      "ContributorOpenPrMonitor": {
+        "type": "object",
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "openPrCount": {
+            "type": "number"
+          },
+          "registeredRepoCount": {
+            "type": "number"
+          },
+          "cleanupFirst": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "guidance": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pendingScenarios": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "detection": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "github_observed",
+                        "user_supplied"
+                      ]
+                    },
+                    "pendingMergedPrCount": {
+                      "type": "number"
+                    },
+                    "pendingClosedPrCount": {
+                      "type": "number"
+                    },
+                    "approvedPrCount": {
+                      "type": "number"
+                    },
+                    "expectedOpenPrCountAfterMerge": {
+                      "type": "number"
+                    },
+                    "scenarioNotes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "classified": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repoFullName": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "number"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "classification": {
+                            "type": "string"
+                          },
+                          "reasons": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "repoFullName",
+                          "number",
+                          "title",
+                          "classification",
+                          "reasons"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "pendingMergedPrCount",
+                    "pendingClosedPrCount",
+                    "approvedPrCount",
+                    "scenarioNotes",
+                    "classified"
+                  ]
+                }
+              },
+              "required": [
+                "repoFullName",
+                "detection"
+              ]
+            }
+          },
+          "pullRequests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContributorOpenPrNextStepPacket"
+            }
+          }
+        },
+        "required": [
+          "login",
+          "generatedAt",
+          "openPrCount",
+          "registeredRepoCount",
+          "cleanupFirst",
+          "summary",
+          "guidance",
+          "pendingScenarios",
+          "pullRequests"
+        ]
+      },
       "ContributorDecisionPack": {
         "type": "object",
         "properties": {
@@ -2045,6 +2231,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "openPrMonitor": {
+            "$ref": "#/components/schemas/ContributorOpenPrMonitor"
           }
         },
         "required": [
@@ -8718,6 +8907,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DecisionPackRefreshNeeded"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/open-pr-monitor": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Contributor open-PR monitor with classifications and public-safe next-step packets from cached metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributorOpenPrMonitor"
                 }
               }
             }

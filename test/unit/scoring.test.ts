@@ -143,15 +143,15 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     });
 
     expect(preview.activeModel).toBe("pending_saturation_model");
-    expect(preview.scoreEstimate.baseScore).toBeCloseTo(20.803, 3);
-    expect(preview.scoreEstimate.contributionBonus).toBe(5);
+    expect(preview.scoreEstimate.baseScore).toBeCloseTo(40.803, 3);
+    expect(preview.scoreEstimate.contributionBonus).toBe(25);
     expect(preview.scoreEstimate.pendingSaturationScore).toBe(preview.scoreEstimate.baseScore);
-    expect(preview.scoreEstimate.estimatedMergedScore).toBeCloseTo(33.2016, 3);
+    expect(preview.scoreEstimate.estimatedMergedScore).toBeCloseTo(65.1216, 3);
     expect(preview.gates.baseTokenGatePassed).toBe(true);
     expect(JSON.stringify(preview.scoreEstimate)).not.toMatch(/reward estimate|wallet|hotkey|farming|payout/i);
   });
 
-  it("keeps pending saturation projection bonus capped for density-era snapshots", () => {
+  it("projects the saturation-model score with the full contribution bonus for density-era snapshots", () => {
     const densitySnapshot: ScoringModelSnapshotRecord = {
       ...snapshot,
       activeModel: "current_density_model",
@@ -175,8 +175,36 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     });
 
     expect(preview.scoreEstimate.contributionBonus).toBe(25);
-    expect(preview.scoreEstimate.pendingSaturationScore).toBeCloseTo(20.803, 3);
-    expect(preview.underlyingPotentialScore).toBeLessThan(30);
+    expect(preview.scoreEstimate.pendingSaturationScore).toBeCloseTo(40.803, 3);
+    expect(preview.underlyingPotentialScore).toBeCloseTo(40.803, 3);
+  });
+
+  it("scores the saturation contribution bonus identically to the density bonus and keeps full-bonus work a strong fit", () => {
+    const input = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 58,
+      totalTokenScore: 1500,
+      sourceLines: 120,
+      openPrCount: 0,
+      credibility: 1,
+    };
+    const saturationPreview = buildScorePreview({
+      repo,
+      snapshot: { ...snapshot, activeModel: "pending_saturation_model" as const },
+      input,
+    });
+    const densityPreview = buildScorePreview({
+      repo,
+      snapshot: { ...snapshot, activeModel: "current_density_model" as const },
+      input,
+    });
+
+    // Same MAX_CONTRIBUTION_BONUS, same full ramp -> both models must agree on the bonus.
+    expect(saturationPreview.scoreEstimate.contributionBonus).toBe(densityPreview.scoreEstimate.contributionBonus);
+    expect(saturationPreview.scoreEstimate.contributionBonus).toBe(25);
+    // A full-bonus contribution must not fall below the strong_fit threshold (>= 30)
+    // because the contribution bonus was clipped.
+    expect(saturationPreview.effectiveEstimatedScore).toBeGreaterThanOrEqual(30);
   });
 
   it("keeps lane math tied to the recorded model snapshot and clamps score gates", () => {

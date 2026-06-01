@@ -211,9 +211,7 @@ function computeScoreCore(
   const densityMultiplier = clamp(rawDensity || 0, 0, constant(constants, "MAX_CODE_DENSITY_MULTIPLIER", 1.15));
   const densityTokenGatePassed = sourceTokenScore >= constant(constants, "MIN_TOKEN_SCORE_FOR_BASE_SCORE", 5);
   const baseTokenGatePassed = snapshot.activeModel === "pending_saturation_model" ? sourceTokenScore > 0 : densityTokenGatePassed;
-  const densityContributionBonus =
-    clamp(totalTokenScore / constant(constants, "CONTRIBUTION_SCORE_FOR_FULL_BONUS", 1500), 0, 1) *
-    constant(constants, "MAX_CONTRIBUTION_BONUS", 25);
+  const densityContributionBonus = contributionBonusRamp(totalTokenScore, constants);
   const saturationContributionBonusValue = saturationContributionBonus(totalTokenScore, constants);
   const saturationBaseScore = saturationScore(sourceTokenScore, totalTokenScore, constants);
   const densityBaseScore =
@@ -559,8 +557,17 @@ function saturationScore(sourceTokenScore: number, totalTokenScore: number, cons
 }
 
 function saturationContributionBonus(totalTokenScore: number, constants: Record<string, number>): number {
-  const contributionBonusCap = Math.min(constant(constants, "MAX_CONTRIBUTION_BONUS", 5), 5);
-  return clamp(totalTokenScore / constant(constants, "CONTRIBUTION_SCORE_FOR_FULL_BONUS", 1500), 0, 1) * contributionBonusCap;
+  return contributionBonusRamp(totalTokenScore, constants);
+}
+
+// Shared contribution-bonus ramp used by both scoring models so the saturation
+// and density bonuses cannot drift: clamp(totalTokenScore / FULL_BONUS, 0, 1)
+// scaled by MAX_CONTRIBUTION_BONUS (default 25).
+function contributionBonusRamp(totalTokenScore: number, constants: Record<string, number>): number {
+  return (
+    clamp(totalTokenScore / constant(constants, "CONTRIBUTION_SCORE_FOR_FULL_BONUS", 1500), 0, 1) *
+    constant(constants, "MAX_CONTRIBUTION_BONUS", 25)
+  );
 }
 
 function nonNegative(value: number | undefined): number {

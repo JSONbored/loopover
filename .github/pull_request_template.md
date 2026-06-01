@@ -13,7 +13,7 @@
 - [ ] `git diff --check`
 - [ ] `npm run actionlint`
 - [ ] `npm run typecheck`
-- [ ] `npm run test:coverage`
+- [ ] `npm run test:coverage` locally; global coverage stays at or above **97%** for lines, statements, functions, and branches (aim for **98%+** branch coverage locally so CI variance does not fail near the threshold)
 - [ ] `npm run test:workers`
 - [ ] `npm run build:mcp`
 - [ ] `npm run test:mcp-pack`
@@ -22,7 +22,7 @@
 - [ ] `npm run ui:typecheck`
 - [ ] `npm run ui:build`
 - [ ] `npm audit --audit-level=moderate`
-- [ ] Coverage remains at or above 97% for statements, branches, functions, and lines.
+- [ ] New or changed behavior has unit/integration tests for new branches, fallback paths, and sanitizer boundaries
 
 If any required check was skipped, explain why:
 

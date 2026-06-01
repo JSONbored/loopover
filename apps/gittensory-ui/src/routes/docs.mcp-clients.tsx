@@ -32,6 +32,20 @@ function McpClients() {
       title="MCP client setup"
       description="Configure your coding agent to talk to the Gittensory MCP. Pick stdio for local agents, remote for cloud agents."
     >
+      <h2>Generate config</h2>
+      <p>These commands print config only. They do not mutate your local client files.</p>
+      <CodeBlock
+        lang="bash"
+        code={`gittensory-mcp init-client --print codex
+gittensory-mcp init-client --print claude
+gittensory-mcp init-client --print cursor
+gittensory-mcp init-client --print mcp`}
+      />
+      <p>
+        <code>--print mcp</code> uses the same JSON snippet as Claude Desktop and Cursor for other
+        stdio MCP hosts that expect the <code>mcpServers</code> shape.
+      </p>
+
       <h2>Codex (OpenAI)</h2>
       <CodeBlock
         filename="~/.codex/config.toml"

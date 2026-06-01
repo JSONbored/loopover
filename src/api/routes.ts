@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
 import {
@@ -133,9 +134,11 @@ import {
   buildRegistryChangeReport,
 } from "../signals/engine";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
+import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
+import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
 import type { BountyLifecycleEventRecord, ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
@@ -222,6 +225,8 @@ const localBranchAnalysisSchema = z
     expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
     projectedCredibility: z.number().min(0).max(1).optional(),
     scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+    pendingCommitCount: z.number().int().min(0).optional(),
+    ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
   })
   .strict();
 
@@ -1147,6 +1152,13 @@ export function createApp() {
     return c.json(serving.refresh, 202);
   });
 
+  app.get("/v1/contributors/:login/open-pr-monitor", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    return c.json(await buildContributorOpenPrMonitor(c.env, login));
+  });
+
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {
     const login = c.req.param("login");
     const unauthorized = await requireContributorAccess(c, login);
@@ -1539,6 +1551,43 @@ export function createApp() {
     return c.json({ ok: true, imported: bounties.length, lifecycleEvents: events.length });
   });
 
+  app.post("/v1/internal/queue-intelligence", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || !Array.isArray(body.pullRequests)) {
+      return c.json({ error: "invalid_request", detail: "pullRequests array required" }, 400);
+    }
+    const prSchema = z.object({
+      number: z.number().int().positive(),
+      author: z.string(),
+      authorRole: z.enum(["first-time", "contributor", "maintainer"] as [AuthorRole, ...AuthorRole[]]),
+      isConfirmedMiner: z.boolean(),
+      linkedIssue: z.object({ qualityScore: z.number().min(0).max(1) }).nullable(),
+      checksStatus: z.enum(["passing", "failing", "pending"] as [ChecksStatus, ...ChecksStatus[]]),
+      isStale: z.boolean(),
+      additions: z.number().int().nonnegative(),
+      deletions: z.number().int().nonnegative(),
+      title: z.string(),
+      body: z.string(),
+      duplicateCandidates: z.array(z.number().int().positive()),
+      createdAt: z.string().datetime(),
+      lastUpdatedAt: z.string().datetime(),
+    });
+    const repoContextSchema = z.object({
+      totalOpenPRs: z.number().int().nonnegative(),
+      avgReviewTimeDays: z.number().nonnegative(),
+      maintainerWorkload: z.number().min(0).max(1),
+    });
+    const prsResult = z.array(prSchema).safeParse(body.pullRequests);
+    if (!prsResult.success) return c.json({ error: "invalid_request", issues: prsResult.error.issues }, 400);
+    const repoContext = repoContextSchema.safeParse(body.repoContext).success
+      ? repoContextSchema.parse(body.repoContext)
+      : { totalOpenPRs: 0, avgReviewTimeDays: 0, maintainerWorkload: 0 };
+    const result = await analyzePRQueue(prsResult.data, repoContext);
+    const recommendations: Record<number, string> = {};
+    for (const [num, rec] of result.recommendations) recommendations[num] = rec;
+    return c.json({ rankedPRs: result.rankedPRs, recommendations });
+  });
+
   app.post("/v1/internal/repos/:owner/:repo/settings", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = repositorySettingsSchema.safeParse(body);
@@ -1860,102 +1909,54 @@ async function buildIssueQualityResponse(env: Env, fullName: string) {
   return loadOrComputeIssueQualityResponse(env, fullName);
 }
 
+async function loadInstallationHealthSummary(env: Env, repo: RepositoryRecord | null): Promise<InstallationHealthSummary | null> {
+  /* v8 ignore start -- Installation health loading is route-level glue over covered signal helpers. */
+  const installationId = repo?.installationId ?? null;
+  if (installationId === null) return null;
+  const healthRecord = await getInstallationHealth(env, installationId);
+  if (!healthRecord) return null;
+  const enriched = enrichInstallationHealth(healthRecord);
+  return { status: enriched.status, missingPermissions: enriched.missingPermissions, missingEvents: enriched.missingEvents };
+  /* v8 ignore stop */
+}
+
 async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
-  /* v8 ignore start -- Registration readiness branches are route-level response shaping over covered signal helpers. */
+  /* v8 ignore start -- Registration readiness route-level shaping over covered signal helpers. */
   const intelligence = await buildRepoIntelligenceResponse(env, fullName);
   const settings = await getRepositorySettings(env, fullName);
   const repo = intelligence.repo;
-  const configQuality = intelligence.configQuality as ReturnType<typeof buildConfigQuality>;
-  const maintainerCutReadiness = intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>;
-  const contributorIntakeHealth = intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>;
-  const lane = buildLaneAdvice(repo, fullName);
-  const blockers = [
-    ...(!repo?.isRegistered ? ["Repository is not registered in the latest Gittensory registry snapshot."] : []),
-    ...(configQuality.level === "fragile" ? ["Repository config quality is fragile."] : []),
-    ...(contributorIntakeHealth.level === "blocked" ? ["Contributor intake health is blocked."] : []),
-  ];
-  const warnings = [
-    ...(configQuality.level === "needs_attention" ? ["Repository config quality needs attention before registration promotion."] : []),
-    ...(contributorIntakeHealth.level === "strained" ? ["Contributor intake is strained; expect more maintainer triage."] : []),
-    ...(settings.publicSurface === "off" ? ["GitHub App public surface is disabled; maintainers will not get comment/label assistance."] : []),
-  ];
-  const issuePolicy =
-    lane.lane === "issue_discovery"
-      ? "issue_discovery_enabled"
-      : lane.lane === "split"
-        ? "split_pr_and_issue_discovery_enabled"
-      : settings.requireLinkedIssue
-        ? "direct_pr_requires_linked_issue"
-        : "direct_pr_no_issue_required";
-  const ready = blockers.length === 0 && !["fragile", "needs_attention"].includes(configQuality.level);
-  return {
+  const installation = await loadInstallationHealthSummary(env, repo);
+  const report = buildRegistrationReadiness({
     repoFullName: fullName,
-    generatedAt: nowIso(),
-    ready,
-    recommendedRegistrationMode: lane.lane === "issue_discovery" ? "issue_discovery" : lane.lane === "split" ? "split" : "direct_pr",
-    issuePolicy,
-    labelPolicy: {
-      autoLabelEnabled: settings.autoLabelEnabled,
-      label: settings.gittensorLabel,
-      createMissingLabel: settings.createMissingLabel,
-      configuredRegistryLabels: configQuality.configuredLabels,
-      missingOrUnusedRegistryLabels: configQuality.notObservedConfiguredLabels,
-    },
-    maintainerCutReadiness,
-    contributorIntakeHealth,
-    docsCompleteness: {
-      status: "repo_docs_not_crawled",
-      requiredDocs: ["README", "CONTRIBUTING", "SECURITY", "SUPPORT"],
-      note: "Gittensory validates public repo docs from the local project during CI; remote repo-doc crawling is not enabled in this signal yet.",
-    },
-    blockers,
-    warnings,
-    dataQuality: intelligence.dataQuality,
-  };
+    repo,
+    settings,
+    lane: buildLaneAdvice(repo, fullName),
+    configQuality: intelligence.configQuality as ReturnType<typeof buildConfigQuality>,
+    labelAudit: intelligence.labelAudit as ReturnType<typeof buildLabelAudit>,
+    queueHealth: intelligence.queueHealth as ReturnType<typeof buildQueueHealth>,
+    maintainerCutReadiness: intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>,
+    contributorIntakeHealth: intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>,
+    installation,
+  });
+  return { ...report, dataQuality: intelligence.dataQuality };
   /* v8 ignore stop */
 }
 
 async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {
-  /* v8 ignore start -- Config recommendation branches shape advisory output over covered signal helpers. */
+  /* v8 ignore start -- Config recommendation route-level shaping over covered signal helpers. */
   const intelligence = await buildRepoIntelligenceResponse(env, fullName);
   const settings = await getRepositorySettings(env, fullName);
   const repo = intelligence.repo;
-  const lane = buildLaneAdvice(repo, fullName);
-  const configQuality = intelligence.configQuality as ReturnType<typeof buildConfigQuality>;
-  const contributorIntakeHealth = intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>;
-  const maintainerCutReadiness = intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>;
-  const current = repo?.registryConfig ?? null;
-  const shouldEnableIssueDiscovery = contributorIntakeHealth.level === "healthy" && configQuality.level === "excellent";
-  const recommendedIssueDiscoveryShare = shouldEnableIssueDiscovery ? 0.1 : 0;
-  const currentAllocation = current?.emissionShare ?? 0;
-  const directPrShare = Math.max(0, currentAllocation - recommendedIssueDiscoveryShare);
-  const recommendedMaintainerCut = maintainerCutReadiness.ready ? Math.max(current?.maintainerCut ?? 0, 0.02) : current?.maintainerCut ?? 0;
-  return {
+  const recommendation = buildGittensorConfigRecommendation({
     repoFullName: fullName,
-    generatedAt: nowIso(),
-    privateOnly: true,
-    current,
-    recommended: {
-      participationMode: recommendedIssueDiscoveryShare > 0 ? "split" : "direct_pr",
-      issueDiscoveryShare: recommendedIssueDiscoveryShare,
-      directPrShare,
-      maintainerCut: recommendedMaintainerCut,
-      requireLinkedIssue: settings.requireLinkedIssue,
-      labelMultipliers: configQuality.configuredLabels.length > 0 ? "keep_current_and_prune_unused" : "start_without_trusted_label_multipliers",
-      publicSurface: settings.publicSurface,
-      confirmedMinerLabel: settings.gittensorLabel,
-    },
-    reasons: [
-      lane.lane === "issue_discovery" ? "The current registry lane already routes meaningful work through issue discovery." : "Direct-PR mode is the safest default until issue-discovery intake is intentionally staffed.",
-      shouldEnableIssueDiscovery ? "Config and intake signals are strong enough to consider a small issue-discovery slice." : "Issue discovery should stay disabled until config quality and intake health are excellent.",
-      maintainerCutReadiness.ready ? "Maintainer cut can be considered because config and queue signals are clean." : "Maintainer cut should stay unchanged until readiness blockers are cleared.",
-    ],
-    warnings: [
-      ...(configQuality.notObservedConfiguredLabels.length > 0 ? [`${configQuality.notObservedConfiguredLabels.length} configured label(s) have not been observed in cached repo activity.`] : []),
-      ...(contributorIntakeHealth.level === "strained" || contributorIntakeHealth.level === "blocked" ? [`Contributor intake is ${contributorIntakeHealth.level}; avoid increasing noisy lanes yet.`] : []),
-    ],
-    dataQuality: intelligence.dataQuality,
-  };
+    repo,
+    settings,
+    lane: buildLaneAdvice(repo, fullName),
+    configQuality: intelligence.configQuality as ReturnType<typeof buildConfigQuality>,
+    contributorIntakeHealth: intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>,
+    maintainerCutReadiness: intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>,
+  });
+  return { ...recommendation, dataQuality: intelligence.dataQuality };
   /* v8 ignore stop */
 }
 

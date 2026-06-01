@@ -541,6 +541,99 @@ describe("api routes", () => {
     const invalidLocalDiff = await app.request("/v1/preflight/local-diff", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({}) }, env);
     expect(invalidLocalDiff.status).toBe(400);
 
+    const queueIntelligence = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          pullRequests: [
+            {
+              number: 1,
+              author: "alice",
+              authorRole: "contributor",
+              isConfirmedMiner: true,
+              linkedIssue: { qualityScore: 0.9 },
+              checksStatus: "passing",
+              isStale: false,
+              additions: 50,
+              deletions: 10,
+              title: "Fix cache",
+              body: "Fixes #1",
+              duplicateCandidates: [],
+              createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+              lastUpdatedAt: new Date(Date.now() - 3600000).toISOString(),
+            },
+            {
+              number: 2,
+              author: "bob",
+              authorRole: "maintainer",
+              isConfirmedMiner: false,
+              linkedIssue: null,
+              checksStatus: "failing",
+              isStale: true,
+              additions: 800,
+              deletions: 900,
+              title: "",
+              body: "",
+              duplicateCandidates: [5],
+              createdAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+              lastUpdatedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+            },
+          ],
+          repoContext: { totalOpenPRs: 2, avgReviewTimeDays: 4, maintainerWorkload: 0.7 },
+        }),
+      },
+      env,
+    );
+    expect(queueIntelligence.status).toBe(200);
+    const queueIntelligencePayload = (await queueIntelligence.json()) as {
+      rankedPRs: Array<{ number: number; title: string; author: string; recommendation: string }>;
+      recommendations: Record<number, string>;
+    };
+    expect(queueIntelligencePayload.rankedPRs).toHaveLength(2);
+    expect(queueIntelligencePayload.rankedPRs[0]).toMatchObject({ number: 1 });
+    expect(queueIntelligencePayload.rankedPRs[1]).toMatchObject({ number: 2 });
+    expect(queueIntelligencePayload.recommendations).toMatchObject({ "1": "review_now", "2": "maintainer_lane" });
+
+    const invalidQueueIntelligence = await app.request(
+      "/v1/internal/queue-intelligence",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ pullRequests: [{ number: 1 }] }) },
+      env,
+    );
+    expect(invalidQueueIntelligence.status).toBe(400);
+
+    const invalidRepoContext = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          pullRequests: [
+            {
+              number: 1,
+              author: "alice",
+              authorRole: "contributor",
+              isConfirmedMiner: true,
+              linkedIssue: { qualityScore: 0.9 },
+              checksStatus: "passing",
+              isStale: false,
+              additions: 50,
+              deletions: 10,
+              title: "Fix cache",
+              body: "Fixes #1",
+              duplicateCandidates: [],
+              createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+              lastUpdatedAt: new Date(Date.now() - 3600000).toISOString(),
+            },
+          ],
+          repoContext: { totalOpenPRs: "invalid" },
+        }),
+      },
+      env,
+    );
+    expect(invalidRepoContext.status).toBe(200);
+
     const localBranchAnalysis = await app.request(
       "/v1/local/branch-analysis",
       {
@@ -2822,7 +2915,7 @@ describe("api routes", () => {
     const excellentRecommendation = await app.request("/v1/repos/owner/excellent/gittensor-config-recommendation", { headers: apiHeaders(env) }, env);
     expect(excellentRecommendation.status).toBe(200);
     await expect(excellentRecommendation.json()).resolves.toMatchObject({
-      recommended: { participationMode: "split", issueDiscoveryShare: 0.1, maintainerCut: 0.02 },
+      recommended: { participationMode: "split", issueDiscoveryShare: 0.1, maintainerCut: 0.3 },
       reasons: expect.arrayContaining(["Config and intake signals are strong enough to consider a small issue-discovery slice.", "Maintainer cut can be considered because config and queue signals are clean."]),
     });
     const issueOnlyReadiness = await app.request("/v1/repos/owner/issue-only/registration-readiness", { headers: apiHeaders(env) }, env);
@@ -2882,6 +2975,13 @@ function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
     accept: "application/json, text/event-stream",
     "content-type": "application/json",
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+  };
+}
+
+function internalHeaders(env: Env): Record<string, string> {
+  return {
+    authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`,
+    "content-type": "application/json",
   };
 }
 

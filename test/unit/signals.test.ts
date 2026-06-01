@@ -539,6 +539,45 @@ describe("world-class backend signals", () => {
     ]);
   });
 
+  it("scores linked-PR risk by state, not raw count", () => {
+    const openIssue: IssueRecord = { ...issues[0]!, number: 7, state: "open", linkedPrs: [] };
+    const fundedActive: BountyRecord = { id: "risk-bounty", repoFullName: repo.fullName, issueNumber: 7, status: "Open", payload: { bounty_amount: "2.0000" }, updatedAt: new Date().toISOString() };
+    const linkedOpen = (number: number): PullRequestRecord => ({ ...pullRequests[0]!, number, state: "open", mergedAt: undefined, linkedIssues: [7] });
+    const linkedMerged = (number: number): PullRequestRecord => ({ ...pullRequests[0]!, number, state: "merged", mergedAt: "2026-05-01T00:00:00.000Z", linkedIssues: [7] });
+    const linkedClosed = (number: number): PullRequestRecord => ({ ...pullRequests[0]!, number, state: "closed", mergedAt: undefined, linkedIssues: [7] });
+
+    // Multiple OPEN linked PRs => elevated active-overlap risk.
+    const manyOpen = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedOpen(60), linkedOpen(61)]);
+    expect(manyOpen.consensusRisk).toBe("high");
+    const overlapFinding = manyOpen.findings.find((finding) => finding.code === "bounty_has_active_pr");
+    expect(overlapFinding?.severity).toBe("warning");
+    expect(overlapFinding?.detail).toContain("duplicating active");
+    expect(manyOpen.findings.map((finding) => finding.code)).not.toContain("bounty_linked_pr_merged");
+    expect(manyOpen.findings.map((finding) => finding.code)).not.toContain("bounty_linked_pr_closed_history");
+
+    // A MERGED linked PR => possible solved/resolution warning, not active overlap.
+    const merged = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedMerged(62)]);
+    expect(merged.consensusRisk).toBe("medium");
+    const mergedFinding = merged.findings.find((finding) => finding.code === "bounty_linked_pr_merged");
+    expect(mergedFinding?.severity).toBe("warning");
+    expect(mergedFinding?.detail).toMatch(/already be solved/i);
+    expect(merged.findings.map((finding) => finding.code)).not.toContain("bounty_has_active_pr");
+
+    // Only CLOSED-unmerged linked PRs => historical caution/ambiguity, distinct from active-overlap wording.
+    const severalClosed = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedClosed(63), linkedClosed(64)]);
+    expect(severalClosed.consensusRisk).toBe("medium");
+    const closedFinding = severalClosed.findings.find((finding) => finding.code === "bounty_linked_pr_closed_history");
+    expect(closedFinding?.severity).toBe("warning");
+    expect(closedFinding?.detail).toMatch(/historical attempts, not active competing work/i);
+    expect(severalClosed.findings.map((finding) => finding.code)).not.toContain("bounty_has_active_pr");
+    expect(severalClosed.findings.map((finding) => finding.code)).not.toContain("bounty_linked_pr_merged");
+
+    // A single closed-unmerged attempt is not elevated like concurrent active overlap.
+    const oneClosed = buildBountyAdvisory(fundedActive, repo, openIssue, [linkedClosed(65)]);
+    expect(oneClosed.consensusRisk).toBe("low");
+    expect(oneClosed.findings.find((finding) => finding.code === "bounty_linked_pr_closed_history")?.severity).toBe("info");
+  });
+
   it("feeds bounty state into issue quality scoring", () => {
     const completedBounty: BountyRecord = { id: "q1", repoFullName: repo.fullName, issueNumber: 7, status: "Completed", payload: {} };
     const cancelledBounty: BountyRecord = { id: "q2", repoFullName: repo.fullName, issueNumber: 8, status: "Cancelled", payload: {} };

@@ -2676,6 +2676,28 @@ function buildBountyLinkedPrs(issue: IssueRecord | null, pullRequests: PullReque
   });
 }
 
+/**
+ * Bounty/issue consensus risk derived from linked PR STATE, not raw count, so historical or closed
+ * attempts are never scored the same as multiple active open PRs:
+ *  - multiple open PRs    -> high (concurrent active overlap / strong duplicate-work risk)
+ *  - a single open PR     -> medium (active overlap, but not yet crowded)
+ *  - any merged PR        -> medium (work may already be solved)
+ *  - several closed or otherwise unresolved PRs -> medium (ambiguous history worth caution)
+ */
+function computeBountyConsensusRisk(
+  lifecycle: BountyLifecycle,
+  issue: IssueRecord | null,
+  open: number,
+  merged: number,
+  closed: number,
+  unknown: number,
+): BountyAdvisory["consensusRisk"] {
+  if (open > 1) return "high";
+  if (lifecycle === "active" && !issue) return "high";
+  if (open === 1 || merged > 0 || closed > 1 || unknown > 1) return "medium";
+  return "low";
+}
+
 export function buildBountyAdvisory(
   bounty: BountyRecord,
   repo: RepositoryRecord | null,
@@ -2747,13 +2769,39 @@ export function buildBountyAdvisory(
       detail: "Gittensory has not cached the GitHub issue associated with this bounty.",
     });
   }
-  const activeLinkedPrs = linkedPrs.filter((pr) => pr.isActive).length;
-  if (activeLinkedPrs > 0) {
+  // Linked PRs carry different risk by state: open = active overlap, merged = possibly solved,
+  // closed-unmerged = historical attempts. Surface each class with its own wording so contributors
+  // know whether they are avoiding duplicate active work, verifying a solved bounty, or reviewing history.
+  const openLinkedPrs = linkedPrs.filter((pr) => pr.state === "open");
+  const mergedLinkedPrs = linkedPrs.filter((pr) => pr.state === "merged");
+  const closedLinkedPrs = linkedPrs.filter((pr) => pr.state === "closed");
+  const unknownLinkedPrs = linkedPrs.filter((pr) => pr.state === "unknown");
+  const prRefs = (prs: BountyLinkedPr[]): string => prs.map((pr) => `#${pr.number}`).join(", ");
+  if (openLinkedPrs.length > 0) {
     findings.push({
       code: "bounty_has_active_pr",
-      severity: "info",
-      title: "Active PR(s) reference the bounty issue",
-      detail: `${activeLinkedPrs} open PR(s) already reference this bounty's issue; confirm solver state before starting overlapping work.`,
+      severity: openLinkedPrs.length > 1 ? "warning" : "info",
+      title: openLinkedPrs.length > 1 ? "Multiple open PRs are actively working this bounty issue" : "An open PR is actively working this bounty issue",
+      detail: `${openLinkedPrs.length} open PR(s) (${prRefs(openLinkedPrs)}) already reference this bounty's issue; you may be duplicating active in-progress work. Confirm solver state before starting overlapping work.`,
+      action: "Review the open PR(s) before starting so you do not duplicate active work.",
+    });
+  }
+  if (mergedLinkedPrs.length > 0) {
+    findings.push({
+      code: "bounty_linked_pr_merged",
+      severity: "warning",
+      title: "A merged PR may already resolve this bounty",
+      detail: `${mergedLinkedPrs.length} merged PR(s) (${prRefs(mergedLinkedPrs)}) reference this bounty's issue; the work may already be solved. Verify the bounty is still open before investing in it.`,
+      action: "Verify upstream that the bounty is still unsolved before starting.",
+    });
+  }
+  if (closedLinkedPrs.length > 0) {
+    findings.push({
+      code: "bounty_linked_pr_closed_history",
+      severity: closedLinkedPrs.length > 1 ? "warning" : "info",
+      title: closedLinkedPrs.length > 1 ? "Several closed (unmerged) PRs attempted this bounty issue" : "A closed (unmerged) PR attempted this bounty issue",
+      detail: `${closedLinkedPrs.length} closed, unmerged PR(s) (${prRefs(closedLinkedPrs)}) reference this bounty's issue. These are historical attempts, not active competing work; review why they were closed before re-attempting.`,
+      action: "Review the closed attempt(s) to understand why they did not land.",
     });
   }
   return {
@@ -2764,7 +2812,7 @@ export function buildBountyAdvisory(
     lifecycle,
     isActiveOpportunity: lifecycle === "active",
     fundingStatus,
-    consensusRisk: issue && issue.linkedPrs.length > 1 ? "medium" : lifecycle === "active" && !issue ? "high" : "low",
+    consensusRisk: computeBountyConsensusRisk(lifecycle, issue, openLinkedPrs.length, mergedLinkedPrs.length, closedLinkedPrs.length, unknownLinkedPrs.length),
     linkedPrs,
     findings,
   };

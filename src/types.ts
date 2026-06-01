@@ -94,6 +94,12 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      type: "rollup-product-usage";
+      requestedBy: "schedule" | "api" | "test";
+      day?: string;
+      days?: number;
+    }
+  | {
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
@@ -890,4 +896,81 @@ export type ProductUsageSummary = {
   bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
   byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
   byEvent: Array<{ eventName: string; count: number }>;
+};
+
+export type McpCompatibilityAdoptionSummary = {
+  since?: string | null | undefined;
+  totalEvents: number;
+  activeActors: number;
+  activeSessions: number;
+  scannedEvents: number;
+  scanLimit: number;
+  truncated: boolean;
+  minimumSupportedVersion: string;
+  latestRecommendedVersion: string;
+  staleEvents: number;
+  incompatibleEvents: number;
+  byClientVersion: ProductUsageDimensionCount[];
+  byProtocolVersion: ProductUsageDimensionCount[];
+  byCompatibilityStatus: Array<{ status: "current" | "stale" | "incompatible" | "unknown"; count: number }>;
+};
+
+export type ProductUsageDailyRollupStatus = "complete" | "partial" | "incomplete";
+
+export type ProductUsageDimensionCount = {
+  key: string;
+  count: number;
+};
+
+export type ProductUsageActivationFunnel = {
+  loginActors: number;
+  doctorPassActors: number;
+  firstUsefulActionActors: number;
+  fullyActivatedActors: number;
+  githubInstalledRepos: number;
+  githubFirstCommandRepos: number;
+  githubUsefulMaintainerRepos: number;
+  githubActivatedRepos: number;
+};
+
+export type ProductUsageDailyRollupRecord = {
+  day: string;
+  status: ProductUsageDailyRollupStatus;
+  totalEvents: number;
+  activeActors: number;
+  activeSessions: number;
+  activeRepos: number;
+  sourceEventCount: number;
+  maxEventCapacity: number;
+  firstEventAt?: string | null | undefined;
+  lastEventAt?: string | null | undefined;
+  bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
+  byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
+  byEvent: Array<{ eventName: string; count: number }>;
+  byRepo: ProductUsageDimensionCount[];
+  byCommand: ProductUsageDimensionCount[];
+  byTool: ProductUsageDimensionCount[];
+  byRouteClass: ProductUsageDimensionCount[];
+  activation: ProductUsageActivationFunnel;
+  generatedAt: string;
+  updatedAt: string;
+};
+
+export type ProductUsageRollupRunResult = {
+  generatedAt: string;
+  requestedDays: string[];
+  rollups: ProductUsageDailyRollupRecord[];
+  status: ProductUsageRollupStatus;
+};
+
+export type ProductUsageRollupStatus = {
+  status: "empty" | "ready" | "partial" | "stale" | "incomplete";
+  generatedAt: string;
+  latestEventAt?: string | null | undefined;
+  latestRollupDay?: string | null | undefined;
+  latestRollupGeneratedAt?: string | null | undefined;
+  missingDays: string[];
+  staleDays: string[];
+  incompleteDays: string[];
+  warnings: string[];
 };

@@ -48,6 +48,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     jobs.push({ type: "refresh-registry", requestedBy: "schedule" });
     jobs.push({ type: "refresh-scoring-model", requestedBy: "schedule" });
     jobs.push({ type: "refresh-upstream-drift", requestedBy: "schedule" });
+    jobs.push({ type: "rollup-product-usage", requestedBy: "schedule", days: 7 });
   }
   if (isFullSyncWindow) {
     jobs.push({ type: "generate-signal-snapshots", requestedBy: "schedule" });

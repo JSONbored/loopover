@@ -500,6 +500,8 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/internal/jobs/build-burden-forecasts", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/repair-data-fidelity", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/generate-signal-snapshots/run", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/rollup-product-usage", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/rollup-product-usage/run", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/bounties/import", { method: "POST" }, env)).status).toBe(401);
     expect(
       (
@@ -513,6 +515,24 @@ describe("api route guards and error branches", () => {
 
     expect((await app.request("/v1/internal/jobs/repair-data-fidelity", { method: "POST", headers: internalHeaders(env) }, env)).status).toBe(202);
     expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "repair-data-fidelity" })]));
+
+    const queuedRollup = await app.request(
+      "/v1/internal/jobs/rollup-product-usage",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ day: "2026-05-28", days: 500 }) },
+      env,
+    );
+    expect(queuedRollup.status).toBe(202);
+    expect(await queuedRollup.json()).toMatchObject({ status: "queued", day: "2026-05-28", days: 31 });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "rollup-product-usage", day: "2026-05-28", days: 31 })]));
+
+    const queuedDefaultRollup = await app.request("/v1/internal/jobs/rollup-product-usage", { method: "POST", headers: internalHeaders(env), body: "{}" }, env);
+    expect(queuedDefaultRollup.status).toBe(202);
+    await expect(queuedDefaultRollup.json()).resolves.toMatchObject({ status: "queued" });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "rollup-product-usage" })]));
+
+    const immediateRollup = await app.request("/v1/internal/jobs/rollup-product-usage/run", { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ days: -5 }) }, env);
+    expect(immediateRollup.status).toBe(200);
+    await expect(immediateRollup.json()).resolves.toMatchObject({ requestedDays: expect.any(Array), rollups: expect.any(Array) });
 
     expect(
       (

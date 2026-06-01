@@ -32,6 +32,7 @@ import {
   recordWebhookEvent,
   replaceCollisionEdges,
   upsertOfficialMinerDetection,
+  rollupProductUsageDaily,
   upsertBurdenForecast,
   upsertContributorEvidence,
   upsertContributorScoringProfile,
@@ -206,6 +207,9 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "repair-data-fidelity":
       await repairDataFidelity(env, message.requestedBy);
+      return;
+    case "rollup-product-usage":
+      await rollupProductUsageDaily(env, { ...(message.day ? { day: message.day } : {}), ...(message.days === undefined ? {} : { days: message.days }) });
       return;
     case "run-agent":
       await executeAgentRun(env, message.runId);
@@ -492,6 +496,20 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
     }
 
     await upsertInstallation(env, payload);
+    if (eventName === "installation" && (payload.action === "created" || payload.action === "added")) {
+      const installedRepos = payload.repositories?.map((repo) => repo.full_name).filter(Boolean) ?? (payload.repository?.full_name ? [payload.repository.full_name] : [undefined]);
+      await Promise.all(
+        installedRepos.slice(0, 50).map((repoFullName) =>
+          recordGithubProductUsage(env, "github_installation_created", {
+            actor: payload.installation?.account?.login,
+            repoFullName,
+            targetKey: payload.installation?.id ? `installation:${payload.installation.id}` : repoFullName,
+            outcome: "completed",
+            metadata: { action: payload.action, repoCount: installedRepos.filter(Boolean).length, truncatedRepos: Math.max(installedRepos.length - 50, 0) },
+          }),
+        ),
+      );
+    }
 
     const installationId = getInstallationId(payload);
     if (payload.repositories) {

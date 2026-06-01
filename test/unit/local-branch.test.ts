@@ -1165,6 +1165,96 @@ describe("local branch analysis", () => {
     expect(analysis.summary).toContain("is the top private next action");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
+
+  it("applies a maintainer focus manifest: preferred path, label, and a public-safe focus section", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "fix-cache",
+        body: "Fixes #7",
+        labels: ["bug"],
+        changedFiles: [
+          { path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" },
+          { path: "test/cache.test.ts", additions: 8, deletions: 0, status: "added" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        focusManifest: {
+          source: "repo_file",
+          wantedPaths: ["src/"],
+          preferredLabels: ["bug"],
+          linkedIssuePolicy: "required",
+          maintainerNotes: ["Internal: ping @owner before touching the cache layer."],
+          publicNotes: ["Prefer small, focused PRs."],
+        },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.manifestGuidance.present).toBe(true);
+    expect(analysis.manifestGuidance.matchedWantedPaths).toContain("src/");
+    expect(analysis.manifestGuidance.preferredLabelHits).toContain("bug");
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "manifest_preferred_path" })]));
+    expect(analysis.prPacket.markdown).toContain("## Maintainer Focus");
+    expect(analysis.prPacket.markdown).toContain("Prefer small, focused PRs.");
+    expect(analysis.prPacket.markdown).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("treats a maintainer-blocked path as a branch-quality blocker", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "touch-migrations",
+        body: "Fixes #7",
+        changedFiles: [{ path: "migrations/0099_change.sql", additions: 20, deletions: 0, status: "added" }],
+        focusManifest: { blockedPaths: ["migrations/"] },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.manifestGuidance.matchedBlockedPaths).toEqual(["migrations/"]);
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "manifest_blocked_path", severity: "critical" })]));
+    expect(analysis.branchQualityBlockers).toEqual(expect.arrayContaining([expect.stringContaining("maintainer-blocked area")]));
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("ignores a malformed focus manifest without breaking analysis", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "fix-cache",
+        changedFiles: [{ path: "src/cache.ts", additions: 4, deletions: 0, status: "modified" }],
+        focusManifest: { wantedPaths: "src/", linkedIssuePolicy: "sometimes" },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.manifestGuidance.present).toBe(false);
+    expect(analysis.manifestGuidance.warnings.length).toBeGreaterThan(0);
+    expect(analysis.prPacket.bodySections.some((section) => section.heading === "Maintainer Focus")).toBe(false);
+  });
 });
 
 describe("local MCP git metadata collection", () => {

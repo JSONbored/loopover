@@ -60,6 +60,7 @@ import {
 } from "../signals/engine";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 
@@ -163,6 +164,7 @@ const localBranchAnalysisShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
+  focusManifest: z.record(z.unknown()).optional(),
   localScorer: z
     .object({
       mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
@@ -931,7 +933,7 @@ export class GittensoryMcp {
 
   private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
     this.requireContributorAccess(input.login);
-    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality] = await Promise.all([
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([
       this.loadContributorFastContext(input.login),
       getRepository(this.env, input.repoFullName),
       listIssues(this.env, input.repoFullName),
@@ -940,13 +942,18 @@ export class GittensoryMcp {
       listBountiesByRepo(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       loadOrComputeIssueQualityResponse(this.env, input.repoFullName),
+      loadRepoFocusManifest(this.env, input.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot: snapshot });
     const checkSummaries = await this.loadCheckSummariesForPullRequests(input.repoFullName, input, pullRequests);
+    // Caller-supplied focusManifest wins; otherwise fall back to the repo-owned manifest when present.
+    const analysisInput = input.focusManifest !== undefined || !repoManifest.present
+      ? input
+      : { ...input, focusManifest: repoManifest as unknown };
     return {
       ...buildLocalBranchAnalysis({
-        input,
+        input: analysisInput,
         repo,
         issues,
         pullRequests,

@@ -149,6 +149,7 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
@@ -297,6 +298,7 @@ const localBranchAnalysisSchema = z
     scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
     pendingCommitCount: z.number().int().min(0).optional(),
     ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+    focusManifest: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -1467,7 +1469,7 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
     if (unauthorized) return unauthorized;
-    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality] = await Promise.all([
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([
       loadContributorFastContext(c.env, parsed.data.login),
       getRepository(c.env, parsed.data.repoFullName),
       listIssues(c.env, parsed.data.repoFullName),
@@ -1476,12 +1478,17 @@ export function createApp() {
       listBountiesByRepo(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
+      loadRepoFocusManifest(c.env, parsed.data.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: parsed.data.login, fit, scoringSnapshot: snapshot });
     const checkSummaries = await loadCheckSummariesForPullRequests(c.env, parsed.data.repoFullName, parsed.data, pullRequests);
+    // Caller-supplied focusManifest wins; otherwise fall back to the repo-owned manifest when present.
+    const analysisInput = parsed.data.focusManifest !== undefined || !repoManifest.present
+      ? parsed.data
+      : { ...parsed.data, focusManifest: repoManifest as unknown };
     const analysis = buildLocalBranchAnalysis({
-      input: parsed.data,
+      input: analysisInput,
       repo,
       issues,
       pullRequests,
@@ -1994,7 +2001,9 @@ const APP_COMMANDS = [
     description: "Preview the public-safe summary that may be posted to a PR thread.",
     endpoint: "/v1/app/commands/preview",
   },
-  ...GITTENSORY_MENTION_COMMAND_CATALOG.filter((command) => !["help", "preflight", "blockers", "packet"].includes(command.id)).map((command) => ({
+  ...GITTENSORY_MENTION_COMMAND_CATALOG.filter(
+    (command) => !["help", "preflight", "blockers", "packet", "queue-summary", "review-now", "needs-author", "confirmed-miners", "duplicate-clusters"].includes(command.id),
+  ).map((command) => ({
     id: command.id,
     command: `@gittensory ${command.id}`,
     audience: "public-safe",
@@ -2002,6 +2011,46 @@ const APP_COMMANDS = [
     description: command.description,
     endpoint: "GitHub issue comment",
   })),
+  {
+    id: "queue-summary",
+    command: "@gittensory queue-summary",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "Post a maintainer-only queue digest from cached GitHub metadata.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "review-now",
+    command: "@gittensory review-now",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List cached PRs that look ready for maintainer review.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "needs-author",
+    command: "@gittensory needs-author",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List cached PRs that need author cleanup before detailed review.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "confirmed-miners",
+    command: "@gittensory confirmed-miners",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List open PRs whose authors are confirmed in the official-miner cache.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
+  {
+    id: "duplicate-clusters",
+    command: "@gittensory duplicate-clusters",
+    audience: "maintainer",
+    boundary: "public-safe",
+    description: "List duplicate or WIP clusters visible from cached GitHub metadata.",
+    endpoint: "/v1/app/maintainer-dashboard",
+  },
 ] as const;
 
 function authRedirectWithError(env: Env, reason: string): string {

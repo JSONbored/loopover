@@ -258,9 +258,9 @@ describe("signal coverage edge cases", () => {
     expect(burden.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["queue_growth_risk"]));
     expect(buildBurdenForecast(directRepo, [], Array.from({ length: 5 }, (_, index) => pr(directRepo.fullName, index + 300, `Medium PR ${index}`, { linkedIssues: [index] })), buildCollisionReport(directRepo.fullName, [], []), 7).level).toBe("medium");
     expect(buildBurdenForecast(directRepo, [], Array.from({ length: 12 }, (_, index) => pr(directRepo.fullName, index + 400, `High PR ${index}`, { linkedIssues: [index] })), buildCollisionReport(directRepo.fullName, [], []), 7).level).toBe("high");
-    expect(historicalBounty).toMatchObject({ lifecycle: "historical", fundingStatus: "target_only", consensusRisk: "low" });
-    expect(activeBounty).toMatchObject({ lifecycle: "active", fundingStatus: "funded", consensusRisk: "low" });
-    expect(historicalBounty.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["historical_bounty", "bounty_repo_unregistered", "bounty_issue_not_cached"]));
+    expect(historicalBounty).toMatchObject({ lifecycle: "cancelled", isActiveOpportunity: false, fundingStatus: "target_only", consensusRisk: "low" });
+    expect(activeBounty).toMatchObject({ lifecycle: "active", isActiveOpportunity: true, fundingStatus: "funded", consensusRisk: "low" });
+    expect(historicalBounty.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["cancelled_bounty", "bounty_repo_unregistered", "bounty_issue_not_cached"]));
 
     const stalePr = pr(directRepo.fullName, 20, "Misc refactor cleanup various things", {
       linkedIssues: [],

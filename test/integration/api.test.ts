@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionForGitHubUser } from "../../src/auth/security";
 import {
   upsertBounty,
@@ -32,7 +32,15 @@ import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
 
 describe("api routes", () => {
+  // Freshness/readiness fixtures are dated relative to late May 2026; pin the clock so freshness SLO
+  // windows stay deterministic regardless of when CI runs (fixtures otherwise tip "stale" after 7 days).
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -700,7 +708,8 @@ describe("api routes", () => {
       env,
     );
     expect(imported.status).toBe(200);
-    await expect(imported.json()).resolves.toMatchObject({ imported: 1 });
+    // A first sighting of bounty id "2" records one lifecycle event (the watcher).
+    await expect(imported.json()).resolves.toMatchObject({ imported: 1, lifecycleEvents: 1 });
 
     const bounties = await app.request("/v1/bounties", { headers: apiHeaders(env) }, env);
     expect(bounties.status).toBe(200);
@@ -708,7 +717,33 @@ describe("api routes", () => {
 
     const bountyAdvisory = await app.request("/v1/bounties/bounty-1/advisory", { headers: apiHeaders(env) }, env);
     expect(bountyAdvisory.status).toBe(200);
-    await expect(bountyAdvisory.json()).resolves.toMatchObject({ lifecycle: "historical", fundingStatus: "target_only" });
+    await expect(bountyAdvisory.json()).resolves.toMatchObject({ lifecycle: "completed", isActiveOpportunity: false, fundingStatus: "target_only" });
+
+    // Re-importing the same bounty with a changed status records a second lifecycle transition; an unchanged re-import records none.
+    const reimported = await app.request(
+      "/v1/internal/bounties/import",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}` },
+        body: JSON.stringify({
+          success: true,
+          issue_count: 1,
+          issues: [{ id: 2, repository_full_name: "entrius/allways-ui", issue_number: 8, status: "Completed", bounty_alpha: "0.0000", target_alpha: "17.0000" }],
+        }),
+      },
+      env,
+    );
+    await expect(reimported.json()).resolves.toMatchObject({ imported: 1, lifecycleEvents: 1 });
+
+    const lifecycle = await app.request("/v1/bounties/2/lifecycle", { headers: apiHeaders(env) }, env);
+    expect(lifecycle.status).toBe(200);
+    const lifecycleBody = (await lifecycle.json()) as { bountyId: string; events: Array<{ status: string }> };
+    expect(lifecycleBody.bountyId).toBe("2");
+    expect(lifecycleBody.events).toHaveLength(2);
+    expect(lifecycleBody.events.map((event) => event.status)).toEqual(expect.arrayContaining(["Cancelled", "Completed"]));
+
+    const missingLifecycle = await app.request("/v1/bounties/missing/lifecycle", { headers: apiHeaders(env) }, env);
+    expect(missingLifecycle.status).toBe(404);
 
     const missingBountyAdvisory = await app.request("/v1/bounties/missing/advisory", { headers: apiHeaders(env) }, env);
     expect(missingBountyAdvisory.status).toBe(404);
@@ -1930,6 +1965,32 @@ describe("api routes", () => {
     );
     expect(missingRepoDecision.status).toBe(200);
     await expect(mcpJson(missingRepoDecision)).resolves.toMatchObject({ result: { structuredContent: { status: "not_found", decision: null } } });
+
+    const historicalBountyPreflight = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "bounty-preflight",
+          method: "tools/call",
+          params: {
+            name: "gittensory_preflight_pr",
+            arguments: {
+              repoFullName: "entrius/allways-ui",
+              title: "Fix dashboard cache refresh after reconnect",
+              body: "Fixes #7",
+              changedFiles: ["src/cache.ts", "test/cache.test.ts"],
+            },
+          },
+        }),
+      },
+      env,
+    );
+    expect(historicalBountyPreflight.status).toBe(200);
+    const historicalBountyPreflightPayload = (await mcpJson(historicalBountyPreflight)) as { result: { structuredContent: { findings: Array<{ code: string }> } } };
+    expect(historicalBountyPreflightPayload.result.structuredContent.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_historical");
 
     await persistSignalSnapshot(env, {
       id: "mcp-issue-quality",

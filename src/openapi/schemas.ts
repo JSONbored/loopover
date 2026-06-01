@@ -422,12 +422,37 @@ export const BountyAdvisorySchema = z
     repoFullName: z.string(),
     issueNumber: z.number(),
     status: z.string(),
-    lifecycle: z.enum(["active", "historical", "unknown"]),
+    lifecycle: z.enum(["active", "historical", "completed", "cancelled", "stale", "ambiguous", "unknown"]),
+    isActiveOpportunity: z.boolean(),
     fundingStatus: z.enum(["funded", "target_only", "unknown"]),
     consensusRisk: z.enum(["low", "medium", "high"]),
+    linkedPrs: z.array(
+      z.object({
+        number: z.number(),
+        state: z.enum(["open", "closed", "merged", "unknown"]),
+        isActive: z.boolean(),
+      }),
+    ),
     findings: z.array(FindingSchema),
   })
   .openapi("BountyAdvisory");
+
+export const BountyLifecycleEventsSchema = z
+  .object({
+    bountyId: z.string(),
+    events: z.array(
+      z.object({
+        id: z.string(),
+        bountyId: z.string(),
+        repoFullName: z.string(),
+        issueNumber: z.number(),
+        status: z.string(),
+        payload: z.record(z.unknown()),
+        generatedAt: z.string(),
+      }),
+    ),
+  })
+  .openapi("BountyLifecycleEvents");
 
 export const RepositorySettingsSchema = z
   .object({
@@ -1172,6 +1197,7 @@ export const ContributorDecisionPackSchema = z
     profile: z.record(z.unknown()),
     outcomeHistory: ContributorOutcomeHistorySchema,
     roleContexts: z.array(RoleContextSchema),
+    opportunities: z.array(ContributorOpportunitySchema),
     repoDecisions: z.array(z.record(z.unknown())),
     topActions: z.array(z.record(z.unknown())),
     cleanupFirst: z.array(z.record(z.unknown())),

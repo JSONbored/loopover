@@ -3128,18 +3128,41 @@ function boundedProductUsageField(value: unknown, maxLength: number): string | n
   return safe ? safe : null;
 }
 
-function buildProductUsageActorRedactor(actor: unknown): RegExp | null {
+type ProductUsageActorRedactor = {
+  pattern: RegExp;
+};
+
+function buildProductUsageActorRedactor(actor: unknown): ProductUsageActorRedactor | null {
   const normalized = typeof actor === "string" ? actor.trim() : "";
   if (!normalized || normalized.length > PRODUCT_USAGE_ACTOR_REDACTION_MAX_CHARS) return null;
-  return new RegExp(`(^|[^A-Za-z0-9])${escapeRegExp(normalized)}(?=$|[^A-Za-z0-9])`, "gi");
+  return { pattern: new RegExp(escapeRegExp(normalized), "gi") };
 }
 
-function redactProductUsageActor(value: string | null, actorRedactor: RegExp | null): string | null {
-  return value && actorRedactor ? value.replace(actorRedactor, "$1<redacted-actor>") : value;
+function redactProductUsageActor(value: string | null, actorRedactor: ProductUsageActorRedactor | null): string | null {
+  if (!value || !actorRedactor) return value;
+  return value.replace(actorRedactor.pattern, (match, offset: number, source: string) => {
+    const previous = offset > 0 ? source[offset - 1] : undefined;
+    const next = source[offset + match.length];
+    const hasLeftBoundary = isProductUsageActorTokenBoundary(previous) || isProductUsageCamelBoundaryBefore(previous, match);
+    const hasRightBoundary = isProductUsageActorTokenBoundary(next) || isProductUsageCamelBoundaryAfter(next);
+    return hasLeftBoundary && hasRightBoundary ? "<redacted-actor>" : match;
+  });
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isProductUsageActorTokenBoundary(value: string | undefined): boolean {
+  return value === undefined || !/[A-Za-z0-9]/.test(value);
+}
+
+function isProductUsageCamelBoundaryBefore(previous: string | undefined, match: string): boolean {
+  return Boolean(previous && /[a-z0-9]/.test(previous) && /^[A-Z]/.test(match));
+}
+
+function isProductUsageCamelBoundaryAfter(next: string | undefined): boolean {
+  return Boolean(next && /[A-Z]/.test(next));
 }
 
 async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt: string): Promise<ProductUsageDailyRollupRecord> {
@@ -3410,7 +3433,7 @@ const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
 
-function sanitizeProductUsageMetadata(value: Record<string, unknown> | null | undefined, actorRedactor: RegExp | null): Record<string, JsonValue> {
+function sanitizeProductUsageMetadata(value: Record<string, unknown> | null | undefined, actorRedactor: ProductUsageActorRedactor | null): Record<string, JsonValue> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const output: Record<string, JsonValue> = {};
   for (const [key, entryValue] of Object.entries(value).slice(0, PRODUCT_USAGE_METADATA_MAX_KEYS)) {
@@ -3423,7 +3446,7 @@ function sanitizeProductUsageMetadata(value: Record<string, unknown> | null | un
   return output;
 }
 
-function sanitizeProductUsageJson(value: unknown, depth: number, actorRedactor: RegExp | null): JsonValue | undefined {
+function sanitizeProductUsageJson(value: unknown, depth: number, actorRedactor: ProductUsageActorRedactor | null): JsonValue | undefined {
   if (value === undefined || typeof value === "function" || typeof value === "symbol") return undefined;
   if (value === null) return null;
   if (typeof value === "boolean") return value;

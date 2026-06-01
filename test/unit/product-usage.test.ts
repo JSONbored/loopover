@@ -76,6 +76,38 @@ describe("product usage events", () => {
     expect(JSON.stringify(row)).not.toMatch(/"ab"|\bab\/|\bab:|for ab\b/i);
   });
 
+  it("redacts short actor components from metadata keys and camelCase values", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "local_branch_analysis_completed",
+      actor: "bob",
+      repoFullName: "bob/private-tool",
+      targetKey: "bob:JSONbored/gittensory:feature-x",
+      metadata: {
+        viewer: "bob",
+        note: "for bob, but bobcat stays readable",
+        bobKey: "owner key redacted too",
+        nested: { forBob: "bob owns this" },
+      },
+    });
+
+    const [row] = await listProductUsageEvents(env);
+    expect(row).toBeDefined();
+    if (!row) throw new Error("expected product usage event");
+    expect(row.repoFullName).toBe("<redacted-actor>/private-tool");
+    expect(row.targetKey).toBe("<redacted-actor>:JSONbored/gittensory:feature-x");
+    expect(row.metadata).toMatchObject({
+      viewer: "<redacted-actor>",
+      note: "for <redacted-actor>, but bobcat stays readable",
+      "<redacted-actor>Key": "owner key redacted too",
+      nested: { "for<redacted-actor>": "<redacted-actor> owns this" },
+    });
+    expect(row.metadata).not.toHaveProperty("bobKey");
+    expect(JSON.stringify(row)).not.toMatch(/\bbob\b|bobKey|forBob/i);
+  });
+
   it("bounds actor redaction patterns while still covering long valid handles", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
     const actor = "a".repeat(200);

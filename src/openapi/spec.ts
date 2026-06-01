@@ -567,7 +567,9 @@ export function buildOpenApiSpec() {
     "/v1/app/maintainer-dashboard",
     "/v1/app/operator-dashboard",
     "/v1/app/commands",
+    "/v1/app/commands/usefulness",
     "/v1/app/digest",
+    "/v1/app/analytics/daily-rollups",
     "/v1/app/analytics/mcp-compatibility",
     "/v1/app/analytics/weekly-value-report",
   ]) {
@@ -580,7 +582,7 @@ export function buildOpenApiSpec() {
       },
     });
   }
-  for (const path of ["/v1/app/commands/preview", "/v1/app/digest/subscriptions"]) {
+  for (const path of ["/v1/app/commands/preview", "/v1/app/commands/feedback", "/v1/app/digest/subscriptions"]) {
     registry.registerPath({
       method: "post",
       path,

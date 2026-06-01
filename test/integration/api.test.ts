@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionForGitHubUser, hashToken } from "../../src/auth/security";
 import {
   upsertBounty,
+  upsertAgentCommandAnswer,
   upsertBurdenForecast,
   upsertCheckSummary,
   upsertInstallation,
@@ -1442,12 +1443,72 @@ describe("api routes", () => {
       settingsPreview: { added: expect.any(Array), removed: expect.any(Array) },
     });
 
+    await upsertAgentCommandAnswer(env, {
+      id: "api-answer-feedback",
+      repoFullName: "entrius/allways-ui",
+      issueNumber: 14,
+      command: "preflight",
+      requestCommentId: 100,
+      responseCommentId: 101,
+      responseUrl: "https://github.com/entrius/allways-ui/pull/14#issuecomment-101",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    const unauthenticatedFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ answerId: "api-answer-feedback", vote: "useful" }) },
+      env,
+    );
+    expect(unauthenticatedFeedback.status).toBe(401);
+    const invalidFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      { method: "POST", headers: cookieHeaders, body: JSON.stringify({ answerId: "bad<script>", vote: "useful" }) },
+      env,
+    );
+    expect(invalidFeedback.status).toBe(400);
+    const missingFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      { method: "POST", headers: cookieHeaders, body: JSON.stringify({ answerId: "missing-answer", vote: "useful" }) },
+      env,
+    );
+    expect(missingFeedback.status).toBe(404);
+    const firstFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      { method: "POST", headers: cookieHeaders, body: JSON.stringify({ answerId: "api-answer-feedback", vote: "useful" }) },
+      env,
+    );
+    expect(firstFeedback.status).toBe(200);
+    const updatedFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      { method: "POST", headers: cookieHeaders, body: JSON.stringify({ answerId: "api-answer-feedback", vote: "not_useful" }) },
+      env,
+    );
+    expect(updatedFeedback.status).toBe(200);
+    const unauthenticatedUsefulness = await app.request("/v1/app/commands/usefulness?days=14", {}, env);
+    expect(unauthenticatedUsefulness.status).toBe(401);
+    const usefulness = await app.request("/v1/app/commands/usefulness?days=14", { headers: apiHeaders(env) }, env);
+    expect(usefulness.status).toBe(200);
+    await expect(usefulness.json()).resolves.toMatchObject({
+      windowDays: 14,
+      totals: { feedbackCount: 1, usefulCount: 0, notUsefulCount: 1, usefulnessRate: 0 },
+      commands: [expect.objectContaining({ command: "preflight", feedbackCount: 1 })],
+    });
+    const clampedUsefulness = await app.request("/v1/app/commands/usefulness?days=not-a-number", { headers: apiHeaders(env) }, env);
+    expect(clampedUsefulness.status).toBe(200);
+    await expect(clampedUsefulness.json()).resolves.toMatchObject({ windowDays: 1 });
+    const defaultUsefulness = await app.request("/v1/app/commands/usefulness", { headers: apiHeaders(env) }, env);
+    expect(defaultUsefulness.status).toBe(200);
+    await expect(defaultUsefulness.json()).resolves.toMatchObject({ windowDays: 30 });
+
     const operator = await app.request("/v1/app/operator-dashboard", { headers: apiHeaders(env) }, env);
     expect(operator.status).toBe(200);
     await expect(operator.json()).resolves.toMatchObject({
-      metrics: expect.arrayContaining([expect.objectContaining({ label: "Active sessions" }), expect.objectContaining({ label: "Digest subscriptions" })]),
+      metrics: expect.arrayContaining([expect.objectContaining({ label: "Active sessions" }), expect.objectContaining({ label: "Digest subscriptions" }), expect.objectContaining({ label: "Command usefulness", value: "0/1" })]),
       noiseReduction: expect.any(Array),
       weeklyReport: expect.arrayContaining([expect.stringContaining("registered repo")]),
+      commandUsefulness: expect.objectContaining({ totals: expect.objectContaining({ feedbackCount: 1 }) }),
     });
 
     const notificationModel = await app.request("/v1/app/notification-model", { headers: apiHeaders(env) }, env);

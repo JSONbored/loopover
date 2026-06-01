@@ -18,6 +18,8 @@ import {
   contributorScoringProfiles,
   contributors,
   digestSubscriptions,
+  githubAgentCommandAnswers,
+  githubAgentCommandFeedback,
   installationHealth,
   installations,
   issueQualityReports,
@@ -52,6 +54,8 @@ import type {
   AgentActionRecord,
   AgentActionStatus,
   AgentActionType,
+  AgentCommandAnswerRecord,
+  AgentCommandFeedbackRecord,
   AgentContextSnapshotRecord,
   AgentMode,
   AgentRunRecord,
@@ -65,6 +69,7 @@ import type {
   BurdenForecastRecord,
   CheckSummaryRecord,
   CollisionEdgeRecord,
+  CommandUsefulnessSummary,
   ContributorEvidenceRecord,
   ContributorRecord,
   ContributorRepoStatRecord,
@@ -1080,6 +1085,132 @@ export async function summarizeProductUsageEvents(env: Env, sinceIso?: string): 
   };
 }
 
+export async function upsertAgentCommandAnswer(env: Env, answer: AgentCommandAnswerRecord): Promise<AgentCommandAnswerRecord> {
+  const now = answer.updatedAt ?? nowIso();
+  const createdAt = answer.createdAt ?? now;
+  const values = {
+    id: answer.id,
+    repoFullName: boundedString(answer.repoFullName, 200),
+    issueNumber: Math.max(0, Math.round(answer.issueNumber)),
+    command: boundedString(answer.command, 64),
+    requestCommentId: optionalNumber(answer.requestCommentId),
+    responseCommentId: optionalNumber(answer.responseCommentId),
+    responseUrl: answer.responseUrl ? boundedString(answer.responseUrl, 500) : null,
+    actorKind: answer.actorKind,
+    createdAt,
+    updatedAt: now,
+    metadataJson: jsonString(answer.metadata),
+  };
+  await getDb(env.DB)
+    .insert(githubAgentCommandAnswers)
+    .values(values)
+    .onConflictDoUpdate({
+      target: githubAgentCommandAnswers.id,
+      set: {
+        repoFullName: values.repoFullName,
+        issueNumber: values.issueNumber,
+        command: values.command,
+        requestCommentId: values.requestCommentId,
+        responseCommentId: values.responseCommentId,
+        responseUrl: values.responseUrl,
+        actorKind: values.actorKind,
+        updatedAt: values.updatedAt,
+        metadataJson: values.metadataJson,
+      },
+    });
+  return (await getAgentCommandAnswer(env, answer.id))!;
+}
+
+export async function getAgentCommandAnswer(env: Env, answerId: string): Promise<AgentCommandAnswerRecord | null> {
+  const [row] = await getDb(env.DB).select().from(githubAgentCommandAnswers).where(eq(githubAgentCommandAnswers.id, answerId)).limit(1);
+  return row ? toAgentCommandAnswer(row) : null;
+}
+
+export async function recordAgentCommandFeedback(env: Env, feedback: AgentCommandFeedbackRecord): Promise<void> {
+  const actorHash = await hashCommandFeedbackActor(feedback.repoFullName, feedback.actorLogin);
+  const now = feedback.updatedAt ?? nowIso();
+  const values = {
+    id: feedback.id ?? crypto.randomUUID(),
+    answerId: feedback.answerId,
+    repoFullName: boundedString(feedback.repoFullName, 200),
+    issueNumber: Math.max(0, Math.round(feedback.issueNumber)),
+    command: boundedString(feedback.command, 64),
+    actorHash,
+    vote: feedback.vote,
+    source: feedback.source,
+    actorKind: feedback.actorKind,
+    createdAt: feedback.createdAt ?? now,
+    updatedAt: now,
+    metadataJson: jsonString(feedback.metadata ?? {}),
+  };
+  await getDb(env.DB)
+    .insert(githubAgentCommandFeedback)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [githubAgentCommandFeedback.answerId, githubAgentCommandFeedback.actorHash],
+      set: {
+        vote: values.vote,
+        source: values.source,
+        actorKind: values.actorKind,
+        updatedAt: values.updatedAt,
+        metadataJson: values.metadataJson,
+      },
+    });
+}
+
+export async function getCommandUsefulnessSummary(env: Env, options: { windowDays?: number; now?: string } = {}): Promise<CommandUsefulnessSummary> {
+  const windowDays = clampInteger(options.windowDays ?? 30, 1, 180);
+  const now = options.now ?? nowIso();
+  const sinceIso = new Date(Date.parse(now) - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await getDb(env.DB)
+    .select({
+      command: githubAgentCommandFeedback.command,
+      feedbackCount: sql<number>`count(*)`,
+      usefulCount: sql<number>`coalesce(sum(case when ${githubAgentCommandFeedback.vote} = 'useful' then 1 else 0 end), 0)`,
+      notUsefulCount: sql<number>`coalesce(sum(case when ${githubAgentCommandFeedback.vote} = 'not_useful' then 1 else 0 end), 0)`,
+      answerCount: sql<number>`count(distinct ${githubAgentCommandFeedback.answerId})`,
+      latestFeedbackAt: sql<string | null>`max(${githubAgentCommandFeedback.updatedAt})`,
+    })
+    .from(githubAgentCommandFeedback)
+    .where(gte(githubAgentCommandFeedback.updatedAt, sinceIso))
+    .groupBy(githubAgentCommandFeedback.command);
+  const commands = rows
+    .map((row) => {
+      const feedbackCount = Number(row.feedbackCount);
+      const usefulCount = Number(row.usefulCount);
+      const notUsefulCount = Number(row.notUsefulCount);
+      return {
+        command: row.command,
+        feedbackCount,
+        usefulCount,
+        notUsefulCount,
+        answerCount: Number(row.answerCount),
+        usefulnessRate: usefulCount / feedbackCount,
+        latestFeedbackAt: row.latestFeedbackAt,
+      };
+    })
+    .sort((left, right) => right.feedbackCount - left.feedbackCount || left.command.localeCompare(right.command));
+  const totals = commands.reduce(
+    (acc, row) => ({
+      feedbackCount: acc.feedbackCount + row.feedbackCount,
+      usefulCount: acc.usefulCount + row.usefulCount,
+      notUsefulCount: acc.notUsefulCount + row.notUsefulCount,
+      answerCount: acc.answerCount + row.answerCount,
+      latestFeedbackAt: maxIso(acc.latestFeedbackAt, row.latestFeedbackAt),
+    }),
+    { feedbackCount: 0, usefulCount: 0, notUsefulCount: 0, answerCount: 0, latestFeedbackAt: null as string | null },
+  );
+  return {
+    windowDays,
+    generatedAt: now,
+    totals: {
+      ...totals,
+      usefulnessRate: totals.feedbackCount > 0 ? totals.usefulCount / totals.feedbackCount : null,
+    },
+    commands,
+  };
+}
+
 export async function summarizeMcpCompatibilityAdoption(
   env: Env,
   sinceIso?: string,
@@ -1313,6 +1444,21 @@ function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnap
 
 function boundedString(value: unknown, maxLength: number): string {
   return String(value ?? "").slice(0, maxLength);
+}
+
+async function hashCommandFeedbackActor(repoFullName: string, actorLogin: string): Promise<string> {
+  return `sha256:${await sha256Hex(`gittensory-command-feedback:v1:${repoFullName.toLowerCase()}:${actorLogin.toLowerCase()}`)}`;
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function maxIso(left: string | null | undefined, right: string | null | undefined): string | null {
+  if (!left) return right ?? null;
+  if (!right) return left;
+  return right > left ? right : left;
 }
 
 function finiteNumber(value: unknown): number {
@@ -3298,6 +3444,22 @@ function sanitizeProductUsageString(value: string, maxLength: number): string {
     .replace(PRODUCT_USAGE_BEARER_VALUE, "Bearer <redacted-token>");
   if (PRODUCT_USAGE_SENSITIVE_VALUE.test(redacted)) return "<redacted>";
   return redacted.slice(0, maxLength);
+}
+
+function toAgentCommandAnswer(row: typeof githubAgentCommandAnswers.$inferSelect): AgentCommandAnswerRecord {
+  return {
+    id: row.id,
+    repoFullName: row.repoFullName,
+    issueNumber: row.issueNumber,
+    command: row.command,
+    requestCommentId: row.requestCommentId,
+    responseCommentId: row.responseCommentId,
+    responseUrl: row.responseUrl,
+    actorKind: row.actorKind === "maintainer" ? "maintainer" : "author",
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
+  };
 }
 
 function parseAgentSurface(value: string): AgentSurface {

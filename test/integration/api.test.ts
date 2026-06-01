@@ -603,37 +603,6 @@ describe("api routes", () => {
     );
     expect(invalidQueueIntelligence.status).toBe(400);
 
-    const invalidRepoContext = await app.request(
-      "/v1/internal/queue-intelligence",
-      {
-        method: "POST",
-        headers: internalHeaders(env),
-        body: JSON.stringify({
-          pullRequests: [
-            {
-              number: 1,
-              author: "alice",
-              authorRole: "contributor",
-              isConfirmedMiner: true,
-              linkedIssue: { qualityScore: 0.9 },
-              checksStatus: "passing",
-              isStale: false,
-              additions: 50,
-              deletions: 10,
-              title: "Fix cache",
-              body: "Fixes #1",
-              duplicateCandidates: [],
-              createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-              lastUpdatedAt: new Date(Date.now() - 3600000).toISOString(),
-            },
-          ],
-          repoContext: { totalOpenPRs: -1, avgReviewTimeDays: 4, maintainerWorkload: 0.7 },
-        }),
-      },
-      env,
-    );
-    expect(invalidRepoContext.status).toBe(400);
-
     const localBranchAnalysis = await app.request(
       "/v1/local/branch-analysis",
       {

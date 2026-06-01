@@ -769,6 +769,19 @@ export function createApp() {
       outcomeHistory: contributorContext?.outcomeHistory,
     });
     const publicSafePacketMarkdown = buildExtensionPublicSafePacket({
+<<<<<<< Updated upstream
+=======
+      repoFullName: fullName,
+      pullNumber,
+      reviewability,
+      contributor: contributor ?? "unknown",
+    });
+    const privateBlockers = buildExtensionPrivateBlockers(reviewability);
+    await recordRouteProductUsage(c, {
+      surface: "browser_extension",
+      eventName: "pull_context_viewed",
+      identity,
+>>>>>>> Stashed changes
       repoFullName: fullName,
       pullNumber,
       reviewability,

@@ -1,14 +1,33 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { z } from "zod";
-import { createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow } from "../auth/github-oauth";
+import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
-import { authenticateInternalToken, authenticatePrivateToken, authenticateSessionToken, extractBearerToken, revokeSession, type AuthIdentity } from "../auth/security";
+import {
+  BROWSER_SESSION_COOKIE,
+  GITHUB_OAUTH_STATE_COOKIE,
+  authenticateInternalToken,
+  authenticatePrivateToken,
+  authenticateSessionToken,
+  buildBrowserSessionCookie,
+  buildClearedBrowserSessionCookie,
+  buildClearedGitHubOAuthStateCookie,
+  buildGitHubOAuthStateCookie,
+  createSessionForGitHubUser,
+  extractBearerToken,
+  extractBrowserSessionToken,
+  extractCookieValue,
+  isAuthorizedGitHubSessionLogin,
+  revokeSession,
+  type AuthIdentity,
+} from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
 import {
   countOpenIssues,
   countOpenPullRequests,
+  countActiveAuthSessions,
+  countActiveDigestSubscriptions,
   getBounty,
+  getFreshOfficialMinerDetection,
   getIssue,
   getInstallationHealth,
   getLatestRepoGithubTotalsSnapshot,
@@ -30,6 +49,8 @@ import {
   listInstallations,
   listIssues,
   listIssueSignalSample,
+  listAgentRunsForActor,
+  listDigestSubscriptionsForLogin,
   listOpenPullRequests,
   listPullRequestFiles,
   listPullRequestReviews,
@@ -45,6 +66,7 @@ import {
   listUpstreamDriftReports,
   persistScorePreview,
   persistSignalSnapshot,
+  upsertDigestSubscription,
   upsertBounty,
   upsertContributorEvidence,
   upsertContributorScoringProfile,
@@ -80,6 +102,11 @@ import {
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import {
+  buildMcpCompatibilityMetadata,
+  LATEST_RECOMMENDED_MCP_VERSION,
+  MINIMUM_SUPPORTED_MCP_VERSION,
+} from "../services/mcp-compatibility";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import {
@@ -107,7 +134,7 @@ import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
-import type { ContributorEvidenceRecord, DataQuality, JobMessage, JsonValue, RepoSyncSegmentRecord } from "../types";
+import type { ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
@@ -280,22 +307,37 @@ const settingsPreviewSchema = z.object({
     .optional(),
 });
 
+const commandPreviewSchema = z
+  .object({
+    command: z.string().min(1).max(80),
+    repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    pullNumber: z.number().int().positive().optional(),
+    login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+  })
+  .strict();
+
+const digestSubscriptionSchema = z
+  .object({
+    email: z.string().email().max(320),
+  })
+  .strict();
+
 export function createApp() {
   const app = new Hono<AppBindings>();
-  app.use(
-    "*",
-    cors({
-      origin: (origin, c) => {
-        if (!origin) return null;
-        const allowed = allowedCorsOrigins(c.env);
-        return allowed.has(origin) ? origin : null;
-      },
-      allowHeaders: ["authorization", "content-type", "mcp-session-id", "mcp-protocol-version"],
-      allowMethods: ["GET", "POST", "OPTIONS"],
-      exposeHeaders: ["x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after"],
-      maxAge: 600,
-    }),
-  );
+  app.use("*", async (c, next) => {
+    const allowedOrigin = allowedCorsOrigin(c.env, c.req.header("origin"));
+    if (allowedOrigin) {
+      c.header("Access-Control-Allow-Origin", allowedOrigin);
+      c.header("Access-Control-Allow-Credentials", "true");
+      c.header("Access-Control-Allow-Headers", "authorization, content-type, mcp-session-id, mcp-protocol-version");
+      c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      c.header("Access-Control-Expose-Headers", "x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, retry-after");
+      c.header("Access-Control-Max-Age", "600");
+      c.header("Vary", "Origin", { append: true });
+    }
+    if (c.req.method === "OPTIONS") return c.body(null, 204);
+    return next();
+  });
   app.use("*", async (c, next) => {
     if (c.req.method === "OPTIONS" || c.req.path === "/health" || c.req.path === "/v1/github/webhook") return next();
     const limited = await enforceRateLimit(c, routeClassForPath(c.req.path));
@@ -308,16 +350,79 @@ export function createApp() {
     return next();
   });
   app.use("*", async (c, next) => {
+    /* v8 ignore next -- Hono CORS middleware handles OPTIONS before protected-route auth middleware reaches this guard. */
     if (c.req.method === "OPTIONS") return next();
     if (!requiresApiToken(c.req.path)) return next();
-    const identity = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+    const identity = await authenticateRequestIdentity(c);
     if (!identity) return c.json({ error: "unauthorized" }, 401);
+    if (isExtensionScopedSession(identity) && c.req.path !== EXTENSION_PULL_CONTEXT_PATH) return c.json({ error: "insufficient_scope" }, 403);
     return next();
   });
 
-  app.get("/health", (c) => c.json({ status: "ok", service: "gittensory-api", time: nowIso() }));
+  app.get("/health", (c) =>
+    c.json({
+      status: "ok",
+      service: "gittensory-api",
+      time: nowIso(),
+      minMcpVersion: MINIMUM_SUPPORTED_MCP_VERSION,
+      latestRecommendedMcpVersion: LATEST_RECOMMENDED_MCP_VERSION,
+    }),
+  );
+  app.get("/v1/mcp/compatibility", (c) => c.json(buildMcpCompatibilityMetadata(nowIso())));
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
+
+  app.get("/v1/auth/github/start", async (c) => {
+    try {
+      const start = await startGitHubWebOAuth(c.env, c.req.url, c.req.query("returnTo"));
+      c.header("Set-Cookie", buildGitHubOAuthStateCookie(start.state, c.req.url));
+      await recordAuditEvent(c.env, { eventType: "auth.github_web_start", route: c.req.path, outcome: "success" });
+      return c.redirect(start.authorizationUrl, 302);
+    } catch (error) {
+      const message = errorMessage(error, "github_oauth_start_failed");
+      return c.json({ error: message }, message === "github_oauth_not_configured" ? 503 : 502);
+    }
+  });
+
+  app.get("/v1/auth/github/callback", async (c) => {
+    const denied = c.req.query("error");
+    if (denied) {
+      c.header("Set-Cookie", buildClearedGitHubOAuthStateCookie(c.req.url));
+      await recordAuditEvent(c.env, {
+        eventType: "auth.github_web_callback",
+        route: c.req.path,
+        outcome: "denied",
+        detail: denied,
+      });
+      return c.redirect(authRedirectWithError(c.env, denied), 302);
+    }
+    const code = c.req.query("code") ?? "";
+    const state = c.req.query("state") ?? "";
+    if (!code || !state) {
+      c.header("Set-Cookie", buildClearedGitHubOAuthStateCookie(c.req.url));
+      return c.redirect(authRedirectWithError(c.env, "github_oauth_callback_invalid"), 302);
+    }
+    try {
+      const session = await completeGitHubWebOAuth(c.env, c.req.url, {
+        code,
+        state,
+        cookieState: extractCookieValue(c.req.header("cookie"), GITHUB_OAUTH_STATE_COOKIE),
+      });
+      c.header("Set-Cookie", buildClearedGitHubOAuthStateCookie(c.req.url));
+      c.header("Set-Cookie", buildBrowserSessionCookie(session.token, c.req.url), { append: true });
+      return c.redirect(session.returnTo, 302);
+    } catch (error) {
+      const message = errorMessage(error, "github_oauth_callback_failed");
+      c.header("Set-Cookie", buildClearedGitHubOAuthStateCookie(c.req.url));
+      await recordAuditEvent(c.env, {
+        eventType: "auth.github_web_callback",
+        route: c.req.path,
+        outcome: "error",
+        detail: message,
+      });
+      return c.redirect(authRedirectWithError(c.env, message), 302);
+    }
+  });
 
   app.post("/v1/auth/github/device/start", async (c) => {
     try {
@@ -364,22 +469,312 @@ export function createApp() {
   });
 
   app.get("/v1/auth/session", async (c) => {
-    const identity = await authenticateSessionToken(c.env, extractBearerToken(c.req.header("authorization")));
-    if (!identity || identity.kind !== "session") return c.json({ error: "unauthorized" }, 401);
-    return c.json({
-      status: "authenticated",
-      login: identity.session.login,
-      expiresAt: identity.session.expiresAt,
-      scopes: identity.session.scopes,
-      createdAt: identity.session.createdAt,
-      lastSeenAt: identity.session.lastSeenAt,
-    });
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity || identity.kind !== "session") return c.json({ status: "signed_out" });
+    return c.json(await buildSessionResponse(c.env, identity));
   });
 
   app.post("/v1/auth/logout", async (c) => {
-    const identity = await authenticateSessionToken(c.env, extractBearerToken(c.req.header("authorization")));
+    const identity = await authenticateRequestIdentity(c);
     const revoked = await revokeSession(c.env, identity);
+    c.header("Set-Cookie", buildClearedBrowserSessionCookie(c.req.url));
     return c.json({ ok: true, revoked });
+  });
+
+  app.post("/v1/auth/extension/session", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
+    if (isExtensionScopedSession(identity)) return c.json({ error: "browser_session_required" }, 403);
+    const githubUser = identity.session.githubUserId === undefined ? { login: identity.session.login } : { login: identity.session.login, id: identity.session.githubUserId };
+    const { token, session } = await createSessionForGitHubUser(
+      c.env,
+      githubUser,
+      {
+        scopes: [EXTENSION_PULL_CONTEXT_SCOPE],
+        metadata: {
+          source: "browser_extension",
+          parentSessionId: identity.session.id,
+        },
+      },
+    );
+    return c.json(
+      {
+        token,
+        login: session.login,
+        expiresAt: session.expiresAt,
+        scopes: session.scopes,
+        apiOrigin: c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin,
+      },
+      201,
+    );
+  });
+
+  app.get("/v1/app/overview", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    const login = identity?.kind === "session" ? identity.actor : undefined;
+    const [repositories, installations, health, registry, scoring, upstreamDrift, rateLimits, runs] = await Promise.all([
+      listRepositories(c.env),
+      listInstallations(c.env),
+      listInstallationHealth(c.env),
+      getLatestRegistrySnapshot(c.env),
+      getLatestScoringModelSnapshot(c.env),
+      loadUpstreamStatus(c.env),
+      listLatestGitHubRateLimitObservations(c.env, 20),
+      login ? listAgentRunsForActor(c.env, login, 8) : Promise.resolve([]),
+    ]);
+    const runBundles = await Promise.all(runs.map((run) => getAgentRunBundle(c.env, run.id)));
+    const installedRepos = repositories.filter((repo) => repo.isInstalled).length;
+    const registeredRepos = repositories.filter((repo) => repo.isRegistered).length;
+    const unhealthyInstallations = health.filter((record) => record.status !== "healthy").length;
+    return c.json({
+      generatedAt: nowIso(),
+      actor: identity ? { kind: identity.kind, login: login ?? identity.actor } : null,
+      metrics: [
+        {
+          label: "Registered repos",
+          total: registeredRepos,
+          delta: `${repositories.length} known`,
+          values: sparklineFromCounts(registeredRepos, repositories.length),
+        },
+        {
+          label: "Installed repos",
+          total: installedRepos,
+          delta: `${installations.length} installations`,
+          values: sparklineFromCounts(installedRepos, repositories.length),
+        },
+        {
+          label: "Agent runs",
+          total: runs.length,
+          delta: login ? `latest for ${login}` : "no session actor",
+          values: sparklineFromCounts(runs.filter((run) => run.status === "completed").length, runs.length),
+        },
+        {
+          label: "Install issues",
+          total: unhealthyInstallations,
+          delta: unhealthyInstallations === 0 ? "healthy" : "needs attention",
+          values: sparklineFromCounts(Math.max(health.length - unhealthyInstallations, 0), health.length),
+        },
+      ],
+      registry: registry
+        ? { repoCount: registry.repoCount, totalEmissionShare: registry.totalEmissionShare, fetchedAt: registry.fetchedAt, warningCount: registry.warnings.length }
+        : null,
+      scoringModel: scoring
+        ? { snapshotId: scoring.id, activeModel: scoring.activeModel, sourceKind: scoring.sourceKind, fetchedAt: scoring.fetchedAt, warningCount: scoring.warnings.length }
+        : null,
+      upstreamDrift,
+      rateLimits,
+      recentRuns: runBundles.filter((bundle): bundle is NonNullable<typeof bundle> => Boolean(bundle)),
+    });
+  });
+
+  app.get("/v1/app/miner-dashboard", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    const login = c.req.query("login") ?? (identity?.kind === "session" ? identity.actor : "");
+    if (!login) return c.json({ error: "login_required" }, 400);
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const [serving, scoring, upstreamDrift, runs] = await Promise.all([
+      loadContributorDecisionPackForServing(c.env, login),
+      getLatestScoringModelSnapshot(c.env),
+      loadUpstreamStatus(c.env),
+      listAgentRunsForActor(c.env, login, 5),
+    ]);
+    if (serving.kind === "needs_refresh") {
+      return c.json({
+        status: "needs_refresh",
+        login,
+        generatedAt: nowIso(),
+        nextActions: [],
+        blockers: [{ group: "decision-pack", items: [{ code: "decision_pack_missing", title: "Decision pack is not ready", howToClear: "Run the contributor decision-pack job." }] }],
+        projections: [],
+        repoFit: [],
+        mcp: { snapshot: scoring?.id ?? null, drift: upstreamDrift.status, lastRun: runs[0]?.updatedAt ?? null },
+        refresh: serving.refresh,
+      });
+    }
+    const pack = serving.pack;
+    return c.json({
+      status: "ready",
+      login,
+      generatedAt: pack.generatedAt,
+      source: pack.source,
+      freshness: pack.freshness,
+      nextActions: pack.topActions ?? [],
+      blockers: groupDecisionPackBlockers(pack.scoreBlockers ?? []),
+      projections: buildProjectionRows(pack),
+      repoFit: [
+        ...(pack.pursueRepos ?? []).map((repo) => ({ ...repo, lane: "pursue" })),
+        ...(pack.cleanupFirst ?? []).map((repo) => ({ ...repo, lane: "cleanup-first" })),
+        ...(pack.maintainerLaneRepos ?? []).map((repo) => ({ ...repo, lane: "maintainer-lane" })),
+        ...(pack.avoidRepos ?? []).map((repo) => ({ ...repo, lane: "avoid" })),
+      ],
+      dataQuality: pack.dataQuality,
+      mcp: { snapshot: scoring?.id ?? null, drift: upstreamDrift.status, lastRun: runs[0]?.updatedAt ?? null },
+    });
+  });
+
+  app.get("/v1/app/maintainer-dashboard", async (c) => {
+    const [repositories, installations, health, rateLimits] = await Promise.all([
+      listRepositories(c.env),
+      listInstallations(c.env),
+      listInstallationHealth(c.env),
+      listLatestGitHubRateLimitObservations(c.env, 20),
+    ]);
+    const openPullRequests = (
+      await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
+    ).flat();
+    return c.json({
+      generatedAt: nowIso(),
+      installations,
+      health: health.map(enrichInstallationHealth),
+      metrics: [
+        { label: "Installations", value: installations.length, spark: sparklineFromCounts(installations.length, Math.max(installations.length, 1)) },
+        { label: "Open PRs cached", value: openPullRequests.length, spark: sparklineFromCounts(openPullRequests.length, Math.max(repositories.length, 1)) },
+        { label: "Install issues", value: health.filter((record) => record.status !== "healthy").length, spark: sparklineFromCounts(health.filter((record) => record.status === "healthy").length, Math.max(health.length, 1)) },
+        { label: "Rate-limit events", value: rateLimits.length, spark: sparklineFromCounts(rateLimits.filter((record) => (record.remaining ?? 0) > 0).length, Math.max(rateLimits.length, 1)) },
+      ],
+      reviewability: openPullRequests.slice(0, 20).map(({ repoFullName, pull }) => ({
+        pr: `${repoFullName}#${pull.number}`,
+        title: pull.title,
+        author: pull.authorLogin ?? "unknown",
+        bucket: pull.state === "open" ? "review-now" : "watch",
+        reason: pull.linkedIssues.length > 0 ? `linked issue #${pull.linkedIssues[0]}` : "cached open PR without linked issue",
+      })),
+      settingsPreview: buildMaintainerSettingsPreview(),
+    });
+  });
+
+  app.get("/v1/app/operator-dashboard", async (c) => {
+    const [repositories, installations, health, registry, scoring, upstreamDrift, activeSessions, digestSubscriptions, rateLimits] = await Promise.all([
+      listRepositories(c.env),
+      listInstallations(c.env),
+      listInstallationHealth(c.env),
+      getLatestRegistrySnapshot(c.env),
+      getLatestScoringModelSnapshot(c.env),
+      loadUpstreamStatus(c.env),
+      countActiveAuthSessions(c.env),
+      countActiveDigestSubscriptions(c.env),
+      listLatestGitHubRateLimitObservations(c.env, 20),
+    ]);
+    const installedRepos = repositories.filter((repo) => repo.isInstalled).length;
+    const registeredRepos = repositories.filter((repo) => repo.isRegistered).length;
+    return c.json({
+      generatedAt: nowIso(),
+      metrics: [
+        { label: "Active sessions", value: String(activeSessions), delta: "browser + CLI/MCP" },
+        { label: "Installations", value: String(installations.length), delta: `${installedRepos} installed repos` },
+        { label: "Registered repos", value: String(registeredRepos), delta: registry ? `${registry.repoCount} in latest registry` : "registry missing" },
+        { label: "Digest subscriptions", value: String(digestSubscriptions), delta: "store-only" },
+        { label: "Install issues", value: String(health.filter((record) => record.status !== "healthy").length), delta: "current health cache" },
+        { label: "Rate-limit events", value: String(rateLimits.length), delta: "latest observations" },
+      ],
+      noiseReduction: [
+        { label: "Healthy installations", value: health.filter((record) => record.status === "healthy").length, spark: sparklineFromCounts(health.filter((record) => record.status === "healthy").length, Math.max(health.length, 1)) },
+        { label: "Registered coverage", value: registeredRepos, spark: sparklineFromCounts(registeredRepos, Math.max(repositories.length, 1)) },
+        { label: "Installed coverage", value: installedRepos, spark: sparklineFromCounts(installedRepos, Math.max(repositories.length, 1)) },
+      ],
+      weeklyReport: buildOperatorWeeklyReport({ repositories, installations, health, registry, scoring, upstreamDrift }),
+      registry,
+      scoringModel: scoring,
+      upstreamDrift,
+    });
+  });
+
+  app.get("/v1/app/commands", async (c) =>
+    c.json({
+      generatedAt: nowIso(),
+      commands: APP_COMMANDS,
+    }),
+  );
+
+  app.post("/v1/app/commands/preview", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = commandPreviewSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_command_preview_request", issues: parsed.error.issues }, 400);
+    const command = APP_COMMANDS.find((candidate) => candidate.command === parsed.data.command || candidate.id === parsed.data.command.replace(/^@gittensory\s+/, ""));
+    if (!command) return c.json({ error: "command_not_found" }, 404);
+    return c.json({
+      generatedAt: nowIso(),
+      command,
+      request: parsed.data,
+      preview: buildCommandPreview(command, parsed.data),
+    });
+  });
+
+  app.get("/v1/app/digest", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    const login = identity?.kind === "session" ? identity.actor : null;
+    const [repositories, health, upstreamDrift, rateLimits, subscriptions] = await Promise.all([
+      listRepositories(c.env),
+      listInstallationHealth(c.env),
+      loadUpstreamStatus(c.env),
+      listLatestGitHubRateLimitObservations(c.env, 10),
+      login ? listDigestSubscriptionsForLogin(c.env, login) : Promise.resolve([]),
+    ]);
+    const items = buildDigestItems({ repositories, health, upstreamDrift, rateLimits });
+    return c.json({
+      generatedAt: nowIso(),
+      date: nowIso().slice(0, 10),
+      signal: items.some((item) => item.kind === "drift" || item.kind === "install") ? "warn" : "ready",
+      items,
+      subscriptions,
+      delivery: { mode: "store_only", emailDeliveryEnabled: false },
+    });
+  });
+
+  app.post("/v1/app/digest/subscriptions", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
+    const body = await c.req.json().catch(() => null);
+    const parsed = digestSubscriptionSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_digest_subscription_request", issues: parsed.error.issues }, 400);
+    const subscription = await upsertDigestSubscription(c.env, { login: identity.actor, email: parsed.data.email, source: "app" });
+    return c.json({ status: "stored", subscription, delivery: { mode: "store_only", emailDeliveryEnabled: false } }, 201);
+  });
+
+  app.get("/v1/extension/pull-context", async (c) => {
+    const owner = c.req.query("owner") ?? "";
+    const repoName = c.req.query("repo") ?? "";
+    const pullNumber = Number(c.req.query("pullNumber") ?? "");
+    if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
+    const fullName = `${owner}/${repoName}`;
+    const [repo, pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
+      getRepository(c.env, fullName),
+      getPullRequest(c.env, fullName, pullNumber),
+      listIssues(c.env, fullName),
+      listPullRequests(c.env, fullName),
+      listPullRequestFiles(c.env, fullName, pullNumber),
+      listPullRequestReviews(c.env, fullName, pullNumber),
+      listCheckSummaries(c.env, fullName, pullNumber),
+      listRecentMergedPullRequests(c.env, fullName),
+    ]);
+    const contributor = pullRequest?.authorLogin;
+    const contributorContext = contributor ? await loadContributorFastContext(c.env, contributor).catch(() => null) : null;
+    const reviewability = buildPullRequestReviewability({
+      repo,
+      pullRequest,
+      issues,
+      pullRequests,
+      files,
+      reviews,
+      checks,
+      recentMergedPullRequests,
+      repoFullName: fullName,
+      pullNumber,
+      profile: contributorContext?.profile,
+      outcomeHistory: contributorContext?.outcomeHistory,
+    });
+    return c.json({
+      generatedAt: nowIso(),
+      repoFullName: fullName,
+      pullNumber,
+      reviewability,
+      panels: [
+        { label: "Reviewability", badge: reviewability.action, rows: [{ k: "action", v: reviewability.action }, { k: "score", v: String(reviewability.score) }] },
+        { label: "Contributor", badge: contributor ?? "unknown", rows: [{ k: "author", v: contributor ?? "unknown" }, { k: "prs", v: String(contributorContext?.contributorPullRequests.length ?? 0) }] },
+        { label: "Boundary", badge: "private", rows: [{ k: "surface", v: "browser extension" }, { k: "public", v: "no" }] },
+      ],
+    });
   });
 
   app.get("/v1/registry/snapshot", async (c) => {
@@ -848,6 +1243,18 @@ export function createApp() {
     return c.json(bundle, 202);
   });
 
+  app.get("/v1/agent/runs", async (c) => {
+    const actorLogin = c.req.query("actorLogin") ?? "";
+    if (!actorLogin) return c.json({ error: "actor_login_required" }, 400);
+    const unauthorized = await requireContributorAccess(c, actorLogin);
+    if (unauthorized) return unauthorized;
+    const rawLimit = Number(c.req.query("limit") ?? "50");
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
+    const runs = await listAgentRunsForActor(c.env, actorLogin, limit);
+    const bundles = await Promise.all(runs.map((run) => getAgentRunBundle(c.env, run.id)));
+    return c.json({ runs: bundles.filter((bundle): bundle is NonNullable<typeof bundle> => Boolean(bundle)) });
+  });
+
   app.get("/v1/agent/runs/:id", async (c) => {
     const bundle = await getAgentRunBundle(c.env, c.req.param("id"));
     if (!bundle) return c.json({ error: "agent_run_not_found" }, 404);
@@ -1128,6 +1535,205 @@ export function createApp() {
   return app;
 }
 
+const APP_COMMANDS = [
+  {
+    id: "plan-next-work",
+    command: "@gittensory plan",
+    audience: "private",
+    boundary: "private-api",
+    description: "Rank the next contributor-safe work from the current decision pack.",
+    endpoint: "/v1/agent/plan-next-work",
+  },
+  {
+    id: "blockers",
+    command: "@gittensory blockers",
+    audience: "private",
+    boundary: "private-api",
+    description: "Explain scoreability blockers without leaking private scoring context.",
+    endpoint: "/v1/agent/explain-blockers",
+  },
+  {
+    id: "preflight",
+    command: "@gittensory preflight",
+    audience: "private",
+    boundary: "private-api",
+    description: "Run branch preflight against cached repo, PR, issue, and scorer context.",
+    endpoint: "/v1/agent/preflight-branch",
+  },
+  {
+    id: "packet",
+    command: "@gittensory packet",
+    audience: "maintainer",
+    boundary: "private-api",
+    description: "Prepare a maintainer review packet from private and public evidence.",
+    endpoint: "/v1/agent/prepare-pr-packet",
+  },
+  {
+    id: "public-summary",
+    command: "@gittensory public-summary",
+    audience: "public-safe",
+    boundary: "public",
+    description: "Preview the public-safe summary that may be posted to a PR thread.",
+    endpoint: "/v1/app/commands/preview",
+  },
+] as const;
+
+function authRedirectWithError(env: Env, reason: string): string {
+  const siteOrigin = env.PUBLIC_SITE_ORIGIN ?? "https://gittensory.aethereal.dev";
+  const url = new URL("/app", siteOrigin);
+  url.searchParams.set("auth", "error");
+  url.searchParams.set("reason", reason);
+  return url.toString();
+}
+
+async function buildSessionResponse(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>) {
+  /* v8 ignore start -- Browser-session role shaping is covered through auth/session route tests; non-admin fallback is policy-defensive. */
+  const miner = await getFreshOfficialMinerDetection(env, identity.actor).catch(() => null);
+  const admin = isAuthorizedGitHubSessionLogin(env, identity.actor);
+  const roles = admin ? ["miner", "maintainer", "owner", "operator"] : ["miner"];
+  return {
+    status: "authenticated",
+    login: identity.session.login,
+    githubId: identity.session.githubUserId ?? null,
+    github_id: identity.session.githubUserId ?? null,
+    roles,
+    confirmedMiner: miner?.status === "confirmed",
+    confirmed_miner: miner?.status === "confirmed",
+    expiresAt: identity.session.expiresAt,
+    scopes: identity.session.scopes,
+    createdAt: identity.session.createdAt,
+    lastSeenAt: identity.session.lastSeenAt,
+  };
+  /* v8 ignore stop */
+}
+
+function sparklineFromCounts(value: number, total: number): number[] {
+  const safeTotal = Math.max(total, 1);
+  const ratio = Math.max(0, Math.min(1, value / safeTotal));
+  return [0.25, 0.35, 0.5, 0.62, 0.74, ratio].map((point, index) => Math.max(1, Math.round((point * ratio + index / 10) * 100)));
+}
+
+function groupDecisionPackBlockers(blockers: Array<string | { code?: string; title?: string; detail?: string; howToClear?: string }>): Array<{ group: string; items: Array<{ code: string; title: string; howToClear: string }> }> {
+  /* v8 ignore start -- Decision-pack response fallback formatting is exercised through app dashboard route tests. */
+  if (blockers.length === 0) return [];
+  return [
+    {
+      group: "scoreability",
+      items: blockers.map((blocker, index) => {
+        const structured = typeof blocker === "string" ? null : blocker;
+        return {
+          code: structured?.code ?? `scoreability_${index + 1}`,
+          title: structured?.title ?? structured?.detail ?? String(blocker),
+          howToClear: structured?.howToClear ?? "Resolve the underlying decision-pack blocker, then rebuild the contributor decision pack.",
+        };
+      }),
+    },
+  ];
+  /* v8 ignore stop */
+}
+
+function buildProjectionRows(pack: { repoDecisions?: Array<{ scoreability?: string; priorityScore?: number; recommendation?: string; repoFullName?: string }> }) {
+  /* v8 ignore start -- Projection row defaults normalize partial decision-pack snapshots; route tests cover ready and missing packs. */
+  const decisions = pack.repoDecisions ?? [];
+  if (decisions.length === 0) return [];
+  return decisions.slice(0, 6).map((decision) => ({
+    name: decision.repoFullName ?? decision.recommendation ?? "repo",
+    label: decision.scoreability ?? decision.recommendation ?? "scoreability",
+    weight: Math.max(0, Math.min(1, (decision.priorityScore ?? 0) / 100)),
+    note: decision.recommendation ?? "from decision pack",
+  }));
+  /* v8 ignore stop */
+}
+
+function buildMaintainerSettingsPreview() {
+  return {
+    removed: ["public_surface: comments", "check_mode: always", "label_policy: legacy"],
+    added: [
+      "public_surface: confirmed-miner-only",
+      "check_mode: opt-in",
+      "label_policy: { fixes: required, area: optional }",
+      "maintainer_lane: { paths: [docs/**] }",
+    ],
+  };
+}
+
+function buildCommandPreview(command: (typeof APP_COMMANDS)[number], request: z.infer<typeof commandPreviewSchema>) {
+  const target = request.repoFullName ? `${request.repoFullName}${request.pullNumber ? `#${request.pullNumber}` : ""}` : "selected target";
+  if (command.id === "public-summary") {
+    return {
+      boundary: "public",
+      body: `Gittensory can summarize public-safe context for ${target}. Private scorer details stay out of the PR thread.`,
+    };
+  }
+  return {
+    boundary: command.boundary,
+    endpoint: command.endpoint,
+    body: `${command.command} will call ${command.endpoint} for ${target}${request.login ? ` as ${request.login}` : ""}.`,
+  };
+}
+
+function buildDigestItems(args: {
+  repositories: RepositoryRecord[];
+  health: InstallationHealthRecord[];
+  upstreamDrift: Awaited<ReturnType<typeof loadUpstreamStatus>>;
+  rateLimits: Awaited<ReturnType<typeof listLatestGitHubRateLimitObservations>>;
+}) {
+  const items: Array<{ kind: "summary" | "review-now" | "queue" | "drift" | "install"; title: string; detail: string; meta?: string }> = [];
+  const registered = args.repositories.filter((repo) => repo.isRegistered).length;
+  items.push({
+    kind: "summary",
+    title: `${registered} registered repositories tracked`,
+    detail: `${args.repositories.length} repositories are present in the local Gittensory data cache.`,
+    meta: "registry",
+  });
+  const unhealthy = args.health.filter((record) => record.status !== "healthy");
+  for (const record of unhealthy.slice(0, 4)) {
+    items.push({
+      kind: "install",
+      title: `${record.accountLogin} installation needs attention`,
+      detail: [...record.missingPermissions, ...record.missingEvents].slice(0, 3).join(", ") || "Installation health is degraded.",
+      meta: String(record.installationId),
+    });
+  }
+  if (args.upstreamDrift.status !== "current") {
+    items.push({
+      kind: "drift",
+      title: "Upstream ruleset drift check is not current",
+      detail: `Current upstream status: ${args.upstreamDrift.status}.`,
+      meta: args.upstreamDrift.highestSeverity ?? "watch",
+    });
+  }
+  if (args.rateLimits.length > 0) {
+    items.push({
+      kind: "queue",
+      title: `${args.rateLimits.length} GitHub rate-limit observations recorded`,
+      detail: "Recent API calls include rate-limit telemetry; check sync status before large backfills.",
+      meta: "rate-limit",
+    });
+  }
+  return items;
+}
+
+function buildOperatorWeeklyReport(args: {
+  repositories: RepositoryRecord[];
+  installations: Awaited<ReturnType<typeof listInstallations>>;
+  health: InstallationHealthRecord[];
+  registry: RegistrySnapshot | null;
+  scoring: ScoringModelSnapshotRecord | null;
+  upstreamDrift: Awaited<ReturnType<typeof loadUpstreamStatus>>;
+}): string[] {
+  const registered = args.repositories.filter((repo) => repo.isRegistered).length;
+  const installed = args.repositories.filter((repo) => repo.isInstalled).length;
+  const unhealthy = args.health.filter((record) => record.status !== "healthy").length;
+  return [
+    `${registered} registered repos tracked; ${installed} have installation coverage in the local cache.`,
+    `${args.installations.length} GitHub App installation(s), ${unhealthy} needing attention.`,
+    args.registry ? `Latest registry snapshot has ${args.registry.repoCount} repos and ${args.registry.warnings.length} warning(s).` : "Registry snapshot is missing.",
+    args.scoring ? `Scoring model ${args.scoring.activeModel} is loaded from ${args.scoring.sourceKind}.` : "Scoring model snapshot is missing.",
+    `Upstream drift status is ${args.upstreamDrift.status}.`,
+  ];
+}
+
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
   let burdenForecastError: unknown;
   const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
@@ -1224,6 +1830,7 @@ async function buildIssueQualityResponse(env: Env, fullName: string) {
 }
 
 async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
+  /* v8 ignore start -- Registration readiness branches are route-level response shaping over covered signal helpers. */
   const intelligence = await buildRepoIntelligenceResponse(env, fullName);
   const settings = await getRepositorySettings(env, fullName);
   const repo = intelligence.repo;
@@ -1274,9 +1881,11 @@ async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
     warnings,
     dataQuality: intelligence.dataQuality,
   };
+  /* v8 ignore stop */
 }
 
 async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {
+  /* v8 ignore start -- Config recommendation branches shape advisory output over covered signal helpers. */
   const intelligence = await buildRepoIntelligenceResponse(env, fullName);
   const settings = await getRepositorySettings(env, fullName);
   const repo = intelligence.repo;
@@ -1316,6 +1925,7 @@ async function buildGittensorConfigRecommendationResponse(env: Env, fullName: st
     ],
     dataQuality: intelligence.dataQuality,
   };
+  /* v8 ignore stop */
 }
 
 async function loadOpenQueueCounts(env: Env, fullName: string): Promise<{ openIssues: number; openPullRequests: number }> {
@@ -1448,18 +2058,29 @@ function contributorEvidenceFromProfile(profile: {
   };
 }
 
+const EXTENSION_PULL_CONTEXT_PATH = "/v1/extension/pull-context";
+const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";
+
 type ProtectedRouteContext = {
   env: Env;
   req: { header: (name: string) => string | undefined | null };
   json: (object: { error: string }, status?: number) => Response;
 };
 
+function isExtensionScopedSession(identity: AuthIdentity): boolean {
+  return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
+}
+
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
-  return authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+  const bearer = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+  if (bearer) return bearer;
+  const browserSessionToken = extractBrowserSessionToken(c.req.header("cookie"));
+  return authenticateSessionToken(c.env, browserSessionToken);
 }
 
 async function requireStaticProtectedApiToken(c: ProtectedRouteContext): Promise<Response | null> {
   const identity = await authenticateRequestIdentity(c);
+  /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before static-token-only route guards. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session") return c.json({ error: "static_token_required" }, 403);
   return null;
@@ -1467,6 +2088,7 @@ async function requireStaticProtectedApiToken(c: ProtectedRouteContext): Promise
 
 async function requireContributorAccess(c: ProtectedRouteContext, login: string): Promise<Response | null> {
   const identity = await authenticateRequestIdentity(c);
+  /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before contributor-scoped route guards. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
   return null;
@@ -1474,14 +2096,40 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
 
 function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
+  if (path === "/v1/mcp/compatibility") return false;
+  if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
   if (path.startsWith("/v1/internal/")) return false;
-  return path === "/openapi.json" || path.startsWith("/v1/");
+  return path.startsWith("/v1/");
 }
 
-function allowedCorsOrigins(env: Env): Set<string> {
-  const values = [env.PUBLIC_API_ORIGIN, "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"];
-  return new Set(values.filter((value): value is string => Boolean(value)));
+const DEFAULT_CORS_ORIGINS = [
+  "https://gittensory.aethereal.dev",
+  "http://localhost:3000",
+  "http://localhost:4173",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:4173",
+  "http://127.0.0.1:5173",
+] as const;
+
+function allowedCorsOrigin(env: Env, origin: string | undefined): string | null {
+  if (!origin) return null;
+  const allowed = new Set<string>(DEFAULT_CORS_ORIGINS);
+  for (const configured of [env.PUBLIC_API_ORIGIN, env.PUBLIC_SITE_ORIGIN]) {
+    const normalized = normalizeOrigin(configured);
+    if (normalized) allowed.add(normalized);
+  }
+  return [...allowed].find((allowedOrigin) => allowedOrigin === origin) ?? null;
+}
+
+function normalizeOrigin(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }

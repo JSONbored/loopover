@@ -1559,5 +1559,38 @@ export const HealthSchema = z
     status: z.literal("ok"),
     service: z.literal("gittensory-api"),
     time: z.string(),
+    minMcpVersion: z.string(),
+    latestRecommendedMcpVersion: z.string(),
   })
   .openapi("Health");
+
+export const McpCompatibilitySchema = z
+  .object({
+    status: z.literal("ok"),
+    service: z.literal("gittensory-api"),
+    apiVersion: z.string(),
+    mcp: z.object({
+      packageName: z.string(),
+      minimumSupportedVersion: z.string(),
+      latestRecommendedVersion: z.string(),
+      latestPackageVersion: z.string(),
+      supportedVersionRange: z.string(),
+      upgradeCommand: z.string(),
+      npxFallbackCommand: z.string(),
+    }),
+    compatibilityWarnings: z.array(
+      z.object({
+        code: z.string(),
+        message: z.string(),
+      }),
+    ),
+    breakingChanges: z.array(
+      z.object({
+        version: z.string(),
+        summary: z.string(),
+        mitigation: z.string().optional(),
+      }),
+    ),
+    generatedAt: z.string(),
+  })
+  .openapi("McpCompatibility");

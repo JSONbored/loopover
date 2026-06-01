@@ -29,6 +29,7 @@ try {
       output: "packages/gittensory-mcp/CHANGELOG.md",
       command: "npm run changelog:mcp",
       selector: "--mcp",
+      releaseTag: () => `mcp-v${JSON.parse(readFileSync("packages/gittensory-mcp/package.json", "utf8")).version}`,
       args: [
         "--config",
         "cliff.mcp.toml",
@@ -44,8 +45,11 @@ try {
 
   const failures = [];
   for (const check of checks) {
-    const generatedPath = check.args.at(-1);
-    run(["git-cliff", ...check.args], check.label);
+    const args = [...check.args];
+    const releaseTag = typeof check.releaseTag === "function" ? check.releaseTag() : null;
+    if (releaseTag && changelogHasReleaseHeader(check.output, releaseTag)) args.push("--tag", releaseTag);
+    const generatedPath = args[args.lastIndexOf("--output") + 1];
+    run(["git-cliff", ...args], check.label);
     const expected = readFileSync(generatedPath, "utf8");
     const actual = readFileSync(check.output, "utf8");
     if (normalize(actual) !== normalize(expected)) failures.push(`${check.output} is stale; run ${check.command}.`);
@@ -71,4 +75,12 @@ function run(command, label) {
 
 function normalize(value) {
   return value.replace(/\r\n/g, "\n").trimEnd();
+}
+
+function changelogHasReleaseHeader(path, tag) {
+  return new RegExp(`^## ${escapeRegExp(tag)} - `, "m").test(readFileSync(path, "utf8"));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -64,6 +64,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "false",
     GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory",
     PUBLIC_API_ORIGIN: "https://gittensory-api.aethereal.dev",
+    PUBLIC_SITE_ORIGIN: "https://gittensory.aethereal.dev",
     INTERNAL_JOB_TOKEN: "dev-internal-token",
     GITTENSORY_API_TOKEN: "test-api-token",
     GITTENSORY_MCP_TOKEN: "test-mcp-token",

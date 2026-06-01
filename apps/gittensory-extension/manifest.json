@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Gittensory Maintainer Overlay",
+  "description": "Private Gittensory pull request context on GitHub.",
+  "version": "0.1.0",
+  "permissions": ["storage"],
+  "host_permissions": ["https://github.com/*", "https://gittensory-api.aethereal.dev/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*/*/pull/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Gittensory"
+  }
+}

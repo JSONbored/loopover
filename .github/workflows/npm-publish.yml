@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           PACK_JSON="$(npm pack --workspace @jsonbored/gittensory-mcp --json)"
           TARBALL="$(node -e 'const fs=require("fs"); const input=fs.readFileSync(0,"utf8"); process.stdout.write(JSON.parse(input)[0].filename)' <<< "$PACK_JSON")"
-          UNEXPECTED_FILES="$(tar -tzf "$TARBALL" | grep -Ev '^(package/(bin|lib)/.+|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
+          UNEXPECTED_FILES="$(tar -tzf "$TARBALL" | grep -Ev '^(package/(bin|lib|scripts)/.+|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
           if [ -n "$UNEXPECTED_FILES" ]; then
             printf '%s\n' "$UNEXPECTED_FILES"
             echo "Unexpected file in package tarball"

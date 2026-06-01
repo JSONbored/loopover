@@ -26,6 +26,7 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("queue processors", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -283,6 +284,9 @@ describe("queue processors", () => {
   });
 
   it("marks fidelity repair completed when only signal refreshes are needed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T01:00:00.000Z"));
+
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       JOBS: {
@@ -331,6 +335,9 @@ describe("queue processors", () => {
   });
 
   it("queues signal repair and emits alertable audit state when freshness SLOs breach", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T13:00:00.000Z"));
+
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       JOBS: {

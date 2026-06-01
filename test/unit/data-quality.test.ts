@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity, freshnessAuditMetadata } from "../../src/signals/data-quality";
 import type { PullRequestDetailSyncStateRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord } from "../../src/types";
 
+const TEST_NOW_MS = Date.parse("2026-05-25T01:00:00.000Z");
+
 describe("sync data quality", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TEST_NOW_MS);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("marks capped and partial segments as degraded instead of complete", () => {
     const state = repoState({ status: "capped", warnings: ["GitHub sync reached local cap of 100 item(s)."] });
     const quality = buildRepoDataQuality("owner/repo", state, [

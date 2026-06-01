@@ -1,5 +1,6 @@
 import type { LocalBranchAnalysis, LocalBranchAnalysisInput, LocalBranchChangedFile, LocalBranchValidation } from "./local-branch";
 import { isTestPath } from "./test-evidence";
+import { sanitizeLocalScorerWarnings } from "./local-scorer-diagnostics";
 
 export type LocalWorkspaceIntelligence = {
   version: 2;
@@ -87,7 +88,7 @@ export function buildLocalWorkspaceIntelligence(args: {
           localScorerDiagnostics: {
             mode: scorer.mode,
             ...(scorer.activeModel ? { activeModel: scorer.activeModel } : {}),
-            warnings: scorer.warnings ?? [],
+            warnings: sanitizeLocalScorerWarnings(scorer.warnings),
             metadataOnly: scorer.mode === "metadata_only",
           },
         }

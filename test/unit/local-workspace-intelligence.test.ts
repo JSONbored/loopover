@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildLocalWorkspaceIntelligence } from "../../src/signals/local-workspace-intelligence";
+import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../../src/signals/local-scorer-diagnostics";
 import { hasLocalTestEvidence, isTestPath } from "../../src/signals/test-evidence";
 import { buildLocalDiffPreflightResult } from "../../src/signals/engine";
 import type { RepositoryRecord } from "../../src/types";
@@ -165,6 +166,37 @@ describe("local workspace intelligence v2", () => {
       warnings: expect.arrayContaining([expect.stringMatching(/not configured/i)]),
     });
     expect(intelligence.testEvidence.level).toBe("none");
+  });
+
+  it("bounds local scorer diagnostics before returning workspace intelligence", () => {
+    const intelligence = buildLocalWorkspaceIntelligence({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        localScorer: {
+          mode: "metadata_only",
+          warnings: Array.from({ length: MAX_LOCAL_SCORER_WARNING_COUNT + 5 }, (_, index) => `${index}: ${"w".repeat(MAX_LOCAL_SCORER_WARNING_CHARS + 25)}`),
+        },
+      },
+      analysis: {
+        baseFreshness: { status: "unknown", changedFileCount: 0, testFileCount: 0, passedValidationCount: 0, warnings: [] },
+        branchQualityBlockers: [],
+        accountStateBlockers: [],
+        recommendedRerunCondition: "Rerun after any branch, base, or PR state changes before opening/submitting.",
+        prPacket: {
+          titleSuggestion: "Local branch preflight",
+          markdown: "# Local branch preflight\n",
+          bodySections: [],
+          reviewerNotes: [],
+          validationSummary: { passed: 0, failed: 0, notRun: 0, commands: [] },
+          publicSafeWarnings: [],
+        },
+      },
+      changedFiles: [],
+    });
+
+    expect(intelligence.localScorerDiagnostics?.warnings).toHaveLength(MAX_LOCAL_SCORER_WARNING_COUNT);
+    expect(intelligence.localScorerDiagnostics?.warnings.every((warning) => warning.length <= MAX_LOCAL_SCORER_WARNING_CHARS)).toBe(true);
   });
 
   it("records test_files evidence when only test paths changed", () => {

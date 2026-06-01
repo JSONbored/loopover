@@ -472,18 +472,94 @@ describe("upstream ruleset drift tracking", () => {
     const linkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(linkedEnv, driftReport("linked-fingerprint", { issueNumber: 93, issueUrl: "https://github.com/JSONbored/gittensory/issues/93" }));
     const linkedCalls: GitHubIssueFetchCall[] = [];
-    vi.stubGlobal("fetch", githubIssueFetch({ update: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93" }, calls: linkedCalls }));
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93", fingerprint: "linked-fingerprint" },
+        update: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93" },
+        calls: linkedCalls,
+      }),
+    );
     await expect(fileUpstreamDriftIssues(linkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
-    expect(linkedCalls).toEqual([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" })]);
+    expect(linkedCalls).toEqual([
+      expect.objectContaining({ method: "GET", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" }),
+      expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" }),
+    ]);
+
+    const objectLabelLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(objectLabelLinkedEnv, driftReport("object-label-linked", { issueNumber: 129, issueUrl: "https://github.com/JSONbored/gittensory/issues/129" }));
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: { number: 129, url: "https://github.com/JSONbored/gittensory/issues/129", fingerprint: "object-label-linked", labels: [{ name: "signals" }] },
+        update: { number: 129, url: "https://github.com/JSONbored/gittensory/issues/129" },
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(objectLabelLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+
+    const staleLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "victim/current-repo" });
+    await upsertUpstreamDriftReport(staleLinkedEnv, driftReport("stale-linked", { issueNumber: 123, issueUrl: "https://github.com/other-owner/old-repo/issues/123" }));
+    const staleLinkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 124, url: "https://github.com/victim/current-repo/issues/124" }, calls: staleLinkedCalls }));
+    await expect(fileUpstreamDriftIssues(staleLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    expect(staleLinkedCalls).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/victim/current-repo/issues/123" })]),
+    );
+
+    const invalidLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(invalidLinkedEnv, driftReport("invalid-linked", { issueNumber: 125, issueUrl: "not a github issue url" }));
+    const invalidLinkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 126, url: "https://github.com/JSONbored/gittensory/issues/126" }, calls: invalidLinkedCalls }));
+    await expect(fileUpstreamDriftIssues(invalidLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    expect(invalidLinkedCalls).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/125" })]),
+    );
+
+    const throwingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(throwingLinkedEnv, driftReport("throwing-linked", { issueNumber: 127, issueUrl: "https://github.com/JSONbored/gittensory/issues/127" }));
+    const throwingLinkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ throwOnIssueGet: true, create: { number: 128, url: "https://github.com/JSONbored/gittensory/issues/128" }, calls: throwingLinkedCalls }));
+    await expect(fileUpstreamDriftIssues(throwingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    expect(throwingLinkedCalls).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/127" })]),
+    );
+
+    for (const scenario of [
+      { fingerprint: "wrong-host-linked", issueNumber: 130, issueUrl: "https://example.com/JSONbored/gittensory/issues/130" },
+      { fingerprint: "wrong-path-linked", issueNumber: 131, issueUrl: "https://github.com/JSONbored/gittensory/pull/131" },
+      { fingerprint: "lookup-status-linked", issueNumber: 132, issueUrl: "https://github.com/JSONbored/gittensory/issues/132", issueStatus: 500 },
+      { fingerprint: "wrong-number-linked", issueNumber: 133, issueUrl: "https://github.com/JSONbored/gittensory/issues/133", issue: { number: 134, url: "https://github.com/JSONbored/gittensory/issues/133", fingerprint: "wrong-number-linked" } },
+      { fingerprint: "closed-linked", issueNumber: 135, issueUrl: "https://github.com/JSONbored/gittensory/issues/135", issue: { number: 135, url: "https://github.com/JSONbored/gittensory/issues/135", fingerprint: "closed-linked", state: "closed" } },
+      { fingerprint: "missing-body-linked", issueNumber: 136, issueUrl: "https://github.com/JSONbored/gittensory/issues/136", issue: { number: 136, url: "https://github.com/JSONbored/gittensory/issues/136", fingerprint: "missing-body-linked", body: null } },
+      { fingerprint: "missing-label-linked", issueNumber: 137, issueUrl: "https://github.com/JSONbored/gittensory/issues/137", issue: { number: 137, url: "https://github.com/JSONbored/gittensory/issues/137", fingerprint: "missing-label-linked", labels: [{ name: "triage" }] } },
+      { fingerprint: "returned-url-linked", issueNumber: 138, issueUrl: "https://github.com/JSONbored/gittensory/issues/138", issue: { number: 138, url: "https://github.com/other/repo/issues/138", fingerprint: "returned-url-linked" } },
+    ]) {
+      const rejectedLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+      await upsertUpstreamDriftReport(rejectedLinkedEnv, driftReport(scenario.fingerprint, { issueNumber: scenario.issueNumber, issueUrl: scenario.issueUrl }));
+      const rejectedLinkedCalls: GitHubIssueFetchCall[] = [];
+      vi.stubGlobal(
+        "fetch",
+        githubIssueFetch({
+          issue: scenario.issue ?? { number: scenario.issueNumber, url: scenario.issueUrl, fingerprint: scenario.fingerprint },
+          issueStatus: scenario.issueStatus,
+          create: { number: scenario.issueNumber + 100, url: `https://github.com/JSONbored/gittensory/issues/${scenario.issueNumber + 100}` },
+          calls: rejectedLinkedCalls,
+        }),
+      );
+      await expect(fileUpstreamDriftIssues(rejectedLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+      expect(rejectedLinkedCalls).toEqual(
+        expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: `https://api.github.com/repos/JSONbored/gittensory/issues/${scenario.issueNumber}` })]),
+      );
+    }
 
     const failingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(failingLinkedEnv, driftReport("failing-linked", { issueNumber: 94, issueUrl: "https://github.com/JSONbored/gittensory/issues/94" }));
-    vi.stubGlobal("fetch", githubIssueFetch({ updateStatus: 500 }));
+    vi.stubGlobal("fetch", githubIssueFetch({ issue: { number: 94, url: "https://github.com/JSONbored/gittensory/issues/94", fingerprint: "failing-linked" }, updateStatus: 500 }));
     await expect(fileUpstreamDriftIssues(failingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const missingUpdatePayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(missingUpdatePayloadEnv, driftReport("missing-update-payload", { issueNumber: 96, issueUrl: "https://github.com/JSONbored/gittensory/issues/96" }));
-    vi.stubGlobal("fetch", githubIssueFetch({ updatePayload: {} }));
+    vi.stubGlobal("fetch", githubIssueFetch({ issue: { number: 96, url: "https://github.com/JSONbored/gittensory/issues/96", fingerprint: "missing-update-payload" }, updatePayload: {} }));
     await expect(fileUpstreamDriftIssues(missingUpdatePayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const disabledEnv = createTestEnv();
@@ -625,11 +701,14 @@ function githubIssueFetch(options: {
   create?: { number: number; url: string };
   createPayload?: Record<string, unknown>;
   update?: { number: number; url: string };
+  issue?: { number: number; url: string; fingerprint: string; state?: string; labels?: Array<string | { name?: string }>; body?: string | null };
   updatePayload?: Record<string, unknown>;
+  issueStatus?: number | undefined;
   listStatus?: number;
   createStatus?: number;
   updateStatus?: number;
   throwOnList?: boolean;
+  throwOnIssueGet?: boolean;
   calls?: GitHubIssueFetchCall[];
 }) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -650,6 +729,18 @@ function githubIssueFetch(options: {
       );
     }
     const issueMatch = url.match(/\/issues\/(\d+)$/);
+    if (issueMatch && method === "GET") {
+      if (options.throwOnIssueGet) throw new Error("issue lookup failed");
+      if (options.issueStatus) return new Response("issue lookup failed", { status: options.issueStatus });
+      if (!options.issue || options.issue.number !== Number(issueMatch[1])) return new Response("not found", { status: 404 });
+      return Response.json({
+        number: options.issue.number,
+        html_url: options.issue.url,
+        state: options.issue.state ?? "open",
+        body: options.issue.body === undefined ? `<!-- gittensory-upstream-drift:${options.issue.fingerprint} -->` : options.issue.body,
+        labels: options.issue.labels ?? ["signals"],
+      });
+    }
     if (issueMatch && method === "PATCH") {
       if (options.updateStatus) return new Response("update failed", { status: options.updateStatus });
       if (options.updatePayload) return Response.json(options.updatePayload);

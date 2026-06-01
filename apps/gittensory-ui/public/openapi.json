@@ -5746,6 +5746,125 @@
               "risks"
             ]
           },
+          "manifestGuidance": {
+            "type": "object",
+            "properties": {
+              "present": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "repo_file",
+                  "api_record",
+                  "none"
+                ]
+              },
+              "linkedIssuePolicy": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "preferred",
+                  "optional"
+                ]
+              },
+              "issueDiscoveryPolicy": {
+                "type": "string",
+                "enum": [
+                  "encouraged",
+                  "neutral",
+                  "discouraged"
+                ]
+              },
+              "matchedWantedPaths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "matchedBlockedPaths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "preferredLabelHits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "warning",
+                        "critical"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "severity",
+                    "title",
+                    "detail"
+                  ]
+                }
+              },
+              "publicNextSteps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maintainerNotes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "present",
+              "source",
+              "linkedIssuePolicy",
+              "issueDiscoveryPolicy",
+              "matchedWantedPaths",
+              "matchedBlockedPaths",
+              "preferredLabelHits",
+              "findings",
+              "publicNextSteps",
+              "maintainerNotes",
+              "warnings",
+              "summary"
+            ]
+          },
           "prPacket": {
             "type": "object",
             "properties": {
@@ -5885,6 +6004,7 @@
           "recommendedRerunCondition",
           "localFindings",
           "maintainerFit",
+          "manifestGuidance",
           "prPacket",
           "nextActions",
           "workspaceIntelligence",
@@ -9673,6 +9793,145 @@
         ]
       }
     },
+    "/v1/app/notification-model": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Opt-in notification model and PWA-readiness metadata for control-panel routes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string"
+                    },
+                    "notificationModel": {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "opt_in"
+                          ]
+                        },
+                        "defaultState": {
+                          "type": "string",
+                          "enum": [
+                            "disabled"
+                          ]
+                        },
+                        "channels": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "transport": {
+                                "type": "string",
+                                "enum": [
+                                  "in_app",
+                                  "web_push"
+                                ]
+                              },
+                              "defaultEnabled": {
+                                "type": "boolean"
+                              },
+                              "requiresPermission": {
+                                "type": "boolean"
+                              },
+                              "purpose": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "transport",
+                              "defaultEnabled",
+                              "purpose"
+                            ]
+                          }
+                        },
+                        "privacyGuards": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "fallbackWhenUnavailable": {
+                          "type": "string",
+                          "enum": [
+                            "in_app_digest_only"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "defaultState",
+                        "channels",
+                        "privacyGuards",
+                        "fallbackWhenUnavailable"
+                      ]
+                    },
+                    "pwa": {
+                      "type": "object",
+                      "properties": {
+                        "nativeDependency": {
+                          "type": "boolean"
+                        },
+                        "manifestPath": {
+                          "type": "string"
+                        },
+                        "serviceWorkerPath": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "nativeDependency",
+                        "manifestPath",
+                        "serviceWorkerPath"
+                      ]
+                    },
+                    "mobileReadyRoutes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "nativeMobileFuture": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "generatedAt",
+                    "notificationModel",
+                    "pwa",
+                    "mobileReadyRoutes",
+                    "nativeMobileFuture"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Role does not allow control-panel notification model access"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/repos": {
       "get": {
         "responses": {
@@ -10850,6 +11109,66 @@
         ]
       }
     },
+    "/v1/app/analytics/mcp-compatibility": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/analytics/weekly-value-report": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/app/commands/preview": {
       "post": {
         "responses": {
@@ -11220,6 +11539,26 @@
       }
     },
     "/v1/internal/jobs/generate-signal-snapshots": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/generate-weekly-value-report": {
       "post": {
         "responses": {
           "202": {

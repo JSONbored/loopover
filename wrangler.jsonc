@@ -24,6 +24,7 @@
     "GITHUB_APP_ID": "3824093",
     "GITHUB_APP_SLUG": "gittensory",
     "GITHUB_OAUTH_CLIENT_ID": "Iv23li574mpdLo2PnVN4",
+    "GITHUB_WEBHOOK_MAX_BODY_BYTES": "1048576",
     "GITTENSOR_UPSTREAM_REPO": "entrius/gittensor",
     "GITTENSOR_UPSTREAM_REF": "test",
     "GITTENSOR_REGISTRY_URL": "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",

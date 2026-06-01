@@ -8,3 +8,7 @@ React.startTransition(() => {
     React.createElement(React.StrictMode, null, React.createElement(StartClient)),
   );
 });
+
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+}

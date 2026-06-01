@@ -273,6 +273,10 @@ server.registerTool(
     }
     return toolResult("Gittensory local MCP status.", {
       apiUrl,
+      package: {
+        name: packageName,
+        version: packageVersion,
+      },
       hasToken: Boolean(getApiToken()),
       authLogin: config.session?.login ?? null,
       sessionExpiresAt: config.session?.expiresAt ?? null,
@@ -1203,6 +1207,9 @@ async function apiFetch(path, init, options = {}) {
       ...(token && options.auth !== false ? { authorization: `Bearer ${token}` } : {}),
       "content-type": "application/json",
       accept: "application/json",
+      "x-gittensory-mcp-package": packageName,
+      "x-gittensory-mcp-version": packageVersion,
+      "x-gittensory-mcp-client": "gittensory-mcp-cli",
     },
   }).finally(() => clearTimeout(timeout));
   const text = await response.text();

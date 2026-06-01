@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, not, sql } from "drizzle-orm";
+import { and, desc, eq, gte, not, or, sql } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
@@ -28,6 +28,8 @@ import {
   pullRequestDetailSyncState,
   pullRequestReviews,
   pullRequests,
+  productUsageDailyRollups,
+  productUsageEvents,
   recentMergedPullRequests,
   repositories,
   repoGithubTotalsSnapshots,
@@ -78,6 +80,16 @@ import type {
   IssueRecord,
   IssueQualityReportRecord,
   JsonValue,
+  McpCompatibilityAdoptionSummary,
+  ProductUsageActivationFunnel,
+  ProductUsageDailyRollupRecord,
+  ProductUsageDailyRollupStatus,
+  ProductUsageEventRecord,
+  ProductUsageRollupRunResult,
+  ProductUsageRollupStatus,
+  ProductUsageOutcome,
+  ProductUsageSummary,
+  ProductUsageSurface,
   PullRequestFileRecord,
   PullRequestDetailSyncStateRecord,
   PullRequestRecord,
@@ -104,6 +116,8 @@ import type {
   UpstreamSourceStatus,
 } from "../types";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
+import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
+import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
@@ -940,6 +954,260 @@ export async function countActiveDigestSubscriptions(env: Env): Promise<number> 
   const [row] = await db.select({ count: sql<number>`count(*)` }).from(digestSubscriptions).where(eq(digestSubscriptions.status, "active"));
   /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   return Number(row?.count ?? 0);
+}
+
+export async function recordProductUsageEvent(
+  env: Env,
+  event: {
+    surface: ProductUsageSurface;
+    eventName: string;
+    actor?: string | null | undefined;
+    sessionId?: string | null | undefined;
+    route?: string | null | undefined;
+    repoFullName?: string | null | undefined;
+    targetKey?: string | null | undefined;
+    outcome?: ProductUsageOutcome | null | undefined;
+    latencyMs?: number | null | undefined;
+    clientName?: string | null | undefined;
+    clientVersion?: string | null | undefined;
+    metadata?: Record<string, unknown> | null | undefined;
+    occurredAt?: string | null | undefined;
+  },
+): Promise<ProductUsageEventRecord> {
+  const db = getDb(env.DB);
+  const actorRedactor = buildProductUsageActorRedactor(event.actor);
+  const record: ProductUsageEventRecord = {
+    id: crypto.randomUUID(),
+    surface: normalizeProductUsageSurface(event.surface),
+    eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
+    route: boundedProductUsageField(event.route, 160),
+    actorHash: await hashProductUsageIdentifier(env, "actor", event.actor),
+    sessionHash: await hashProductUsageIdentifier(env, "session", event.sessionId),
+    repoFullName: redactProductUsageActor(boundedProductUsageField(event.repoFullName, 256), actorRedactor),
+    targetKey: redactProductUsageActor(boundedProductUsageField(event.targetKey, 256), actorRedactor),
+    outcome: normalizeProductUsageOutcome(event.outcome),
+    latencyMs: normalizeProductUsageLatency(event.latencyMs),
+    clientName: boundedProductUsageField(event.clientName, 80),
+    clientVersion: boundedProductUsageField(event.clientVersion, 80),
+    metadata: sanitizeProductUsageMetadata(event.metadata, actorRedactor),
+    occurredAt: event.occurredAt ?? nowIso(),
+  };
+  await db.insert(productUsageEvents).values({
+    id: record.id,
+    surface: record.surface,
+    eventName: record.eventName,
+    route: record.route ?? null,
+    actorHash: record.actorHash ?? null,
+    sessionHash: record.sessionHash ?? null,
+    repoFullName: record.repoFullName ?? null,
+    targetKey: record.targetKey ?? null,
+    outcome: record.outcome,
+    latencyMs: record.latencyMs ?? null,
+    clientName: record.clientName ?? null,
+    clientVersion: record.clientVersion ?? null,
+    metadataJson: jsonString(record.metadata),
+    occurredAt: record.occurredAt,
+  });
+  return record;
+}
+
+export async function listProductUsageEvents(
+  env: Env,
+  options: { limit?: number; sinceIso?: string } = {},
+): Promise<ProductUsageEventRecord[]> {
+  const db = getDb(env.DB);
+  const limit = Math.max(1, Math.min(500, Math.round(options.limit ?? 100)));
+  const rows = options.sinceIso
+    ? await db
+        .select()
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, options.sinceIso))
+        .orderBy(desc(productUsageEvents.occurredAt))
+        .limit(limit)
+    : await db.select().from(productUsageEvents).orderBy(desc(productUsageEvents.occurredAt)).limit(limit);
+  return rows.map(toProductUsageEventRecord);
+}
+
+export async function summarizeProductUsageEvents(env: Env, sinceIso?: string): Promise<ProductUsageSummary> {
+  const db = getDb(env.DB);
+  const [totalRow] = sinceIso
+    ? await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents).where(gte(productUsageEvents.occurredAt, sinceIso))
+    : await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents);
+  const [activeActorRow] = sinceIso
+    ? await db
+        .select({ count: sql<number>`count(distinct ${productUsageEvents.actorHash})` })
+        .from(productUsageEvents)
+        .where(and(gte(productUsageEvents.occurredAt, sinceIso), sql`${productUsageEvents.actorHash} is not null`))
+    : await db
+        .select({ count: sql<number>`count(distinct ${productUsageEvents.actorHash})` })
+        .from(productUsageEvents)
+        .where(sql`${productUsageEvents.actorHash} is not null`);
+  const bySurfaceRows = sinceIso
+    ? await db
+        .select({ surface: productUsageEvents.surface, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, sinceIso))
+        .groupBy(productUsageEvents.surface)
+    : await db.select({ surface: productUsageEvents.surface, count: sql<number>`count(*)` }).from(productUsageEvents).groupBy(productUsageEvents.surface);
+  const byOutcomeRows = sinceIso
+    ? await db
+        .select({ outcome: productUsageEvents.outcome, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, sinceIso))
+        .groupBy(productUsageEvents.outcome)
+    : await db.select({ outcome: productUsageEvents.outcome, count: sql<number>`count(*)` }).from(productUsageEvents).groupBy(productUsageEvents.outcome);
+  const byEventRows = sinceIso
+    ? await db
+        .select({ eventName: productUsageEvents.eventName, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, sinceIso))
+        .groupBy(productUsageEvents.eventName)
+        .orderBy(sql`count(*) desc`)
+        .limit(20)
+    : await db
+        .select({ eventName: productUsageEvents.eventName, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .groupBy(productUsageEvents.eventName)
+        .orderBy(sql`count(*) desc`)
+        .limit(20);
+  return {
+    since: sinceIso,
+    totalEvents: Number(totalRow?.count ?? 0),
+    activeActors: Number(activeActorRow?.count ?? 0),
+    bySurface: bySurfaceRows.map((row) => ({ surface: normalizeProductUsageSurface(row.surface), count: Number(row.count ?? 0) })),
+    byOutcome: byOutcomeRows.map((row) => ({ outcome: normalizeProductUsageOutcome(row.outcome), count: Number(row.count ?? 0) })),
+    byEvent: byEventRows.map((row) => ({ eventName: row.eventName, count: Number(row.count ?? 0) })),
+  };
+}
+
+export async function summarizeMcpCompatibilityAdoption(
+  env: Env,
+  sinceIso?: string,
+  options: { limit?: number } = {},
+): Promise<McpCompatibilityAdoptionSummary> {
+  const db = getDb(env.DB);
+  const limit = Math.max(1, Math.min(MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT, Math.round(options.limit ?? MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT)));
+  const mcpClientWhere = or(eq(productUsageEvents.surface, "mcp"), eq(productUsageEvents.clientName, "gittensory-mcp"), eq(productUsageEvents.clientName, "gittensory-mcp-cli"));
+  const baseWhere = sinceIso ? and(mcpClientWhere, gte(productUsageEvents.occurredAt, sinceIso)) : mcpClientWhere;
+  const [totalRow] = await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents).where(baseWhere);
+  const [activeActorRow] = await db
+    .select({ count: sql<number>`count(distinct ${productUsageEvents.actorHash})` })
+    .from(productUsageEvents)
+    .where(and(baseWhere, sql`${productUsageEvents.actorHash} is not null`));
+  const [activeSessionRow] = await db
+    .select({ count: sql<number>`count(distinct ${productUsageEvents.sessionHash})` })
+    .from(productUsageEvents)
+    .where(and(baseWhere, sql`${productUsageEvents.sessionHash} is not null`));
+  const rows = await db.select().from(productUsageEvents).where(baseWhere).orderBy(desc(productUsageEvents.occurredAt)).limit(limit + 1);
+  const events = rows.slice(0, limit).map(toProductUsageEventRecord);
+  const compatibilityStatuses = events.map(mcpCompatibilityStatusForEvent);
+  return {
+    since: sinceIso,
+    totalEvents: Number(totalRow?.count ?? 0),
+    activeActors: Number(activeActorRow?.count ?? 0),
+    activeSessions: Number(activeSessionRow?.count ?? 0),
+    scannedEvents: events.length,
+    scanLimit: limit,
+    truncated: rows.length > limit || Number(totalRow?.count ?? 0) > limit,
+    minimumSupportedVersion: MINIMUM_SUPPORTED_MCP_VERSION,
+    latestRecommendedVersion: LATEST_RECOMMENDED_MCP_VERSION,
+    staleEvents: compatibilityStatuses.filter((status) => status === "stale").length,
+    incompatibleEvents: compatibilityStatuses.filter((status) => status === "incompatible").length,
+    byClientVersion: countProductUsageDimensions(events.map(mcpClientVersionForEvent)),
+    byProtocolVersion: countProductUsageDimensions(events.map((event) => productUsageMetadataString(event, "protocolVersion") ?? "unknown")),
+    byCompatibilityStatus: countProductUsageDimensions(compatibilityStatuses).map(({ key, count }) => ({ status: normalizeMcpCompatibilityStatus(key), count })),
+  };
+}
+
+export async function rollupProductUsageDaily(
+  env: Env,
+  options: { day?: string; days?: number; nowIso?: string } = {},
+): Promise<ProductUsageRollupRunResult> {
+  const generatedAt = options.nowIso ?? nowIso();
+  const requestedDays = options.day ? [normalizeProductUsageRollupDay(options.day, generatedAt)] : productUsageRollupDays(generatedAt, options.days ?? 7);
+  const rollups: ProductUsageDailyRollupRecord[] = [];
+  for (const day of requestedDays) rollups.push(await upsertProductUsageDailyRollup(env, day, generatedAt));
+  return { generatedAt, requestedDays, rollups, status: await getProductUsageRollupStatus(env, { nowIso: generatedAt }) };
+}
+
+export async function listProductUsageDailyRollups(
+  env: Env,
+  options: { limit?: number; fromDay?: string } = {},
+): Promise<ProductUsageDailyRollupRecord[]> {
+  const db = getDb(env.DB);
+  const limit = Math.max(1, Math.min(90, Math.round(options.limit ?? 14)));
+  const rows = options.fromDay
+    ? await db
+        .select()
+        .from(productUsageDailyRollups)
+        .where(gte(productUsageDailyRollups.day, options.fromDay))
+        .orderBy(desc(productUsageDailyRollups.day))
+        .limit(limit)
+    : await db.select().from(productUsageDailyRollups).orderBy(desc(productUsageDailyRollups.day)).limit(limit);
+  return rows.map(toProductUsageDailyRollupRecord);
+}
+
+export async function getProductUsageRollupStatus(
+  env: Env,
+  options: { nowIso?: string; lookbackDays?: number } = {},
+): Promise<ProductUsageRollupStatus> {
+  const db = getDb(env.DB);
+  const generatedAt = options.nowIso ?? nowIso();
+  const lookbackDays = Math.max(1, Math.min(31, Math.round(options.lookbackDays ?? 14)));
+  const sinceDay = addProductUsageUtcDays(productUsageDayFromIso(generatedAt), -(lookbackDays - 1));
+  const [latestEvent] = await db.select().from(productUsageEvents).orderBy(desc(productUsageEvents.occurredAt)).limit(1);
+  const rollups = await listProductUsageDailyRollups(env, { fromDay: sinceDay, limit: lookbackDays + 1 });
+  const rollupByDay = new Map(rollups.map((rollup) => [rollup.day, rollup]));
+  const eventDayExpr = sql<string>`substr(${productUsageEvents.occurredAt}, 1, 10)`;
+  const eventDayRows = await db
+    .select({ day: eventDayExpr, count: sql<number>`count(*)` })
+    .from(productUsageEvents)
+    .where(gte(productUsageEvents.occurredAt, `${sinceDay}T00:00:00.000Z`))
+    .groupBy(eventDayExpr);
+  const eventDayCounts = new Map(eventDayRows.map((row) => [row.day, Number(row.count ?? 0)]));
+  const eventDays = [...eventDayCounts.keys()].sort();
+  const missingDays = eventDays.filter((day) => !rollupByDay.has(day));
+  const incompleteDays = rollups.filter((rollup) => rollup.status === "incomplete").map((rollup) => rollup.day);
+  const partialDays = rollups.filter((rollup) => rollup.status === "partial").map((rollup) => rollup.day);
+  const latestRollup = rollups[0];
+  const latestEventAt = latestEvent?.occurredAt ?? null;
+  const staleDays = [
+    ...new Set([
+      ...eventDays.filter((day) => {
+        const rollup = rollupByDay.get(day);
+        return rollup ? rollup.sourceEventCount !== eventDayCounts.get(day) : false;
+      }),
+      ...(latestEventAt && latestRollup?.generatedAt && latestEventAt > latestRollup.generatedAt ? [productUsageDayFromIso(latestEventAt)] : []),
+    ]),
+  ].sort();
+  const warnings = [
+    ...(missingDays.length > 0 ? [`${missingDays.length} product usage day(s) have events but no rollup.`] : []),
+    ...(incompleteDays.length > 0 ? [`${incompleteDays.length} product usage rollup day(s) hit the worker-safe event scan cap.`] : []),
+    ...(staleDays.length > 0 ? ["Product usage rollups are stale relative to the latest raw event."] : []),
+    ...(partialDays.length > 0 ? ["Current-day product usage rollup is partial until the UTC day closes."] : []),
+  ];
+  const status: ProductUsageRollupStatus["status"] = !latestEvent
+    ? "empty"
+    : staleDays.length > 0
+      ? "stale"
+      : missingDays.length > 0
+        ? "incomplete"
+        : incompleteDays.length > 0
+          ? "incomplete"
+          : partialDays.length > 0
+            ? "partial"
+            : "ready";
+  return {
+    status,
+    generatedAt,
+    latestEventAt,
+    latestRollupDay: latestRollup?.day ?? null,
+    latestRollupGeneratedAt: latestRollup?.generatedAt ?? null,
+    missingDays,
+    staleDays,
+    incompleteDays,
+    warnings,
+  };
 }
 
 export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promise<void> {
@@ -2623,6 +2891,413 @@ function toDigestSubscriptionRecord(row: typeof digestSubscriptions.$inferSelect
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function toProductUsageEventRecord(row: typeof productUsageEvents.$inferSelect): ProductUsageEventRecord {
+  return {
+    id: row.id,
+    surface: normalizeProductUsageSurface(row.surface),
+    eventName: row.eventName,
+    route: row.route,
+    actorHash: row.actorHash,
+    sessionHash: row.sessionHash,
+    repoFullName: row.repoFullName,
+    targetKey: row.targetKey,
+    outcome: normalizeProductUsageOutcome(row.outcome),
+    latencyMs: row.latencyMs,
+    clientName: row.clientName,
+    clientVersion: row.clientVersion,
+    metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
+    occurredAt: row.occurredAt,
+  };
+}
+
+function toProductUsageDailyRollupRecord(row: typeof productUsageDailyRollups.$inferSelect): ProductUsageDailyRollupRecord {
+  return {
+    day: row.day,
+    status: normalizeProductUsageDailyRollupStatus(row.status),
+    totalEvents: row.totalEvents,
+    activeActors: row.activeActors,
+    activeSessions: row.activeSessions,
+    activeRepos: row.activeRepos,
+    sourceEventCount: row.sourceEventCount,
+    maxEventCapacity: row.maxEventCapacity,
+    firstEventAt: row.firstEventAt,
+    lastEventAt: row.lastEventAt,
+    bySurface: parseJson<Array<{ surface: ProductUsageSurface; count: number }>>(row.surfacesJson, []),
+    byOutcome: parseJson<Array<{ outcome: ProductUsageOutcome; count: number }>>(row.outcomesJson, []),
+    byEvent: parseJson<Array<{ eventName: string; count: number }>>(row.eventsJson, []),
+    byRepo: parseJson<Array<{ key: string; count: number }>>(row.reposJson, []),
+    byCommand: parseJson<Array<{ key: string; count: number }>>(row.commandsJson, []),
+    byTool: parseJson<Array<{ key: string; count: number }>>(row.toolsJson, []),
+    byRouteClass: parseJson<Array<{ key: string; count: number }>>(row.routeClassesJson, []),
+    activation: parseJson<ProductUsageActivationFunnel>(row.activationJson, emptyProductUsageActivationFunnel()),
+    generatedAt: row.generatedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function normalizeProductUsageSurface(surface: unknown): ProductUsageSurface {
+  if (typeof surface === "string" && PRODUCT_USAGE_SURFACES.has(surface as ProductUsageSurface)) return surface as ProductUsageSurface;
+  return "api";
+}
+
+function normalizeProductUsageOutcome(outcome: unknown): ProductUsageOutcome {
+  if (typeof outcome === "string" && PRODUCT_USAGE_OUTCOMES.has(outcome as ProductUsageOutcome)) return outcome as ProductUsageOutcome;
+  return "success";
+}
+
+function normalizeProductUsageDailyRollupStatus(status: unknown): ProductUsageDailyRollupStatus {
+  if (status === "complete" || status === "partial" || status === "incomplete") return status;
+  return "incomplete";
+}
+
+function normalizeProductUsageLatency(latencyMs: unknown): number | null {
+  return typeof latencyMs === "number" && Number.isFinite(latencyMs) ? Math.max(0, Math.round(latencyMs)) : null;
+}
+
+async function hashProductUsageIdentifier(env: Env, kind: "actor" | "session", value: unknown): Promise<string | null> {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized) return null;
+  const salt = env.PRODUCT_USAGE_HASH_SALT;
+  if (!salt) return null;
+  return sha256Hex(`gittensory:product-usage:v1:${kind}:${salt}:${normalized}`);
+}
+
+function boundedProductUsageField(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const safe = sanitizeProductUsageString(value.trim(), maxLength);
+  return safe ? safe : null;
+}
+
+function buildProductUsageActorRedactor(actor: unknown): RegExp | null {
+  const normalized = typeof actor === "string" ? actor.trim() : "";
+  if (!normalized || normalized.length > PRODUCT_USAGE_ACTOR_REDACTION_MAX_CHARS) return null;
+  return new RegExp(`(^|[^A-Za-z0-9])${escapeRegExp(normalized)}(?=$|[^A-Za-z0-9])`, "gi");
+}
+
+function redactProductUsageActor(value: string | null, actorRedactor: RegExp | null): string | null {
+  return value && actorRedactor ? value.replace(actorRedactor, "$1<redacted-actor>") : value;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt: string): Promise<ProductUsageDailyRollupRecord> {
+  const db = getDb(env.DB);
+  const startIso = `${day}T00:00:00.000Z`;
+  const endIso = `${addProductUsageUtcDays(day, 1)}T00:00:00.000Z`;
+  const [totalRow] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(productUsageEvents)
+    .where(and(gte(productUsageEvents.occurredAt, startIso), sql`${productUsageEvents.occurredAt} < ${endIso}`));
+  const sourceEventCount = Number(totalRow?.count ?? 0);
+  const rows = await db
+    .select()
+    .from(productUsageEvents)
+    .where(and(gte(productUsageEvents.occurredAt, startIso), sql`${productUsageEvents.occurredAt} < ${endIso}`))
+    .orderBy(productUsageEvents.occurredAt)
+    .limit(PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT + 1);
+  const capped = rows.length > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT || sourceEventCount > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT;
+  const events = rows.slice(0, PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
+  const record = buildProductUsageDailyRollupRecord({
+    day,
+    generatedAt,
+    sourceEventCount,
+    capped,
+    events,
+  });
+  await db
+    .insert(productUsageDailyRollups)
+    .values({
+      day: record.day,
+      status: record.status,
+      totalEvents: record.totalEvents,
+      activeActors: record.activeActors,
+      activeSessions: record.activeSessions,
+      activeRepos: record.activeRepos,
+      sourceEventCount: record.sourceEventCount,
+      maxEventCapacity: record.maxEventCapacity,
+      firstEventAt: record.firstEventAt ?? null,
+      lastEventAt: record.lastEventAt ?? null,
+      surfacesJson: jsonString(record.bySurface),
+      outcomesJson: jsonString(record.byOutcome),
+      eventsJson: jsonString(record.byEvent),
+      reposJson: jsonString(record.byRepo),
+      commandsJson: jsonString(record.byCommand),
+      toolsJson: jsonString(record.byTool),
+      routeClassesJson: jsonString(record.byRouteClass),
+      activationJson: jsonString(record.activation),
+      generatedAt: record.generatedAt,
+      updatedAt: record.updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: productUsageDailyRollups.day,
+      set: {
+        status: record.status,
+        totalEvents: record.totalEvents,
+        activeActors: record.activeActors,
+        activeSessions: record.activeSessions,
+        activeRepos: record.activeRepos,
+        sourceEventCount: record.sourceEventCount,
+        maxEventCapacity: record.maxEventCapacity,
+        firstEventAt: record.firstEventAt ?? null,
+        lastEventAt: record.lastEventAt ?? null,
+        surfacesJson: jsonString(record.bySurface),
+        outcomesJson: jsonString(record.byOutcome),
+        eventsJson: jsonString(record.byEvent),
+        reposJson: jsonString(record.byRepo),
+        commandsJson: jsonString(record.byCommand),
+        toolsJson: jsonString(record.byTool),
+        routeClassesJson: jsonString(record.byRouteClass),
+        activationJson: jsonString(record.activation),
+        generatedAt: record.generatedAt,
+        updatedAt: record.updatedAt,
+      },
+    });
+  return record;
+}
+
+function buildProductUsageDailyRollupRecord(args: {
+  day: string;
+  generatedAt: string;
+  sourceEventCount: number;
+  capped: boolean;
+  events: ProductUsageEventRecord[];
+}): ProductUsageDailyRollupRecord {
+  const today = productUsageDayFromIso(args.generatedAt);
+  const actorHashes = new Set(args.events.map((event) => event.actorHash).filter(isNonEmptyString));
+  const sessionHashes = new Set(args.events.map((event) => event.sessionHash).filter(isNonEmptyString));
+  const repoNames = new Set(args.events.map((event) => event.repoFullName).filter(isNonEmptyString));
+  const loginActors = productUsageActorSet(args.events, (event) => event.eventName === "auth_session_created");
+  const doctorPassActors = productUsageActorSet(args.events, isProductUsageDoctorPassEvent);
+  const firstUsefulActionActors = productUsageActorSet(args.events, isProductUsageUsefulActionEvent);
+  const githubInstalledRepos = productUsageRepoSet(args.events, (event) => event.eventName === "github_installation_created");
+  const githubFirstCommandRepos = productUsageRepoSet(args.events, isProductUsageGitHubCommandEvent);
+  const githubUsefulMaintainerRepos = productUsageRepoSet(args.events, isProductUsageUsefulMaintainerEvent);
+  const activation: ProductUsageActivationFunnel = {
+    loginActors: loginActors.size,
+    doctorPassActors: doctorPassActors.size,
+    firstUsefulActionActors: firstUsefulActionActors.size,
+    fullyActivatedActors: intersectionCount(loginActors, doctorPassActors, firstUsefulActionActors),
+    githubInstalledRepos: githubInstalledRepos.size,
+    githubFirstCommandRepos: githubFirstCommandRepos.size,
+    githubUsefulMaintainerRepos: githubUsefulMaintainerRepos.size,
+    githubActivatedRepos: intersectionCount(githubInstalledRepos, githubFirstCommandRepos, githubUsefulMaintainerRepos),
+  };
+  return {
+    day: args.day,
+    status: args.capped ? "incomplete" : args.day === today ? "partial" : "complete",
+    totalEvents: args.sourceEventCount,
+    activeActors: actorHashes.size,
+    activeSessions: sessionHashes.size,
+    activeRepos: repoNames.size,
+    sourceEventCount: args.sourceEventCount,
+    maxEventCapacity: PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT,
+    firstEventAt: args.events[0]?.occurredAt ?? null,
+    lastEventAt: args.events.at(-1)?.occurredAt ?? null,
+    bySurface: countProductUsageDimensions(args.events.map((event) => event.surface)).map(({ key, count }) => ({ surface: normalizeProductUsageSurface(key), count })),
+    byOutcome: countProductUsageDimensions(args.events.map((event) => event.outcome)).map(({ key, count }) => ({ outcome: normalizeProductUsageOutcome(key), count })),
+    byEvent: countProductUsageDimensions(args.events.map((event) => event.eventName)).map(({ key, count }) => ({ eventName: key, count })),
+    byRepo: countProductUsageDimensions(args.events.map((event) => event.repoFullName)),
+    byCommand: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "command"))),
+    byTool: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "toolName"))),
+    byRouteClass: countProductUsageDimensions(args.events.map((event) => productUsageRouteClass(event.route))),
+    activation,
+    generatedAt: args.generatedAt,
+    updatedAt: args.generatedAt,
+  };
+}
+
+function productUsageActorSet(events: ProductUsageEventRecord[], predicate: (event: ProductUsageEventRecord) => boolean): Set<string> {
+  return new Set(events.filter(predicate).map((event) => event.actorHash).filter(isNonEmptyString));
+}
+
+function productUsageRepoSet(events: ProductUsageEventRecord[], predicate: (event: ProductUsageEventRecord) => boolean): Set<string> {
+  return new Set(events.filter(predicate).map((event) => event.repoFullName).filter(isNonEmptyString));
+}
+
+function isProductUsageDoctorPassEvent(event: ProductUsageEventRecord): boolean {
+  return event.outcome === "success" || event.outcome === "completed" ? event.eventName === "mcp_request" || event.eventName === "mcp_tool_called" || event.eventName === "mcp_doctor_passed" : false;
+}
+
+function isProductUsageUsefulActionEvent(event: ProductUsageEventRecord): boolean {
+  if (event.outcome !== "success" && event.outcome !== "completed" && event.outcome !== "queued") return false;
+  return PRODUCT_USAGE_USEFUL_ACTION_EVENTS.has(event.eventName);
+}
+
+function isProductUsageGitHubCommandEvent(event: ProductUsageEventRecord): boolean {
+  return event.eventName === "agent_command_replied" || event.eventName === "agent_command_skipped";
+}
+
+function isProductUsageUsefulMaintainerEvent(event: ProductUsageEventRecord): boolean {
+  return event.eventName === "agent_command_replied" && productUsageMetadataString(event, "actorKind") === "maintainer" && event.outcome === "completed";
+}
+
+function mcpClientVersionForEvent(event: ProductUsageEventRecord): string {
+  return event.clientVersion ?? productUsageMetadataString(event, "packageVersion") ?? "unknown";
+}
+
+function mcpCompatibilityStatusForEvent(event: ProductUsageEventRecord): "current" | "stale" | "incompatible" | "unknown" {
+  const metadataStatus = normalizeMcpCompatibilityStatus(productUsageMetadataString(event, "compatibilityStatus"));
+  if (metadataStatus !== "unknown") return metadataStatus;
+  return classifyMcpClientVersion(mcpClientVersionForEvent(event));
+}
+
+function normalizeMcpCompatibilityStatus(value: unknown): "current" | "stale" | "incompatible" | "unknown" {
+  return value === "current" || value === "stale" || value === "incompatible" ? value : "unknown";
+}
+
+function productUsageMetadataString(event: ProductUsageEventRecord, key: string): string | null {
+  const value = event.metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function countProductUsageDimensions(values: Array<string | null | undefined>, limit = 20): Array<{ key: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    if (!value) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+    .slice(0, limit);
+}
+
+function productUsageRouteClass(route: string | null | undefined): string {
+  if (!route) return "unknown";
+  if (route === "/health") return "health";
+  if (route.startsWith("/v1/auth/")) return "auth";
+  if (route === "/mcp" || route.startsWith("/v1/mcp/")) return "mcp";
+  if (route.startsWith("/v1/app/")) return "control_panel";
+  if (route.startsWith("/v1/agent/")) return "agent";
+  if (route.startsWith("/v1/extension/")) return "browser_extension";
+  if (route.startsWith("/v1/github/")) return "github_app";
+  if (route.startsWith("/v1/internal/")) return "internal";
+  if (route.startsWith("/v1/repos/")) return "repository";
+  return "api";
+}
+
+function intersectionCount(first: Set<string>, ...rest: Array<Set<string>>): number {
+  return [...first].filter((value) => rest.every((set) => set.has(value))).length;
+}
+
+function emptyProductUsageActivationFunnel(): ProductUsageActivationFunnel {
+  return {
+    loginActors: 0,
+    doctorPassActors: 0,
+    firstUsefulActionActors: 0,
+    fullyActivatedActors: 0,
+    githubInstalledRepos: 0,
+    githubFirstCommandRepos: 0,
+    githubUsefulMaintainerRepos: 0,
+    githubActivatedRepos: 0,
+  };
+}
+
+function productUsageRollupDays(nowValue: string, count: number): string[] {
+  const days = Math.max(1, Math.min(31, Math.round(count)));
+  const today = productUsageDayFromIso(nowValue);
+  return Array.from({ length: days }, (_, index) => addProductUsageUtcDays(today, index - (days - 1)));
+}
+
+function normalizeProductUsageRollupDay(value: string, fallbackIso: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`)) ? value : productUsageDayFromIso(fallbackIso);
+}
+
+function productUsageDayFromIso(value: string): string {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : nowIso().slice(0, 10);
+}
+
+function addProductUsageUtcDays(day: string, delta: number): string {
+  const date = new Date(`${day}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+function isNonEmptyString(value: string | null | undefined): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+const PRODUCT_USAGE_METADATA_MAX_DEPTH = 3;
+const PRODUCT_USAGE_METADATA_MAX_KEYS = 20;
+const PRODUCT_USAGE_METADATA_MAX_ARRAY_ITEMS = 20;
+const PRODUCT_USAGE_METADATA_MAX_KEY_CHARS = 64;
+const PRODUCT_USAGE_METADATA_MAX_STRING_CHARS = 200;
+const PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT = 5000;
+const MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT = 5000;
+const PRODUCT_USAGE_ACTOR_REDACTION_MAX_CHARS = 256;
+const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
+  "command_previewed",
+  "pull_context_viewed",
+  "local_branch_analysis_completed",
+  "agent_run_started",
+  "agent_plan_next_work_completed",
+  "agent_preflight_branch_completed",
+  "agent_pr_packet_completed",
+  "agent_blockers_completed",
+  "agent_command_replied",
+  "pr_public_surface_published",
+  "mcp_tool_called",
+]);
+const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"]);
+const PRODUCT_USAGE_OUTCOMES = new Set<ProductUsageOutcome>(["success", "denied", "error", "queued", "completed", "skipped"]);
+const PRODUCT_USAGE_SENSITIVE_KEY =
+  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd/i;
+const PRODUCT_USAGE_SENSITIVE_VALUE = /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey)\b/i;
+const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
+const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
+const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
+
+function sanitizeProductUsageMetadata(value: Record<string, unknown> | null | undefined, actorRedactor: RegExp | null): Record<string, JsonValue> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const output: Record<string, JsonValue> = {};
+  for (const [key, entryValue] of Object.entries(value).slice(0, PRODUCT_USAGE_METADATA_MAX_KEYS)) {
+    if (PRODUCT_USAGE_SENSITIVE_KEY.test(key)) continue;
+    const safeKey = redactProductUsageActor(sanitizeProductUsageString(key, PRODUCT_USAGE_METADATA_MAX_KEY_CHARS), actorRedactor);
+    if (!safeKey) continue;
+    const safeValue = sanitizeProductUsageJson(entryValue, 0, actorRedactor);
+    if (safeValue !== undefined) output[safeKey] = safeValue;
+  }
+  return output;
+}
+
+function sanitizeProductUsageJson(value: unknown, depth: number, actorRedactor: RegExp | null): JsonValue | undefined {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return undefined;
+  if (value === null) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return redactProductUsageActor(sanitizeProductUsageString(String(value), PRODUCT_USAGE_METADATA_MAX_STRING_CHARS), actorRedactor);
+  if (typeof value === "string") return redactProductUsageActor(sanitizeProductUsageString(value, PRODUCT_USAGE_METADATA_MAX_STRING_CHARS), actorRedactor);
+  if (value instanceof Date) return value.toISOString();
+  if (depth >= PRODUCT_USAGE_METADATA_MAX_DEPTH) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, PRODUCT_USAGE_METADATA_MAX_ARRAY_ITEMS)
+      .map((item) => sanitizeProductUsageJson(item, depth + 1, actorRedactor))
+      .filter((item): item is JsonValue => item !== undefined);
+  }
+  const output: Record<string, JsonValue> = {};
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>).slice(0, PRODUCT_USAGE_METADATA_MAX_KEYS)) {
+    if (PRODUCT_USAGE_SENSITIVE_KEY.test(key)) continue;
+    const safeKey = redactProductUsageActor(sanitizeProductUsageString(key, PRODUCT_USAGE_METADATA_MAX_KEY_CHARS), actorRedactor);
+    if (!safeKey) continue;
+    const safeValue = sanitizeProductUsageJson(entryValue, depth + 1, actorRedactor);
+    if (safeValue !== undefined) output[safeKey] = safeValue;
+  }
+  return output;
+}
+
+function sanitizeProductUsageString(value: string, maxLength: number): string {
+  const redacted = value
+    .replace(PRODUCT_USAGE_LOCAL_PATH, "<redacted-path>")
+    .replace(PRODUCT_USAGE_TOKEN_VALUE, "<redacted-token>")
+    .replace(PRODUCT_USAGE_BEARER_VALUE, "Bearer <redacted-token>");
+  if (PRODUCT_USAGE_SENSITIVE_VALUE.test(redacted)) return "<redacted>";
+  return redacted.slice(0, maxLength);
 }
 
 function parseAgentSurface(value: string): AgentSurface {

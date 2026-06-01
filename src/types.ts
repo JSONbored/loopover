@@ -94,6 +94,18 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      type: "rollup-product-usage";
+      requestedBy: "schedule" | "api" | "test";
+      day?: string;
+      days?: number;
+    }
+  | {
+      type: "generate-weekly-value-report";
+      requestedBy: "schedule" | "api" | "test";
+      variant?: WeeklyValueReportVariant;
+      days?: number;
+    }
+  | {
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
@@ -860,4 +872,161 @@ export type AuditEventRecord = {
   detail?: string | null | undefined;
   metadata?: Record<string, JsonValue> | undefined;
   createdAt?: string | null | undefined;
+};
+
+export type ProductUsageSurface = "api" | "mcp" | "github_app" | "control_panel" | "browser_extension" | "internal";
+
+export type ProductUsageOutcome = "success" | "denied" | "error" | "queued" | "completed" | "skipped";
+
+export type ProductUsageEventRecord = {
+  id: string;
+  surface: ProductUsageSurface;
+  eventName: string;
+  route?: string | null | undefined;
+  actorHash?: string | null | undefined;
+  sessionHash?: string | null | undefined;
+  repoFullName?: string | null | undefined;
+  targetKey?: string | null | undefined;
+  outcome: ProductUsageOutcome;
+  latencyMs?: number | null | undefined;
+  clientName?: string | null | undefined;
+  clientVersion?: string | null | undefined;
+  metadata: Record<string, JsonValue>;
+  occurredAt: string;
+};
+
+export type ProductUsageSummary = {
+  since?: string | null | undefined;
+  totalEvents: number;
+  activeActors: number;
+  bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
+  byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
+  byEvent: Array<{ eventName: string; count: number }>;
+};
+
+export type McpCompatibilityAdoptionSummary = {
+  since?: string | null | undefined;
+  totalEvents: number;
+  activeActors: number;
+  activeSessions: number;
+  scannedEvents: number;
+  scanLimit: number;
+  truncated: boolean;
+  minimumSupportedVersion: string;
+  latestRecommendedVersion: string;
+  staleEvents: number;
+  incompatibleEvents: number;
+  byClientVersion: ProductUsageDimensionCount[];
+  byProtocolVersion: ProductUsageDimensionCount[];
+  byCompatibilityStatus: Array<{ status: "current" | "stale" | "incompatible" | "unknown"; count: number }>;
+};
+
+export type ProductUsageDailyRollupStatus = "complete" | "partial" | "incomplete";
+
+export type ProductUsageDimensionCount = {
+  key: string;
+  count: number;
+};
+
+export type ProductUsageActivationFunnel = {
+  loginActors: number;
+  doctorPassActors: number;
+  firstUsefulActionActors: number;
+  fullyActivatedActors: number;
+  githubInstalledRepos: number;
+  githubFirstCommandRepos: number;
+  githubUsefulMaintainerRepos: number;
+  githubActivatedRepos: number;
+};
+
+export type ProductUsageDailyRollupRecord = {
+  day: string;
+  status: ProductUsageDailyRollupStatus;
+  totalEvents: number;
+  activeActors: number;
+  activeSessions: number;
+  activeRepos: number;
+  sourceEventCount: number;
+  maxEventCapacity: number;
+  firstEventAt?: string | null | undefined;
+  lastEventAt?: string | null | undefined;
+  bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
+  byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
+  byEvent: Array<{ eventName: string; count: number }>;
+  byRepo: ProductUsageDimensionCount[];
+  byCommand: ProductUsageDimensionCount[];
+  byTool: ProductUsageDimensionCount[];
+  byRouteClass: ProductUsageDimensionCount[];
+  activation: ProductUsageActivationFunnel;
+  generatedAt: string;
+  updatedAt: string;
+};
+
+export type ProductUsageRollupRunResult = {
+  generatedAt: string;
+  requestedDays: string[];
+  rollups: ProductUsageDailyRollupRecord[];
+  status: ProductUsageRollupStatus;
+};
+
+export type ProductUsageRollupStatus = {
+  status: "empty" | "ready" | "partial" | "stale" | "incomplete";
+  generatedAt: string;
+  latestEventAt?: string | null | undefined;
+  latestRollupDay?: string | null | undefined;
+  latestRollupGeneratedAt?: string | null | undefined;
+  missingDays: string[];
+  staleDays: string[];
+  incompleteDays: string[];
+  warnings: string[];
+};
+
+export type WeeklyValueReportVariant = "public" | "operator";
+
+export type WeeklyValueReportMetric = {
+  id: string;
+  label: string;
+  value: number;
+  detail: string;
+  visibility: "public" | "operator";
+};
+
+export type WeeklyValueReport = {
+  generatedAt: string;
+  variant: WeeklyValueReportVariant;
+  publicSafe: boolean;
+  period: {
+    days: number;
+    startDay?: string | null | undefined;
+    endDay?: string | null | undefined;
+    rollupDays: string[];
+  };
+  summary: string[];
+  metrics: WeeklyValueReportMetric[];
+  warnings: string[];
+  freshness: {
+    status: ProductUsageRollupStatus["status"];
+    latestEventAt?: string | null | undefined;
+    latestRollupDay?: string | null | undefined;
+    latestRollupGeneratedAt?: string | null | undefined;
+    warnings: string[];
+  };
+  dataQuality: {
+    status: "ready" | "warn";
+    warnings: string[];
+  };
+  operatorDetails?: {
+    topRepos: ProductUsageDimensionCount[];
+    topCommands: ProductUsageDimensionCount[];
+    topTools: ProductUsageDimensionCount[];
+    topRouteClasses: ProductUsageDimensionCount[];
+    daily: Array<{
+      day: string;
+      status: ProductUsageDailyRollupStatus;
+      totalEvents: number;
+      activeActors: number;
+      activeRepos: number;
+    }>;
+    activation: ProductUsageActivationFunnel;
+  };
 };

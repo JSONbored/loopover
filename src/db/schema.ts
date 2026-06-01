@@ -749,6 +749,61 @@ export const auditEvents = sqliteTable(
   }),
 );
 
+export const productUsageEvents = sqliteTable(
+  "product_usage_events",
+  {
+    id: text("id").primaryKey(),
+    surface: text("surface").notNull(),
+    eventName: text("event_name").notNull(),
+    route: text("route"),
+    actorHash: text("actor_hash"),
+    sessionHash: text("session_hash"),
+    repoFullName: text("repo_full_name"),
+    targetKey: text("target_key"),
+    outcome: text("outcome").notNull(),
+    latencyMs: integer("latency_ms"),
+    clientName: text("client_name"),
+    clientVersion: text("client_version"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    occurredAt: text("occurred_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    surfaceOccurred: index("product_usage_events_surface_occurred_idx").on(table.surface, table.occurredAt),
+    eventOccurred: index("product_usage_events_event_occurred_idx").on(table.eventName, table.occurredAt),
+    actorOccurred: index("product_usage_events_actor_occurred_idx").on(table.actorHash, table.occurredAt),
+    repoOccurred: index("product_usage_events_repo_occurred_idx").on(table.repoFullName, table.occurredAt),
+  }),
+);
+
+export const productUsageDailyRollups = sqliteTable(
+  "product_usage_daily_rollups",
+  {
+    day: text("day").primaryKey(),
+    status: text("status").notNull(),
+    totalEvents: integer("total_events").notNull().default(0),
+    activeActors: integer("active_actors").notNull().default(0),
+    activeSessions: integer("active_sessions").notNull().default(0),
+    activeRepos: integer("active_repos").notNull().default(0),
+    sourceEventCount: integer("source_event_count").notNull().default(0),
+    maxEventCapacity: integer("max_event_capacity").notNull().default(0),
+    firstEventAt: text("first_event_at"),
+    lastEventAt: text("last_event_at"),
+    surfacesJson: text("surfaces_json").notNull().default("[]"),
+    outcomesJson: text("outcomes_json").notNull().default("[]"),
+    eventsJson: text("events_json").notNull().default("[]"),
+    reposJson: text("repos_json").notNull().default("[]"),
+    commandsJson: text("commands_json").notNull().default("[]"),
+    toolsJson: text("tools_json").notNull().default("[]"),
+    routeClassesJson: text("route_classes_json").notNull().default("[]"),
+    activationJson: text("activation_json").notNull().default("{}"),
+    generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    statusUpdated: index("product_usage_daily_rollups_status_idx").on(table.status, table.updatedAt),
+  }),
+);
+
 export const aiUsageEvents = sqliteTable(
   "ai_usage_events",
   {

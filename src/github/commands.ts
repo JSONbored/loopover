@@ -859,7 +859,10 @@ function normalizeLogin(value: string): string {
 }
 
 function shortText(value: string, maxLength: number): string {
-  const sanitized = publicBlockerDetail(value).replace(/\s+/g, " ").trim();
+  const sanitized = sanitizePublicComment(value)
+    .replace(/[\u0000-\u001F\u007F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   const safeText = neutralizePublicMarkdownText(sanitized);
   return safeText.length > maxLength ? `${safeText.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...` : safeText;
 }
@@ -922,12 +925,23 @@ function publicBlockerLabel(code: string): string {
 }
 
 function publicBlockerDetail(value: string): string {
-  return sanitizePublicComment(
-    value
-      .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work")
-      .replace(/\bcheck_duplicate_risk\b/gi, "duplicate-risk review")
-      .replace(/\bopen_pr_pressure\b/gi, "open pull request pressure"),
+  return sanitizePublicInlineDetail(
+    sanitizePublicComment(
+      value
+        .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work")
+        .replace(/\bcheck_duplicate_risk\b/gi, "duplicate-risk review")
+        .replace(/\bopen_pr_pressure\b/gi, "open pull request pressure"),
+    ),
   );
+}
+
+function sanitizePublicInlineDetail(value: string): string {
+  return value
+    .replace(/[\u0000-\u001F\u007F]+/g, " ")
+    .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200B")
+    .replace(/[\\`*_{}[\]()#+>|]/g, "\\$&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function dedupeBulletLines(lines: string[]): string[] {

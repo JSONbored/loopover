@@ -222,20 +222,29 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   const token = env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return { status: "skipped", reason: "missing_issue_token", created: 0, updated: 0, skipped: 0 };
   const repo = env.GITTENSORY_DRIFT_ISSUE_REPO || DEFAULT_DRIFT_ISSUE_REPO;
-  const reports = (await listUpstreamDriftReports(env, 20)).filter((report) => report.status === "open" && !report.issueUrl);
+  const reports = (await listUpstreamDriftReports(env, 20)).filter((report) => report.status === "open");
   let created = 0;
   let updated = 0;
   let skipped = 0;
   for (const report of reports) {
-    const existing = await findGitHubIssueForFingerprint(repo, token, report.fingerprint);
-    const issue = existing ?? (await createGitHubDriftIssue(repo, token, report));
+    const existing = recordedGitHubIssue(report) ?? (await findGitHubIssueForFingerprint(repo, token, report.fingerprint));
+    if (existing) {
+      const issue = await updateGitHubDriftIssue(repo, token, existing.number, report);
+      if (!issue) {
+        skipped += 1;
+        continue;
+      }
+      await updateUpstreamDriftReportIssue(env, report.fingerprint, issue);
+      updated += 1;
+      continue;
+    }
+    const issue = await createGitHubDriftIssue(repo, token, report);
     if (!issue) {
       skipped += 1;
       continue;
     }
     await updateUpstreamDriftReportIssue(env, report.fingerprint, issue);
-    if (existing) updated += 1;
-    else created += 1;
+    created += 1;
   }
   await recordAuditEvent(env, {
     eventType: "upstream.drift_issues_filed",
@@ -614,7 +623,51 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
 async function createGitHubDriftIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<{ number: number; url: string } | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name) return null;
-  const body = [
+  const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
+    method: "POST",
+    headers: githubHeaders(token, "application/vnd.github+json"),
+    body: jsonString(githubDriftIssuePayload(report)),
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { number?: number; html_url?: string };
+  return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
+}
+
+async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: number, report: UpstreamDriftReportRecord): Promise<{ number: number; url: string } | null> {
+  const [owner, name] = repo.split("/");
+  if (!owner || !name || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+  const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`, {
+    method: "PATCH",
+    headers: githubHeaders(token, "application/vnd.github+json"),
+    body: jsonString(githubDriftIssuePayload(report)),
+  });
+  if (!response.ok) return null;
+  const payload = (await response.json()) as { number?: number; html_url?: string };
+  return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
+}
+
+function recordedGitHubIssue(report: UpstreamDriftReportRecord): { number: number; url: string } | null {
+  if (Number.isInteger(report.issueNumber) && report.issueNumber && report.issueNumber > 0 && report.issueUrl) {
+    return { number: report.issueNumber, url: report.issueUrl };
+  }
+  return null;
+}
+
+function githubDriftIssueTitle(report: UpstreamDriftReportRecord): string {
+  return `chore(upstream): reconcile Gittensor drift ${report.fingerprint.slice(0, 8)}`;
+}
+
+function githubDriftIssuePayload(report: UpstreamDriftReportRecord): Record<string, JsonValue> {
+  return {
+    title: githubDriftIssueTitle(report),
+    body: githubDriftIssueBody(report),
+    labels: ["signals", "scoring", "data", report.severity === "high" || report.severity === "blocking" ? "high-impact" : "backend"],
+    assignees: ["jsonbored"],
+  };
+}
+
+function githubDriftIssueBody(report: UpstreamDriftReportRecord): string {
+  return [
     `<!-- gittensory-upstream-drift:${report.fingerprint} -->`,
     "",
     "## Background",
@@ -624,31 +677,49 @@ async function createGitHubDriftIssue(repo: string, token: string, report: Upstr
     "## Drift Summary",
     "",
     `- Severity: ${report.severity}`,
+    `- Changed upstream source: ${changedUpstreamSourceSummary(report.affectedAreas)}`,
     `- Affected areas: ${report.affectedAreas.join(", ") || "source"}`,
     `- Summary: ${report.summary}`,
     `- Current ruleset: ${report.currentRulesetId ?? "unknown"}`,
     `- Previous ruleset: ${report.previousRulesetId ?? "unknown"}`,
     "",
+    "## Suggested Tests",
+    "",
+    "- Add or update regression fixtures for the affected upstream source paths.",
+    "- Run `npx vitest run test/unit/upstream-ruleset.test.ts`.",
+    "- Run `npm run test:ci` and keep coverage at or above 97%.",
+    "",
     "## Required Follow-Up",
     "",
     "- Inspect the upstream ruleset drift report in the private API.",
     "- Update Gittensory parsing/scoring fixtures if the semantic change is expected.",
-    "- Keep public GitHub output sanitized and private scoreability details private.",
-    "- Run `npm run test:ci` and keep coverage at or above 97%.",
+    "- Keep public GitHub output sanitized and avoid private contributor context.",
   ].join("\n");
-  const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
-    method: "POST",
-    headers: githubHeaders(token, "application/vnd.github+json"),
-    body: jsonString({
-      title: `chore(upstream): reconcile Gittensor drift ${report.fingerprint.slice(0, 8)}`,
-      body,
-      labels: ["signals", "scoring", "data", report.severity === "high" || report.severity === "blocking" ? "high-impact" : "backend"],
-      assignees: ["jsonbored"],
-    }),
-  });
-  if (!response.ok) return null;
-  const payload = (await response.json()) as { number?: number; html_url?: string };
-  return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
+}
+
+function changedUpstreamSourceSummary(affectedAreas: UpstreamDriftArea[]): string {
+  const paths = new Set<string>();
+  for (const area of affectedAreas.length > 0 ? affectedAreas : (["source"] as UpstreamDriftArea[])) {
+    for (const path of upstreamSourcePathsForArea(area)) paths.add(path);
+  }
+  return [...paths].join(", ");
+}
+
+function upstreamSourcePathsForArea(area: UpstreamDriftArea): string[] {
+  switch (area) {
+    case "registry":
+      return ["gittensor/validator/weights/master_repositories.json"];
+    case "scoring_model":
+      return ["gittensor/constants.py", "gittensor/validator/oss_contributions/mirror/scoring.py"];
+    case "issue_discovery":
+      return ["gittensor/validator/issue_discovery/scan.py"];
+    case "mirror_linkage":
+      return ["gittensor/validator/oss_contributions/mirror/scoring.py", "gittensor/utils/mirror/models.py"];
+    case "language_weights":
+      return ["gittensor/validator/weights/programming_languages.json"];
+    case "source":
+      return TRACKED_SOURCES.map((source) => source.path);
+  }
 }
 
 function githubHeaders(token: string | undefined, accept: string): Record<string, string> {

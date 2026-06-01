@@ -4,23 +4,48 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import type { AgentActionRecord } from "../types";
 import type { GitHubIssuePayload, PullRequestRecord, RepositoryRecord } from "../types";
 
-export type GittensoryMentionCommandName = "help" | "preflight" | "blockers" | "duplicate-check" | "miner-context" | "next-action";
+export const GITTENSORY_MENTION_COMMAND_CATALOG = [
+  { id: "help", title: "Gittensory command help", description: "Show public-safe @gittensory command help." },
+  { id: "preflight", title: "Gittensory preflight", description: "Summarize public PR hygiene and validation readiness." },
+  { id: "blockers", title: "Gittensory readiness blockers", description: "Explain public-safe readiness blockers." },
+  { id: "duplicate-check", title: "Gittensory duplicate & WIP check", description: "Summarize duplicate and in-progress overlap caution." },
+  { id: "miner-context", title: "Gittensory miner context", description: "Confirm public Gittensor miner context when available." },
+  { id: "next-action", title: "Gittensory next step", description: "Suggest the next public-safe action." },
+  { id: "reviewability", title: "Gittensory PR readiness", description: "Summarize maintainer-friendly PR readiness without private review internals." },
+  { id: "repo-fit", title: "Gittensory repository fit", description: "Summarize public-safe repository fit signals." },
+  { id: "packet", title: "Gittensory public packet", description: "Prepare public-safe PR packet guidance." },
+] as const;
+
+export type GittensoryMentionCommandName = (typeof GITTENSORY_MENTION_COMMAND_CATALOG)[number]["id"];
 
 export type GittensoryMentionCommand = {
   name: GittensoryMentionCommandName;
   raw: string;
 };
 
-const COMMANDS = new Set<GittensoryMentionCommandName>(["help", "preflight", "blockers", "duplicate-check", "miner-context", "next-action"]);
+const COMMANDS = new Set<GittensoryMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
-const COMMAND_TITLES: Record<GittensoryMentionCommandName, string> = {
-  help: "Gittensory command help",
-  preflight: "Gittensory preflight",
-  blockers: "Gittensory readiness blockers",
-  "duplicate-check": "Gittensory duplicate & WIP check",
-  "miner-context": "Gittensory miner context",
-  "next-action": "Gittensory next step",
+const COMMAND_TITLES = Object.fromEntries(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => [command.id, command.title])) as Record<GittensoryMentionCommandName, string>;
+
+const REFRESH_SECTION_TITLES: Record<Exclude<GittensoryMentionCommandName, "help" | "miner-context">, string> = {
+  preflight: "Preflight snapshot refresh",
+  blockers: "Blocker snapshot refresh",
+  "duplicate-check": "Duplicate-check snapshot refresh",
+  "next-action": "Next-action snapshot refresh",
+  reviewability: "PR readiness snapshot refresh",
+  "repo-fit": "Repository fit snapshot refresh",
+  packet: "Public packet snapshot refresh",
+};
+
+const EMPTY_SECTION_TITLES: Record<Exclude<GittensoryMentionCommandName, "help" | "miner-context">, string> = {
+  preflight: "Preflight summary",
+  blockers: "Readiness blockers",
+  "duplicate-check": "Duplicate & WIP caution",
+  "next-action": "Recommended next step",
+  reviewability: "PR readiness",
+  "repo-fit": "Repository fit",
+  packet: "Public packet",
 };
 
 export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
@@ -98,6 +123,12 @@ function commandSections(
       return duplicateCheckSections(bundle);
     case "next-action":
       return nextActionSections(bundle);
+    case "reviewability":
+      return reviewabilitySections(bundle);
+    case "repo-fit":
+      return repoFitSections(bundle);
+    case "packet":
+      return packetSections(bundle);
   }
 }
 
@@ -111,6 +142,9 @@ function helpSections(): string[] {
     "- `@gittensory duplicate-check` summarizes duplicate/WIP caution.",
     "- `@gittensory miner-context` confirms public Gittensor miner context.",
     "- `@gittensory next-action` gives a public-safe next step.",
+    "- `@gittensory reviewability` summarizes PR readiness without private review internals.",
+    "- `@gittensory repo-fit` summarizes repository fit from cached public-safe signals.",
+    "- `@gittensory packet` prepares public-safe PR packet guidance.",
   ];
 }
 
@@ -215,28 +249,67 @@ function nextActionSections(bundle: AgentRunBundle | null | undefined): string[]
   ];
 }
 
-function refreshSections(command: Exclude<GittensoryMentionCommandName, "help" | "miner-context">): string[] {
-  const labels: Record<typeof command, string> = {
-    preflight: "Preflight snapshot refresh",
-    blockers: "Blocker snapshot refresh",
-    "duplicate-check": "Duplicate-check snapshot refresh",
-    "next-action": "Next-action snapshot refresh",
-  };
+function reviewabilitySections(bundle: AgentRunBundle | null | undefined): string[] {
+  if (bundle?.run.status === "needs_snapshot_refresh") {
+    return refreshSections("reviewability");
+  }
+  const actions = pickActions(bundle, (action) =>
+    action.actionType === "preflight_branch" || action.actionType === "prepare_pr_packet" || /preflight|packet|validation|maintainer/i.test(action.publicSafeSummary),
+  );
+  if (actions.length === 0) {
+    return emptySections("reviewability");
+  }
   return [
-    `**${labels[command]}**`,
+    "**PR readiness**",
+    "",
+    ...actions.slice(0, 3).flatMap((action) => formatActionBullets(action, { includeBlockers: true, includeRerun: true })),
+  ];
+}
+
+function repoFitSections(bundle: AgentRunBundle | null | undefined): string[] {
+  if (bundle?.run.status === "needs_snapshot_refresh") {
+    return refreshSections("repo-fit");
+  }
+  const actions = pickActions(bundle, (action) => action.actionType === "explain_repo_fit" || action.actionType === "choose_next_work" || /repo fit|repository fit|lane fit/i.test(action.publicSafeSummary));
+  if (actions.length === 0) {
+    return emptySections("repo-fit");
+  }
+  const lines = ["**Repository fit**", ""];
+  for (const action of actions.slice(0, 4)) {
+    if (action.targetRepoFullName) lines.push(`- Target: \`${sanitizePublicComment(action.targetRepoFullName)}\``);
+    lines.push(`- ${publicBlockerDetail(action.publicSafeSummary)}`);
+    if (action.rerunWhen) lines.push(`- Rerun when: ${publicBlockerDetail(action.rerunWhen)}`);
+  }
+  return dedupeBulletLines(lines);
+}
+
+function packetSections(bundle: AgentRunBundle | null | undefined): string[] {
+  if (bundle?.run.status === "needs_snapshot_refresh") {
+    return refreshSections("packet");
+  }
+  const actions = pickActions(bundle, (action) => action.actionType === "prepare_pr_packet" || action.safetyClass === "public_safe" || /packet|public-safe PR/i.test(action.publicSafeSummary));
+  if (actions.length === 0) {
+    return emptySections("packet");
+  }
+  return [
+    "**Public packet**",
+    "",
+    ...actions.slice(0, 3).flatMap((action) => formatActionBullets(action, { includeBlockers: true, includeRerun: true })),
+    "",
+    "- Use this as public PR-thread guidance only; keep private scorer context in MCP or the control panel.",
+  ];
+}
+
+function refreshSections(command: Exclude<GittensoryMentionCommandName, "help" | "miner-context">): string[] {
+  return [
+    `**${REFRESH_SECTION_TITLES[command]}**`,
     "",
     "- Gittensory is refreshing the contributor decision snapshot. Try the command again shortly.",
   ];
 }
 
 function emptySections(command: Exclude<GittensoryMentionCommandName, "help" | "miner-context">): string[] {
-  const labels: Record<typeof command, string> = {
-    preflight: "Preflight summary",
-    blockers: "Readiness blockers",
-    "duplicate-check": "Duplicate & WIP caution",
-    "next-action": "Recommended next step",
-  };
-  return [`**${labels[command]}**`, "", "- No public-safe context is available from the current cached snapshot."];
+  return [`**${EMPTY_SECTION_TITLES[command]}**`, "", "- No public-safe context is available from the current cached snapshot."];
 }
 
 function pickActions(
@@ -308,8 +381,16 @@ function dedupeBulletLines(lines: string[]): string[] {
 export function sanitizePublicComment(value: string): string {
   const sanitized = value
     .replace(/\b(raw trust score|trust score|wallet|hotkey|coldkey|seed phrase|mnemonic)\b/gi, "private context")
-    .replace(/\b(estimated score|score estimate|reward estimate|payout|farming|reviewability)\b/gi, "private context")
+    .replace(/\b(public score estimate|estimated score|score estimate|reward estimates?|payout|farming|scoreability|score preview)\b/gi, "private context")
+    .replace(/\b(private reviewability|reviewability internals?)\b/gi, "private context")
     .replace(/\b(private ranking|private rankings)\b/gi, "private context")
     .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work");
-  return sanitized.replace(/private context(?:,\s*private context)+/gi, "private context");
+  return sanitizeReviewabilityTerm(sanitized).replace(/private context(?:,\s*private context)+/gi, "private context");
+}
+
+function sanitizeReviewabilityTerm(value: string): string {
+  return value.replace(/\breviewability\b/gi, (match, offset, fullText: string) => {
+    const prefix = fullText.slice(Math.max(0, offset - "@gittensory ".length), offset).toLowerCase();
+    return prefix.endsWith("@gittensory ") ? match : "private context";
+  });
 }

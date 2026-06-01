@@ -805,6 +805,41 @@ export type AuthSessionRecord = {
   metadata: Record<string, JsonValue>;
 };
 
+export type ControlPanelRoleName = "miner" | "maintainer" | "owner" | "operator";
+
+export type ControlPanelRoleStatus = "active" | "available" | "needs_setup";
+
+export type ControlPanelRoleCard = {
+  role: ControlPanelRoleName;
+  status: ControlPanelRoleStatus;
+  title: string;
+  detail: string;
+  href: string;
+  evidenceCount: number;
+  sampleRepos: string[];
+  nextActions: string[];
+};
+
+export type ControlPanelRoleSummary = {
+  login: string;
+  generatedAt: string;
+  roles: ControlPanelRoleName[];
+  confirmedMiner: boolean;
+  roleCards: ControlPanelRoleCard[];
+  onboarding: {
+    status: "ready" | "needs_setup";
+    primaryRole?: ControlPanelRoleName | undefined;
+    nextActions: string[];
+  };
+  evidence: {
+    ownedInstalledRepos: number;
+    maintainerRepos: number;
+    accountInstallations: number;
+    operator: boolean;
+  };
+  publicSafe: true;
+};
+
 export type DigestSubscriptionRecord = {
   id: string;
   login: string;

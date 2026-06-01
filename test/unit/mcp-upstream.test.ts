@@ -1,8 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
+import { authenticatePrivateToken, createSessionForGitHubUser } from "../../src/auth/security";
 import { persistUpstreamRulesetSnapshot, upsertUpstreamDriftReport } from "../../src/db/repositories";
 import { GittensoryMcp } from "../../src/mcp/server";
 import type { UpstreamDriftReportRecord, UpstreamRulesetSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+
+describe("MCP contributor access", () => {
+  it("blocks session actors from another contributor open-pr monitor", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "attacker" });
+    const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+    const mcp = new GittensoryMcp(env, identity);
+    await expect((mcp as unknown as { monitorOpenPullRequests(login: string): Promise<unknown> }).monitorOpenPullRequests("victim")).rejects.toThrow(
+      /Forbidden: session can only access the authenticated GitHub login/,
+    );
+  });
+});
 
 describe("MCP upstream drift tool", () => {
   it("summarizes current, drifted, stale, and unavailable upstream states", async () => {

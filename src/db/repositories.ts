@@ -1037,6 +1037,8 @@ function toCacheableGittensorSnapshot(snapshot: Partial<GittensorContributorSnap
     // serialize, store, read, and parse during webhook processing.
     repositories: [],
     pullRequests: [],
+    issueMirrorAvailable: Boolean(snapshot.issueMirrorAvailable),
+    issues: [],
     issueLabels: [],
   };
 }

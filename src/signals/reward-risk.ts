@@ -154,6 +154,9 @@ export function buildRepoRewardRisk(args: {
   issues: IssueRecord[];
   pullRequests: PullRequestRecord[];
   recentMergedPullRequests?: RecentMergedPullRequestRecord[] | undefined;
+  /** Repo primary language (from sync metadata / ContributorFit.languageFit),
+   *  used for the personalFit language-match bonus. */
+  repoLanguage?: string | null | undefined;
 }): RepoRewardRisk {
   const roleContext = buildRoleContext({
     login: args.login,
@@ -209,7 +212,7 @@ export function buildRepoRewardRisk(args: {
 
   const relevantLane = relevantLaneFor(lane, roleContext);
   const laneValueScore = laneValue(lane, currentPreview, relevantLane);
-  const personalFitScore = personalFit(repoOutcome, args.scoringProfile, roleContext, args.profile, args.repo);
+  const personalFitScore = personalFit(repoOutcome, args.scoringProfile, roleContext, args.profile, args.repoLanguage ?? null);
   const riskPenalty = riskScore(repoOutcome, queueHealth, collisions.summary.clusterCount, collisions.summary.highRiskCount, currentOpenPrCount, currentPreview.gates.openPrThreshold);
   const maintainerFrictionPenalty = maintainerFriction(queueHealth, collisions.summary.clusterCount, args.pullRequests);
   const scoreBlockers = scoreBlockersFor({
@@ -343,6 +346,7 @@ export function buildContributorRewardRiskStrategy(args: {
         issues: args.allIssues.filter((issue) => sameRepo(issue.repoFullName, repoFullName)),
         pullRequests: args.allPullRequests.filter((pr) => sameRepo(pr.repoFullName, repoFullName)),
         recentMergedPullRequests: (args.recentMergedPullRequests ?? []).filter((pr) => sameRepo(pr.repoFullName, repoFullName)),
+        repoLanguage: args.fit.languageFit.find((entry) => sameRepo(entry.repoFullName, repoFullName))?.language ?? null,
       });
     })
     /* v8 ignore next -- Locale tie ordering is deterministic presentation fallback after ranked analysis scores. */
@@ -661,10 +665,18 @@ function personalFit(
   scoringProfile: ContributorScoringProfile | null | undefined,
   roleContext: RoleContext,
   profile: ContributorProfile,
-  repo: RepositoryRecord | null,
+  repoLanguage: string | null | undefined,
 ): number {
   if (roleContext.maintainerLane) return 80;
-  const languageMatch = repo?.fullName && profile.github.topLanguages.length > 0 ? 10 : 0;
+  // Award the language-fit bonus only when the repo's primary language (sourced
+  // from ContributorFit.languageFit, as decision-pack.ts does) is one the
+  // contributor actually works in. Previously this granted +10 to any repo
+  // whenever the contributor had *any* top language, never comparing the two —
+  // so an off-language repo (e.g. a Rust repo for a Python-only contributor) was
+  // scored as a language match, inflating personalFit and the action
+  // priorityScores derived from it.
+  const contributorLanguages = new Set(profile.github.topLanguages.map((language) => language.toLowerCase()));
+  const languageMatch = repoLanguage && contributorLanguages.has(repoLanguage.toLowerCase()) ? 10 : 0;
   return clamp(
     (outcome?.mergedPullRequests ?? 0) * 2.2 +
       /* v8 ignore next -- Credibility fallback order protects sparse private snapshots; scoring behavior is covered at public entry points. */

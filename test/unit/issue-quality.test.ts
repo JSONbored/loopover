@@ -75,6 +75,7 @@ describe("issue quality reports", () => {
       ],
       [],
       repo.fullName,
+      [],
       undefined,
       [recentMergedPr(repo.fullName, 101, "Fixes #6", { linkedIssues: [6] })],
     );
@@ -133,6 +134,7 @@ describe("buildContributorOpportunities x issue quality", () => {
       [repo],
       issues,
       [],
+      [],
       new Map([[repo.fullName, quality]]),
     );
     expect(opportunities.map((o) => o.issueNumber)).toEqual([2]);
@@ -153,6 +155,7 @@ describe("buildContributorOpportunities x issue quality", () => {
       sampleProfile({ reposTouched: [repo.fullName], dominantLabels: ["bug"] }),
       [repo],
       issues,
+      [],
       [],
       new Map([[repo.fullName, quality]]),
     );
@@ -175,6 +178,7 @@ describe("buildContributorOpportunities x issue quality", () => {
       [repo],
       issues,
       [],
+      [],
       new Map([[repo.fullName, quality]]),
     );
     expect(opportunities[0]).toMatchObject({ fit: "caution" });
@@ -195,6 +199,7 @@ describe("buildContributorOpportunities x issue quality", () => {
       sampleProfile(),
       [repo],
       issues,
+      [],
       [],
       new Map([[repo.fullName, quality]]),
     );
@@ -224,6 +229,7 @@ describe("buildContributorOpportunities x issue quality", () => {
       [],
       [],
       [],
+      [],
       new Map([[repo.fullName, quality]]),
     );
     expect(fit.opportunities.map((o) => o.issueNumber)).toEqual([2]);
@@ -243,6 +249,7 @@ describe("buildContributorOpportunities x issue quality", () => {
       sampleProfile(),
       [repo],
       issues,
+      [],
       [],
       new Map([["owner/mixedcase", quality]]),
     );

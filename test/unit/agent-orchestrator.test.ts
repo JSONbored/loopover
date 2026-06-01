@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAgentRun, persistScoringModelSnapshot, persistSignalSnapshot, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRecentMergedPullRequest, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { createAgentRun, persistScoringModelSnapshot, persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRecentMergedPullRequest, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import {
   __agentOrchestratorInternals,
   executeAgentRun,
@@ -256,8 +256,10 @@ describe("agent orchestrator", () => {
     await persistDecisionPack(env, decisionPackFixture());
 
     const bundle = await explainBlockersWithAgent(env, { login: "oktofeesh1", repoFullName: "entrius/gittensor" });
+    const mcpBundle = await explainBlockersWithAgent(env, { login: "oktofeesh1", repoFullName: "entrius/gittensor", surface: "mcp" });
 
     expect(bundle.actions).toHaveLength(1);
+    expect(mcpBundle.run.surface).toBe("mcp");
     expect(bundle.actions[0]).toMatchObject({
       actionType: "explain_score_blockers",
       status: "blocked",
@@ -521,6 +523,7 @@ describe("agent orchestrator", () => {
     expect(packet.actions).toHaveLength(1);
     expect(packet.actions[0]).toMatchObject({ actionType: "prepare_pr_packet", safetyClass: "public_safe", approvalRequired: false });
     expect(blockers.actions[0]).toMatchObject({ actionType: "explain_score_blockers", targetRepoFullName: "entrius/allways-ui" });
+    expect(JSON.stringify(preflight.actions)).toContain("linked_issue_bounty_historical");
     expect(JSON.stringify(preflight.actions)).toContain("Source upload disabled");
   });
 });
@@ -651,6 +654,7 @@ function decisionPackFixture(overrides: Partial<ContributorDecisionPack> = {}): 
       maintainerLaneRepos: ["JSONbored/awesome-claude"],
     },
     roleContexts: [],
+    opportunities: [],
     repoDecisions,
     topActions: [
       action("cleanup_existing_prs", "we-promise/sure", "cleanup_first", 94),
@@ -845,6 +849,15 @@ async function seedLocalBranchData(env: Env): Promise<void> {
     linkedIssues: [7],
     changedFiles: ["src/cache.ts"],
     payload: {},
+  });
+  await upsertBounty(env, {
+    id: "local-bounty-7",
+    repoFullName: "entrius/allways-ui",
+    issueNumber: 7,
+    status: "Completed",
+    amountText: "0.0000",
+    sourceUrl: "contract://issues/7",
+    payload: { target_alpha: "5.0000", bounty_alpha: "0.0000" },
   });
 }
 

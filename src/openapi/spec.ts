@@ -7,6 +7,7 @@ import {
   AgentRunBundleSchema,
   AgentRunSchema,
   BountyAdvisorySchema,
+  BountyLifecycleEventsSchema,
   BountySchema,
   BurdenForecastSchema,
   CollisionReportSchema,
@@ -105,6 +106,7 @@ export function buildOpenApiSpec() {
   registry.register("PullRequestReviewIntelligence", PullRequestReviewIntelligenceSchema);
   registry.register("Bounty", BountySchema);
   registry.register("BountyAdvisory", BountyAdvisorySchema);
+  registry.register("BountyLifecycleEvents", BountyLifecycleEventsSchema);
   registry.register("RepositorySettings", RepositorySettingsSchema);
   registry.register("RepoSettingsPreview", RepoSettingsPreviewSchema);
   registry.register("AgentRun", AgentRunSchema);
@@ -447,6 +449,14 @@ export function buildOpenApiSpec() {
     path: "/v1/bounties/{id}/advisory",
     responses: {
       200: { description: "Bounty lifecycle advisory", content: { "application/json": { schema: BountyAdvisorySchema } } },
+      404: { description: "Bounty not found" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/bounties/{id}/lifecycle",
+    responses: {
+      200: { description: "Bounty lifecycle transition history", content: { "application/json": { schema: BountyLifecycleEventsSchema } } },
       404: { description: "Bounty not found" },
     },
   });

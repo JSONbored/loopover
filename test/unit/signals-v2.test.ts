@@ -648,6 +648,19 @@ describe("v2 signal builders", () => {
     const fit = buildContributorFit(profile, [awesomeRepo, sureRepo], issues, pullRequests, [], repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: "jsonbored", fit, scoringSnapshot: scoringSnapshot() });
     const strategy = buildContributorStrategy({ login: "jsonbored", fit, scoringProfile, scoringSnapshot: scoringSnapshot(), outcomeHistory: history });
+    const avoidStrategy = buildContributorStrategy({
+      login: "jsonbored",
+      fit,
+      scoringProfile,
+      scoringSnapshot: scoringSnapshot(),
+      outcomeHistory: {
+        ...history,
+        repoOutcomes: [
+          { repoFullName: "owner/closed", maintainerLane: false, closedPullRequestRate: 0.4, credibility: 1, openPullRequests: 0, strengths: [], risks: [] },
+          { repoFullName: "owner/low", maintainerLane: false, closedPullRequestRate: 0.1, credibility: 0.5, openPullRequests: 0, strengths: [], risks: [] },
+        ],
+      } as any,
+    });
     const recommendation = buildRepoFitRecommendation({ login: "jsonbored", repo: awesomeRepo, repoFullName: awesomeRepo.fullName, profile, outcomeHistory: history, issues, pullRequests });
     const intake = buildContributorIntakeHealth(awesomeRepo, issues, pullRequests, awesomeRepo.fullName);
     const lane = buildMaintainerLaneReport(awesomeRepo, issues, pullRequests, awesomeRepo.fullName);
@@ -680,6 +693,10 @@ describe("v2 signal builders", () => {
     });
     expect(buildContributorPatternReport(history, "failure").patterns.map((pattern) => pattern.title)).toContain("Raw issue activity is not solved discovery evidence");
     expect(strategy.maintainerLaneRepos).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "jsonbored/awesome-claude" })]));
+    expect(avoidStrategy.avoidRepos).toEqual([
+      expect.objectContaining({ repoFullName: "owner/closed", reason: "Closed PR rate is 40%." }),
+      expect.objectContaining({ repoFullName: "owner/low", reason: "Official repo credibility is 0.5." }),
+    ]);
     expect(recommendation.recommendation).toBe("maintainer_lane");
     expect(intake.level).toEqual(expect.stringMatching(/healthy|watch|strained|blocked/));
     expect(lane.summary).toContain("Maintainer lane");

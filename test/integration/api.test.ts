@@ -24,7 +24,7 @@ import {
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
 } from "../../src/db/repositories";
-import { createApp } from "../../src/api/routes";
+import { createApp, MAX_API_BODY_BYTES } from "../../src/api/routes";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -87,6 +87,40 @@ describe("api routes", () => {
     const unauthenticatedSpec = await app.request("/openapi.json", {}, env);
     expect(unauthenticatedSpec.status).toBe(200);
     await expect(unauthenticatedSpec.json()).resolves.toMatchObject({ info: { title: "Gittensory API" } });
+  });
+
+  it("rejects oversized JSON API request bodies before route parsing", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const smallBody = JSON.stringify({ githubToken: "token" });
+
+    const contentLengthRejected = await app.request(
+      "/v1/auth/github/session",
+      {
+        method: "POST",
+        body: smallBody,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(MAX_API_BODY_BYTES + 1),
+        },
+      },
+      env,
+    );
+    expect(contentLengthRejected.status).toBe(413);
+    await expect(contentLengthRejected.json()).resolves.toMatchObject({ error: "request_body_too_large", maxBytes: MAX_API_BODY_BYTES });
+
+    const streamRejected = await app.request(
+      "/v1/auth/github/session",
+      {
+        method: "POST",
+        body: oversizedJsonBodyStream(),
+        duplex: "half",
+        headers: { "content-type": "application/json" },
+      } as RequestInit,
+      env,
+    );
+    expect(streamRejected.status).toBe(413);
+    await expect(streamRejected.json()).resolves.toMatchObject({ error: "request_body_too_large", maxBytes: MAX_API_BODY_BYTES });
   });
 
   it("serves registry drift through the canonical registry change endpoint", async () => {
@@ -2874,6 +2908,29 @@ async function signWebhook(body: string, secret: string): Promise<string> {
   ]);
   const signed = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
   return `sha256=${[...new Uint8Array(signed)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function oversizedJsonBodyStream(): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode('{"githubToken":"');
+  const chunk = encoder.encode("x".repeat(64 * 1024));
+  let sent = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent === 0) {
+        controller.enqueue(prefix);
+        sent += prefix.byteLength;
+        return;
+      }
+      if (sent <= MAX_API_BODY_BYTES + chunk.byteLength) {
+        controller.enqueue(chunk);
+        sent += chunk.byteLength;
+        return;
+      }
+      controller.enqueue(encoder.encode('"}'));
+      controller.close();
+    },
+  });
 }
 
 function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {

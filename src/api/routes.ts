@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
@@ -144,6 +145,7 @@ type AppBindings = { Bindings: Env };
 
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
+export const MAX_API_BODY_BYTES = 1024 * 1024;
 
 const preflightSchema = z.object({
   repoFullName: z.string().min(3),
@@ -327,6 +329,10 @@ const digestSubscriptionSchema = z
 
 export function createApp() {
   const app = new Hono<AppBindings>();
+  const apiBodyLimit = bodyLimit({
+    maxSize: MAX_API_BODY_BYTES,
+    onError: (c) => c.json({ error: "request_body_too_large", maxBytes: MAX_API_BODY_BYTES }, 413),
+  });
   app.use("*", async (c, next) => {
     const allowedOrigin = allowedCorsOrigin(c.env, c.req.header("origin"));
     if (allowedOrigin) {
@@ -360,6 +366,12 @@ export function createApp() {
     if (!identity) return c.json({ error: "unauthorized" }, 401);
     if (isExtensionScopedSession(identity) && c.req.path !== EXTENSION_PULL_CONTEXT_PATH) return c.json({ error: "insufficient_scope" }, 403);
     return next();
+  });
+  app.use("*", async (c, next) => {
+    if (c.req.method === "OPTIONS" || c.req.path === "/v1/github/webhook" || !c.req.path.startsWith("/v1/")) {
+      return next();
+    }
+    return apiBodyLimit(c, next);
   });
 
   app.get("/health", (c) =>

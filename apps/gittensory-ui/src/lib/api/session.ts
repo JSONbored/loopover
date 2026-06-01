@@ -11,6 +11,24 @@ export interface AppSession {
   github_id?: number | null;
   githubId?: number | null;
   roles: AppRole[];
+  roleSummary?: {
+    roles: AppRole[];
+    onboarding: {
+      status: "ready" | "needs_setup";
+      primaryRole?: AppRole;
+      nextActions: string[];
+    };
+    roleCards: Array<{
+      role: AppRole;
+      status: "active" | "available" | "needs_setup";
+      title: string;
+      detail: string;
+      href: string;
+      evidenceCount: number;
+      sampleRepos: string[];
+      nextActions: string[];
+    }>;
+  };
   confirmed_miner: boolean;
   confirmedMiner?: boolean;
   expiresAt?: string;

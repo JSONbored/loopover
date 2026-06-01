@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
+import { loadControlPanelRoleSummary } from "../services/control-panel-roles";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -55,6 +56,7 @@ import {
   buildRegistryChangeReport,
   buildRoleContext,
 } from "../signals/engine";
+import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { loadUpstreamStatus } from "../upstream/ruleset";
@@ -196,6 +198,15 @@ const agentPlanShape = {
   repoFullName: z.string().min(3).optional(),
 };
 
+const linkedIssueContextShape = {
+  status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
+  source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
+  issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
+  solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
+  reason: z.string().optional(),
+  warnings: z.array(z.string()).max(20).optional(),
+};
+
 const scorePreviewShape = {
   repoFullName: z.string().min(3),
   targetType: z.enum(["planned_pr", "pull_request", "local_diff", "variant"]).default("local_diff"),
@@ -203,6 +214,7 @@ const scorePreviewShape = {
   contributorLogin: z.string().min(1).optional(),
   labels: z.array(z.string()).optional(),
   linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
+  linkedIssueContext: z.object(linkedIssueContextShape).strict().optional(),
   sourceTokenScore: z.number().min(0).optional(),
   totalTokenScore: z.number().min(0).optional(),
   sourceLines: z.number().min(0).optional(),
@@ -280,6 +292,16 @@ export class GittensoryMcp {
         inputSchema: loginShape,
       },
       async (input) => this.toolResult(await this.getDecisionPack(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_monitor_open_prs",
+      {
+        description:
+          "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
+        inputSchema: loginShape,
+      },
+      async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
     );
 
     server.registerTool(
@@ -610,6 +632,15 @@ export class GittensoryMcp {
     };
   }
 
+  private async monitorOpenPullRequests(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const monitor = await buildContributorOpenPrMonitor(this.env, login);
+    return {
+      summary: monitor.summary,
+      data: monitor as unknown as Record<string, unknown>,
+    };
+  }
+
   private async explainRepoDecision(input: { login: string; owner: string; repo: string }): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     const fullName = `${input.owner}/${input.repo}`;
@@ -881,6 +912,7 @@ export class GittensoryMcp {
         scoringSnapshot: snapshot,
         scoringProfile,
         issueQuality: issueQuality?.report,
+        gittensorSnapshot: context.gittensorSnapshot,
       }),
       dataQuality: await this.loadRepoDataQuality(input.repoFullName),
     };
@@ -932,6 +964,7 @@ export class GittensoryMcp {
       repositories,
       syncStates,
       repoStats,
+      gittensorSnapshot,
       outcomeHistory,
     };
   }
@@ -978,7 +1011,10 @@ function authoritativeContributorRepoStats(
 }
 
 async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {
-  return authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+  const identity = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+  if (!identity || identity.kind !== "session") return identity;
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  return summary.roles.length > 0 ? identity : null;
 }
 
 function getExecutionContext(c: AppContext): ExecutionContext<unknown> {

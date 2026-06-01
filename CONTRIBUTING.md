@@ -86,8 +86,10 @@ npm run ui:build
 npm audit --audit-level=moderate
 ```
 
-`npm run test:ci` runs the normal combined gate. Coverage must stay at or above 97% for
-statements, branches, functions, and lines.
+`npm run test:ci` runs the normal combined gate. Coverage must stay at or above **97%** for
+statements, branches, functions, and lines. Run `npm run test:coverage` locally when you change
+behavior, and aim for **98%+ branch coverage** locally so small CI variance does not fail near the
+threshold.
 
 Maintainer/release smoke checks:
 
@@ -103,6 +105,13 @@ The browser smoke path is manual until it is stable enough to make required on e
 
 Tests should prove behavior, not just exercise lines for coverage.
 
+- Add or update tests for every behavior change: new branches, fallback paths, sanitizer rules,
+  and regressions.
+- Add invariant or property-style tests when behavior depends on sorting, gating, public/private
+  boundaries, scoring, queue pressure, or source-upload safety.
+- Public GitHub comments must be tested against forbidden language when comment text changes
+  (wallet, hotkey, raw trust score, payout, reward estimate, farming, private reviewability,
+  public score estimate).
 - Backend/API tests should cover success, denied, invalid input, missing auth, scoped auth,
   rate-limit, persistence, and error-shaping paths.
 - Auth tests should cover browser cookie sessions, bearer sessions, logout/revocation, GitHub
@@ -146,6 +155,8 @@ MCP:
 
 - Preserve backwards compatibility where practical.
 - Keep CLI output stable and JSON output parseable.
+- `gittensory-mcp init-client --print` supports `codex`, `claude`, `cursor`, and `mcp` (generic
+  JSON hosts that use the `mcpServers` shape).
 - MCP package releases are prepared separately and published from protected `mcp-vX.Y.Z` tags.
 
 Public GitHub surfaces:

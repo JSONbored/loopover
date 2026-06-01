@@ -82,7 +82,8 @@ describe("api route guards and error branches", () => {
     await expect(session.json()).resolves.toMatchObject({
       status: "authenticated",
       login: "jsonbored",
-      roles: ["miner", "maintainer", "owner", "operator"],
+      roles: ["operator"],
+      roleSummary: { onboarding: { status: "ready", primaryRole: "operator" } },
     });
 
     const reposWithCookie = await app.request("/v1/repos", { headers: { cookie: sessionCookie } }, env);
@@ -160,6 +161,18 @@ describe("api route guards and error branches", () => {
     const victimDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: sessionHeaders }, env);
     expect(victimDecisionPack.status).toBe(403);
     await expect(victimDecisionPack.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const ownOpenPrMonitor = await app.request("/v1/contributors/attacker/open-pr-monitor", { headers: sessionHeaders }, env);
+    expect(ownOpenPrMonitor.status).toBe(200);
+    await expect(ownOpenPrMonitor.json()).resolves.toMatchObject({ login: "attacker", pullRequests: expect.any(Array) });
+
+    const victimOpenPrMonitor = await app.request("/v1/contributors/victim/open-pr-monitor", { headers: sessionHeaders }, env);
+    expect(victimOpenPrMonitor.status).toBe(403);
+    await expect(victimOpenPrMonitor.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const staticTokenOpenPrMonitor = await app.request("/v1/contributors/victim/open-pr-monitor", { headers: apiHeaders(env) }, env);
+    expect(staticTokenOpenPrMonitor.status).toBe(200);
+    await expect(staticTokenOpenPrMonitor.json()).resolves.toMatchObject({ login: "victim" });
 
     const victimRepoDecision = await app.request("/v1/contributors/victim/repos/owner/private-repo/decision", { headers: sessionHeaders }, env);
     expect(victimRepoDecision.status).toBe(403);

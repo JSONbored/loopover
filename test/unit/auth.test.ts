@@ -84,6 +84,7 @@ describe("private-beta auth and rate limiting", () => {
     expect(routeClassForPath("/v1/scoring/preview")).toBe("expensive");
     expect(routeClassForPath("/v1/upstream/status")).toBe("expensive");
     expect(routeClassForPath("/v1/contributors/jsonbored/decision-pack")).toBe("expensive");
+    expect(routeClassForPath("/v1/contributors/jsonbored/open-pr-monitor")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/generate-signal-snapshots")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/build-contributor-decision-packs")).toBe("expensive");
     expect(routeClassForPath("/v1/internal/jobs/refresh-upstream-drift")).toBe("expensive");
@@ -436,14 +437,15 @@ describe("private-beta auth and rate limiting", () => {
     await expect(createSessionFromGitHubToken(createTestEnv({ ADMIN_GITHUB_LOGINS: "no-id-user" }), "valid-token")).resolves.toMatchObject({ login: "no-id-user", scopes: [] });
   });
 
-  it("requires GitHub OAuth sessions to come from configured admin logins", async () => {
+  it("creates GitHub OAuth sessions without granting operator authorization", async () => {
     vi.stubGlobal("fetch", async () => Response.json({ login: "external-attacker", id: 99 }));
-    await expect(createSessionFromGitHubToken(createTestEnv(), "attacker-token")).rejects.toThrow(/github_user_not_authorized/);
-    await expect(createSessionFromGitHubToken(createTestEnv({ ADMIN_GITHUB_LOGINS: "" }), "attacker-token")).rejects.toThrow(/github_user_not_authorized/);
+    await expect(createSessionFromGitHubToken(createTestEnv(), "attacker-token")).resolves.toMatchObject({ login: "external-attacker" });
+    await expect(createSessionFromGitHubToken(createTestEnv({ ADMIN_GITHUB_LOGINS: "" }), "attacker-token")).resolves.toMatchObject({ login: "external-attacker" });
 
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token } = await createSessionForGitHubUser(env, { login: "external-attacker", id: 99 });
-    await expect(authenticatePrivateToken(env, token)).resolves.toBeNull();
+    await expect(authenticatePrivateToken(env, token)).resolves.toMatchObject({ kind: "session", actor: "external-attacker" });
+    expect(isAuthorizedGitHubSessionLogin(env, "external-attacker")).toBe(false);
   });
 });
 

@@ -65,7 +65,7 @@ describe("Gittensor API contributor snapshots", () => {
         ]);
       }
       if (url.endsWith("/miners/49853598/issues")) {
-        return Response.json({ issues: [{ labels: [{ name: "feature" }, { name: "help wanted" }] }] });
+        return Response.json({ issues: [{ repo_full_name: "we-promise/sure", issue_number: 77, state: "closed", solved_by_pr: 1869, labels: [{ name: "feature" }, { name: "help wanted" }] }] });
       }
       return new Response("not found", { status: 404 });
     });
@@ -80,6 +80,8 @@ describe("Gittensor API contributor snapshots", () => {
         expect.objectContaining({ repoFullName: "we-promise/sure", pullRequests: 47, mergedPullRequests: 37, openPullRequests: 6 }),
         expect.objectContaining({ repoFullName: "jsonbored/awesome-claude", pullRequests: 0, openIssues: 42 }),
       ],
+      issueMirrorAvailable: true,
+      issues: [expect.objectContaining({ repoFullName: "we-promise/sure", number: 77, state: "closed", solvedByPullRequest: 1869, labels: ["feature", "help wanted"] })],
     });
     expect(contributorRepoStatsFromGittensor(snapshot)).toEqual(
       expect.arrayContaining([
@@ -125,6 +127,8 @@ describe("Gittensor API contributor snapshots", () => {
       totals: { pullRequests: 63, mergedPullRequests: 46, openPullRequests: 9, closedPullRequests: 8 },
       repositories: [],
       pullRequests: [],
+      issueMirrorAvailable: false,
+      issues: [],
       issueLabels: [],
     });
   });
@@ -159,7 +163,7 @@ describe("Gittensor API contributor snapshots", () => {
         ]);
       }
       if (url.endsWith("/miners/123/issues")) {
-        return Response.json({ issues: [{ labels: [{}, { name: null }, { name: "bug" }] }] });
+        return Response.json({ issues: [{ repo_full_name: "owner/repo", issue_number: "bad", labels: [{}, { name: null }, { name: "bug" }] }] });
       }
       return Response.json({});
     });
@@ -169,6 +173,8 @@ describe("Gittensor API contributor snapshots", () => {
     expect(snapshot).toMatchObject({
       totals: { pullRequests: 0, mergedPullRequests: 2, openPullRequests: 0 },
       issueCredibility: 1,
+      issueMirrorAvailable: true,
+      issues: [],
       issueLabels: ["bug"],
       pullRequests: [expect.objectContaining({ repoFullName: "owner/repo", number: 7, title: "Fix it", score: 0, baseScore: 1 })],
       repositories: [
@@ -243,7 +249,7 @@ describe("Gittensor API contributor snapshots", () => {
         return Response.json([{ repository: "owner/repo", pullRequestNumber: 9, pullRequestTitle: undefined, prState: undefined, mergedAt: null, label: "bug", tokenScore: "7" }]);
       }
       if (url.endsWith("/miners/49853598/issues")) {
-        return Response.json({ issues: [{ labels: undefined }, { labels: [{ name: "bug" }] }] });
+        return Response.json({ issues: [{ labels: undefined }, { repo_full_name: "owner/issues", issue_number: 22, state: "open", solved_by_pr: null, labels: [{ name: "bug" }] }] });
       }
       return Response.json({});
     });
@@ -261,6 +267,8 @@ describe("Gittensor API contributor snapshots", () => {
       updatedAt: "2026-05-25T00:00:00.000Z",
       repositories: [expect.objectContaining({ repoFullName: "owner/issues", openIssues: 1, closedIssues: 1, validSolvedIssues: 1, issueCredibility: 0.9 })],
       pullRequests: [expect.objectContaining({ repoFullName: "owner/repo", number: 9, title: "", state: "UNKNOWN", label: "bug", tokenScore: 7 })],
+      issueMirrorAvailable: true,
+      issues: [expect.objectContaining({ repoFullName: "owner/issues", number: 22, state: "open", solvedByPullRequest: null, labels: ["bug"] })],
       issueLabels: ["bug"],
     });
     expect(contributorRepoStatsFromGittensor(snapshot)).toEqual(

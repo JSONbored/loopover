@@ -1359,6 +1359,71 @@ export const RepoRewardRiskSchema = z
   })
   .openapi("RepoRewardRisk");
 
+export const LocalWorkspaceIntelligenceSchema = z
+  .object({
+    version: z.literal(2),
+    sourceUpload: z.object({
+      enabled: z.literal(false),
+      detail: z.string(),
+    }),
+    branch: z.object({
+      name: z.string().optional(),
+      baseRef: z.string().optional(),
+      headSha: z.string().optional(),
+      pendingCommitCount: z.number(),
+    }),
+    changedFiles: z.object({
+      total: z.number(),
+      added: z.number(),
+      modified: z.number(),
+      deleted: z.number(),
+      renamed: z.number(),
+      binary: z.number(),
+      paths: z.array(z.string()),
+    }),
+    testEvidence: z.object({
+      level: z.enum(["test_files", "validation_commands", "both", "none"]),
+      testFileCount: z.number(),
+      passedValidationCount: z.number(),
+      commands: z.array(
+        z.object({
+          command: z.string(),
+          status: z.enum(["passed", "failed", "not_run"]),
+          summary: z.string().optional(),
+        }),
+      ),
+    }),
+    linkedIssues: z.array(z.number()),
+    baseFreshness: z.object({
+      status: z.enum(["fresh", "stale", "possibly_stale", "unknown"]),
+      baseRef: z.string().optional(),
+      baseSha: z.string().optional(),
+      headSha: z.string().optional(),
+      mergeBaseSha: z.string().optional(),
+      remoteTrackingSha: z.string().optional(),
+      changedFileCount: z.number(),
+      testFileCount: z.number(),
+      passedValidationCount: z.number(),
+      warnings: z.array(z.string()),
+      recommendation: z.string().optional(),
+    }),
+    ciStatusHints: z.array(z.string()),
+    localScorerDiagnostics: z
+      .object({
+        mode: z.string(),
+        activeModel: z.string().optional(),
+        warnings: z.array(z.string()),
+        metadataOnly: z.boolean(),
+      })
+      .optional(),
+    blockers: z.object({
+      branchQuality: z.array(z.string()),
+      accountState: z.array(z.string()),
+    }),
+    rerunWhen: z.string(),
+  })
+  .openapi("LocalWorkspaceIntelligence");
+
 export const LocalBranchAnalysisSchema = z
   .object({
     login: z.string(),
@@ -1447,6 +1512,7 @@ export const LocalBranchAnalysisSchema = z
       publicSafeWarnings: z.array(z.string()),
     }),
     nextActions: z.array(RewardRiskActionSchema),
+    workspaceIntelligence: LocalWorkspaceIntelligenceSchema,
     summary: z.string(),
   })
   .openapi("LocalBranchAnalysis");

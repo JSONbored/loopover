@@ -3377,6 +3377,272 @@
           "summary"
         ]
       },
+      "LocalWorkspaceIntelligence": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "enum": [
+              2
+            ]
+          },
+          "sourceUpload": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "detail"
+            ]
+          },
+          "branch": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "baseRef": {
+                "type": "string"
+              },
+              "headSha": {
+                "type": "string"
+              },
+              "pendingCommitCount": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "pendingCommitCount"
+            ]
+          },
+          "changedFiles": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number"
+              },
+              "added": {
+                "type": "number"
+              },
+              "modified": {
+                "type": "number"
+              },
+              "deleted": {
+                "type": "number"
+              },
+              "renamed": {
+                "type": "number"
+              },
+              "binary": {
+                "type": "number"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "total",
+              "added",
+              "modified",
+              "deleted",
+              "renamed",
+              "binary",
+              "paths"
+            ]
+          },
+          "testEvidence": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "string",
+                "enum": [
+                  "test_files",
+                  "validation_commands",
+                  "both",
+                  "none"
+                ]
+              },
+              "testFileCount": {
+                "type": "number"
+              },
+              "passedValidationCount": {
+                "type": "number"
+              },
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "passed",
+                        "failed",
+                        "not_run"
+                      ]
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "command",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "level",
+              "testFileCount",
+              "passedValidationCount",
+              "commands"
+            ]
+          },
+          "linkedIssues": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "baseFreshness": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "fresh",
+                  "stale",
+                  "possibly_stale",
+                  "unknown"
+                ]
+              },
+              "baseRef": {
+                "type": "string"
+              },
+              "baseSha": {
+                "type": "string"
+              },
+              "headSha": {
+                "type": "string"
+              },
+              "mergeBaseSha": {
+                "type": "string"
+              },
+              "remoteTrackingSha": {
+                "type": "string"
+              },
+              "changedFileCount": {
+                "type": "number"
+              },
+              "testFileCount": {
+                "type": "number"
+              },
+              "passedValidationCount": {
+                "type": "number"
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "recommendation": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "changedFileCount",
+              "testFileCount",
+              "passedValidationCount",
+              "warnings"
+            ]
+          },
+          "ciStatusHints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "localScorerDiagnostics": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string"
+              },
+              "activeModel": {
+                "type": "string"
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "metadataOnly": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "mode",
+              "warnings",
+              "metadataOnly"
+            ]
+          },
+          "blockers": {
+            "type": "object",
+            "properties": {
+              "branchQuality": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "accountState": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "branchQuality",
+              "accountState"
+            ]
+          },
+          "rerunWhen": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "sourceUpload",
+          "branch",
+          "changedFiles",
+          "testEvidence",
+          "linkedIssues",
+          "baseFreshness",
+          "ciStatusHints",
+          "blockers",
+          "rerunWhen"
+        ]
+      },
       "LocalBranchAnalysis": {
         "type": "object",
         "properties": {
@@ -4658,6 +4924,9 @@
               "$ref": "#/components/schemas/RewardRiskAction"
             }
           },
+          "workspaceIntelligence": {
+            "$ref": "#/components/schemas/LocalWorkspaceIntelligence"
+          },
           "summary": {
             "type": "string"
           }
@@ -4683,6 +4952,7 @@
           "maintainerFit",
           "prPacket",
           "nextActions",
+          "workspaceIntelligence",
           "summary"
         ]
       },

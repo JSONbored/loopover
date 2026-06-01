@@ -49,6 +49,13 @@ body:
         - ...
     validations:
       required: true
+  - type: textarea
+    id: test_scenarios
+    attributes:
+      label: Test scenarios
+      description: List unit/integration cases for new branches, fallback paths, sanitizer rules, and regressions. Call out public/private safety boundaries if GitHub comments or MCP output changes.
+    validations:
+      required: true
   - type: checkboxes
     id: boundaries
     attributes:
@@ -61,4 +68,6 @@ body:
         - label: This does not expose wallet details, raw trust scores, private rankings, or reward estimates publicly.
           required: true
         - label: This does not auto-close, auto-merge, rewrite contributor work, or label PRs outside the confirmed-miner policy.
+          required: true
+        - label: Public GitHub output will be tested against forbidden language (wallet, hotkey, raw trust score, payout, reward estimate, farming, private reviewability, public score estimate).
           required: true

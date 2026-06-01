@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360" role="img" aria-label="Gittensory">
-  <rect width="360" height="360" fill="#050608"/>
-  <path d="M56 72h248v216H56z" fill="#0d1117" stroke="#3d444d" stroke-width="2"/>
-  <path d="M88 112h126v18H88zm0 52h184v18H88zm0 52h112v18H88z" fill="#f0f6fc"/>
-  <path d="M240 102h32v32h-32zm-24 52h56v32h-56zm32 52h24v32h-24z" fill="#7ee787"/>
-  <path d="M56 72h248M56 288h248M56 72v216M304 72v216" fill="none" stroke="#3d444d" stroke-width="2"/>
-  <path d="M56 72h48M56 72v48M304 288h-48M304 288v-48" fill="none" stroke="#7ee787" stroke-width="6"/>
-</svg>

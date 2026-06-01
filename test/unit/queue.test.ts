@@ -6,6 +6,8 @@ import {
   getContributorEvidence,
   getAgentRun,
   getContributorScoringProfile,
+  getLatestUpstreamRulesetSnapshot,
+  listUpstreamDriftReports,
   listInstallationHealth,
   listPullRequests,
   listRepoSyncStates,
@@ -24,6 +26,7 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("queue processors", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -137,6 +140,42 @@ describe("queue processors", () => {
     expect(queued).toContainEqual({ type: "build-contributor-decision-packs", requestedBy: "api", login: "oktofeesh1" });
   });
 
+  it("routes upstream drift jobs through queue processors", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/commits/")) return Response.json({ sha: "queue-upstream-commit" });
+      if (url.includes("/contents/gittensor/constants.py")) {
+        return Response.json({ content: b64("SRC_TOK_SATURATION_SCALE = 58\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n"), encoding: "base64", sha: "constants-sha" });
+      }
+      if (url.includes("/contents/gittensor/validator/weights/master_repositories.json")) {
+        return Response.json({ content: b64(JSON.stringify({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: true } })), encoding: "base64", sha: "registry-sha" });
+      }
+      if (url.includes("/contents/gittensor/validator/weights/programming_languages.json")) {
+        return Response.json({ content: b64(JSON.stringify({ TypeScript: 1 })), encoding: "base64", sha: "languages-sha" });
+      }
+      if (url.includes("/contents/gittensor/validator/oss_contributions/mirror/scoring.py")) {
+        return Response.json({ content: b64("score = 1 - exp(-x)\nsolved_by_pr = True\n"), encoding: "base64", sha: "scoring-sha" });
+      }
+      if (url.includes("/contents/gittensor/validator/issue_discovery/scan.py")) {
+        return Response.json({ content: b64("branch eligibility required\n"), encoding: "base64", sha: "issue-scan-sha" });
+      }
+      if (url.includes("/contents/gittensor/utils/mirror/models.py")) {
+        return Response.json({ content: b64("solved_by_pr: int\n"), encoding: "base64", sha: "models-sha" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, { type: "refresh-upstream-drift", requestedBy: "test" });
+    await processJob(env, { type: "refresh-upstream-sources", requestedBy: "test" });
+    await processJob(env, { type: "build-upstream-ruleset", requestedBy: "test" });
+    await processJob(env, { type: "detect-upstream-drift", requestedBy: "test" });
+    await processJob(env, { type: "file-upstream-drift-issues", requestedBy: "test" });
+
+    await expect(getLatestUpstreamRulesetSnapshot(env)).resolves.toMatchObject({ activeModel: "pending_saturation_model", registryRepoCount: 1 });
+    await expect(listUpstreamDriftReports(env)).resolves.toEqual([]);
+  });
+
   it("fans out all-repo backfill jobs into repo-scoped queue messages", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
@@ -245,6 +284,9 @@ describe("queue processors", () => {
   });
 
   it("marks fidelity repair completed when only signal refreshes are needed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T01:00:00.000Z"));
+
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       JOBS: {
@@ -293,6 +335,9 @@ describe("queue processors", () => {
   });
 
   it("queues signal repair and emits alertable audit state when freshness SLOs breach", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T13:00:00.000Z"));
+
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       JOBS: {
@@ -1427,6 +1472,10 @@ function completeSegment(repoFullName: string, segment: "labels" | "open_issues"
     completedAt: "2026-05-25T00:00:00.000Z",
     warnings: [],
   };
+}
+
+function b64(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64");
 }
 
 async function generatePrivateKeyPem(): Promise<string> {

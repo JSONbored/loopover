@@ -13,7 +13,7 @@ export async function loadOrComputeIssueQualityResponse(env: Env, fullName: stri
   const cached = (await listSignalSnapshots(env, "issue-quality", fullName))[0];
   if (cached) {
     const payload = cached.payload as unknown as IssueQualityReport;
-    const generatedAt = cached.generatedAt ?? (payload.generatedAt as string | undefined) ?? new Date().toISOString();
+    const generatedAt = cached.generatedAt || (payload.generatedAt as string | undefined) || new Date().toISOString();
     return {
       status: "ready",
       source: "snapshot",

@@ -62,6 +62,13 @@ import { buildAndPersistContributorDecisionPack } from "../services/decision-pac
 import { executeAgentRun, explainBlockersWithAgent, planNextWork } from "../services/agent-orchestrator";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import {
+  buildUpstreamRulesetSnapshot,
+  detectAndPersistUpstreamDrift,
+  fileUpstreamDriftIssues,
+  refreshUpstreamDrift,
+  refreshUpstreamSourceSnapshots,
+} from "../upstream/ruleset";
+import {
   buildFreshnessSloReport,
   freshnessAuditMetadata,
 } from "../signals/data-quality";
@@ -163,6 +170,21 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "refresh-scoring-model":
       await refreshScoringModelSnapshot(env);
+      return;
+    case "refresh-upstream-sources":
+      await refreshUpstreamSourceSnapshots(env);
+      return;
+    case "build-upstream-ruleset":
+      await buildUpstreamRulesetSnapshot(env);
+      return;
+    case "detect-upstream-drift":
+      await detectAndPersistUpstreamDrift(env);
+      return;
+    case "refresh-upstream-drift":
+      await refreshUpstreamDrift(env);
+      return;
+    case "file-upstream-drift-issues":
+      await fileUpstreamDriftIssues(env);
       return;
     case "build-contributor-evidence":
       await buildContributorEvidence(env, message.login);
@@ -298,7 +320,7 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
     const profile = buildContributorProfile(contributorLogin, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
     const fit = buildContributorFit(profile, repositories, allIssues, allPullRequests, syncStates, repoStats, issueQualityByRepo);
     const scoringProfile = buildContributorScoringProfile({ login: contributorLogin, fit, scoringSnapshot: snapshot });
-    const outcomeHistory = buildContributorOutcomeHistory({ login: contributorLogin, profile, repositories, pullRequests: allPullRequests, issues: allIssues, repoStats });
+    const outcomeHistory = buildContributorOutcomeHistory({ login: contributorLogin, profile, repositories, pullRequests: allPullRequests, issues: allIssues, repoStats, cachedRepoStats });
     const strategy = buildContributorStrategy({ login: contributorLogin, fit, scoringProfile, scoringSnapshot: snapshot, outcomeHistory });
     const evidence: ContributorEvidenceRecord = {
       login: contributorLogin,

@@ -27,7 +27,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -51,8 +51,10 @@ jobs:
       - name: MCP package check
         run: npm run build:mcp && npm run test:mcp-pack
 
-      - name: Docs check
-        run: npm run docs:check && npm run docs:build
+      - name: UI check
+        env:
+          VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
+        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run ui:build
 
       - name: Audit dependencies
         run: npm audit --audit-level=moderate

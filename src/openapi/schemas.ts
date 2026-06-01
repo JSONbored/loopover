@@ -661,6 +661,56 @@ export const InstallationHealthSchema = z
   })
   .openapi("InstallationHealth");
 
+export const UpstreamDriftReportSchema = z
+  .object({
+    id: z.string(),
+    fingerprint: z.string(),
+    severity: z.enum(["low", "medium", "high", "blocking"]),
+    status: z.enum(["open", "acknowledged", "resolved", "ignored"]),
+    summary: z.string(),
+    affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    previousRulesetId: z.string().nullable().optional(),
+    currentRulesetId: z.string().nullable().optional(),
+    issueNumber: z.number().nullable().optional(),
+    issueUrl: z.string().nullable().optional(),
+    payload: z.record(z.unknown()).optional(),
+    generatedAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .openapi("UpstreamDriftReport");
+
+export const UpstreamRulesetSnapshotSchema = z
+  .object({
+    id: z.string(),
+    sourceRepo: z.string(),
+    sourceRef: z.string(),
+    commitSha: z.string().nullable().optional(),
+    sourceSnapshotIds: z.array(z.string()),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
+    registryRepoCount: z.number(),
+    totalEmissionShare: z.number(),
+    semanticHash: z.string(),
+    payload: z.record(z.unknown()),
+    warnings: z.array(z.string()),
+    generatedAt: z.string(),
+  })
+  .openapi("UpstreamRulesetSnapshot");
+
+export const UpstreamStatusSchema = z
+  .object({
+    generatedAt: z.string(),
+    status: z.enum(["current", "drift_detected", "stale", "unavailable"]),
+    latestCommitSha: z.string().nullable().optional(),
+    latestRulesetId: z.string().nullable().optional(),
+    latestRulesetGeneratedAt: z.string().nullable().optional(),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]).nullable().optional(),
+    highestSeverity: z.enum(["low", "medium", "high", "blocking"]).nullable().optional(),
+    affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    openReportCount: z.number(),
+    reports: z.array(UpstreamDriftReportSchema),
+  })
+  .openapi("UpstreamStatus");
+
 export const SyncStatusSchema = z
   .object({
     generatedAt: z.string(),
@@ -678,6 +728,7 @@ export const SyncStatusSchema = z
       warnings: z.array(z.string()),
     }),
     coreSignalFidelity: CoreSignalFidelitySchema,
+    upstreamDrift: UpstreamStatusSchema,
     historyCoverage: z.enum(["sampled", "counts_only", "full"]),
     refreshingRepos: z.array(z.string()),
     waitingForRateLimitRepos: z.array(z.string()),
@@ -710,6 +761,7 @@ export const ReadinessSchema = z
       warnings: z.array(z.string()),
     }),
     coreSignalFidelity: CoreSignalFidelitySchema,
+    upstreamDrift: UpstreamStatusSchema,
     historyCoverage: z.enum(["sampled", "counts_only", "full"]),
     partialRepos: z.array(z.string()),
     cappedRepos: z.array(z.string()),
@@ -730,7 +782,7 @@ export const ReadinessSchema = z
     scoringModel: z
       .object({
         snapshotId: z.string(),
-        activeModel: z.enum(["current_density_model", "pending_saturation_model", "unknown"]),
+        activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
         sourceKind: z.string(),
         fetchedAt: z.string(),
         warningCount: z.number(),
@@ -784,7 +836,7 @@ export const ScoringModelSnapshotSchema = z
     sourceKind: z.enum(["raw-github", "api", "fallback", "test"]),
     sourceUrl: z.string(),
     fetchedAt: z.string(),
-    activeModel: z.enum(["current_density_model", "pending_saturation_model", "unknown"]),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
     constants: z.record(z.number()),
     programmingLanguages: z.record(z.unknown()),
     registrySnapshotId: z.string().nullable().optional(),
@@ -845,7 +897,7 @@ export const ScorePreviewResultSchema = z
     repoFullName: z.string(),
     generatedAt: z.string(),
     scoringModelSnapshotId: z.string(),
-    activeModel: z.enum(["current_density_model", "pending_saturation_model", "unknown"]),
+    activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]),
     privateOnly: z.literal(true),
     laneMath: z.record(z.number()),
     scoreEstimate: ScoreEstimateSchema,
@@ -888,6 +940,7 @@ export const IssueQualityReportSchema = z
       z.object({
         number: z.number(),
         title: z.string(),
+        lifecycle: z.enum(["open", "closed_not_solved", "solved", "valid_solved", "stale", "duplicate", "invalid"]).optional(),
         status: z.enum(["ready", "needs_proof", "hold", "do_not_use"]),
         score: z.number(),
         reasons: z.array(z.string()),
@@ -945,11 +998,58 @@ export const RoleContextSchema = z
   })
   .openapi("RoleContext");
 
+const ContributorOutcomeCountsSchema = z.object({
+  pullRequests: z.number(),
+  mergedPullRequests: z.number(),
+  openPullRequests: z.number(),
+  closedPullRequests: z.number(),
+  issues: z.number(),
+  openIssues: z.number(),
+  closedIssues: z.number(),
+  solvedIssues: z.number(),
+  validSolvedIssues: z.number(),
+});
+
+const ContributorOutcomeTotalsSchema = ContributorOutcomeCountsSchema.extend({
+  closedPullRequestRate: z.number(),
+  credibility: z.number(),
+  issueCredibility: z.number(),
+});
+
+const ContributorReconciliationReportSchema = z.object({
+  login: z.string(),
+  generatedAt: z.string(),
+  source: z.enum(["gittensor_api", "github_cache"]),
+  officialAuthoritative: z.boolean(),
+  totals: z.object({
+    official: ContributorOutcomeTotalsSchema.optional(),
+    cached: ContributorOutcomeTotalsSchema,
+    effective: ContributorOutcomeTotalsSchema,
+  }),
+  repos: z.array(
+    z.object({
+      repoFullName: z.string(),
+      maintainerLane: z.boolean(),
+      official: ContributorOutcomeCountsSchema.optional(),
+      cached: ContributorOutcomeCountsSchema,
+      effective: ContributorOutcomeCountsSchema,
+      discrepancyReasons: z.array(z.string()),
+      freshness: z.object({
+        officialUpdatedAt: z.string().optional(),
+        cachedLastActivityAt: z.string().optional(),
+      }),
+    }),
+  ),
+  findings: z.array(FindingSchema),
+  summary: z.string(),
+});
+
 export const ContributorOutcomeHistorySchema = z
   .object({
     login: z.string(),
     generatedAt: z.string(),
     source: z.enum(["gittensor_api", "github_cache"]),
+    reconciliation: ContributorReconciliationReportSchema.optional(),
     totals: z.record(z.number()),
     repoOutcomes: z.array(z.record(z.unknown())),
     successPatterns: z.array(z.record(z.unknown())),
@@ -1276,6 +1376,15 @@ export const LocalBranchAnalysisSchema = z
       maintainerLane: z.number(),
       notes: z.array(z.string()),
     }),
+    githubBranchStatus: z.object({
+      source: z.literal("cached_github_data"),
+      status: z.enum(["approved", "failing_checks", "needs_author", "blocked", "pending_review", "no_pr", "unknown"]),
+      pullNumber: z.number().optional(),
+      title: z.string().optional(),
+      reviewDecision: z.string().nullable().optional(),
+      mergeableState: z.string().nullable().optional(),
+      notes: z.array(z.string()),
+    }),
     rewardRisk: RepoRewardRiskSchema,
     scoreBlockers: z.array(z.string()),
     branchQualityBlockers: z.array(z.string()),
@@ -1299,7 +1408,15 @@ export const LocalBranchAnalysisSchema = z
         passed: z.number(),
         failed: z.number(),
         notRun: z.number(),
-        commands: z.array(z.object({ command: z.string(), status: z.enum(["passed", "failed", "not_run"]), summary: z.string().optional() })),
+        commands: z.array(
+          z.object({
+            command: z.string(),
+            status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
+            summary: z.string().optional(),
+            durationMs: z.number().optional(),
+            exitCode: z.number().optional(),
+          }),
+        ),
       }),
       publicSafeWarnings: z.array(z.string()),
     }),
@@ -1442,5 +1559,38 @@ export const HealthSchema = z
     status: z.literal("ok"),
     service: z.literal("gittensory-api"),
     time: z.string(),
+    minMcpVersion: z.string(),
+    latestRecommendedMcpVersion: z.string(),
   })
   .openapi("Health");
+
+export const McpCompatibilitySchema = z
+  .object({
+    status: z.literal("ok"),
+    service: z.literal("gittensory-api"),
+    apiVersion: z.string(),
+    mcp: z.object({
+      packageName: z.string(),
+      minimumSupportedVersion: z.string(),
+      latestRecommendedVersion: z.string(),
+      latestPackageVersion: z.string(),
+      supportedVersionRange: z.string(),
+      upgradeCommand: z.string(),
+      npxFallbackCommand: z.string(),
+    }),
+    compatibilityWarnings: z.array(
+      z.object({
+        code: z.string(),
+        message: z.string(),
+      }),
+    ),
+    breakingChanges: z.array(
+      z.object({
+        version: z.string(),
+        summary: z.string(),
+        mitigation: z.string().optional(),
+      }),
+    ),
+    generatedAt: z.string(),
+  })
+  .openapi("McpCompatibility");

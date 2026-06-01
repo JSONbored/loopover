@@ -4,72 +4,87 @@
   "main": "src/index.ts",
   "workers_dev": true,
   "preview_urls": false,
-  "compatibility_date": "2026-05-26",
+  "compatibility_date": "2026-05-28",
   "compatibility_flags": ["nodejs_compat"],
+  "placement": {
+    "mode": "smart",
+  },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+    },
   },
   "vars": {
     "GITHUB_APP_ID": "3824093",
     "GITHUB_APP_SLUG": "gittensory",
     "GITHUB_OAUTH_CLIENT_ID": "Iv23li574mpdLo2PnVN4",
+    "GITTENSOR_UPSTREAM_REPO": "entrius/gittensor",
+    "GITTENSOR_UPSTREAM_REF": "test",
     "GITTENSOR_REGISTRY_URL": "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",
+    "GITTENSORY_AUTO_FILE_DRIFT_ISSUES": "false",
+    "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
     "PUBLIC_API_ORIGIN": "https://gittensory-api.aethereal.dev",
+    "PUBLIC_SITE_ORIGIN": "https://gittensory.aethereal.dev",
     "AI_SUMMARIES_ENABLED": "false",
     "AI_PUBLIC_COMMENTS_ENABLED": "false",
     "WORKERS_AI_SUMMARY_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
     "AI_DAILY_NEURON_BUDGET": "10000",
     "AI_MAX_OUTPUT_TOKENS": "256",
-    "ADMIN_GITHUB_LOGINS": "JSONbored"
+    "ADMIN_GITHUB_LOGINS": "JSONbored",
   },
   "routes": [
     {
       "pattern": "gittensory-api.aethereal.dev",
-      "custom_domain": true
-    }
+      "custom_domain": true,
+    },
   ],
   "ai": {
-    "binding": "AI"
+    "binding": "AI",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "gittensory",
       "database_id": "b2c79dd6-7771-4b1f-aa6b-085d5f3e9528",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
   "durable_objects": {
     "bindings": [
       {
         "name": "RATE_LIMITER",
-        "class_name": "RateLimiter"
-      }
-    ]
+        "class_name": "RateLimiter",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1-rate-limiter",
-      "new_sqlite_classes": ["RateLimiter"]
-    }
+      "new_sqlite_classes": ["RateLimiter"],
+    },
   ],
   "queues": {
     "producers": [
       {
         "binding": "JOBS",
-        "queue": "gittensory-jobs"
-      }
+        "queue": "gittensory-jobs",
+      },
     ],
     "consumers": [
       {
         "queue": "gittensory-jobs",
         "max_batch_size": 10,
-        "max_batch_timeout": 5
-      }
-    ]
+        "max_batch_timeout": 5,
+      },
+    ],
   },
   "triggers": {
-    "crons": ["*/30 * * * *"]
-  }
+    "crons": ["*/30 * * * *"],
+  },
 }

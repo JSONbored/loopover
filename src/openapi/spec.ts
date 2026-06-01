@@ -34,6 +34,7 @@ import {
   MaintainerCutReadinessSchema,
   MaintainerLaneReportSchema,
   MaintainerNoiseReportSchema,
+  McpCompatibilitySchema,
   PullRequestMaintainerPacketSchema,
   PullRequestReviewIntelligenceSchema,
   PullRequestReviewabilitySchema,
@@ -61,12 +62,16 @@ import {
   ScoringModelSnapshotSchema,
   SignalFidelitySchema,
   SyncStatusSchema,
+  UpstreamDriftReportSchema,
+  UpstreamRulesetSnapshotSchema,
+  UpstreamStatusSchema,
   WorkboardItemSchema,
 } from "./schemas";
 
 export function buildOpenApiSpec() {
   const registry = new OpenAPIRegistry();
   registry.register("Health", HealthSchema);
+  registry.register("McpCompatibility", McpCompatibilitySchema);
   registry.register("RegistrySnapshot", RegistrySnapshotSchema);
   registry.register("Repository", RepositorySchema);
   registry.register("Advisory", AdvisorySchema);
@@ -113,6 +118,9 @@ export function buildOpenApiSpec() {
   registry.register("InstallationHealth", InstallationHealthSchema);
   registry.register("SyncStatus", SyncStatusSchema);
   registry.register("Readiness", ReadinessSchema);
+  registry.register("UpstreamStatus", UpstreamStatusSchema);
+  registry.register("UpstreamRulesetSnapshot", UpstreamRulesetSnapshotSchema);
+  registry.register("UpstreamDriftReport", UpstreamDriftReportSchema);
   registry.register("RegistryChangeReport", RegistryChangeReportSchema);
   registry.register("LaneAdvice", LaneAdviceSchema);
   registry.register("ScoringModelSnapshot", ScoringModelSnapshotSchema);
@@ -137,6 +145,13 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/mcp/compatibility",
+    responses: {
+      200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/registry/snapshot",
     responses: {
       200: { description: "Latest Gittensor registry snapshot", content: { "application/json": { schema: RegistrySnapshotSchema } } },
@@ -154,6 +169,39 @@ export function buildOpenApiSpec() {
     path: "/v1/scoring/model",
     responses: {
       200: { description: "Latest private scoring model snapshot", content: { "application/json": { schema: ScoringModelSnapshotSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/upstream/status",
+    responses: {
+      200: { description: "Upstream Gittensor source/ruleset drift status", content: { "application/json": { schema: UpstreamStatusSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/upstream/ruleset",
+    responses: {
+      200: { description: "Latest normalized upstream Gittensor ruleset snapshot", content: { "application/json": { schema: UpstreamRulesetSnapshotSchema } } },
+      404: { description: "No upstream ruleset snapshot has been built yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/upstream/drift",
+    responses: {
+      200: {
+        description: "Open and historical upstream drift reports",
+        content: {
+          "application/json": {
+            schema: z.object({
+              generatedAt: z.string(),
+              upstreamDrift: UpstreamStatusSchema,
+              reports: z.array(UpstreamDriftReportSchema),
+            }),
+          },
+        },
+      },
     },
   });
   registry.registerPath({
@@ -338,6 +386,37 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/agent/runs",
+    request: {
+      query: z.object({
+        actorLogin: z.string().min(1).openapi({
+          param: { description: "GitHub login that owns the agent runs." },
+          example: "jsonbored",
+        }),
+        limit: z
+          .string()
+          .optional()
+          .openapi({
+            param: { description: "Maximum run bundles to return, clamped from 1 to 100." },
+            example: "50",
+          }),
+      }),
+    },
+    responses: {
+      200: {
+        description: "Recent agent run bundles for an authenticated actor",
+        content: {
+          "application/json": {
+            schema: z.object({ runs: z.array(AgentRunBundleSchema) }),
+          },
+        },
+      },
+      400: { description: "Missing actor login" },
+      401: { description: "Unauthorized" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/agent/runs/{id}",
     responses: {
       200: { description: "Persisted agent run bundle", content: { "application/json": { schema: AgentRunBundleSchema } } },
@@ -379,7 +458,22 @@ export function buildOpenApiSpec() {
       401: { description: "Invalid webhook signature" },
     },
   });
-  for (const path of ["/v1/auth/github/device/start", "/v1/auth/github/device/poll", "/v1/auth/github/session", "/v1/auth/logout"]) {
+  registry.registerPath({
+    method: "get",
+    path: "/v1/auth/github/start",
+    responses: {
+      302: { description: "Redirects to GitHub web OAuth" },
+      503: { description: "GitHub OAuth app secret is not configured" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/auth/github/callback",
+    responses: {
+      302: { description: "Completes GitHub web OAuth and redirects to the app" },
+    },
+  });
+  for (const path of ["/v1/auth/github/device/start", "/v1/auth/github/device/poll", "/v1/auth/github/session", "/v1/auth/logout", "/v1/auth/extension/session"]) {
     registry.registerPath({
       method: "post",
       path,
@@ -396,7 +490,52 @@ export function buildOpenApiSpec() {
     method: "get",
     path: "/v1/auth/session",
     responses: {
-      200: { description: "Current auth session" },
+      200: { description: "Current auth session, or signed_out when no app session is present" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/app/overview",
+    responses: {
+      200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.unknown()) } } },
+      401: { description: "Unauthorized" },
+    },
+  });
+  for (const path of ["/v1/app/miner-dashboard", "/v1/app/maintainer-dashboard", "/v1/app/operator-dashboard", "/v1/app/commands", "/v1/app/digest"]) {
+    registry.registerPath({
+      method: "get",
+      path,
+      responses: {
+        200: { description: "Live app API response", content: { "application/json": { schema: z.record(z.unknown()) } } },
+        401: { description: "Unauthorized" },
+      },
+    });
+  }
+  for (const path of ["/v1/app/commands/preview", "/v1/app/digest/subscriptions"]) {
+    registry.registerPath({
+      method: "post",
+      path,
+      responses: {
+        200: { description: "Live app mutation or preview response", content: { "application/json": { schema: z.record(z.unknown()) } } },
+        201: { description: "Created", content: { "application/json": { schema: z.record(z.unknown()) } } },
+        400: { description: "Invalid request" },
+        401: { description: "Unauthorized" },
+      },
+    });
+  }
+  registry.registerPath({
+    method: "get",
+    path: "/v1/extension/pull-context",
+    request: {
+      query: z.object({
+        owner: z.string().min(1).openapi({ param: { description: "Repository owner" }, example: "JSONbored" }),
+        repo: z.string().min(1).openapi({ param: { description: "Repository name" }, example: "gittensory" }),
+        pullNumber: z.string().min(1).openapi({ param: { description: "Pull request number" }, example: "120" }),
+      }),
+    },
+    responses: {
+      200: { description: "Browser extension PR context overlay payload", content: { "application/json": { schema: z.record(z.unknown()) } } },
+      400: { description: "Invalid pull context query" },
       401: { description: "Unauthorized" },
     },
   });
@@ -436,6 +575,8 @@ export function buildOpenApiSpec() {
   });
   for (const path of [
     "/v1/internal/jobs/refresh-scoring-model",
+    "/v1/internal/jobs/refresh-upstream-drift",
+    "/v1/internal/jobs/file-upstream-drift-issues",
     "/v1/internal/jobs/build-contributor-evidence",
     "/v1/internal/jobs/build-contributor-decision-packs",
     "/v1/internal/jobs/build-burden-forecasts",
@@ -461,7 +602,7 @@ export function buildOpenApiSpec() {
   });
 
   const generator = new OpenApiGeneratorV3(registry.definitions);
-  return generator.generateDocument({
+  const document = generator.generateDocument({
     openapi: "3.0.3",
     info: {
       title: "Gittensory API",
@@ -469,4 +610,45 @@ export function buildOpenApiSpec() {
       description: "Backend API for Gittensory advisory checks and Gittensor repository context.",
     },
   });
+  return applySecurityMetadata(document);
+}
+
+type GeneratedOpenApiDocument = ReturnType<OpenApiGeneratorV3["generateDocument"]>;
+type GeneratedOperation = NonNullable<GeneratedOpenApiDocument["paths"][string]>[keyof NonNullable<GeneratedOpenApiDocument["paths"][string]>] & {
+  security?: Array<Record<string, string[]>>;
+};
+
+function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpenApiDocument {
+  document.components = {
+    ...(document.components ?? {}),
+    securitySchemes: {
+      ...(document.components?.securitySchemes ?? {}),
+      GittensoryBearer: {
+        type: "http",
+        scheme: "bearer",
+        description: "Static API/MCP token or GitHub device-flow Gittensory session token.",
+      },
+      GittensorySessionCookie: {
+        type: "apiKey",
+        in: "cookie",
+        name: "gittensory_session",
+        description: "HttpOnly browser session cookie set by GitHub web OAuth.",
+      },
+    },
+  };
+  for (const [path, pathItem] of Object.entries(document.paths)) {
+    if (!pathItem || !isProtectedPath(path)) continue;
+    for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+      const operation = pathItem[method] as GeneratedOperation | undefined;
+      if (operation) operation.security = [{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }];
+    }
+  }
+  return document;
+}
+
+function isProtectedPath(path: string): boolean {
+  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility") return false;
+  if (path.startsWith("/v1/auth/")) return path === "/v1/auth/extension/session";
+  if (path === "/v1/github/webhook") return false;
+  return path.startsWith("/v1/");
 }

@@ -1,5 +1,14 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Contribution guidelines
+    url: https://github.com/JSONbored/gittensory/blob/main/CONTRIBUTING.md
+    about: Read this before opening a PR or proposing larger work.
+  - name: Code of Conduct
+    url: https://github.com/JSONbored/gittensory/blob/main/CODE_OF_CONDUCT.md
+    about: Expected behavior for issues, PRs, reviews, and support discussions.
+  - name: Support guide
+    url: https://github.com/JSONbored/gittensory/blob/main/SUPPORT.md
+    about: Use this for non-sensitive support details and issue hygiene.
   - name: Security issue
     url: https://github.com/JSONbored/gittensory/security/advisories/new
     about: Please report security issues privately. Do not open a public issue with secrets or sensitive data.

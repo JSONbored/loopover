@@ -1,21 +1,52 @@
 name: Feature request
-description: Suggest a backend signal, API, MCP, GitHub App, or operational improvement.
+description: Suggest a UI, API, MCP, GitHub App, signal, docs, or operational improvement.
 title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep requests concrete. Broad redesigns, framework swaps, GitHub Pages/VitePress restoration, reward-farming features, and public private-signal exposure are out of scope.
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What contributor, maintainer, or repo-owner problem should this solve?
+      description: What contributor, maintainer, operator, or repo-owner problem should this solve?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend UI
+        - REST API
+        - MCP
+        - GitHub App
+        - Auth/session
+        - Cloudflare deploy/runtime
+        - Registry/backfill
+        - Signal logic
+        - Tests/CI
+        - Documentation
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: Proposal
-      description: Describe the backend behavior, signal, or API shape.
+      description: Describe the behavior, signal, UI, API shape, or operational change.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What would prove this is done and production-safe?
+      placeholder: |
+        - ...
+        - ...
     validations:
       required: true
   - type: checkboxes
@@ -23,7 +54,11 @@ body:
     attributes:
       label: Boundaries
       options:
-        - label: This is backend-only.
-        - label: This does not require storing user PATs.
-        - label: This does not expose wallet details, raw trust scores, or private rankings publicly.
+        - label: This does not restore GitHub Pages, VitePress, `site/`, or `CNAME`.
+          required: true
+        - label: This does not require storing user PATs or adding a non-GitHub identity provider.
+          required: true
+        - label: This does not expose wallet details, raw trust scores, private rankings, or reward estimates publicly.
+          required: true
         - label: This does not auto-close, auto-merge, rewrite contributor work, or label PRs outside the confirmed-miner policy.
+          required: true

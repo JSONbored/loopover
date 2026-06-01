@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../../src/signals/local-branch";
+import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../../src/signals/local-scorer-diagnostics";
 import type { ContributorOutcomeHistory, ContributorProfile, ContributorScoringProfile, IssueQualityReport } from "../../src/signals/engine";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
@@ -60,6 +61,31 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).toContain("- passed: npm test -- cache");
     expect(analysis.prPacket.markdown).toContain("metadata only");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("bounds local scorer warnings before adding local findings", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/scorer.ts", additions: 10, deletions: 0, status: "modified" }],
+        localScorer: {
+          mode: "metadata_only",
+          warnings: Array.from({ length: MAX_LOCAL_SCORER_WARNING_COUNT + 5 }, (_, index) => `${index}: ${"w".repeat(MAX_LOCAL_SCORER_WARNING_CHARS + 25)}`),
+        },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const finding = analysis.localFindings.find((entry) => entry.code === "local_scorer_warning");
+    expect(finding?.detail.length).toBeLessThanOrEqual(MAX_LOCAL_SCORER_WARNING_COUNT * MAX_LOCAL_SCORER_WARNING_CHARS + (MAX_LOCAL_SCORER_WARNING_COUNT - 1));
+    expect(analysis.workspaceIntelligence.localScorerDiagnostics?.warnings).toHaveLength(MAX_LOCAL_SCORER_WARNING_COUNT);
   });
 
   it("projects a blocked local branch into a useful after-pending-merge scenario", () => {
@@ -1277,6 +1303,8 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).toContain("## Maintainer Focus");
     expect(analysis.prPacket.markdown).toContain("Prefer small, focused PRs.");
     expect(analysis.prPacket.markdown).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.manifestGuidance)).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis)).not.toMatch(/ping @owner/);
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/ping @owner/);
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });

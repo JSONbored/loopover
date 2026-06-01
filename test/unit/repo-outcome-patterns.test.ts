@@ -375,6 +375,26 @@ describe("buildRepoOutcomePatterns", () => {
     expect(missing.summary).toMatch(/evidence missing/);
   });
 
+  it("sanitizes untrusted path and label text before formatting outcome details", () => {
+    const pullRequests = [
+      closedPr(1, { labels: ["wip [click](https://example.test) @octo-team"] }),
+      closedPr(2, { labels: ["wip [click](https://example.test) @octo-team"] }),
+      closedPr(3, { labels: ["wip [click](https://example.test) @octo-team"] }),
+    ];
+    const files = [
+      file(1, "duplicate\n@octo-team/owned.md"),
+      file(2, "duplicate\n@octo-team/other.md"),
+      file(3, "duplicate\n@octo-team/more.md"),
+    ];
+
+    const result = buildRepoOutcomePatterns({ repo: repo(), repoFullName: REPO, pullRequests, files });
+    const details = result.riskPatterns.map((p) => p.detail);
+
+    expect(details).toContain("PRs touching duplicate @​octo-team/ have high closure risk here (0/3 merged).");
+    expect(details).toContain('PRs labeled "wip \\[click\\]\\(https://example.test\\) @​octo-team" have high closure risk here (0/3 merged).');
+    expect(details.join("\n")).not.toMatch(/duplicate\n@octo-team|@octo-team|[^\\]\[click\]\(https:\/\/example\.test\)/);
+  });
+
   it("never emits forbidden public-surface language", () => {
     const fixtures = [
       buildRepoOutcomePatterns(primaryFixture()),

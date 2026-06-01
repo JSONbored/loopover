@@ -1676,7 +1676,6 @@ export const LocalBranchAnalysisSchema = z
       preferredLabelHits: z.array(z.string()),
       findings: z.array(z.object({ code: z.string(), severity: z.enum(["info", "warning", "critical"]), title: z.string(), detail: z.string(), action: z.string().optional() })),
       publicNextSteps: z.array(z.string()),
-      maintainerNotes: z.array(z.string()),
       warnings: z.array(z.string()),
       summary: z.string(),
     }),

@@ -47,6 +47,11 @@ describe("local branch analysis", () => {
     expect(analysis.rewardRisk.rewardUpside.relevantLane).toBe("direct_pr");
     expect(analysis.nextActions.map((action) => action.actionKind)).toContain("open_new_direct_pr");
     expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "source_upload_disabled" })]));
+    expect(analysis.workspaceIntelligence.version).toBe(2);
+    expect(analysis.workspaceIntelligence.sourceUpload.enabled).toBe(false);
+    expect(analysis.workspaceIntelligence.testEvidence.level).toBe("both");
+    expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual(analysis.branchQualityBlockers);
+    expect(analysis.workspaceIntelligence.blockers.accountState).toEqual(analysis.accountStateBlockers);
     expect(analysis.prPacket.markdown).toContain("## Branch Freshness");
     expect(analysis.prPacket.markdown).toContain("## Overlap/WIP Check");
     expect(analysis.prPacket.markdown).toContain("- Closes #7");
@@ -773,6 +778,8 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).toMatch(/Base freshness: stale|git fetch origin/i);
     expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("missing_test_evidence");
     expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("local_diff_missing_tests");
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "validation_as_test_evidence" })]));
+    expect(analysis.workspaceIntelligence.testEvidence.level).toBe("validation_commands");
     expect(analysis.recommendedRerunCondition).toMatch(/git fetch origin/i);
   });
 
@@ -985,6 +992,8 @@ describe("local branch analysis", () => {
 
     expect(analysis.branchQualityBlockers).toEqual([]);
     expect(analysis.accountStateBlockers.join(" ")).toMatch(/Open PR count|Credibility/i);
+    expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual([]);
+    expect(analysis.workspaceIntelligence.blockers.accountState.length).toBeGreaterThan(0);
     expect(analysis.recommendedRerunCondition).toBe("Rerun after account/queue maturity blockers clear.");
     expect(analysis.nextActions[0]?.actionKind).not.toBe("land_existing_prs");
   });
@@ -1014,6 +1023,7 @@ describe("local branch analysis", () => {
         expect.objectContaining({ code: "binary_diff_present" }),
       ]),
     );
+    expect(analysis.workspaceIntelligence.changedFiles.binary).toBe(1);
     expect(analysis.prPacket.bodySections).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ heading: "Linked Context", lines: ["- No linked issue detected; explain why this is a no-issue PR."] }),
@@ -1058,6 +1068,42 @@ describe("local MCP git metadata collection", () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = null;
     delete process.env.GITTENSORY_UPLOAD_SOURCE;
+  });
+
+  it("counts pending commits, emits CI hints, and tracks deleted or renamed paths", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { collectCiStatusHints, collectLocalBranchMetadata, collectPendingCommitCount } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    writeFileSync(join(tempDir, "keep.ts"), "keep\n");
+    git(tempDir, "add", "keep.ts");
+    git(tempDir, "commit", "-m", "add keep file");
+    git(tempDir, "checkout", "-b", "rename-delete");
+    writeFileSync(join(tempDir, "old.ts"), "old\n");
+    git(tempDir, "add", "old.ts");
+    git(tempDir, "commit", "-m", "add old file");
+    git(tempDir, "mv", "old.ts", "new.ts");
+    git(tempDir, "add", "new.ts");
+    git(tempDir, "commit", "-m", "rename old to new");
+    const renameMetadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(renameMetadata.changedFiles).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "new.ts", previousPath: "old.ts", status: "renamed" })]),
+    );
+    git(tempDir, "rm", "keep.ts");
+    git(tempDir, "commit", "-m", "delete keep file");
+
+    expect(collectPendingCommitCount(tempDir, "HEAD~2")).toBe(2);
+    const deleteMetadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(deleteMetadata.changedFiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "keep.ts", status: "deleted" })]));
+    expect(collectCiStatusHints(tempDir, "HEAD~2", deleteMetadata.changedFiles).join(" ")).toMatch(/local commit/i);
+    expect(JSON.stringify(renameMetadata)).not.toMatch(/export const old/);
   });
 
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {

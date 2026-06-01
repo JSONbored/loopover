@@ -13,6 +13,12 @@ import {
 import { createTestEnv } from "../helpers/d1";
 
 describe("database row parser hardening", () => {
+  it("returns empty arrays from D1 raw() when a select has no rows", async () => {
+    const env = createTestEnv();
+    const rows = await env.DB.prepare("select id from installations where 1 = 0").raw();
+    expect(rows).toEqual([]);
+  });
+
   it("preserves cached pull request review and mergeability scenario fields", async () => {
     const env = createTestEnv();
 

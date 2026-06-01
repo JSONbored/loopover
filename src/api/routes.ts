@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
 import {
@@ -133,6 +134,7 @@ import {
   buildRegistryChangeReport,
 } from "../signals/engine";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
+import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
@@ -223,6 +225,8 @@ const localBranchAnalysisSchema = z
     expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
     projectedCredibility: z.number().min(0).max(1).optional(),
     scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+    pendingCommitCount: z.number().int().min(0).optional(),
+    ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
   })
   .strict();
 
@@ -1148,6 +1152,13 @@ export function createApp() {
     return c.json(serving.refresh, 202);
   });
 
+  app.get("/v1/contributors/:login/open-pr-monitor", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    return c.json(await buildContributorOpenPrMonitor(c.env, login));
+  });
+
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {
     const login = c.req.param("login");
     const unauthorized = await requireContributorAccess(c, login);
@@ -1538,6 +1549,43 @@ export function createApp() {
     }
     await Promise.all(events.map((event) => persistBountyLifecycleEvent(c.env, event)));
     return c.json({ ok: true, imported: bounties.length, lifecycleEvents: events.length });
+  });
+
+  app.post("/v1/internal/queue-intelligence", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || !Array.isArray(body.pullRequests)) {
+      return c.json({ error: "invalid_request", detail: "pullRequests array required" }, 400);
+    }
+    const prSchema = z.object({
+      number: z.number().int().positive(),
+      author: z.string(),
+      authorRole: z.enum(["first-time", "contributor", "maintainer"] as [AuthorRole, ...AuthorRole[]]),
+      isConfirmedMiner: z.boolean(),
+      linkedIssue: z.object({ qualityScore: z.number().min(0).max(1) }).nullable(),
+      checksStatus: z.enum(["passing", "failing", "pending"] as [ChecksStatus, ...ChecksStatus[]]),
+      isStale: z.boolean(),
+      additions: z.number().int().nonnegative(),
+      deletions: z.number().int().nonnegative(),
+      title: z.string(),
+      body: z.string(),
+      duplicateCandidates: z.array(z.number().int().positive()),
+      createdAt: z.string().datetime(),
+      lastUpdatedAt: z.string().datetime(),
+    });
+    const repoContextSchema = z.object({
+      totalOpenPRs: z.number().int().nonnegative(),
+      avgReviewTimeDays: z.number().nonnegative(),
+      maintainerWorkload: z.number().min(0).max(1),
+    });
+    const prsResult = z.array(prSchema).safeParse(body.pullRequests);
+    if (!prsResult.success) return c.json({ error: "invalid_request", issues: prsResult.error.issues }, 400);
+    const repoContext = repoContextSchema.safeParse(body.repoContext).success
+      ? repoContextSchema.parse(body.repoContext)
+      : { totalOpenPRs: 0, avgReviewTimeDays: 0, maintainerWorkload: 0 };
+    const result = await analyzePRQueue(prsResult.data, repoContext);
+    const recommendations: Record<number, string> = {};
+    for (const [num, rec] of result.recommendations) recommendations[num] = rec;
+    return c.json({ rankedPRs: result.rankedPRs, recommendations });
   });
 
   app.post("/v1/internal/repos/:owner/:repo/settings", async (c) => {

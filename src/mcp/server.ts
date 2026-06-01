@@ -55,6 +55,7 @@ import {
   buildRegistryChangeReport,
   buildRoleContext,
 } from "../signals/engine";
+import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { loadUpstreamStatus } from "../upstream/ruleset";
@@ -280,6 +281,16 @@ export class GittensoryMcp {
         inputSchema: loginShape,
       },
       async (input) => this.toolResult(await this.getDecisionPack(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_monitor_open_prs",
+      {
+        description:
+          "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
+        inputSchema: loginShape,
+      },
+      async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
     );
 
     server.registerTool(
@@ -607,6 +618,15 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory decision pack for ${login} needs a snapshot refresh.`,
       data: serving.refresh as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async monitorOpenPullRequests(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const monitor = await buildContributorOpenPrMonitor(this.env, login);
+    return {
+      summary: monitor.summary,
+      data: monitor as unknown as Record<string, unknown>,
     };
   }
 

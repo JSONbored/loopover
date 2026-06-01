@@ -29,8 +29,9 @@ export class TestD1Database {
         return { results: statement.all(...bound) as T[] };
       },
       async raw<T = unknown[]>() {
-        const columns = statement.columns().map((column) => column.name);
         const rows = statement.all(...bound) as Record<string, unknown>[];
+        if (rows.length === 0) return [] as T[];
+        const columns = Object.keys(rows[0]!);
         return rows.map((row) => columns.map((column) => row[column])) as T[];
       },
       async run() {

@@ -19,6 +19,7 @@ import {
   ContributorOpportunitySchema,
   ContributorPatternReportSchema,
   ContributorDecisionPackSchema,
+  ContributorOpenPrMonitorSchema,
   ContributorRewardRiskStrategySchema,
   ContributorProfileSchema,
   ContributorScoringProfileSchema,
@@ -342,6 +343,16 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: ContributorDecisionPackSchema } },
       },
       202: { description: "Decision pack snapshot is missing; a background rebuild has been requested", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/open-pr-monitor",
+    responses: {
+      200: {
+        description: "Contributor open-PR monitor with classifications and public-safe next-step packets from cached metadata.",
+        content: { "application/json": { schema: ContributorOpenPrMonitorSchema } },
+      },
     },
   });
   registry.registerPath({

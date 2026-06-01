@@ -71,7 +71,9 @@ gittensory-mcp preflight --login your-login --json`}
       <h2>4. Wire it into your coding agent</h2>
       <p>
         Print a config snippet for your editor of choice and paste it in. See{" "}
-        <a href="/docs/mcp-clients">MCP client setup</a> for the details.
+        <a href="/docs/mcp-clients">MCP client setup</a> for the details. For the full miner path
+        (plan → preflight → packet) and other roles, see{" "}
+        <a href="/docs/beta-onboarding">Beta onboarding</a>.
       </p>
       <CodeBlock
         code={`gittensory-mcp init-client --target codex

@@ -27,6 +27,7 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "Product analytics", to: "/app/analytics", group: "App" },
   { label: "Maintainer digest", to: "/app/digest", group: "App" },
   { label: "Operator dashboard", to: "/app/operator", group: "App" },
+  { label: "Beta onboarding", to: "/docs/beta-onboarding", group: "Docs" },
   { label: "Quickstart", to: "/docs/quickstart", group: "Docs" },
   { label: "MCP clients", to: "/docs/mcp-clients", group: "Docs" },
   { label: "Miner workflow", to: "/docs/miner-workflow", group: "Docs" },

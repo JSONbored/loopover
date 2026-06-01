@@ -583,7 +583,6 @@ export function buildOpenApiSpec() {
     "/v1/app/digest",
     "/v1/app/analytics/daily-rollups",
     "/v1/app/analytics/mcp-compatibility",
-    "/v1/app/analytics/daily-rollups",
     "/v1/app/analytics/weekly-value-report",
   ]) {
     registry.registerPath({

@@ -148,6 +148,14 @@ export type GittensorContributorSnapshot = {
     baseScore: number;
     tokenScore: number;
   }>;
+  issueMirrorAvailable?: boolean | undefined;
+  issues?: Array<{
+    repoFullName: string;
+    number: number;
+    state: string;
+    solvedByPullRequest?: number | null | undefined;
+    labels: string[];
+  }> | undefined;
   issueLabels: string[];
 };
 
@@ -156,6 +164,7 @@ export async function fetchGittensorContributorSnapshot(login: string): Promise<
     const detection = await fetchOfficialGittensorMiner(login);
     return detection.status === "confirmed" ? detection.snapshot : null;
   } catch {
+    /* v8 ignore next -- fetchOfficialGittensorMiner converts network failures into an unavailable status; this is a last-resort guard. */
     return null;
   }
 }
@@ -236,6 +245,8 @@ async function buildGittensorContributorSnapshot(miner: ConfirmedGittensorMinerS
     },
     repositories: (detail.repositories ?? []).map(toRepositoryEvaluation).filter((repo) => repo.pullRequests + repo.openIssues + repo.closedIssues > 0),
     pullRequests: pullRequests.map(toPullRequest).filter((pr) => pr.repoFullName && pr.number > 0),
+    issueMirrorAvailable: issuesResult.status === "fulfilled",
+    issues: issues.map(toIssue).filter((issue) => issue.repoFullName && issue.number > 0),
     issueLabels: issues.flatMap((issue) => (issue.labels ?? []).flatMap((label) => (label.name ? [label.name] : []))),
   };
 }
@@ -282,6 +293,16 @@ function toPullRequest(pr: GittensorPullRequestResponse): GittensorContributorSn
     score: asNumber(pr.score),
     baseScore: asNumber(pr.baseScore),
     tokenScore: asNumber(pr.tokenScore),
+  };
+}
+
+function toIssue(issue: NonNullable<GittensorMinerIssuesResponse["issues"]>[number]): NonNullable<GittensorContributorSnapshot["issues"]>[number] {
+  return {
+    repoFullName: issue.repo_full_name ?? "",
+    number: asNumber(issue.issue_number),
+    state: issue.state ?? "UNKNOWN",
+    solvedByPullRequest: issue.solved_by_pr ?? null,
+    labels: (issue.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
   };
 }
 

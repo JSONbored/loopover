@@ -197,6 +197,17 @@ const localBranchScorerSchema = z
   })
   .strict();
 
+const linkedIssueContextSchema = z
+  .object({
+    status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
+    source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
+    issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
+    solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
+    reason: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
+    warnings: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+  })
+  .strict();
+
 const localBranchAnalysisSchema = z
   .object({
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
@@ -232,6 +243,7 @@ const scorePreviewSchema = z.object({
   contributorLogin: z.string().min(1).optional(),
   labels: z.array(z.string()).optional(),
   linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
+  linkedIssueContext: linkedIssueContextSchema.optional(),
   sourceTokenScore: z.number().min(0).optional(),
   totalTokenScore: z.number().min(0).optional(),
   sourceLines: z.number().min(0).optional(),
@@ -1234,6 +1246,7 @@ export function createApp() {
       scoringSnapshot: snapshot,
       scoringProfile,
       issueQuality: issueQuality?.report,
+      gittensorSnapshot: context.gittensorSnapshot,
     });
     const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);

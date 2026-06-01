@@ -8,6 +8,7 @@ export type ScorePreviewInput = {
   contributorLogin?: string | undefined;
   labels?: string[] | undefined;
   linkedIssueMode?: "none" | "standard" | "maintainer" | undefined;
+  linkedIssueContext?: LinkedIssueMultiplierContext | undefined;
   sourceTokenScore?: number | undefined;
   totalTokenScore?: number | undefined;
   sourceLines?: number | undefined;
@@ -34,6 +35,32 @@ export type ScorePreviewInput = {
   observedScenarioNotes?: string[] | undefined;
 };
 
+export type LinkedIssueMultiplierStatus = "not_required" | "raw" | "plausible" | "validated" | "invalid" | "unavailable";
+
+export type LinkedIssueMultiplierSource = "none" | "user_supplied" | "official_mirror" | "github_cache" | "issue_quality" | "missing";
+
+export type LinkedIssueMultiplierContext = {
+  status?: Exclude<LinkedIssueMultiplierStatus, "not_required"> | undefined;
+  source?: Exclude<LinkedIssueMultiplierSource, "none"> | undefined;
+  issueNumbers?: number[] | undefined;
+  solvedByPullRequests?: number[] | undefined;
+  reason?: string | undefined;
+  warnings?: string[] | undefined;
+};
+
+export type LinkedIssueMultiplierDecision = {
+  mode: "none" | "standard" | "maintainer";
+  status: LinkedIssueMultiplierStatus;
+  source: LinkedIssueMultiplierSource;
+  eligible: boolean;
+  issueNumbers: number[];
+  solvedByPullRequests: number[];
+  baseMultiplier: number;
+  appliedMultiplier: number;
+  reason: string;
+  warnings: string[];
+};
+
 export type ScoreGateBlocker = {
   code:
     | "repo_not_registered"
@@ -42,7 +69,9 @@ export type ScoreGateBlocker = {
     | "open_pr_threshold"
     | "credibility_floor"
     | "review_penalty"
-    | "metadata_only";
+    | "metadata_only"
+    | "linked_issue_invalid"
+    | "linked_issue_unvalidated";
   severity: "blocker" | "reducer" | "context";
   detail: string;
 };
@@ -63,6 +92,7 @@ export type ScoreScenarioPreview = {
   effectiveEstimatedScore: number;
   underlyingPotentialScore: number;
   blockedBy: ScoreGateBlocker[];
+  linkedIssueMultiplier: LinkedIssueMultiplierDecision;
   deltaExplanation: string;
 };
 
@@ -92,6 +122,7 @@ export type ScorePreviewResult = {
     estimatedMergedScore: number;
     pendingSaturationScore: number;
   };
+  linkedIssueMultiplier: LinkedIssueMultiplierDecision;
   gates: {
     baseTokenGatePassed: boolean;
     openPrThreshold: number;
@@ -136,6 +167,9 @@ export function buildScorePreview(args: {
     ...(current.scoreEstimate.labelMultiplier <= 1 && Object.keys(args.repo?.registryConfig?.labelMultipliers ?? {}).length > 0
       ? ["Check whether the change legitimately matches one of the repo's configured trusted labels."]
       : []),
+    ...(current.linkedIssueMultiplier.mode === "standard" && !current.linkedIssueMultiplier.eligible
+      ? ["Validate linked issue context with solved-by-PR evidence before relying on the standard issue multiplier."]
+      : []),
   ];
 
   return {
@@ -146,6 +180,7 @@ export function buildScorePreview(args: {
     privateOnly: true,
     laneMath: current.laneMath,
     scoreEstimate: current.scoreEstimate,
+    linkedIssueMultiplier: current.linkedIssueMultiplier,
     gates: current.gates,
     effectiveEstimatedScore,
     underlyingPotentialScore,
@@ -158,6 +193,7 @@ export function buildScorePreview(args: {
       "Advisory preview only; tied to the recorded scoring model snapshot and cached Gittensory data.",
       "No future outcome or exact payout is guaranteed.",
       "Private API/MCP output only; public comments intentionally omit these details.",
+      `Linked issue multiplier status: ${current.linkedIssueMultiplier.status}; ${current.linkedIssueMultiplier.reason}`,
       ...(args.input.scenarioNotes ?? []).map((note) => `User scenario note: ${note}`),
     ],
     recommendation: {
@@ -187,7 +223,7 @@ export function makeScorePreviewRecord(input: ScorePreviewInput, snapshot: Scori
   };
 }
 
-type ScoreCore = Pick<ScorePreviewResult, "laneMath" | "scoreEstimate" | "gates">;
+type ScoreCore = Pick<ScorePreviewResult, "laneMath" | "scoreEstimate" | "gates" | "linkedIssueMultiplier">;
 
 function computeScoreCore(
   input: ScorePreviewInput,
@@ -226,7 +262,8 @@ function computeScoreCore(
         : densityBaseScore;
   const activeContributionBonus = snapshot.activeModel === "pending_saturation_model" ? saturationContributionBonusValue : densityContributionBonus;
   const labelMultiplier = selectLabelMultiplier(input.labels ?? [], config?.labelMultipliers ?? {}, config?.defaultLabelMultiplier ?? 1);
-  const issueMultiplier = selectIssueMultiplier(input.linkedIssueMode ?? "none", constants);
+  const linkedIssueMultiplier = decideLinkedIssueMultiplier(input.linkedIssueMode ?? "none", input.linkedIssueContext, constants);
+  const issueMultiplier = linkedIssueMultiplier.appliedMultiplier;
   const credibilityObserved = clamp(input.credibility ?? inferCredibility(contributorEvidence), 0, 1);
   const credibilityFloor = constant(constants, "MIN_CREDIBILITY", 0.8);
   const credibilityMultiplier = credibilityObserved >= credibilityFloor ? 1 : credibilityObserved / credibilityFloor;
@@ -262,6 +299,7 @@ function computeScoreCore(
       estimatedMergedScore,
       pendingSaturationScore,
     },
+    linkedIssueMultiplier,
     gates: {
       baseTokenGatePassed,
       openPrThreshold,
@@ -314,10 +352,7 @@ function buildScenarioPreviews(
     openPrCount: expectedOpenPrCountAfterMerge,
     credibility: projectedCredibility,
   };
-  const linkedIssueInput = {
-    ...input,
-    linkedIssueMode: input.linkedIssueMode === "none" || !input.linkedIssueMode ? ("standard" as const) : input.linkedIssueMode,
-  };
+  const linkedIssueInput = withValidatedLinkedIssueScenario(input);
   const bestReasonableInput = {
     ...linkedIssueInput,
     openPrCount: Math.min(
@@ -380,8 +415,8 @@ function buildScenarioPreviews(
     ),
     scenario("linkedIssueFixed", "gittensory_projection", linkedIssueInput, computeScoreCore(linkedIssueInput, repo, snapshot, contributorEvidence), [
       input.linkedIssueMode === "none" || !input.linkedIssueMode
-        ? "A standard linked-issue/no-issue rationale multiplier is projected as present."
-        : "Linked issue mode was already supplied; this scenario is unchanged.",
+        ? "A standard linked-issue/no-issue rationale multiplier is projected as solved-by-PR validated."
+        : "Linked issue mode was already supplied; this scenario projects solved-by-PR validation where needed.",
     ], repo),
     scenario("bestReasonableCase", "gittensory_projection", bestReasonableInput, computeScoreCore(bestReasonableInput, repo, snapshot, contributorEvidence), [
       "Combines plausible near-term gate cleanup: open PR pressure at threshold or below, credibility at floor or above, and linked-issue context where applicable.",
@@ -414,6 +449,7 @@ function scenario(
     source,
     assumptions,
     scoreEstimate: core.scoreEstimate,
+    linkedIssueMultiplier: core.linkedIssueMultiplier,
     gates: core.gates,
     effectiveEstimatedScore: core.scoreEstimate.estimatedMergedScore,
     underlyingPotentialScore: core.scoreEstimate.pendingSaturationScore,
@@ -457,14 +493,37 @@ function blockedByFor(input: ScorePreviewInput, repo: RepositoryRecord | null, c
     ...(core.scoreEstimate.reviewPenaltyMultiplier < 1
       ? [{ code: "review_penalty" as const, severity: "reducer" as const, detail: "Change-request history reduces the estimate." }]
       : []),
+    ...(core.linkedIssueMultiplier.mode === "standard" && core.linkedIssueMultiplier.status === "invalid"
+      ? [
+          {
+            code: "linked_issue_invalid" as const,
+            severity: "reducer" as const,
+            detail: core.linkedIssueMultiplier.reason,
+          },
+        ]
+      : []),
+    ...(core.linkedIssueMultiplier.mode === "standard" && ["raw", "plausible", "unavailable"].includes(core.linkedIssueMultiplier.status)
+      ? [
+          {
+            code: "linked_issue_unvalidated" as const,
+            severity: "context" as const,
+            detail: core.linkedIssueMultiplier.reason,
+          },
+        ]
+      : []),
   ];
 }
 
 function buildGateDeltas(current: ScoreCore, scenarios: ScoreScenarioPreview[]): ScoreGateDelta[] {
   const currentScenario = scenarios[0];
+  /* v8 ignore next -- buildScenarioPreviews always emits a current scenario; this protects malformed adapters. */
   if (!currentScenario) return [];
-  const best = scenarios.find((scenarioPreview) => scenarioPreview.name === "bestReasonableCase") ?? currentScenario;
-  const linked = scenarios.find((scenarioPreview) => scenarioPreview.name === "linkedIssueFixed") ?? best;
+  const bestMatch = scenarios.find((scenarioPreview) => scenarioPreview.name === "bestReasonableCase");
+  /* v8 ignore next -- buildScenarioPreviews always emits bestReasonableCase; current is the defensive fallback. */
+  const best = bestMatch ?? currentScenario;
+  const linkedMatch = scenarios.find((scenarioPreview) => scenarioPreview.name === "linkedIssueFixed");
+  /* v8 ignore next -- buildScenarioPreviews always emits linkedIssueFixed; best is the defensive fallback. */
+  const linked = linkedMatch ?? best;
   return [
     ...(current.scoreEstimate.openPrMultiplier !== best.scoreEstimate.openPrMultiplier || current.gates.openPrCount !== best.gates.openPrCount
       ? [
@@ -500,7 +559,7 @@ function buildGateDeltas(current: ScoreCore, scenarios: ScoreScenarioPreview[]):
 }
 
 function warningsFor(input: ScorePreviewInput, repo: RepositoryRecord | null, core: ScoreCore): string[] {
-  return blockedByFor(input, repo, core).map((blocker) => blocker.detail);
+  return [...new Set([...blockedByFor(input, repo, core).map((blocker) => blocker.detail), ...core.linkedIssueMultiplier.warnings])];
 }
 
 function statusFor(
@@ -528,6 +587,110 @@ function selectLabelMultiplier(labels: string[], multipliers: Record<string, num
     fallback || 1,
     ...Object.entries(multipliers).flatMap(([label, multiplier]) => (normalized.has(label.toLowerCase()) ? [multiplier] : [])),
   );
+}
+
+function decideLinkedIssueMultiplier(
+  mode: "none" | "standard" | "maintainer",
+  context: LinkedIssueMultiplierContext | undefined,
+  constants: Record<string, number>,
+): LinkedIssueMultiplierDecision {
+  const baseMultiplier = selectIssueMultiplier(mode, constants);
+  const issueNumbers = uniquePositiveInts(context?.issueNumbers ?? []);
+  const solvedByPullRequests = uniquePositiveInts(context?.solvedByPullRequests ?? []);
+  if (mode === "none") {
+    return {
+      mode,
+      status: "not_required",
+      source: "none",
+      eligible: false,
+      issueNumbers,
+      solvedByPullRequests,
+      baseMultiplier,
+      appliedMultiplier: 1,
+      reason: "No linked-issue multiplier mode was requested.",
+      warnings: [],
+    };
+  }
+  if (mode === "maintainer") {
+    return {
+      mode,
+      status: "not_required",
+      source: context?.source ?? "none",
+      eligible: true,
+      issueNumbers,
+      solvedByPullRequests,
+      baseMultiplier,
+      appliedMultiplier: baseMultiplier,
+      reason: "Maintainer-lane multiplier does not require solved-by-PR issue linkage.",
+      warnings: context?.warnings ?? [],
+    };
+  }
+
+  const status = context?.status ?? (solvedByPullRequests.length > 0 ? "validated" : issueNumbers.length > 0 ? "raw" : "unavailable");
+  const source = context?.source ?? (status === "unavailable" ? "missing" : "user_supplied");
+  const eligible = status === "validated";
+  const reason = context?.reason ?? linkedIssueReason(status, source, issueNumbers, solvedByPullRequests);
+  return {
+    mode,
+    status,
+    source,
+    eligible,
+    issueNumbers,
+    solvedByPullRequests,
+    baseMultiplier,
+    appliedMultiplier: eligible ? baseMultiplier : 1,
+    reason,
+    warnings: [...new Set([...linkedIssueWarnings(status), ...(context?.warnings ?? [])])],
+  };
+}
+
+function withValidatedLinkedIssueScenario(input: ScorePreviewInput): ScorePreviewInput {
+  const mode = input.linkedIssueMode ?? "none";
+  if (mode === "maintainer") return input;
+  const issueNumbers = uniquePositiveInts(input.linkedIssueContext?.issueNumbers ?? []);
+  const solvedByPullRequests = uniquePositiveInts(input.linkedIssueContext?.solvedByPullRequests ?? []);
+  return {
+    ...input,
+    linkedIssueMode: "standard",
+    linkedIssueContext: {
+      ...input.linkedIssueContext,
+      status: "validated",
+      source: input.linkedIssueContext?.source ?? "user_supplied",
+      issueNumbers,
+      solvedByPullRequests,
+      reason: "Projection assumes linked issue context is solved-by-PR validated.",
+      warnings: [],
+    },
+  };
+}
+
+function linkedIssueReason(
+  status: Exclude<LinkedIssueMultiplierStatus, "not_required">,
+  source: LinkedIssueMultiplierSource,
+  issueNumbers: number[],
+  solvedByPullRequests: number[],
+): string {
+  const issues = issueNumbers.length > 0 ? ` for issue(s) ${issueNumbers.map((number) => `#${number}`).join(", ")}` : "";
+  if (status === "validated") {
+    const solvers = solvedByPullRequests.length > 0 ? ` via solved-by-PR ${solvedByPullRequests.map((number) => `#${number}`).join(", ")}` : "";
+    return `Linked issue context is solved-by-PR validated${issues}${solvers}.`;
+  }
+  if (status === "invalid") return `Linked issue context is invalid${issues}; standard issue multiplier is not applied.`;
+  if (status === "plausible") return `Linked issue context is plausible${issues}, but solved-by-PR validation is not available yet.`;
+  if (status === "unavailable") return `Linked issue mirror/cache data is unavailable${issues}; standard issue multiplier is not applied until validation is available.`;
+  return `Raw linked issue reference${issues} has no solved-by-PR validation from ${source}.`;
+}
+
+function linkedIssueWarnings(status: Exclude<LinkedIssueMultiplierStatus, "not_required">): string[] {
+  if (status === "validated") return [];
+  if (status === "invalid") return ["Linked issue context is invalid; standard issue multiplier is not applied."];
+  if (status === "unavailable") return ["Linked issue mirror/cache data is unavailable; standard issue multiplier is not applied until validation is available."];
+  if (status === "plausible") return ["Linked issue context is plausible but not solved-by-PR validated; standard issue multiplier is not applied."];
+  return ["Raw linked issue reference has no solved-by-PR evidence; standard issue multiplier is not applied."];
+}
+
+function uniquePositiveInts(values: number[]): number[] {
+  return [...new Set(values.filter((value) => Number.isInteger(value) && value > 0))].sort((left, right) => left - right);
 }
 
 function selectIssueMultiplier(mode: "none" | "standard" | "maintainer", constants: Record<string, number>): number {
@@ -564,6 +727,7 @@ function saturationContributionBonus(totalTokenScore: number, constants: Record<
 }
 
 function nonNegative(value: number | undefined): number {
+  /* v8 ignore next -- API schemas and local scorers normalize numeric preview inputs before this defensive fallback. */
   return Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
 }
 

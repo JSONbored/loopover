@@ -134,6 +134,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
         repoFullName: repo.fullName,
         labels: ["bug"],
         linkedIssueMode: "standard",
+        linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
         sourceTokenScore: 58,
         totalTokenScore: 1500,
         sourceLines: 120,
@@ -187,6 +188,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
         repoFullName: repo.fullName,
         labels: ["bug"],
         linkedIssueMode: "standard",
+        linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
         sourceTokenScore: 60,
         totalTokenScore: 90,
         sourceLines: 50,
@@ -206,6 +208,107 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(preview.privateOnly).toBe(true);
   });
 
+  it("falls back to a neutral label multiplier when repo defaults are zeroed", () => {
+    const preview = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier: 0, labelMultipliers: {} } },
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+
+    expect(preview.scoreEstimate.labelMultiplier).toBe(1);
+  });
+
+  it("requires solved-by-PR validation before applying the standard linked-issue multiplier", () => {
+    const baseInput = {
+      repoFullName: repo.fullName,
+      linkedIssueMode: "standard" as const,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+    };
+    const raw = buildScorePreview({ repo, snapshot, input: { ...baseInput, linkedIssueContext: { status: "raw", source: "github_cache", issueNumbers: [7] } } });
+    const validated = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] } },
+    });
+    const invalid = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "invalid", source: "github_cache", issueNumbers: [7], reason: "Issue #7 is closed without solved-by-PR evidence." } },
+    });
+    const invalidDefaultReason = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "invalid", source: "github_cache", issueNumbers: [8] } },
+    });
+    const plausible = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "plausible", source: "github_cache", issueNumbers: [9] } },
+    });
+    const defaultValidated = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] } },
+    });
+    const validatedWithoutSolverNumber = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "github_cache", issueNumbers: [11] } },
+    });
+    const rawByDefault = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { issueNumbers: [12] } },
+    });
+    const unavailableByDefault = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: {} },
+    });
+    const malformedNumbers = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, sourceTokenScore: Number.NaN, linkedIssueContext: { status: "validated", source: "github_cache", issueNumbers: [13, 13, -1, 0, 1.5], solvedByPullRequests: [120, 120, 0] } },
+    });
+    const unavailable = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "unavailable", source: "missing", issueNumbers: [7] } },
+    });
+    const missingContext = buildScorePreview({ repo, snapshot, input: baseInput });
+
+    expect(raw.linkedIssueMultiplier).toMatchObject({ status: "raw", eligible: false, appliedMultiplier: 1 });
+    expect(raw.scoreEstimate.issueMultiplier).toBe(1);
+    expect(raw.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "linked_issue_unvalidated", severity: "context" })]));
+    expect(raw.scenarioPreviews.find((scenario) => scenario.name === "linkedIssueFixed")?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1.33 });
+    expect(validated.linkedIssueMultiplier).toMatchObject({ status: "validated", eligible: true, solvedByPullRequests: [101], appliedMultiplier: 1.33 });
+    expect(validated.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(invalid.linkedIssueMultiplier).toMatchObject({ status: "invalid", eligible: false, appliedMultiplier: 1 });
+    expect(invalid.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "linked_issue_invalid", severity: "reducer" })]));
+    expect(invalidDefaultReason.linkedIssueMultiplier.reason).toMatch(/invalid.*#8/i);
+    expect(plausible.linkedIssueMultiplier).toMatchObject({ status: "plausible", eligible: false, appliedMultiplier: 1 });
+    expect(plausible.warnings.join(" ")).toMatch(/plausible.*not solved-by-PR/i);
+    expect(defaultValidated.linkedIssueMultiplier).toMatchObject({ status: "validated", source: "user_supplied", solvedByPullRequests: [110], appliedMultiplier: 1.33 });
+    expect(validatedWithoutSolverNumber.linkedIssueMultiplier.reason).toMatch(/validated for issue\(s\) #11\./i);
+    expect(rawByDefault.linkedIssueMultiplier).toMatchObject({ status: "raw", source: "user_supplied", issueNumbers: [12], appliedMultiplier: 1 });
+    expect(unavailableByDefault.linkedIssueMultiplier).toMatchObject({ status: "unavailable", source: "missing", issueNumbers: [], appliedMultiplier: 1 });
+    expect(malformedNumbers.linkedIssueMultiplier).toMatchObject({ issueNumbers: [13], solvedByPullRequests: [120] });
+    expect(malformedNumbers.gates.baseTokenGatePassed).toBe(false);
+    expect(unavailable.warnings.join(" ")).toMatch(/unavailable/i);
+    expect(missingContext.linkedIssueMultiplier).toMatchObject({ status: "unavailable", source: "missing", appliedMultiplier: 1 });
+  });
+
   it("shows conditional scoreability when current open PR pressure zeroes the effective score", () => {
     const preview = buildScorePreview({
       repo,
@@ -213,6 +316,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
       input: {
         repoFullName: repo.fullName,
         linkedIssueMode: "standard",
+        linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
         sourceTokenScore: 60,
         totalTokenScore: 90,
         sourceLines: 50,

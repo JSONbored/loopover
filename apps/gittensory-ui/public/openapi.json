@@ -2780,6 +2780,83 @@
               "pendingSaturationScore"
             ]
           },
+          "linkedIssueMultiplier": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "standard",
+                  "maintainer"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_required",
+                  "raw",
+                  "plausible",
+                  "validated",
+                  "invalid",
+                  "unavailable"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "user_supplied",
+                  "official_mirror",
+                  "github_cache",
+                  "issue_quality",
+                  "missing"
+                ]
+              },
+              "eligible": {
+                "type": "boolean"
+              },
+              "issueNumbers": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "solvedByPullRequests": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "baseMultiplier": {
+                "type": "number"
+              },
+              "appliedMultiplier": {
+                "type": "number"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "mode",
+              "status",
+              "source",
+              "eligible",
+              "issueNumbers",
+              "solvedByPullRequests",
+              "baseMultiplier",
+              "appliedMultiplier",
+              "reason",
+              "warnings"
+            ]
+          },
           "gates": {
             "type": "object",
             "properties": {
@@ -2831,7 +2908,9 @@
                     "open_pr_threshold",
                     "credibility_floor",
                     "review_penalty",
-                    "metadata_only"
+                    "metadata_only",
+                    "linked_issue_invalid",
+                    "linked_issue_unvalidated"
                   ]
                 },
                 "severity": {
@@ -3014,7 +3093,9 @@
                           "open_pr_threshold",
                           "credibility_floor",
                           "review_penalty",
-                          "metadata_only"
+                          "metadata_only",
+                          "linked_issue_invalid",
+                          "linked_issue_unvalidated"
                         ]
                       },
                       "severity": {
@@ -3036,6 +3117,83 @@
                     ]
                   }
                 },
+                "linkedIssueMultiplier": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "standard",
+                        "maintainer"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "not_required",
+                        "raw",
+                        "plausible",
+                        "validated",
+                        "invalid",
+                        "unavailable"
+                      ]
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "user_supplied",
+                        "official_mirror",
+                        "github_cache",
+                        "issue_quality",
+                        "missing"
+                      ]
+                    },
+                    "eligible": {
+                      "type": "boolean"
+                    },
+                    "issueNumbers": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "solvedByPullRequests": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "baseMultiplier": {
+                      "type": "number"
+                    },
+                    "appliedMultiplier": {
+                      "type": "number"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "status",
+                    "source",
+                    "eligible",
+                    "issueNumbers",
+                    "solvedByPullRequests",
+                    "baseMultiplier",
+                    "appliedMultiplier",
+                    "reason",
+                    "warnings"
+                  ]
+                },
                 "deltaExplanation": {
                   "type": "string"
                 }
@@ -3049,6 +3207,7 @@
                 "effectiveEstimatedScore",
                 "underlyingPotentialScore",
                 "blockedBy",
+                "linkedIssueMultiplier",
                 "deltaExplanation"
               ]
             }
@@ -3107,6 +3266,7 @@
           "privateOnly",
           "laneMath",
           "scoreEstimate",
+          "linkedIssueMultiplier",
           "gates",
           "effectiveEstimatedScore",
           "underlyingPotentialScore",
@@ -3595,7 +3755,9 @@
                             "open_pr_threshold",
                             "credibility_floor",
                             "review_penalty",
-                            "metadata_only"
+                            "metadata_only",
+                            "linked_issue_invalid",
+                            "linked_issue_unvalidated"
                           ]
                         },
                         "severity": {
@@ -3617,6 +3779,83 @@
                       ]
                     }
                   },
+                  "linkedIssueMultiplier": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "standard",
+                          "maintainer"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "not_required",
+                          "raw",
+                          "plausible",
+                          "validated",
+                          "invalid",
+                          "unavailable"
+                        ]
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "user_supplied",
+                          "official_mirror",
+                          "github_cache",
+                          "issue_quality",
+                          "missing"
+                        ]
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      },
+                      "issueNumbers": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "solvedByPullRequests": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "baseMultiplier": {
+                        "type": "number"
+                      },
+                      "appliedMultiplier": {
+                        "type": "number"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "status",
+                      "source",
+                      "eligible",
+                      "issueNumbers",
+                      "solvedByPullRequests",
+                      "baseMultiplier",
+                      "appliedMultiplier",
+                      "reason",
+                      "warnings"
+                    ]
+                  },
                   "deltaExplanation": {
                     "type": "string"
                   }
@@ -3630,6 +3869,7 @@
                   "effectiveEstimatedScore",
                   "underlyingPotentialScore",
                   "blockedBy",
+                  "linkedIssueMultiplier",
                   "deltaExplanation"
                 ]
               },
@@ -3761,7 +4001,9 @@
                             "open_pr_threshold",
                             "credibility_floor",
                             "review_penalty",
-                            "metadata_only"
+                            "metadata_only",
+                            "linked_issue_invalid",
+                            "linked_issue_unvalidated"
                           ]
                         },
                         "severity": {
@@ -3783,6 +4025,83 @@
                       ]
                     }
                   },
+                  "linkedIssueMultiplier": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "standard",
+                          "maintainer"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "not_required",
+                          "raw",
+                          "plausible",
+                          "validated",
+                          "invalid",
+                          "unavailable"
+                        ]
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "user_supplied",
+                          "official_mirror",
+                          "github_cache",
+                          "issue_quality",
+                          "missing"
+                        ]
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      },
+                      "issueNumbers": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "solvedByPullRequests": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "baseMultiplier": {
+                        "type": "number"
+                      },
+                      "appliedMultiplier": {
+                        "type": "number"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "status",
+                      "source",
+                      "eligible",
+                      "issueNumbers",
+                      "solvedByPullRequests",
+                      "baseMultiplier",
+                      "appliedMultiplier",
+                      "reason",
+                      "warnings"
+                    ]
+                  },
                   "deltaExplanation": {
                     "type": "string"
                   }
@@ -3796,6 +4115,7 @@
                   "effectiveEstimatedScore",
                   "underlyingPotentialScore",
                   "blockedBy",
+                  "linkedIssueMultiplier",
                   "deltaExplanation"
                 ]
               },
@@ -3927,7 +4247,9 @@
                             "open_pr_threshold",
                             "credibility_floor",
                             "review_penalty",
-                            "metadata_only"
+                            "metadata_only",
+                            "linked_issue_invalid",
+                            "linked_issue_unvalidated"
                           ]
                         },
                         "severity": {
@@ -3949,6 +4271,83 @@
                       ]
                     }
                   },
+                  "linkedIssueMultiplier": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "standard",
+                          "maintainer"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "not_required",
+                          "raw",
+                          "plausible",
+                          "validated",
+                          "invalid",
+                          "unavailable"
+                        ]
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "user_supplied",
+                          "official_mirror",
+                          "github_cache",
+                          "issue_quality",
+                          "missing"
+                        ]
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      },
+                      "issueNumbers": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "solvedByPullRequests": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "baseMultiplier": {
+                        "type": "number"
+                      },
+                      "appliedMultiplier": {
+                        "type": "number"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "status",
+                      "source",
+                      "eligible",
+                      "issueNumbers",
+                      "solvedByPullRequests",
+                      "baseMultiplier",
+                      "appliedMultiplier",
+                      "reason",
+                      "warnings"
+                    ]
+                  },
                   "deltaExplanation": {
                     "type": "string"
                   }
@@ -3962,6 +4361,7 @@
                   "effectiveEstimatedScore",
                   "underlyingPotentialScore",
                   "blockedBy",
+                  "linkedIssueMultiplier",
                   "deltaExplanation"
                 ]
               },
@@ -4093,7 +4493,9 @@
                             "open_pr_threshold",
                             "credibility_floor",
                             "review_penalty",
-                            "metadata_only"
+                            "metadata_only",
+                            "linked_issue_invalid",
+                            "linked_issue_unvalidated"
                           ]
                         },
                         "severity": {
@@ -4115,6 +4517,83 @@
                       ]
                     }
                   },
+                  "linkedIssueMultiplier": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "standard",
+                          "maintainer"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "not_required",
+                          "raw",
+                          "plausible",
+                          "validated",
+                          "invalid",
+                          "unavailable"
+                        ]
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "user_supplied",
+                          "official_mirror",
+                          "github_cache",
+                          "issue_quality",
+                          "missing"
+                        ]
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      },
+                      "issueNumbers": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "solvedByPullRequests": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "baseMultiplier": {
+                        "type": "number"
+                      },
+                      "appliedMultiplier": {
+                        "type": "number"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "status",
+                      "source",
+                      "eligible",
+                      "issueNumbers",
+                      "solvedByPullRequests",
+                      "baseMultiplier",
+                      "appliedMultiplier",
+                      "reason",
+                      "warnings"
+                    ]
+                  },
                   "deltaExplanation": {
                     "type": "string"
                   }
@@ -4128,6 +4607,7 @@
                   "effectiveEstimatedScore",
                   "underlyingPotentialScore",
                   "blockedBy",
+                  "linkedIssueMultiplier",
                   "deltaExplanation"
                 ]
               },
@@ -4259,7 +4739,9 @@
                             "open_pr_threshold",
                             "credibility_floor",
                             "review_penalty",
-                            "metadata_only"
+                            "metadata_only",
+                            "linked_issue_invalid",
+                            "linked_issue_unvalidated"
                           ]
                         },
                         "severity": {
@@ -4281,6 +4763,83 @@
                       ]
                     }
                   },
+                  "linkedIssueMultiplier": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "standard",
+                          "maintainer"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "not_required",
+                          "raw",
+                          "plausible",
+                          "validated",
+                          "invalid",
+                          "unavailable"
+                        ]
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "user_supplied",
+                          "official_mirror",
+                          "github_cache",
+                          "issue_quality",
+                          "missing"
+                        ]
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      },
+                      "issueNumbers": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "solvedByPullRequests": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "baseMultiplier": {
+                        "type": "number"
+                      },
+                      "appliedMultiplier": {
+                        "type": "number"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "status",
+                      "source",
+                      "eligible",
+                      "issueNumbers",
+                      "solvedByPullRequests",
+                      "baseMultiplier",
+                      "appliedMultiplier",
+                      "reason",
+                      "warnings"
+                    ]
+                  },
                   "deltaExplanation": {
                     "type": "string"
                   }
@@ -4294,6 +4853,7 @@
                   "effectiveEstimatedScore",
                   "underlyingPotentialScore",
                   "blockedBy",
+                  "linkedIssueMultiplier",
                   "deltaExplanation"
                 ]
               },
@@ -4342,7 +4902,9 @@
                         "open_pr_threshold",
                         "credibility_floor",
                         "review_penalty",
-                        "metadata_only"
+                        "metadata_only",
+                        "linked_issue_invalid",
+                        "linked_issue_unvalidated"
                       ]
                     },
                     "severity": {
@@ -7653,6 +8215,51 @@
                     "stale",
                     "duplicate",
                     "invalid"
+                  ]
+                },
+                "linkage": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "raw",
+                        "plausible",
+                        "validated",
+                        "invalid",
+                        "unavailable"
+                      ]
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "official_mirror",
+                        "github_cache",
+                        "missing"
+                      ]
+                    },
+                    "solvedByPullRequests": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source",
+                    "solvedByPullRequests",
+                    "reason",
+                    "warnings"
                   ]
                 },
                 "status": {

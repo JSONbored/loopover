@@ -893,7 +893,17 @@ const ScoreGatesSchema = z.object({
 });
 
 const ScoreGateBlockerSchema = z.object({
-  code: z.enum(["repo_not_registered", "inactive_allocation", "base_token_gate", "open_pr_threshold", "credibility_floor", "review_penalty", "metadata_only"]),
+  code: z.enum([
+    "repo_not_registered",
+    "inactive_allocation",
+    "base_token_gate",
+    "open_pr_threshold",
+    "credibility_floor",
+    "review_penalty",
+    "metadata_only",
+    "linked_issue_invalid",
+    "linked_issue_unvalidated",
+  ]),
   severity: z.enum(["blocker", "reducer", "context"]),
   detail: z.string(),
 });
@@ -905,6 +915,19 @@ const ScoreGateDeltaSchema = z.object({
   explanation: z.string(),
 });
 
+const LinkedIssueMultiplierDecisionSchema = z.object({
+  mode: z.enum(["none", "standard", "maintainer"]),
+  status: z.enum(["not_required", "raw", "plausible", "validated", "invalid", "unavailable"]),
+  source: z.enum(["none", "user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]),
+  eligible: z.boolean(),
+  issueNumbers: z.array(z.number()),
+  solvedByPullRequests: z.array(z.number()),
+  baseMultiplier: z.number(),
+  appliedMultiplier: z.number(),
+  reason: z.string(),
+  warnings: z.array(z.string()),
+});
+
 const ScoreScenarioPreviewSchema = z.object({
   name: z.enum(["current", "cleanGates", "afterPendingMerges", "afterApprovedPrsMerge", "afterStalePrsClose", "linkedIssueFixed", "bestReasonableCase"]),
   source: z.enum(["current_data", "user_supplied", "github_observed", "gittensory_projection"]),
@@ -914,6 +937,7 @@ const ScoreScenarioPreviewSchema = z.object({
   effectiveEstimatedScore: z.number(),
   underlyingPotentialScore: z.number(),
   blockedBy: z.array(ScoreGateBlockerSchema),
+  linkedIssueMultiplier: LinkedIssueMultiplierDecisionSchema,
   deltaExplanation: z.string(),
 });
 
@@ -926,6 +950,7 @@ export const ScorePreviewResultSchema = z
     privateOnly: z.literal(true),
     laneMath: z.record(z.number()),
     scoreEstimate: ScoreEstimateSchema,
+    linkedIssueMultiplier: LinkedIssueMultiplierDecisionSchema,
     gates: ScoreGatesSchema,
     effectiveEstimatedScore: z.number(),
     underlyingPotentialScore: z.number(),
@@ -966,6 +991,15 @@ export const IssueQualityReportSchema = z
         number: z.number(),
         title: z.string(),
         lifecycle: z.enum(["open", "closed_not_solved", "solved", "valid_solved", "stale", "duplicate", "invalid"]).optional(),
+        linkage: z
+          .object({
+            status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]),
+            source: z.enum(["official_mirror", "github_cache", "missing"]),
+            solvedByPullRequests: z.array(z.number()),
+            reason: z.string(),
+            warnings: z.array(z.string()),
+          })
+          .optional(),
         status: z.enum(["ready", "needs_proof", "hold", "do_not_use"]),
         score: z.number(),
         reasons: z.array(z.string()),

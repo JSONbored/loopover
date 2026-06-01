@@ -479,6 +479,7 @@ export type IssueQualityReport = {
     number: number;
     title: string;
     lifecycle?: IssueDiscoveryLifecycleState | undefined;
+    linkage?: IssueLinkageRecord | undefined;
     status: "ready" | "needs_proof" | "hold" | "do_not_use";
     score: number;
     reasons: string[];
@@ -488,6 +489,14 @@ export type IssueQualityReport = {
 };
 
 export type IssueDiscoveryLifecycleState = "open" | "closed_not_solved" | "solved" | "valid_solved" | "stale" | "duplicate" | "invalid";
+
+export type IssueLinkageRecord = {
+  status: "raw" | "plausible" | "validated" | "invalid" | "unavailable";
+  source: "official_mirror" | "github_cache" | "missing";
+  solvedByPullRequests: number[];
+  reason: string;
+  warnings: string[];
+};
 
 export type IssueDiscoveryLifecycleReport = {
   repoFullName: string;
@@ -2241,11 +2250,13 @@ export function buildIssueQualityReport(
       /* v8 ignore next -- Missing issue dates normalize to zero age; issue-quality status tests cover age-driven behavior. */
       const age = daysSince(issue.updatedAt ?? issue.createdAt);
       /* v8 ignore next -- Lifecycle map is built from the same issue set; fallback protects malformed external issue-quality payloads. */
-      const lifecycle = lifecycleByIssue.get(issue.number)?.state ?? "open";
+      const lifecycleEntry = lifecycleByIssue.get(issue.number);
+      const lifecycle = lifecycleEntry?.state ?? "open";
       const bodyLength = issue.body?.trim().length ?? 0;
       const bounty = bountyByIssue.get(bountyIssueKey(fullName, issue.number)) ?? null;
       const bountyLifecycle = bounty ? classifyBountyLifecycle(bounty, issue) : null;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
+      const linkage = buildIssueLinkageRecord(issue, lifecycleEntry, linkedPrs, linkedMergedPrs);
       const reasons = [
         ...(bodyLength >= 200 ? ["Issue has enough body detail to evaluate."] : []),
         ...(issue.labels.length > 0 ? [`Labels: ${issue.labels.join(", ")}.`] : []),
@@ -2278,7 +2289,7 @@ export function buildIssueQualityReport(
             : score < 45
               ? "hold"
               : "ready";
-      return { number: issue.number, title: issue.title, lifecycle, status, score, reasons, warnings };
+      return { number: issue.number, title: issue.title, lifecycle, linkage, status, score, reasons, warnings };
     })
     .sort((left, right) => right.score - left.score || left.number - right.number);
   return {
@@ -2309,6 +2320,59 @@ export function buildIssueDiscoveryLifecycleReport(
     states,
     summary: `${states.length} issue lifecycle state(s) classified; ${states.filter((entry) => entry.state === "valid_solved").length} valid solved issue(s), ${states.filter((entry) => entry.state === "closed_not_solved").length} closed without solver evidence.`,
   };
+}
+
+function buildIssueLinkageRecord(
+  issue: IssueRecord,
+  lifecycleEntry: IssueDiscoveryLifecycleReport["states"][number] | undefined,
+  linkedPrs: PullRequestRecord[],
+  linkedMergedPrs: RecentMergedPullRequestRecord[],
+): IssueLinkageRecord {
+  const solvedByPullRequests = [
+    ...new Set([
+      ...(lifecycleEntry?.solvedByPullRequests ?? []),
+      ...linkedPrs.filter((pr) => pr.mergedAt || pr.state === "merged").map((pr) => pr.number),
+      ...linkedMergedPrs.map((pr) => pr.number),
+    ]),
+  ].sort((left, right) => left - right);
+  const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
+  const lifecycle = lifecycleEntry?.state;
+  const status: IssueLinkageRecord["status"] =
+    solvedByPullRequests.length > 0 || lifecycle === "solved" || lifecycle === "valid_solved"
+      ? "validated"
+      : lifecycle === "closed_not_solved" || lifecycle === "duplicate" || lifecycle === "invalid" || issue.state !== "open"
+        ? "invalid"
+        : linkedWorkCount > 0
+          ? "plausible"
+          : lifecycle
+            ? "raw"
+            : "unavailable";
+  const issueRef = `#${issue.number}`;
+  const reason =
+    status === "validated"
+      ? `Cached GitHub linkage has solved-by-PR evidence for ${issueRef}${solvedByPullRequests.length > 0 ? ` via ${solvedByPullRequests.map((number) => `#${number}`).join(", ")}` : ""}.`
+      : status === "invalid"
+        ? `Cached GitHub linkage marks ${issueRef} as ${lifecycle?.replace(/_/g, " ") ?? issue.state}.`
+        : status === "plausible"
+          ? `Cached GitHub linkage has PR context for ${issueRef}, but no solved-by-PR evidence yet.`
+          : status === "unavailable"
+            ? `No cached linkage state was available for ${issueRef}.`
+            : `Cached GitHub linkage has only a raw issue reference for ${issueRef}.`;
+  return {
+    status,
+    source: status === "unavailable" ? "missing" : "github_cache",
+    solvedByPullRequests,
+    reason,
+    warnings: issueLinkageWarnings(status),
+  };
+}
+
+function issueLinkageWarnings(status: IssueLinkageRecord["status"]): string[] {
+  if (status === "validated") return [];
+  if (status === "invalid") return ["Issue linkage should not be treated as multiplier-validated."];
+  if (status === "unavailable") return ["Issue linkage data is unavailable; confirm solved-by-PR state before relying on it."];
+  if (status === "plausible") return ["Issue linkage is plausible but not solved-by-PR validated yet."];
+  return ["Raw issue reference has no solved-by-PR evidence yet."];
 }
 
 function classifyIssueDiscoveryLifecycle(

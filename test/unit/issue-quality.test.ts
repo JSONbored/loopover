@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildContributorFit,
   buildContributorOpportunities,
+  buildIssueDiscoveryLifecycleReport,
   buildIssueQualityReport,
   type ContributorProfile,
   type IssueQualityReport,
@@ -62,6 +63,7 @@ describe("issue quality reports", () => {
     const linkedPr = pr(repo.fullName, 100, "Fix for #5", { linkedIssues: [5] });
     const report = buildIssueQualityReport(repo, [issue(repo.fullName, 5, "Already worked on", { body: "x".repeat(220) })], [linkedPr], repo.fullName);
     expect(report.issues[0]?.status).toBe("do_not_use");
+    expect(report.issues[0]?.linkage).toMatchObject({ status: "plausible", source: "github_cache", solvedByPullRequests: [] });
     expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/already reference this issue/i)]));
   });
 
@@ -85,8 +87,24 @@ describe("issue quality reports", () => {
     });
     expect(report.issues.find((entry) => entry.number === 6)).toMatchObject({
       status: "do_not_use",
+      linkage: { status: "validated", solvedByPullRequests: [101] },
       warnings: expect.arrayContaining([expect.stringMatching(/merged PR/i)]),
     });
+  });
+
+  it("records raw, validated, and closed-not-solved linkage states separately", () => {
+    const repo = issueDiscoveryRepo("owner/linkage");
+    const raw = issue(repo.fullName, 1, "Raw issue", { body: "x".repeat(220) });
+    const solved = issue(repo.fullName, 2, "Solved issue", { body: "x".repeat(220) });
+    const duplicate = issue(repo.fullName, 4, "Duplicate issue", { body: "x".repeat(220), labels: ["duplicate"] });
+    const closed = issue(repo.fullName, 3, "Closed issue", { body: "x".repeat(220), state: "closed" });
+    const quality = buildIssueQualityReport(repo, [raw, solved, closed, duplicate], [], repo.fullName, [], undefined, [recentMergedPr(repo.fullName, 202, "Fixes #2", { linkedIssues: [2] })]);
+    const lifecycle = buildIssueDiscoveryLifecycleReport(repo, [closed], [], repo.fullName);
+
+    expect(quality.issues.find((entry) => entry.number === 1)?.linkage).toMatchObject({ status: "raw", source: "github_cache", solvedByPullRequests: [] });
+    expect(quality.issues.find((entry) => entry.number === 2)?.linkage).toMatchObject({ status: "validated", source: "github_cache", solvedByPullRequests: [202] });
+    expect(quality.issues.find((entry) => entry.number === 4)?.linkage).toMatchObject({ status: "invalid", source: "github_cache", solvedByPullRequests: [] });
+    expect(lifecycle.states[0]).toMatchObject({ number: 3, state: "closed_not_solved", solvedByPullRequests: [] });
   });
 
   it("surfaces duplicate-prone context via collision detection on both issues", () => {

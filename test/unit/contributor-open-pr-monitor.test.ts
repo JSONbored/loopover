@@ -144,6 +144,7 @@ describe("contributor open PR monitor", () => {
     const env = createTestEnv();
     vi.spyOn(repositories, "listRepositories").mockResolvedValue([
       { fullName: "entrius/allways-ui", owner: "entrius", name: "allways-ui", isInstalled: true, isRegistered: true, isPrivate: false },
+      { fullName: "other/unregistered", owner: "other", name: "unregistered", isInstalled: true, isRegistered: false, isPrivate: true },
     ] as Awaited<ReturnType<typeof repositories.listRepositories>>);
     vi.spyOn(repositories, "listContributorPullRequests").mockResolvedValue([
       pr({ number: 10 }),
@@ -161,6 +162,7 @@ describe("contributor open PR monitor", () => {
 
     const monitor = await buildContributorOpenPrMonitor(env, "miner-a");
     expect(monitor.openPrCount).toBe(1);
+    expect(monitor.registeredRepoCount).toBe(1);
     expect(monitor.pullRequests).toHaveLength(1);
     expect(monitor.pullRequests[0]).toMatchObject({ number: 10, classification: "approved" });
     expect(monitor.pendingScenarios[0]?.detection.pendingMergedPrCount).toBe(1);

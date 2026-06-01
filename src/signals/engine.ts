@@ -5,6 +5,7 @@ import type {
   CollisionEdgeRecord,
   ContributorRepoStatRecord,
   IssueRecord,
+  PullRequestDetailSyncStateRecord,
   PullRequestFileRecord,
   PullRequestRecord,
   PullRequestReviewRecord,
@@ -289,6 +290,57 @@ export type ContributorPatternReport = {
   generatedAt: string;
   patternType: "success" | "failure";
   patterns: OutcomePattern[];
+  summary: string;
+};
+
+export type RepoOutcomeBucket = "merged" | "closed_unmerged" | "open_active" | "open_stale";
+export type RepoOutcomeDimensionKind = "path" | "label" | "size" | "linked_issue" | "test_evidence" | "review_churn" | "author_role";
+export type RepoOutcomeSignal = "merges_well" | "high_closure_risk" | "mixed";
+
+export type RepoOutcomeDimension = {
+  dimension: RepoOutcomeDimensionKind;
+  key: string;
+  merged: number;
+  closedUnmerged: number;
+  decided: number;
+  mergeRate: number;
+  signal: RepoOutcomeSignal;
+};
+
+export type RepoOutcomeEvidenceCompleteness = {
+  pullRequestsAnalyzed: number;
+  withFileDetail: number;
+  withReviewDetail: number;
+  withCheckDetail: number;
+  filesCompletenessRatio: number;
+  reviewsCompletenessRatio: number;
+  checksCompletenessRatio: number;
+  fullyDecidedWithDetail: number;
+  status: "complete" | "partial" | "missing";
+};
+
+export type RepoOutcomePatterns = {
+  repoFullName: string;
+  generatedAt: string;
+  lane: ParticipationLane;
+  primaryLanguage: string | null;
+  sampleSize: number;
+  totals: {
+    analyzed: number;
+    merged: number;
+    closedUnmerged: number;
+    openActive: number;
+    openStale: number;
+    maintainerLanePullRequests: number;
+    outsideContributorPullRequests: number;
+  };
+  outsideContributorMergeRate: number;
+  maintainerLaneMergeRate: number;
+  dimensions: RepoOutcomeDimension[];
+  successPatterns: OutcomePattern[];
+  riskPatterns: OutcomePattern[];
+  evidenceCompleteness: RepoOutcomeEvidenceCompleteness;
+  findings: SignalFinding[];
   summary: string;
 };
 
@@ -599,6 +651,11 @@ const STOPWORDS = new Set([
 const MAX_COLLISION_PAIRWISE_ISSUES = 80;
 const MAX_COLLISION_PAIRWISE_PULL_REQUESTS = 120;
 const MAX_COLLISION_PAIRWISE_RECENT_MERGES = 40;
+const REPO_OUTCOME_STALE_OPEN_DAYS = 30;
+const REPO_OUTCOME_MIN_DECIDED_SAMPLE = 3;
+const REPO_OUTCOME_MERGE_WELL_RATE = 0.7;
+const REPO_OUTCOME_CLOSURE_RISK_RATE = 0.34;
+const REPO_OUTCOME_MAX_PATTERNS = 12;
 
 export function buildLaneAdvice(repo: RepositoryRecord | null, fullName: string): LaneAdvice {
   const config = repo?.registryConfig;
@@ -1689,6 +1746,273 @@ export function buildContributorPatternReport(history: ContributorOutcomeHistory
     patternType,
     patterns,
     summary: `${patterns.length} ${patternType} pattern(s) generated from ${history.source === "gittensor_api" ? "official Gittensor API plus cached GitHub" : "cached GitHub"} evidence.`,
+  };
+}
+
+type RepoOutcomePullRequest = {
+  number: number;
+  bucket: RepoOutcomeBucket;
+  decided: boolean;
+  merged: boolean;
+  maintainerLane: boolean;
+  linked: boolean;
+  labels: string[];
+  filePaths: string[];
+  changedLineCount: number;
+  authorRole: "returning_contributor" | "first_time_or_external";
+  hasReview: boolean;
+  changesRequested: boolean;
+};
+
+export function buildRepoOutcomePatterns(args: {
+  repo: RepositoryRecord | null;
+  repoFullName: string;
+  pullRequests: PullRequestRecord[];
+  recentMergedPullRequests?: RecentMergedPullRequestRecord[] | undefined;
+  files?: PullRequestFileRecord[] | undefined;
+  reviews?: PullRequestReviewRecord[] | undefined;
+  detailSyncStates?: PullRequestDetailSyncStateRecord[] | undefined;
+  syncState?: RepoSyncStateRecord | null | undefined;
+}): RepoOutcomePatterns {
+  const repoKey = args.repoFullName.toLowerCase();
+  const mergedDetailByNumber = new Map<number, RecentMergedPullRequestRecord>();
+  for (const record of args.recentMergedPullRequests ?? []) {
+    if (record.repoFullName.toLowerCase() === repoKey) mergedDetailByNumber.set(record.number, record);
+  }
+  const filesByNumber = new Map<number, PullRequestFileRecord[]>();
+  for (const file of args.files ?? []) {
+    if (file.repoFullName.toLowerCase() !== repoKey) continue;
+    const list = filesByNumber.get(file.pullNumber) ?? [];
+    list.push(file);
+    filesByNumber.set(file.pullNumber, list);
+  }
+  const reviewsByNumber = new Map<number, PullRequestReviewRecord[]>();
+  for (const review of args.reviews ?? []) {
+    if (review.repoFullName.toLowerCase() !== repoKey) continue;
+    const list = reviewsByNumber.get(review.pullNumber) ?? [];
+    list.push(review);
+    reviewsByNumber.set(review.pullNumber, list);
+  }
+
+  const lane = buildLaneAdvice(args.repo, args.repoFullName).lane;
+  const primaryLanguage = args.syncState?.primaryLanguage ?? null;
+
+  const analyzed: RepoOutcomePullRequest[] = args.pullRequests
+    .filter((pr) => pr.repoFullName.toLowerCase() === repoKey)
+    .map((pr) => {
+      const mergedDetail = mergedDetailByNumber.get(pr.number);
+      const merged = Boolean(pr.mergedAt) || pr.state === "merged";
+      const closedUnmerged = !merged && pr.state === "closed";
+      const open = !merged && !closedUnmerged;
+      const stale = open && daysSince(pr.updatedAt ?? pr.createdAt) >= REPO_OUTCOME_STALE_OPEN_DAYS;
+      const bucket: RepoOutcomeBucket = merged ? "merged" : closedUnmerged ? "closed_unmerged" : stale ? "open_stale" : "open_active";
+      const fileRecords = filesByNumber.get(pr.number) ?? [];
+      const filePaths = [...new Set([...fileRecords.map((file) => file.path), ...(mergedDetail?.changedFiles ?? [])])].sort();
+      const reviewRecords = reviewsByNumber.get(pr.number) ?? [];
+      return {
+        number: pr.number,
+        bucket,
+        decided: merged || closedUnmerged,
+        merged,
+        maintainerLane: isMaintainerAssociation(pr.authorAssociation),
+        linked: pr.linkedIssues.length > 0 || (mergedDetail?.linkedIssues.length ?? 0) > 0,
+        labels: [...new Set([...pr.labels, ...(mergedDetail?.labels ?? [])])].sort(),
+        filePaths,
+        changedLineCount: fileRecords.reduce((sum, file) => sum + file.additions + file.deletions, 0),
+        authorRole: pr.authorAssociation === "CONTRIBUTOR" ? "returning_contributor" : "first_time_or_external",
+        hasReview: reviewRecords.length > 0,
+        changesRequested: reviewRecords.some((review) => review.state === "CHANGES_REQUESTED"),
+      };
+    });
+
+  const decided = analyzed.filter((pr) => pr.decided);
+  const maintainer = analyzed.filter((pr) => pr.maintainerLane);
+  const outsideDecided = decided.filter((pr) => !pr.maintainerLane);
+  const maintainerDecided = decided.filter((pr) => pr.maintainerLane);
+  const totals = {
+    analyzed: analyzed.length,
+    merged: analyzed.filter((pr) => pr.bucket === "merged").length,
+    closedUnmerged: analyzed.filter((pr) => pr.bucket === "closed_unmerged").length,
+    openActive: analyzed.filter((pr) => pr.bucket === "open_active").length,
+    openStale: analyzed.filter((pr) => pr.bucket === "open_stale").length,
+    maintainerLanePullRequests: maintainer.length,
+    outsideContributorPullRequests: analyzed.length - maintainer.length,
+  };
+  const outsideContributorMergeRate = rate(outsideDecided.filter((pr) => pr.merged).length, outsideDecided.length);
+  const maintainerLaneMergeRate = rate(maintainerDecided.filter((pr) => pr.merged).length, maintainerDecided.length);
+
+  const groups = new Map<RepoOutcomeDimensionKind, Map<string, RepoOutcomePullRequest[]>>();
+  const addToGroup = (dimension: RepoOutcomeDimensionKind, key: string, pr: RepoOutcomePullRequest) => {
+    const byKey = groups.get(dimension) ?? new Map<string, RepoOutcomePullRequest[]>();
+    const list = byKey.get(key) ?? [];
+    list.push(pr);
+    byKey.set(key, list);
+    groups.set(dimension, byKey);
+  };
+  for (const pr of outsideDecided) {
+    for (const bucket of new Set(pr.filePaths.map(pathBucket))) addToGroup("path", bucket, pr);
+    if (pr.filePaths.length > 0) addToGroup("test_evidence", pr.filePaths.some(isTestFile) ? "with_tests" : "without_tests", pr);
+    for (const label of pr.labels) addToGroup("label", label, pr);
+    const size = sizeBucket(pr);
+    if (size) addToGroup("size", size, pr);
+    addToGroup("linked_issue", pr.linked ? "linked" : "unlinked", pr);
+    addToGroup("author_role", pr.authorRole, pr);
+    if (pr.hasReview) addToGroup("review_churn", pr.changesRequested ? "changes_requested" : "clean_review", pr);
+  }
+
+  const dimensionOrder: RepoOutcomeDimensionKind[] = ["path", "label", "size", "linked_issue", "test_evidence", "review_churn", "author_role"];
+  const dimensions: RepoOutcomeDimension[] = [];
+  for (const dimension of dimensionOrder) {
+    const byKey = groups.get(dimension);
+    if (!byKey) continue;
+    for (const [key, group] of [...byKey.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+      if (group.length < REPO_OUTCOME_MIN_DECIDED_SAMPLE) continue;
+      const mergedCount = group.filter((pr) => pr.merged).length;
+      const mergeRate = rate(mergedCount, group.length);
+      dimensions.push({
+        dimension,
+        key,
+        merged: mergedCount,
+        closedUnmerged: group.length - mergedCount,
+        decided: group.length,
+        mergeRate,
+        signal: outcomeSignal(mergeRate),
+      });
+    }
+  }
+
+  const successPatterns: OutcomePattern[] = [];
+  const riskPatterns: OutcomePattern[] = [];
+  if (outsideDecided.length >= REPO_OUTCOME_MIN_DECIDED_SAMPLE && outsideContributorMergeRate >= REPO_OUTCOME_MERGE_WELL_RATE) {
+    successPatterns.push({
+      repoFullName: args.repoFullName,
+      title: "Outside contributors merge well here",
+      detail: `Outside-contributor PRs merge at ${percent(outsideContributorMergeRate)} across ${outsideDecided.length} decided PR(s).`,
+      confidence: outsideDecided.length >= 6 ? "high" : "medium",
+    });
+  }
+  if (outsideDecided.length >= REPO_OUTCOME_MIN_DECIDED_SAMPLE && outsideContributorMergeRate <= REPO_OUTCOME_CLOSURE_RISK_RATE) {
+    riskPatterns.push({
+      repoFullName: args.repoFullName,
+      title: "Outside contributor PRs rarely merge here",
+      detail: `Outside-contributor PRs merge at only ${percent(outsideContributorMergeRate)} across ${outsideDecided.length} decided PR(s); expect a high closure rate.`,
+      confidence: outsideDecided.length >= 6 ? "high" : "medium",
+    });
+  }
+  for (const dimension of dimensions) {
+    if (dimension.signal === "merges_well") {
+      successPatterns.push({
+        repoFullName: args.repoFullName,
+        title: "Merge-friendly pattern",
+        detail: `${describeDimension(dimension.dimension, dimension.key)} merge well here (${dimension.merged}/${dimension.decided} merged).`,
+        confidence: dimension.decided >= 5 && dimension.mergeRate >= 0.8 ? "high" : "medium",
+      });
+    } else if (dimension.signal === "high_closure_risk") {
+      riskPatterns.push({
+        repoFullName: args.repoFullName,
+        title: "High closure-risk pattern",
+        detail: `${describeDimension(dimension.dimension, dimension.key)} have high closure risk here (${dimension.merged}/${dimension.decided} merged).`,
+        confidence: dimension.decided >= 5 ? "high" : "medium",
+      });
+    }
+  }
+  if (totals.openStale > 0) {
+    riskPatterns.push({
+      repoFullName: args.repoFullName,
+      title: "Stale open PRs",
+      detail: `${totals.openStale} open PR(s) have been idle for at least ${REPO_OUTCOME_STALE_OPEN_DAYS} days and may not convert.`,
+      confidence: totals.openStale >= 4 ? "high" : "medium",
+    });
+  }
+
+  const findings: SignalFinding[] = [];
+  if (outsideDecided.length < REPO_OUTCOME_MIN_DECIDED_SAMPLE) {
+    findings.push({
+      code: "low_outcome_sample",
+      severity: "info",
+      title: "Not enough decided outside-contributor PRs",
+      detail: `Only ${outsideDecided.length} decided outside-contributor PR(s) are cached; merge/close patterns will sharpen as more PRs are synced.`,
+    });
+  }
+  if (maintainer.length > 0) {
+    findings.push({
+      code: "maintainer_activity_separated",
+      severity: "info",
+      title: "Maintainer-lane activity separated",
+      detail: `${maintainer.length} maintainer-lane PR(s) were excluded from outside-contributor merge evidence.`,
+    });
+  }
+  if (totals.openStale > 0) {
+    findings.push({
+      code: "stale_open_prs",
+      severity: "warning",
+      title: "Stale open PRs are present",
+      detail: `${totals.openStale} open PR(s) have not updated in at least ${REPO_OUTCOME_STALE_OPEN_DAYS} days.`,
+      action: "Triage stale open PRs before assuming new work in this repo will land quickly.",
+    });
+  }
+
+  const detailByNumber = new Map<number, PullRequestDetailSyncStateRecord>();
+  for (const state of args.detailSyncStates ?? []) {
+    if (state.repoFullName.toLowerCase() === repoKey) detailByNumber.set(state.pullNumber, state);
+  }
+  const withFileDetail = analyzed.filter((pr) => Boolean(detailByNumber.get(pr.number)?.filesSyncedAt)).length;
+  const withReviewDetail = analyzed.filter((pr) => Boolean(detailByNumber.get(pr.number)?.reviewsSyncedAt)).length;
+  const withCheckDetail = analyzed.filter((pr) => Boolean(detailByNumber.get(pr.number)?.checksSyncedAt)).length;
+  const fullyDecidedWithDetail = decided.filter((pr) => {
+    const state = detailByNumber.get(pr.number);
+    return Boolean(state?.filesSyncedAt && state?.reviewsSyncedAt && state?.checksSyncedAt);
+  }).length;
+  const filesCompletenessRatio = rate(withFileDetail, analyzed.length);
+  const reviewsCompletenessRatio = rate(withReviewDetail, analyzed.length);
+  const checksCompletenessRatio = rate(withCheckDetail, analyzed.length);
+  const completenessStatus: RepoOutcomeEvidenceCompleteness["status"] =
+    analyzed.length === 0 || (withFileDetail === 0 && withReviewDetail === 0 && withCheckDetail === 0)
+      ? "missing"
+      : filesCompletenessRatio >= 0.85 && reviewsCompletenessRatio >= 0.85 && checksCompletenessRatio >= 0.85
+        ? "complete"
+        : "partial";
+  const evidenceCompleteness: RepoOutcomeEvidenceCompleteness = {
+    pullRequestsAnalyzed: analyzed.length,
+    withFileDetail,
+    withReviewDetail,
+    withCheckDetail,
+    filesCompletenessRatio,
+    reviewsCompletenessRatio,
+    checksCompletenessRatio,
+    fullyDecidedWithDetail,
+    status: completenessStatus,
+  };
+  if (analyzed.length > 0 && completenessStatus !== "complete") {
+    findings.push({
+      code: "incomplete_evidence",
+      severity: completenessStatus === "missing" ? "warning" : "info",
+      title: completenessStatus === "missing" ? "PR file/review/check evidence is missing" : "PR file/review/check evidence is partial",
+      detail: `Files synced for ${percent(filesCompletenessRatio)} of analyzed PR(s), reviews for ${percent(reviewsCompletenessRatio)}, checks for ${percent(checksCompletenessRatio)}. Path, size, test-evidence, and review-churn dimensions only reflect PRs with detail-level sync.`,
+      action: "Wait for detail-level PR sync to complete (or trigger a backfill) before relying on path/test/review dimensions for this repo.",
+    });
+  }
+
+  const sortPatterns = (patterns: OutcomePattern[]) =>
+    patterns
+      .sort((left, right) => patternRank(right) - patternRank(left) || left.title.localeCompare(right.title) || left.detail.localeCompare(right.detail))
+      .slice(0, REPO_OUTCOME_MAX_PATTERNS);
+
+  return {
+    repoFullName: args.repoFullName,
+    generatedAt: nowIso(),
+    lane,
+    primaryLanguage,
+    sampleSize: outsideDecided.length,
+    totals,
+    outsideContributorMergeRate,
+    maintainerLaneMergeRate,
+    dimensions,
+    successPatterns: sortPatterns(successPatterns),
+    riskPatterns: sortPatterns(riskPatterns),
+    evidenceCompleteness,
+    findings,
+    summary: `${args.repoFullName}: ${totals.merged} merged, ${totals.closedUnmerged} closed-unmerged, ${totals.openActive + totals.openStale} open (${totals.openStale} stale) PR(s); outside-contributor merge rate ${percent(outsideContributorMergeRate)} across ${outsideDecided.length} decided PR(s); evidence ${completenessStatus} (files ${percent(filesCompletenessRatio)}, reviews ${percent(reviewsCompletenessRatio)}, checks ${percent(checksCompletenessRatio)}).`,
   };
 }
 
@@ -3231,6 +3555,47 @@ function daysSince(value: string | null | undefined): number {
   /* v8 ignore next -- Invalid provider timestamps normalize to fresh; stale timestamp handling is covered by signal tests. */
   if (!Number.isFinite(parsed)) return 0;
   return Math.floor((Date.now() - parsed) / 86_400_000);
+}
+
+function pathBucket(path: string): string {
+  const normalized = path.replace(/^\.?\/+/, "");
+  const slash = normalized.indexOf("/");
+  return slash === -1 ? "(root)" : `${normalized.slice(0, slash)}/`;
+}
+
+function sizeBucket(pr: { changedLineCount: number; filePaths: string[] }): "small" | "medium" | "large" | null {
+  if (pr.changedLineCount > 0) {
+    return pr.changedLineCount <= 30 ? "small" : pr.changedLineCount <= 200 ? "medium" : "large";
+  }
+  if (pr.filePaths.length > 0) {
+    return pr.filePaths.length <= 2 ? "small" : pr.filePaths.length <= 10 ? "medium" : "large";
+  }
+  return null;
+}
+
+function outcomeSignal(mergeRate: number): RepoOutcomeSignal {
+  if (mergeRate >= REPO_OUTCOME_MERGE_WELL_RATE) return "merges_well";
+  if (mergeRate <= REPO_OUTCOME_CLOSURE_RISK_RATE) return "high_closure_risk";
+  return "mixed";
+}
+
+function describeDimension(dimension: RepoOutcomeDimensionKind, key: string): string {
+  switch (dimension) {
+    case "path":
+      return `PRs touching ${key}`;
+    case "label":
+      return `PRs labeled "${key}"`;
+    case "size":
+      return `${key} PRs`;
+    case "linked_issue":
+      return key === "linked" ? "PRs that link an issue" : "PRs with no linked issue";
+    case "test_evidence":
+      return key === "with_tests" ? "PRs that include test changes" : "PRs without test changes";
+    case "review_churn":
+      return key === "changes_requested" ? "PRs that received change requests" : "PRs with no change requests";
+    case "author_role":
+      return key === "returning_contributor" ? "PRs from returning contributors" : "PRs from first-time or external authors";
+  }
 }
 
 function isCodeFile(file: string): boolean {

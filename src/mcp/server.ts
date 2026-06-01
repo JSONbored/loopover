@@ -43,6 +43,7 @@ import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
+import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -324,6 +325,15 @@ export class GittensoryMcp {
         inputSchema: ownerRepoShape,
       },
       async (input) => this.toolResult(await this.getBurdenForecast(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_repo_outcome_patterns",
+      {
+        description: "Return cached or freshly-computed per-repo accepted/rejected PR outcome patterns: what maintainers actually merge or close, separated from maintainer-lane activity, with a freshness marker and explicit evidence-completeness.",
+        inputSchema: ownerRepoShape,
+      },
+      async (input) => this.toolResult(await this.getRepoOutcomePatterns(input)),
     );
 
     server.registerTool(
@@ -636,6 +646,24 @@ export class GittensoryMcp {
         response.source === "snapshot"
           ? `Gittensory issue quality for ${fullName} (cached).`
           : `Gittensory issue quality for ${fullName} (computed from cached metadata).`,
+      data: response as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getRepoOutcomePatterns(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    const response = await loadOrComputeRepoOutcomePatternsResponse(this.env, fullName);
+    if (!response) {
+      return {
+        summary: `Gittensory has no cached repo outcome patterns for ${fullName}.`,
+        data: { status: "not_found", repoFullName: fullName },
+      };
+    }
+    return {
+      summary:
+        response.source === "snapshot"
+          ? `Gittensory repo outcome patterns for ${fullName} (cached, ${response.freshness}).`
+          : `Gittensory repo outcome patterns for ${fullName} (computed from cached metadata).`,
       data: response as unknown as Record<string, unknown>,
     };
   }

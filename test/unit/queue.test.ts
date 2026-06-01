@@ -137,6 +137,13 @@ describe("queue processors", () => {
     const issueQualitySnapshots = await listSignalSnapshots(env, "issue-quality", "JSONbored/gittensory");
     expect(issueQualitySnapshots).toHaveLength(1);
     expect(issueQualitySnapshots[0]?.payload).toMatchObject({ repoFullName: "JSONbored/gittensory", issues: expect.any(Array), summary: expect.any(String) });
+    const outcomePatternSnapshots = await listSignalSnapshots(env, "repo-outcome-patterns", "JSONbored/gittensory");
+    expect(outcomePatternSnapshots).toHaveLength(1);
+    expect(outcomePatternSnapshots[0]?.payload).toMatchObject({
+      repoFullName: "JSONbored/gittensory",
+      totals: expect.any(Object),
+      evidenceCompleteness: expect.objectContaining({ status: expect.any(String) }),
+    });
     expect(await listSignalSnapshots(env, "contributor-decision-pack", "oktofeesh1")).not.toHaveLength(0);
     expect(await getContributorEvidence(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
     expect(await getContributorScoringProfile(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });

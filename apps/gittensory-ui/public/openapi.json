@@ -2554,6 +2554,201 @@
           "dataQuality"
         ]
       },
+      "RepoOutcomeEvidenceCompleteness": {
+        "type": "object",
+        "properties": {
+          "pullRequestsAnalyzed": {
+            "type": "number"
+          },
+          "withFileDetail": {
+            "type": "number"
+          },
+          "withReviewDetail": {
+            "type": "number"
+          },
+          "withCheckDetail": {
+            "type": "number"
+          },
+          "filesCompletenessRatio": {
+            "type": "number"
+          },
+          "reviewsCompletenessRatio": {
+            "type": "number"
+          },
+          "checksCompletenessRatio": {
+            "type": "number"
+          },
+          "fullyDecidedWithDetail": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "partial",
+              "missing"
+            ]
+          }
+        },
+        "required": [
+          "pullRequestsAnalyzed",
+          "withFileDetail",
+          "withReviewDetail",
+          "withCheckDetail",
+          "filesCompletenessRatio",
+          "reviewsCompletenessRatio",
+          "checksCompletenessRatio",
+          "fullyDecidedWithDetail",
+          "status"
+        ]
+      },
+      "RepoOutcomePatterns": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "direct_pr",
+              "issue_discovery",
+              "split",
+              "inactive",
+              "unknown"
+            ]
+          },
+          "primaryLanguage": {
+            "type": "string",
+            "nullable": true
+          },
+          "sampleSize": {
+            "type": "number"
+          },
+          "totals": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "outsideContributorMergeRate": {
+            "type": "number"
+          },
+          "maintainerLaneMergeRate": {
+            "type": "number"
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {
+                "nullable": true
+              }
+            }
+          },
+          "successPatterns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {
+                "nullable": true
+              }
+            }
+          },
+          "riskPatterns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {
+                "nullable": true
+              }
+            }
+          },
+          "evidenceCompleteness": {
+            "$ref": "#/components/schemas/RepoOutcomeEvidenceCompleteness"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "generatedAt",
+          "lane",
+          "primaryLanguage",
+          "sampleSize",
+          "totals",
+          "outsideContributorMergeRate",
+          "maintainerLaneMergeRate",
+          "dimensions",
+          "successPatterns",
+          "riskPatterns",
+          "evidenceCompleteness",
+          "findings",
+          "summary"
+        ]
+      },
+      "RepoOutcomePatternsResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "computed"
+            ]
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "ageSeconds": {
+            "type": "number"
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale"
+            ]
+          },
+          "patterns": {
+            "$ref": "#/components/schemas/RepoOutcomePatterns"
+          },
+          "dataQuality": {
+            "type": "object",
+            "additionalProperties": {
+              "nullable": true
+            }
+          }
+        },
+        "required": [
+          "status",
+          "source",
+          "repoFullName",
+          "generatedAt",
+          "ageSeconds",
+          "freshness",
+          "patterns"
+        ]
+      },
       "RegistrationReadiness": {
         "type": "object",
         "properties": {
@@ -10025,6 +10220,33 @@
           },
           "404": {
             "description": "Repo is unknown or has no issue-quality coverage yet"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/outcome-patterns": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Cached or freshly-computed per-repo accepted/rejected PR outcome patterns with freshness envelope and explicit evidence-completeness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoOutcomePatternsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Repo is unknown or has no outcome-pattern coverage yet"
           }
         },
         "security": [

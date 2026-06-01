@@ -47,6 +47,8 @@ import {
   DecisionPackRefreshNeededSchema,
   RepoFitRecommendationSchema,
   RepoDecisionResponseSchema,
+  RepoOutcomePatternsSchema,
+  RepoOutcomePatternsResponseSchema,
   GittensorConfigRecommendationSchema,
   RegistrationReadinessSchema,
   RepoIntelligenceSchema,
@@ -93,6 +95,8 @@ export function buildOpenApiSpec() {
   registry.register("DecisionPackRefreshNeeded", DecisionPackRefreshNeededSchema);
   registry.register("RepoDecisionResponse", RepoDecisionResponseSchema);
   registry.register("RepoIntelligence", RepoIntelligenceSchema);
+  registry.register("RepoOutcomePatterns", RepoOutcomePatternsSchema);
+  registry.register("RepoOutcomePatternsResponse", RepoOutcomePatternsResponseSchema);
   registry.register("RegistrationReadiness", RegistrationReadinessSchema);
   registry.register("GittensorConfigRecommendation", GittensorConfigRecommendationSchema);
   registry.register("RepoFitRecommendation", RepoFitRecommendationSchema);
@@ -321,6 +325,14 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityResponseSchema } } },
       404: { description: "Repo is unknown or has no issue-quality coverage yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/outcome-patterns",
+    responses: {
+      200: { description: "Cached or freshly-computed per-repo accepted/rejected PR outcome patterns with freshness envelope and explicit evidence-completeness", content: { "application/json": { schema: RepoOutcomePatternsResponseSchema } } },
+      404: { description: "Repo is unknown or has no outcome-pattern coverage yet" },
     },
   });
   registry.registerPath({

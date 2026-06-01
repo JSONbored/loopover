@@ -77,6 +77,7 @@ import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranc
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
+import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
 import {
   buildUpstreamRulesetSnapshot,
   detectAndPersistUpstreamDrift,
@@ -480,6 +481,15 @@ export async function generateSignalSnapshots(env: Env, repoFullName?: string): 
       targetKey: repo.fullName,
       repoFullName: repo.fullName,
       payload: issueQuality as unknown as Record<string, never>,
+      generatedAt,
+    });
+    const repoOutcomePatterns = await computeRepoOutcomePatterns(env, repo.fullName, repo);
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_OUTCOME_PATTERNS_SIGNAL,
+      targetKey: repo.fullName,
+      repoFullName: repo.fullName,
+      payload: repoOutcomePatterns as unknown as Record<string, never>,
       generatedAt,
     });
   }

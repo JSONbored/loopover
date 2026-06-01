@@ -2228,6 +2228,65 @@ describe("api routes", () => {
     expect(mutatingCalls).toEqual([]);
   });
 
+  it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedSignalData(env);
+
+    const unauthenticated = await app.request("/v1/repos/entrius/allways-ui/outcome-patterns", {}, env);
+    expect(unauthenticated.status).toBe(401);
+
+    const unknown = await app.request("/v1/repos/ghost/missing/outcome-patterns", { headers: apiHeaders(env) }, env);
+    expect(unknown.status).toBe(404);
+
+    // Known but uncached: falls back to compute (no snapshot exists yet).
+    const computed = await app.request("/v1/repos/entrius/allways-ui/outcome-patterns", { headers: apiHeaders(env) }, env);
+    expect(computed.status).toBe(200);
+    const computedBody = (await computed.json()) as {
+      source: string;
+      freshness: string;
+      patterns: { repoFullName: string; evidenceCompleteness: { status: string; pullRequestsAnalyzed: number } };
+      dataQuality: unknown;
+    };
+    expect(computedBody.source).toBe("computed");
+    expect(computedBody.freshness).toBe("fresh");
+    expect(computedBody.patterns.repoFullName).toBe("entrius/allways-ui");
+    expect(computedBody.patterns.evidenceCompleteness.status).toBeDefined();
+    expect(computedBody.dataQuality).toBeDefined();
+
+    // Persist a snapshot directly and re-fetch — the endpoint must serve from the snapshot.
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: "repo-outcome-patterns",
+      targetKey: "entrius/allways-ui",
+      repoFullName: "entrius/allways-ui",
+      payload: {
+        repoFullName: "entrius/allways-ui",
+        generatedAt: new Date(Date.now() - 60_000).toISOString(),
+        lane: "direct_pr",
+        primaryLanguage: "TypeScript",
+        sampleSize: 0,
+        totals: { analyzed: 0, merged: 0, closedUnmerged: 0, openActive: 0, openStale: 0, maintainerLanePullRequests: 0, outsideContributorPullRequests: 0 },
+        outsideContributorMergeRate: 0,
+        maintainerLaneMergeRate: 0,
+        dimensions: [],
+        successPatterns: [],
+        riskPatterns: [],
+        evidenceCompleteness: { pullRequestsAnalyzed: 0, withFileDetail: 0, withReviewDetail: 0, withCheckDetail: 0, filesCompletenessRatio: 0, reviewsCompletenessRatio: 0, checksCompletenessRatio: 0, fullyDecidedWithDetail: 0, status: "missing" },
+        findings: [],
+        summary: "fixture",
+      } as unknown as Record<string, never>,
+      generatedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const cached = await app.request("/v1/repos/entrius/allways-ui/outcome-patterns", { headers: apiHeaders(env) }, env);
+    expect(cached.status).toBe(200);
+    const cachedBody = (await cached.json()) as { source: string; freshness: string; patterns: { summary: string } };
+    expect(cachedBody.source).toBe("snapshot");
+    expect(cachedBody.freshness).toBe("fresh");
+    expect(cachedBody.patterns.summary).toBe("fixture");
+    expect(JSON.stringify(cachedBody)).not.toMatch(/wallet|hotkey|payout|reward estimate|farming/i);
+  });
+
   it("reports ready status when required public-review dependencies are present", async () => {
     const app = createApp();
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });

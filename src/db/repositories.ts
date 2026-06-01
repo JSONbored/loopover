@@ -1834,6 +1834,12 @@ export async function listPullRequestFiles(env: Env, fullName: string, pullNumbe
   return rows.map(toPullRequestFileRecord);
 }
 
+export async function listRepoPullRequestFiles(env: Env, fullName: string): Promise<PullRequestFileRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(pullRequestFiles).where(eq(pullRequestFiles.repoFullName, fullName)).limit(2000);
+  return rows.map(toPullRequestFileRecord);
+}
+
 export async function upsertPullRequestReview(env: Env, review: PullRequestReviewRecord): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -1869,6 +1875,12 @@ export async function listPullRequestReviews(env: Env, fullName: string, pullNum
     .from(pullRequestReviews)
     .where(and(eq(pullRequestReviews.repoFullName, fullName), eq(pullRequestReviews.pullNumber, pullNumber)))
     .limit(500);
+  return rows.map(toPullRequestReviewRecord);
+}
+
+export async function listRepoPullRequestReviews(env: Env, fullName: string): Promise<PullRequestReviewRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(pullRequestReviews).where(eq(pullRequestReviews.repoFullName, fullName)).limit(2000);
   return rows.map(toPullRequestReviewRecord);
 }
 

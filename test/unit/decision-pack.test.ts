@@ -108,6 +108,40 @@ describe("decision-pack service", () => {
     expect(__decisionPackInternals.round(1.23456)).toBe(1.2346);
   });
 
+  it("feeds repo outcome patterns into repo decisions without inflating maintainer-lane evidence", () => {
+    const outsideRole = { maintainerLane: false } as any;
+    const maintainerRole = { maintainerLane: true } as any;
+    const patterns = {
+      summary: "owner/direct: 5 merged, 3 closed-unmerged, 0 open (0 stale) PR(s); outside-contributor merge rate 62% across 8 decided PR(s).",
+      outsideContributorMergeRate: 0.62,
+      sampleSize: 8,
+      successPatterns: [{ repoFullName: "owner/direct", title: "Merge-friendly pattern", detail: "PRs touching src/ merge well here (5/5 merged).", confidence: "high" }],
+      riskPatterns: [{ repoFullName: "owner/direct", title: "High closure-risk pattern", detail: "PRs with no linked issue have high closure risk here (0/3 merged).", confidence: "medium" }],
+    } as any;
+
+    const pursue = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: outsideRole,
+      outcome: undefined,
+      repoOutcomePatterns: patterns,
+    });
+    expect(pursue.recommendation).toBe("pursue");
+    expect(pursue.repoOutcomePatterns?.sampleSize).toBe(8);
+    expect(pursue.whyThisHelps.some((line) => line.includes("PRs touching src/ merge well here"))).toBe(true);
+    expect(pursue.riskReasons.some((line) => line.includes("high closure risk"))).toBe(true);
+
+    // Maintainer-lane repos surface the patterns for context but never fold the risk into the contributor's own risk reasons.
+    const maintainer = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: maintainerRole,
+      outcome: undefined,
+      repoOutcomePatterns: patterns,
+    });
+    expect(maintainer.recommendation).toBe("maintainer_lane");
+    expect(maintainer.repoOutcomePatterns?.sampleSize).toBe(8);
+    expect(maintainer.riskReasons.some((line) => line.includes("high closure risk"))).toBe(false);
+  });
+
   it("redacts official hotkeys, loads stale snapshots, and resolves repo decisions case-insensitively", async () => {
     const env = createTestEnv();
     const pack = {

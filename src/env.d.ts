@@ -13,6 +13,7 @@ declare global {
     AI_MAX_OUTPUT_TOKENS?: string;
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
+    GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
     GITHUB_APP_PRIVATE_KEY: string;
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;

@@ -420,7 +420,7 @@ export function createApp() {
     return next();
   });
   app.use("*", async (c, next) => {
-    if (c.req.method === "OPTIONS" || c.req.path === "/health" || c.req.path === "/v1/github/webhook") return next();
+    if (c.req.method === "OPTIONS" || c.req.path === "/health") return next();
     const limited = await enforceRateLimit(c, routeClassForPath(c.req.path));
     if (limited) return limited;
     return next();

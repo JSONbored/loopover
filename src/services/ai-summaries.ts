@@ -4,6 +4,12 @@ import type { AgentRunBundle } from "./agent-orchestrator";
 
 type AiSummaryVisibility = "private" | "public";
 
+const PRIVATE_CONTEXT_PATTERN =
+  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|private reviewability|private scoreability|public score estimates?)\b/gi;
+const PRIVATE_OUTCOME_PATTERN = /\b(payouts?|farming|reward estimates?|reward optimization)\b/gi;
+const PUBLIC_FORBIDDEN_TEXT_PATTERN =
+  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|estimated scores?|score estimates?|public score estimates?|reward estimates?|payouts?|farming|private reviewability|private scoreability|reward optimization)\b/i;
+
 export type AiSummaryResult =
   | { status: "disabled"; reason: string }
   | { status: "unavailable"; reason: string }
@@ -90,6 +96,7 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
 }
 
 function compactAgentSignalBundle(bundle: AgentRunBundle, visibility: AiSummaryVisibility): Record<string, JsonValue> {
+  const publicMode = visibility === "public";
   return {
     run: {
       id: bundle.run.id,
@@ -99,20 +106,33 @@ function compactAgentSignalBundle(bundle: AgentRunBundle, visibility: AiSummaryV
       status: bundle.run.status,
       dataQualityStatus: bundle.run.dataQualityStatus,
     },
-    actions: bundle.actions.slice(0, 5).map((action) => ({
-      actionType: action.actionType,
-      status: action.status,
-      recommendation: visibility === "public" ? action.publicSafeSummary : action.recommendation,
-      publicSafeSummary: action.publicSafeSummary,
-      why: action.why.slice(0, 4),
-      blockedBy: action.blockedBy.slice(0, 4),
-      scoreabilityImpact: visibility === "public" ? undefined : action.scoreabilityImpact,
-      riskImpact: visibility === "public" ? undefined : action.riskImpact,
-      maintainerImpact: action.maintainerImpact,
-      rerunWhen: action.rerunWhen,
-    })),
+    actions: bundle.actions.slice(0, 5).map((action) => {
+      const publicSafeSummary = publicMode ? sanitizePublicPromptText(action.publicSafeSummary) : action.publicSafeSummary;
+      return {
+        actionType: action.actionType,
+        status: action.status,
+        recommendation: publicMode ? publicSafeSummary : action.recommendation,
+        publicSafeSummary,
+        why: sanitizePromptList(action.why, visibility),
+        blockedBy: sanitizePromptList(action.blockedBy, visibility),
+        scoreabilityImpact: publicMode ? undefined : action.scoreabilityImpact,
+        riskImpact: publicMode ? undefined : action.riskImpact,
+        maintainerImpact: publicMode && action.maintainerImpact ? sanitizePublicPromptText(action.maintainerImpact) : action.maintainerImpact,
+        rerunWhen: action.rerunWhen,
+      };
+    }),
     freshnessWarnings: bundle.contextSnapshots.flatMap((snapshot) => snapshot.freshnessWarnings).slice(0, 8),
   } as Record<string, JsonValue>;
+}
+
+function sanitizePromptList(values: string[], visibility: AiSummaryVisibility): string[] {
+  const selected = values.slice(0, 4);
+  if (visibility !== "public") return selected;
+  return selected.map((value) => sanitizePublicPromptText(value)).filter(Boolean);
+}
+
+function sanitizePublicPromptText(value: string): string {
+  return sanitizeAiText(value, "public");
 }
 
 function buildPrompt(signalBundle: Record<string, JsonValue>, visibility: AiSummaryVisibility): string {
@@ -141,16 +161,16 @@ function extractAiText(response: unknown): string {
 
 function sanitizeAiText(value: string, visibility: AiSummaryVisibility): string {
   const sanitized = value
-    .replace(/\b(wallet|hotkey|coldkey|seed phrase|mnemonic|raw trust score|trust score)\b/gi, "private context")
-    .replace(/\b(payout|farming)\b/gi, "private outcome");
+    .replace(PRIVATE_CONTEXT_PATTERN, "private context")
+    .replace(PRIVATE_OUTCOME_PATTERN, "private outcome");
   if (visibility === "public") {
-    return sanitized.replace(/\b(estimated score|score estimate|reward estimate|reward optimization)\b/gi, "private context");
+    return sanitized.replace(/\b(estimated scores?|score estimates?)\b/gi, "private context").trim();
   }
   return sanitized.trim();
 }
 
 function containsPublicForbiddenText(value: string): boolean {
-  return /\b(wallet|hotkey|coldkey|seed phrase|mnemonic|raw trust score|estimated score|score estimate|reward estimate|payout|farming)\b/i.test(value);
+  return PUBLIC_FORBIDDEN_TEXT_PATTERN.test(value);
 }
 
 function isEnabled(value: string | undefined): boolean {

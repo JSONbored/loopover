@@ -99,9 +99,15 @@ describe("GitHub mention commands", () => {
     });
     expect(body).toContain("<!-- gittensory-agent-command -->");
     expect(body).toContain("Scope: this repository#12");
+    expect(body).toContain("**Findings**");
+    expect(body).toContain("**Evidence**");
+    expect(body).toContain("**Next actions**");
+    expect(body).toContain("<summary>Source and freshness</summary>");
+    expect(body).toContain("Source: cached Gittensory agent context.");
+    expect(body).toContain("Freshness: agent run status completed.");
     expect(body).not.toContain("Decision snapshot is stale");
     expect(body).not.toContain("background rebuild");
-    expect(body).not.toMatch(/wallet|hotkey|coldkey|estimated score|reward estimate|payout|farming|raw trust score|reviewability|private ranking/i);
+    expect(body).not.toMatch(/wallet|hotkey|coldkey|estimated score|reward estimate|payout|farming|raw trust score|reviewability|private ranking|public score estimate|scoreability/i);
     expect(body).not.toMatch(/private context,\s*private context/i);
     expect(sanitizePublicComment("wallet hotkey payout reviewability private ranking")).not.toMatch(
       /wallet|hotkey|payout|reviewability|private ranking/i,
@@ -215,6 +221,11 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
     });
     expect(help).toContain("@gittensory duplicate-check");
+    expect(help).toContain("<summary>Source and freshness</summary>");
+    expect(help).toContain("Source: static command catalog.");
+    expect(help).toContain("Freshness: shipped command list.");
+    expect(help).toContain("<summary>Additional safe details</summary>");
+    expect(help).toContain("@gittensory next-action");
 
     const minerFallback = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory miner-context")!,
@@ -260,6 +271,32 @@ describe("GitHub mention commands", () => {
       },
     });
     expect(refresh).toContain("**Blocker snapshot refresh**");
+    expect(refresh).toContain("Freshness: snapshot refresh in progress.");
+    expect(refresh).toContain("Retry after the contributor decision snapshot refresh completes.");
+
+    const preflightRefresh = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory preflight")!,
+      repo: null,
+      issue: { number: 31, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: {
+        run: {
+          id: "run-preflight-refresh",
+          objective: "refresh",
+          actorLogin: "oktofeesh1",
+          surface: "github_comment",
+          mode: "copilot",
+          status: "needs_snapshot_refresh",
+          dataQualityStatus: "unknown",
+          payload: {},
+        },
+        actions: [],
+        contextSnapshots: [],
+        summary: "refresh",
+      },
+    });
+    expect(preflightRefresh).toContain("**Preflight snapshot refresh**");
 
     const duplicateRefresh = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
@@ -319,6 +356,36 @@ describe("GitHub mention commands", () => {
     });
     expect(noBundle).toContain("**Preflight summary**");
     expect(noBundle).toContain("No public-safe context is available");
+
+    const emptyBlockers = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 45, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-empty-blockers"),
+        actions: [],
+        contextSnapshots: [],
+        summary: "empty blockers",
+      },
+    });
+    expect(emptyBlockers).toContain("No public readiness blockers are visible");
+
+    const emptyDuplicate = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
+      repo: null,
+      issue: { number: 46, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-empty-duplicate"),
+        actions: [],
+        contextSnapshots: [],
+        summary: "empty duplicate",
+      },
+    });
+    expect(emptyDuplicate).toContain("No duplicate or work-in-progress collision signal is visible");
 
     const withPrFallbackScope = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory next-action")!,
@@ -453,6 +520,35 @@ describe("GitHub mention commands", () => {
     });
     expect(preflightWithRerun).toContain("Rerun when:");
     expect(preflightWithRerun).toContain("Open pull request queue pressure");
+
+    const duplicateBlockerLabels = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 25, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-dedupe-blockers"),
+        actions: [
+          {
+            id: "dedupe-blockers",
+            runId: "run-dedupe-blockers",
+            actionType: "explain_score_blockers",
+            status: "blocked",
+            recommendation: "Resolve blockers",
+            why: [],
+            blockedBy: ["open_pr_pressure", "open_pr_pressure"],
+            publicSafeSummary: "Resolve queue pressure.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "dedupe",
+      },
+    });
+    expect(duplicateBlockerLabels.match(/Open pull request queue pressure/g)).toHaveLength(1);
 
     const duplicateFallbackPick = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,

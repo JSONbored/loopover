@@ -3,6 +3,10 @@ import { __aiSummaryInternals, summarizeAgentBundleWithAi } from "../../src/serv
 import type { AgentRunBundle } from "../../src/services/agent-orchestrator";
 import { createTestEnv } from "../helpers/d1";
 
+const PUBLIC_FORBIDDEN_TEXT =
+  /\b(wallets?|hotkeys?|raw trust scores?|trust scores?|payouts?|reward estimates?|farming|private reviewability|private scoreability|public score estimates?)\b/i;
+type AiRunRequest = { messages: Array<{ role: string; content: string }> };
+
 describe("Workers AI summaries", () => {
   it("stays disabled by default and does not call Workers AI", async () => {
     const run = vi.fn();
@@ -122,6 +126,56 @@ describe("Workers AI summaries", () => {
     expect(unsafe).toMatchObject({ status: "unsafe", reason: "public summary failed sanitizer" });
   });
 
+  it.each(["wallet", "hotkey", "raw trust score", "payout", "reward estimate", "farming", "private reviewability", "private scoreability", "public score estimate"])(
+    "rejects unsafe public AI output containing %s",
+    async (unsafeText) => {
+      const run = vi.fn(async () => ({ response: `Do the next action because ${unsafeText} changed.` }));
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "10000",
+      });
+
+      const result = await summarizeAgentBundleWithAi(env, bundleFixture(), "public");
+
+      expect(result).toMatchObject({ status: "unsafe", reason: "public summary failed sanitizer" });
+    },
+  );
+
+  it("keeps private action facts out of public AI prompt context", async () => {
+    const run = vi.fn(async () => ({ response: "Public-safe queue summary." }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "10000",
+    });
+
+    const publicResult = await summarizeAgentBundleWithAi(env, unsafeBundleFixture(), "public");
+
+    expect(publicResult).toMatchObject({ status: "ok" });
+    const publicRequest = (run.mock.calls as unknown as Array<[string, AiRunRequest]>)[0]?.[1];
+    const publicPrompt = publicRequest?.messages.find((message) => message.role === "user")?.content ?? "";
+    expect(publicPrompt).not.toMatch(PUBLIC_FORBIDDEN_TEXT);
+
+    const privateRun = vi.fn(async () => ({ response: "Private summary with authenticated context." }));
+    await expect(
+      summarizeAgentBundleWithAi(
+        {
+          ...env,
+          AI: { run: privateRun } as unknown as Ai,
+        },
+        unsafeBundleFixture(),
+        "private",
+      ),
+    ).resolves.toMatchObject({ status: "ok" });
+
+    const privateRequest = (privateRun.mock.calls as unknown as Array<[string, AiRunRequest]>)[0]?.[1];
+    const privatePrompt = privateRequest?.messages.find((message) => message.role === "user")?.content ?? "";
+    expect(privatePrompt).toMatch(PUBLIC_FORBIDDEN_TEXT);
+  });
+
   it("falls back when Workers AI returns malformed output or throws non-Error values", async () => {
     const malformed = createTestEnv({
       AI: { run: vi.fn(async () => ({ unknown: "shape" })) } as unknown as Ai,
@@ -208,5 +262,26 @@ function bundleFixture(): AgentRunBundle {
       },
     ],
     summary: "done",
+  };
+}
+
+function unsafeBundleFixture(): AgentRunBundle {
+  const bundle = bundleFixture();
+  const action = bundle.actions[0];
+  if (!action) throw new Error("missing fixture action");
+  return {
+    ...bundle,
+    actions: [
+      {
+        ...action,
+        recommendation: "Review wallet and hotkey evidence before discussing payout projections.",
+        why: ["raw trust score, farming language, and private reviewability are private context."],
+        blockedBy: ["private scoreability context and public score estimate are not public-safe."],
+        scoreabilityImpact: "Authenticated scoreability can include reward estimate details.",
+        riskImpact: "Private users may inspect payout evidence without public rendering.",
+        maintainerImpact: "Avoid publishing wallet, hotkey, or reward estimate language.",
+        publicSafeSummary: "Public score estimate and private reviewability should stay private.",
+      },
+    ],
   };
 }

@@ -911,12 +911,23 @@ function publicBlockerLabel(code: string): string {
 }
 
 function publicBlockerDetail(value: string): string {
-  return sanitizePublicComment(
-    value
-      .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work")
-      .replace(/\bcheck_duplicate_risk\b/gi, "duplicate-risk review")
-      .replace(/\bopen_pr_pressure\b/gi, "open pull request pressure"),
+  return sanitizePublicInlineDetail(
+    sanitizePublicComment(
+      value
+        .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work")
+        .replace(/\bcheck_duplicate_risk\b/gi, "duplicate-risk review")
+        .replace(/\bopen_pr_pressure\b/gi, "open pull request pressure"),
+    ),
   );
+}
+
+function sanitizePublicInlineDetail(value: string): string {
+  return value
+    .replace(/[\u0000-\u001F\u007F]+/g, " ")
+    .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200B")
+    .replace(/[\\`*_{}[\]()#+>|]/g, "\\$&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function dedupeBulletLines(lines: string[]): string[] {

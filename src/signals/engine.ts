@@ -3580,11 +3580,12 @@ function outcomeSignal(mergeRate: number): RepoOutcomeSignal {
 }
 
 function describeDimension(dimension: RepoOutcomeDimensionKind, key: string): string {
+  const safeKey = sanitizeOutcomeDimensionKey(key);
   switch (dimension) {
     case "path":
-      return `PRs touching ${key}`;
+      return `PRs touching ${safeKey}`;
     case "label":
-      return `PRs labeled "${key}"`;
+      return `PRs labeled "${safeKey}"`;
     case "size":
       return `${key} PRs`;
     case "linked_issue":
@@ -3596,6 +3597,15 @@ function describeDimension(dimension: RepoOutcomeDimensionKind, key: string): st
     case "author_role":
       return key === "returning_contributor" ? "PRs from returning contributors" : "PRs from first-time or external authors";
   }
+}
+
+function sanitizeOutcomeDimensionKey(key: string): string {
+  return key
+    .replace(/[\u0000-\u001F\u007F]+/g, " ")
+    .replace(/@(?=[A-Za-z0-9_-])/g, "@\u200B")
+    .replace(/[\\`*_{}[\]()#+>|]/g, "\\$&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isCodeFile(file: string): boolean {

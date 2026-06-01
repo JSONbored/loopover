@@ -647,6 +647,37 @@ describe("GitHub mention commands", () => {
     expect(duplicateViaRecommendation).toContain("**Duplicate & WIP caution**");
     expect(duplicateViaRecommendation).toMatch(/overlap|WIP|Concurrent/i);
 
+    const duplicateWithInjectedWhy = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
+      repo: null,
+      issue: { number: 27, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-duplicate-injection"),
+        actions: [
+          {
+            id: "duplicate-injection",
+            runId: "run-duplicate-injection",
+            actionType: "monitor_existing_pr",
+            status: "watch",
+            recommendation: "Compare duplicate risk",
+            why: ["PRs touching duplicate\n@octo-team/ [click](https://example.test) have high closure risk here."],
+            blockedBy: [],
+            riskImpact: "No extra risk",
+            publicSafeSummary: "Review linked issues before requesting detailed review.",
+            approvalRequired: true,
+            safetyClass: "private",
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "duplicate",
+      },
+    });
+    expect(duplicateWithInjectedWhy).toContain("PRs touching duplicate @​octo-team/ \\[click\\]\\(https://example.test\\)");
+    expect(duplicateWithInjectedWhy).not.toMatch(/\n@octo-team|@octo-team|[^\\]\[click\]\(https:\/\/example\.test\)/);
+
     const preflightWithRerun = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory preflight")!,
       repo: null,

@@ -167,6 +167,60 @@ describe("local workspace intelligence v2", () => {
     expect(intelligence.testEvidence.level).toBe("none");
   });
 
+  it("records test_files evidence when only test paths changed", () => {
+    const intelligence = buildLocalWorkspaceIntelligence({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        headSha: "abc123",
+        localScorer: { mode: "external_command", activeModel: "fixture-model", warnings: [] },
+        changedFiles: [{ path: "src/cache.test.ts", status: "added" }],
+      },
+      analysis: {
+        baseFreshness: { status: "fresh", changedFileCount: 1, testFileCount: 1, passedValidationCount: 0, warnings: [] },
+        branchQualityBlockers: [],
+        accountStateBlockers: [],
+        recommendedRerunCondition: "Rerun after any branch, base, or PR state changes before opening/submitting.",
+        prPacket: {
+          titleSuggestion: "Cache tests",
+          markdown: "# Cache tests\n",
+          bodySections: [],
+          reviewerNotes: [],
+          validationSummary: { passed: 0, failed: 0, notRun: 0, commands: [] },
+          publicSafeWarnings: [],
+        },
+      },
+      changedFiles: [{ path: "src/cache.test.ts", status: "added" }],
+    });
+
+    expect(intelligence.testEvidence.level).toBe("test_files");
+    expect(intelligence.branch.headSha).toBe("abc123");
+    expect(intelligence.localScorerDiagnostics).toMatchObject({ mode: "external_command", activeModel: "fixture-model", metadataOnly: false });
+  });
+
+  it("counts copied file changes as renames in summaries", () => {
+    const intelligence = buildLocalWorkspaceIntelligence({
+      input: { login: "oktofeesh1", repoFullName: repo.fullName },
+      analysis: {
+        baseFreshness: { status: "fresh", changedFileCount: 1, testFileCount: 0, passedValidationCount: 0, warnings: [] },
+        branchQualityBlockers: [],
+        accountStateBlockers: [],
+        recommendedRerunCondition: "Rerun after any branch, base, or PR state changes before opening/submitting.",
+        prPacket: {
+          titleSuggestion: "Copy path",
+          markdown: "# Copy path\n",
+          bodySections: [],
+          reviewerNotes: [],
+          validationSummary: { passed: 0, failed: 0, notRun: 0, commands: [] },
+          publicSafeWarnings: [],
+        },
+      },
+      changedFiles: [{ path: "src/new.ts", previousPath: "src/old.ts", status: "copied" }],
+    });
+
+    expect(intelligence.changedFiles.renamed).toBe(1);
+  });
+
   it("keeps linked issues sorted for stable public output", () => {
     const intelligence = buildLocalWorkspaceIntelligence({
       input: {

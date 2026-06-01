@@ -41,7 +41,7 @@
   ],
   "postUpdateOptions": ["npmDedupe"],
   "prBodyNotes": [
-    "Dependency PRs must keep `npm run test:ci` passing and preserve the 95% global coverage gate.",
+    "Dependency PRs must keep `npm run test:ci` passing and preserve the 97% global coverage gate.",
     "GitHub Actions updates must remain SHA-pinned."
   ],
   "prConcurrentLimit": 5,

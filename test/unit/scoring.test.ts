@@ -102,6 +102,21 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
   });
 
+  it("warns when fetched constants do not identify a known active model", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    expect(refreshed.activeModel).toBe("unknown");
+    expect(refreshed.warnings.join(" ")).toMatch(/recognized active-model indicator/i);
+  });
+
   it("uses saturation math as the active private preview model", () => {
     const saturationSnapshot: ScoringModelSnapshotRecord = {
       ...snapshot,

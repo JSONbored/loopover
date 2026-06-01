@@ -1,0 +1,31 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gittensory-ui",
+  "workers_dev": true,
+  "preview_urls": true,
+  "compatibility_date": "2026-05-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "placement": {
+    "mode": "smart",
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+    },
+  },
+  "vars": {
+    "VITE_GITTENSORY_API_ORIGIN": "https://gittensory-api.aethereal.dev",
+  },
+  "routes": [
+    {
+      "pattern": "gittensory.aethereal.dev",
+      "custom_domain": true,
+    },
+  ],
+}

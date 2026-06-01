@@ -58,4 +58,26 @@ describe("issue-quality service", () => {
     await expect(loadOrComputeIssueQualityResponse(env, "owner/computed")).resolves.toMatchObject({ source: "computed", repoFullName: "owner/computed" });
     await expect(loadOrComputeIssueQualityResponse(env, "owner/missing")).resolves.toBeNull();
   });
+
+  it("falls back to payload or current timestamps for sparse cached snapshots", async () => {
+    const payloadGenerated = "2026-05-29T00:00:00.000Z";
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `insert into signal_snapshots (id, signal_type, target_key, repo_full_name, payload_json, generated_at)
+       values ('quality-payload-generated', 'issue-quality', 'owner/payload', 'owner/payload', ?, '')`,
+    )
+      .bind(JSON.stringify({ repoFullName: "owner/payload", generatedAt: payloadGenerated, lane: { lane: "direct_pr" }, issues: [], summary: "payload" }))
+      .run();
+    await env.DB.prepare(
+      `insert into signal_snapshots (id, signal_type, target_key, repo_full_name, payload_json, generated_at)
+       values ('quality-current-generated', 'issue-quality', 'owner/current', 'owner/current', ?, '')`,
+    )
+      .bind(JSON.stringify({ repoFullName: "owner/current", lane: { lane: "direct_pr" }, issues: [], summary: "current" }))
+      .run();
+
+    await expect(loadOrComputeIssueQualityResponse(env, "owner/payload")).resolves.toMatchObject({ source: "snapshot", generatedAt: payloadGenerated });
+    const current = await loadOrComputeIssueQualityResponse(env, "owner/current");
+    expect(current?.source).toBe("snapshot");
+    expect(Date.parse(current?.generatedAt ?? "")).not.toBeNaN();
+  });
 });

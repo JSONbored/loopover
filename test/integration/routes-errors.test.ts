@@ -41,7 +41,81 @@ describe("api route guards and error branches", () => {
 
     const logout = await app.request("/v1/auth/logout", { method: "POST", headers: authHeaders }, env);
     expect(logout.status).toBe(200);
-    expect((await app.request("/v1/auth/session", { headers: authHeaders }, env)).status).toBe(401);
+    const signedOut = await app.request("/v1/auth/session", { headers: authHeaders }, env);
+    expect(signedOut.status).toBe(200);
+    await expect(signedOut.json()).resolves.toMatchObject({ status: "signed_out" });
+  });
+
+  it("creates browser cookie sessions through GitHub web OAuth callback", async () => {
+    const app = createApp();
+    const env = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+      ADMIN_GITHUB_LOGINS: "jsonbored",
+    });
+
+    const started = await app.request("/v1/auth/github/start?returnTo=https%3A%2F%2Fgittensory.aethereal.dev%2Fapp", {}, env);
+    expect(started.status).toBe(302);
+    const startCookie = started.headers.get("set-cookie") ?? "";
+    const location = new URL(started.headers.get("location") ?? "");
+    const state = location.searchParams.get("state") ?? "";
+    expect(startCookie).toContain("gittensory_oauth_state=");
+    expect(state).toBeTruthy();
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return Response.json({ access_token: "github-token", scope: "read:user" });
+      if (url === "https://api.github.com/user") return Response.json({ login: "jsonbored", id: 42 });
+      return Response.json({});
+    });
+
+    const callback = await app.request(`/v1/auth/github/callback?code=code&state=${encodeURIComponent(state)}`, { headers: { cookie: firstCookiePair(startCookie) } }, env);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("https://gittensory.aethereal.dev/app");
+    const callbackCookie = callback.headers.get("set-cookie") ?? "";
+    expect(callbackCookie).toContain("gittensory_session=");
+    expect(callbackCookie).toContain("HttpOnly");
+
+    const sessionCookie = firstCookiePair(callbackCookie, "gittensory_session");
+    const session = await app.request("/v1/auth/session", { headers: { cookie: sessionCookie } }, env);
+    expect(session.status).toBe(200);
+    await expect(session.json()).resolves.toMatchObject({
+      status: "authenticated",
+      login: "jsonbored",
+      roles: ["miner", "maintainer", "owner", "operator"],
+    });
+
+    const reposWithCookie = await app.request("/v1/repos", { headers: { cookie: sessionCookie } }, env);
+    expect(reposWithCookie.status).toBe(200);
+
+    const logout = await app.request("/v1/auth/logout", { method: "POST", headers: { cookie: sessionCookie } }, env);
+    expect(logout.status).toBe(200);
+    expect(logout.headers.get("set-cookie")).toContain("gittensory_session=");
+    const signedOut = await app.request("/v1/auth/session", { headers: { cookie: sessionCookie } }, env);
+    expect(signedOut.status).toBe(200);
+    await expect(signedOut.json()).resolves.toMatchObject({ status: "signed_out" });
+  });
+
+  it("rejects bad GitHub web OAuth callbacks without creating a browser session", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
+    const invalid = await app.request("/v1/auth/github/callback?code=code&state=wrong", { headers: { cookie: "gittensory_oauth_state=other" } }, env);
+    expect(invalid.status).toBe(302);
+    expect(invalid.headers.get("location")).toContain("auth=error");
+    expect(invalid.headers.get("set-cookie")).toContain("gittensory_oauth_state=");
+
+    const denied = await app.request("/v1/auth/github/callback?error=access_denied", {}, env);
+    expect(denied.status).toBe(302);
+    expect(denied.headers.get("location")).toContain("access_denied");
+
+    const missingCodeEnv = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
+    delete (missingCodeEnv as Partial<Env>).PUBLIC_SITE_ORIGIN;
+    const missingCode = await app.request("/v1/auth/github/callback?state=state-only", {}, missingCodeEnv);
+    expect(missingCode.status).toBe(302);
+    expect(missingCode.headers.get("location")).toContain("github_oauth_callback_invalid");
+    const missingState = await app.request("/v1/auth/github/callback?code=code-only", {}, env);
+    expect(missingState.status).toBe(302);
+    expect(missingState.headers.get("location")).toContain("github_oauth_callback_invalid");
   });
 
   it("limits GitHub-backed sessions to their own private contributor advisory data", async () => {
@@ -164,7 +238,9 @@ describe("api route guards and error branches", () => {
   it("keeps OAuth setup, CORS, and rate limits explicit", async () => {
     const app = createApp();
     const env = createTestEnv();
+    expect((await app.request("/openapi.json", {}, env)).status).toBe(200);
     expect((await app.request("/v1/auth/github/device/start", { method: "POST" }, env)).status).toBe(503);
+    expect((await app.request("/v1/auth/github/start", {}, env)).status).toBe(503);
     expect((await app.request("/v1/auth/github/device/poll", { method: "POST", body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/auth/github/device/poll", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceCode: "device-code" }) }, env)).status).toBe(503);
     expect((await app.request("/v1/auth/github/session", { method: "POST", body: "{}" }, env)).status).toBe(400);
@@ -188,6 +264,33 @@ describe("api route guards and error branches", () => {
       env,
     );
     expect(allowedPreflight.headers.get("access-control-allow-origin")).toBe("https://gittensory-api.aethereal.dev");
+
+    const frontendPreflight = await app.request(
+      "/v1/repos",
+      {
+        method: "OPTIONS",
+        headers: { origin: "https://gittensory.aethereal.dev", "access-control-request-method": "GET" },
+      },
+      env,
+    );
+    expect(frontendPreflight.headers.get("access-control-allow-origin")).toBe("https://gittensory.aethereal.dev");
+
+    const customOriginEnv = createTestEnv({
+      PUBLIC_API_ORIGIN: "not a url",
+      PUBLIC_SITE_ORIGIN: "https://preview.example/app",
+    });
+    const customOriginPreflight = await app.request(
+      "/v1/repos",
+      {
+        method: "OPTIONS",
+        headers: { origin: "https://preview.example", "access-control-request-method": "GET" },
+      },
+      customOriginEnv,
+    );
+    expect(customOriginPreflight.headers.get("access-control-allow-origin")).toBe("https://preview.example");
+
+    const noOriginPreflight = await app.request("/v1/repos", { method: "OPTIONS" }, env);
+    expect(noOriginPreflight.headers.get("access-control-allow-origin")).toBeNull();
 
     const limitedEnv = createTestEnv({ RATE_LIMITER: denyAllRateLimiter() as unknown as DurableObjectNamespace });
     const limited = await app.request("/v1/auth/github/device/start", { method: "POST" }, limitedEnv);
@@ -318,6 +421,7 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/preflight/local-diff", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/local/branch-analysis", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/runs/missing-run", { headers: apiHeaders(env) }, env)).status).toBe(404);
+    expect((await app.request("/v1/agent/runs", { headers: apiHeaders(env) }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/runs", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/plan-next-work", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/preflight-branch", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
@@ -385,6 +489,8 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/internal/jobs/generate-signal-snapshots", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/refresh-scoring-model", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/refresh-scoring-model/run", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/refresh-upstream-drift", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/file-upstream-drift-issues", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/build-contributor-evidence", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/build-contributor-decision-packs/run", { method: "POST" }, env)).status).toBe(401);
@@ -514,6 +620,10 @@ describe("api route guards and error branches", () => {
 
     const queuedScoring = await app.request("/v1/internal/jobs/refresh-scoring-model", { method: "POST", headers: internalHeaders(env) }, env);
     expect(queuedScoring.status).toBe(202);
+    const queuedUpstreamDrift = await app.request("/v1/internal/jobs/refresh-upstream-drift", { method: "POST", headers: internalHeaders(env) }, env);
+    expect(queuedUpstreamDrift.status).toBe(202);
+    const queuedUpstreamDriftIssues = await app.request("/v1/internal/jobs/file-upstream-drift-issues", { method: "POST", headers: internalHeaders(env) }, env);
+    expect(queuedUpstreamDriftIssues.status).toBe(202);
     const queuedEvidence = await app.request("/v1/internal/jobs/build-contributor-evidence", {
       method: "POST",
       headers: internalHeaders(env),
@@ -556,6 +666,8 @@ describe("api route guards and error branches", () => {
     expect(queued).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "refresh-scoring-model" }),
+        expect.objectContaining({ type: "refresh-upstream-drift" }),
+        expect.objectContaining({ type: "file-upstream-drift-issues" }),
         expect.objectContaining({ type: "build-contributor-evidence", login: "oktofeesh1" }),
         expect.objectContaining({ type: "build-contributor-decision-packs", login: "oktofeesh1" }),
         expect.objectContaining({ type: "refresh-contributor-activity", login: "jsonbored", repoFullName: "JSONbored/gittensory" }),
@@ -716,6 +828,12 @@ function internalHeaders(env: Env): Record<string, string> {
     authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`,
     "content-type": "application/json",
   };
+}
+
+function firstCookiePair(header: string, name?: string): string {
+  const cookies = header.split(/,(?=\s*[^;,]+=)/).map((part) => part.trim());
+  const cookie = name ? cookies.find((part) => part.startsWith(`${name}=`)) : cookies[0];
+  return cookie?.split(";")[0] ?? "";
 }
 
 function denyAllRateLimiter() {

@@ -56,7 +56,6 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.4",
-    "@hono/zod-validator": "^0.7.4",
     "@modelcontextprotocol/sdk": "1.26.0",
     "@octokit/core": "^7.0.6",
     "agents": "^0.7.9",
@@ -69,7 +68,6 @@
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.1.7",
     "drizzle-kit": "^0.31.7",
-    "fast-check": "^4.8.0",
     "git-cliff": "^2.13.1",
     "github-actionlint": "^1.7.12",
     "node-addon-api": "^8.5.0",

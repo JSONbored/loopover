@@ -28,7 +28,6 @@ import {
   countActiveAuthSessions,
   countActiveDigestSubscriptions,
   getBounty,
-  getFreshOfficialMinerDetection,
   getIssue,
   getInstallationHealth,
   getLatestRepoGithubTotalsSnapshot,
@@ -86,6 +85,7 @@ import {
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
+import { GITTENSORY_MENTION_COMMAND_CATALOG } from "../github/commands";
 import { handleGitHubWebhook } from "../github/webhook";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
@@ -106,6 +106,10 @@ import {
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import {
+  buildStaticControlPanelRoleSummary,
+  loadControlPanelRoleSummary,
+} from "../services/control-panel-roles";
 import {
   buildMcpCompatibilityMetadata,
   LATEST_RECOMMENDED_MCP_VERSION,
@@ -140,7 +144,7 @@ import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signa
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
-import type { BountyLifecycleEventRecord, ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
+import type { BountyLifecycleEventRecord, ControlPanelRoleName, ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
@@ -200,6 +204,17 @@ const localBranchScorerSchema = z
   })
   .strict();
 
+const linkedIssueContextSchema = z
+  .object({
+    status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
+    source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
+    issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
+    solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
+    reason: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
+    warnings: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
+  })
+  .strict();
+
 const localBranchAnalysisSchema = z
   .object({
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
@@ -237,6 +252,7 @@ const scorePreviewSchema = z.object({
   contributorLogin: z.string().min(1).optional(),
   labels: z.array(z.string()).optional(),
   linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
+  linkedIssueContext: linkedIssueContextSchema.optional(),
   sourceTokenScore: z.number().min(0).optional(),
   totalTokenScore: z.number().min(0).optional(),
   sourceLines: z.number().min(0).optional(),
@@ -363,6 +379,7 @@ export function createApp() {
     if (!requiresApiToken(c.req.path)) return next();
     const identity = await authenticateRequestIdentity(c);
     if (!identity) return c.json({ error: "unauthorized" }, 401);
+    if (identity.kind === "session" && !canSessionAccessPath(c.env, identity, c.req.path)) return c.json({ error: "insufficient_role" }, 403);
     if (isExtensionScopedSession(identity) && c.req.path !== EXTENSION_PULL_CONTEXT_PATH) return c.json({ error: "insufficient_scope" }, 403);
     return next();
   });
@@ -493,6 +510,8 @@ export function createApp() {
     const identity = await authenticateRequestIdentity(c);
     if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
     if (isExtensionScopedSession(identity)) return c.json({ error: "browser_session_required" }, 403);
+    const roleSummary = await loadControlPanelRoleSummary(c.env, identity.actor);
+    if (!roleSummary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator")) return c.json({ error: "insufficient_role" }, 403);
     const githubUser = identity.session.githubUserId === undefined ? { login: identity.session.login } : { login: identity.session.login, id: identity.session.githubUserId };
     const { token, session } = await createSessionForGitHubUser(
       c.env,
@@ -520,7 +539,7 @@ export function createApp() {
   app.get("/v1/app/overview", async (c) => {
     const identity = await authenticateRequestIdentity(c);
     const login = identity?.kind === "session" ? identity.actor : undefined;
-    const [repositories, installations, health, registry, scoring, upstreamDrift, rateLimits, runs] = await Promise.all([
+    const [repositories, installations, health, registry, scoring, upstreamDrift, rateLimits, runs, roleSummary] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
       listInstallationHealth(c.env),
@@ -529,6 +548,7 @@ export function createApp() {
       loadUpstreamStatus(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
       login ? listAgentRunsForActor(c.env, login, 8) : Promise.resolve([]),
+      identity ? getRoleSummaryForIdentity(c.env, identity) : Promise.resolve(null),
     ]);
     const runBundles = await Promise.all(runs.map((run) => getAgentRunBundle(c.env, run.id)));
     const installedRepos = repositories.filter((repo) => repo.isInstalled).length;
@@ -537,6 +557,7 @@ export function createApp() {
     return c.json({
       generatedAt: nowIso(),
       actor: identity ? { kind: identity.kind, login: login ?? identity.actor } : null,
+      roleSummary,
       metrics: [
         {
           label: "Registered repos",
@@ -573,6 +594,12 @@ export function createApp() {
       rateLimits,
       recentRuns: runBundles.filter((bundle): bundle is NonNullable<typeof bundle> => Boolean(bundle)),
     });
+  });
+
+  app.get("/v1/app/roles", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    return c.json(await getRoleSummaryForIdentity(c.env, identity));
   });
 
   app.get("/v1/app/miner-dashboard", async (c) => {
@@ -622,6 +649,8 @@ export function createApp() {
   });
 
   app.get("/v1/app/maintainer-dashboard", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
     const [repositories, installations, health, rateLimits] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
@@ -653,6 +682,8 @@ export function createApp() {
   });
 
   app.get("/v1/app/operator-dashboard", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
     const [repositories, installations, health, registry, scoring, upstreamDrift, activeSessions, digestSubscriptions, rateLimits] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
@@ -710,6 +741,8 @@ export function createApp() {
   });
 
   app.get("/v1/app/digest", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
     const identity = await authenticateRequestIdentity(c);
     const login = identity?.kind === "session" ? identity.actor : null;
     const [repositories, health, upstreamDrift, rateLimits, subscriptions] = await Promise.all([
@@ -731,6 +764,8 @@ export function createApp() {
   });
 
   app.post("/v1/app/digest/subscriptions", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
     const identity = await authenticateRequestIdentity(c);
     if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
     const body = await c.req.json().catch(() => null);
@@ -741,6 +776,8 @@ export function createApp() {
   });
 
   app.get("/v1/extension/pull-context", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity || identity.kind !== "session" || !isExtensionScopedSession(identity)) return c.json({ error: "extension_session_required" }, 403);
     const owner = c.req.query("owner") ?? "";
     const repoName = c.req.query("repo") ?? "";
     const pullNumber = Number(c.req.query("pullNumber") ?? "");
@@ -1246,6 +1283,7 @@ export function createApp() {
       scoringSnapshot: snapshot,
       scoringProfile,
       issueQuality: issueQuality?.report,
+      gittensorSnapshot: context.gittensorSnapshot,
     });
     const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
@@ -1656,6 +1694,14 @@ const APP_COMMANDS = [
     description: "Preview the public-safe summary that may be posted to a PR thread.",
     endpoint: "/v1/app/commands/preview",
   },
+  ...GITTENSORY_MENTION_COMMAND_CATALOG.filter((command) => !["help", "preflight", "blockers", "packet"].includes(command.id)).map((command) => ({
+    id: command.id,
+    command: `@gittensory ${command.id}`,
+    audience: "public-safe",
+    boundary: "public",
+    description: command.description,
+    endpoint: "GitHub issue comment",
+  })),
 ] as const;
 
 function authRedirectWithError(env: Env, reason: string): string {
@@ -1667,24 +1713,21 @@ function authRedirectWithError(env: Env, reason: string): string {
 }
 
 async function buildSessionResponse(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>) {
-  /* v8 ignore start -- Browser-session role shaping is covered through auth/session route tests; non-admin fallback is policy-defensive. */
-  const miner = await getFreshOfficialMinerDetection(env, identity.actor).catch(() => null);
-  const admin = isAuthorizedGitHubSessionLogin(env, identity.actor);
-  const roles = admin ? ["miner", "maintainer", "owner", "operator"] : ["miner"];
+  const roleSummary = await loadControlPanelRoleSummary(env, identity.actor);
   return {
     status: "authenticated",
     login: identity.session.login,
     githubId: identity.session.githubUserId ?? null,
     github_id: identity.session.githubUserId ?? null,
-    roles,
-    confirmedMiner: miner?.status === "confirmed",
-    confirmed_miner: miner?.status === "confirmed",
+    roles: roleSummary.roles,
+    roleSummary,
+    confirmedMiner: roleSummary.confirmedMiner,
+    confirmed_miner: roleSummary.confirmedMiner,
     expiresAt: identity.session.expiresAt,
     scopes: identity.session.scopes,
     createdAt: identity.session.createdAt,
     lastSeenAt: identity.session.lastSeenAt,
   };
-  /* v8 ignore stop */
 }
 
 function sparklineFromCounts(value: number, total: number): number[] {
@@ -2103,11 +2146,31 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
   return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
 }
 
+function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
+  if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
+  if (path.startsWith("/v1/app/")) return true;
+  if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
+  return false;
+}
+
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
   const bearer = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
   if (bearer) return bearer;
   const browserSessionToken = extractBrowserSessionToken(c.req.header("cookie"));
   return authenticateSessionToken(c.env, browserSessionToken);
+}
+
+async function getRoleSummaryForIdentity(env: Env, identity: AuthIdentity) {
+  if (identity.kind === "session") return loadControlPanelRoleSummary(env, identity.actor);
+  return buildStaticControlPanelRoleSummary(identity.actor);
+}
+
+async function requireAppRole(c: ProtectedRouteContext, allowedRoles: ControlPanelRoleName[]): Promise<Response | null> {
+  const identity = await authenticateRequestIdentity(c);
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind !== "session") return null;
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  return summary.roles.some((role) => allowedRoles.includes(role)) ? null : c.json({ error: "insufficient_role" }, 403);
 }
 
 async function requireStaticProtectedApiToken(c: ProtectedRouteContext): Promise<Response | null> {

@@ -52,6 +52,7 @@ import { createOrUpdateCheckRun, getInstallationId } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment } from "../github/comments";
 import {
   buildPublicAgentCommandComment,
+  type GittensoryMentionCommandName,
   isAuthorizedCommandActor,
   parseGittensoryMentionCommand,
 } from "../github/commands";
@@ -61,7 +62,7 @@ import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory } from "../rules/advisory";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
-import { executeAgentRun, explainBlockersWithAgent, planNextWork } from "../services/agent-orchestrator";
+import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import {
   buildUpstreamRulesetSnapshot,
@@ -95,8 +96,10 @@ import {
   detectGittensorContributor,
 } from "../signals/engine";
 import { decidePublicSurface } from "../signals/settings-preview";
+import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import type { ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue } from "../types";
-import { errorMessage } from "../utils/json";
+import { sha256Hex } from "../utils/crypto";
+import { errorMessage, nowIso } from "../utils/json";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
@@ -693,6 +696,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
   const issue = payload.issue;
   const installationId = getInstallationId(payload);
   const commenter = payload.comment?.user?.login;
+  const targetKey = repoFullName && issue ? `${repoFullName}#${issue.number}` : repoFullName;
   if (!repoFullName || !issue || !installationId || !commenter) {
     await recordAuditEvent(env, {
       eventType: "github_app.agent_command_skipped",
@@ -701,6 +705,15 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
       outcome: "completed",
       detail: "missing_repo_issue_installation_or_actor",
       metadata: { deliveryId, command: command.name },
+    });
+    await recordAgentCommandUsage(env, {
+      repoFullName,
+      targetKey,
+      actor: commenter,
+      command: command.name,
+      actorKind: "none",
+      outcome: "skipped",
+      detail: "missing_repo_issue_installation_or_actor",
     });
     return true;
   }
@@ -713,6 +726,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
       detail: "bot_author",
       metadata: { deliveryId, command: command.name },
     });
+    await recordAgentCommandUsage(env, { repoFullName, targetKey, actor: commenter, command: command.name, actorKind: "none", outcome: "skipped", detail: "bot_author" });
     return true;
   }
   if (!issue.pull_request) {
@@ -724,6 +738,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
       detail: "not_a_pull_request_thread",
       metadata: { deliveryId, command: command.name },
     });
+    await recordAgentCommandUsage(env, { repoFullName, targetKey, actor: commenter, command: command.name, actorKind: "none", outcome: "skipped", detail: "not_a_pull_request_thread" });
     return true;
   }
 
@@ -747,21 +762,25 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
       detail: authorization.reason,
       metadata: { deliveryId, command: command.name },
     });
+    await recordAgentCommandUsage(env, {
+      repoFullName,
+      targetKey,
+      actor: commenter,
+      command: command.name,
+      actorKind: authorization.actorKind,
+      outcome: authorization.reason === "miner_detection_unavailable" ? "error" : "skipped",
+      detail: authorization.reason,
+    });
     return true;
   }
 
   const login = pullRequestAuthor ?? commenter;
-  const bundle =
-    command.name === "help" || command.name === "miner-context"
-      ? null
-      : command.name === "blockers"
-        ? await explainBlockersWithAgent(env, { login, repoFullName, surface: "github_comment" })
-        : await planNextWork(env, {
-            login,
-            repoFullName,
-            surface: "github_comment",
-            objective: `Respond to @gittensory ${command.name} for ${repoFullName}#${issue.number}.`,
-          });
+  const bundle = await buildMentionCommandBundle(env, command.name, {
+    login,
+    repoFullName,
+    issue,
+    pullRequest: cachedPullRequest,
+  });
   const body = buildPublicAgentCommandComment({
     command,
     repo,
@@ -779,7 +798,93 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     outcome: "completed",
     metadata: { deliveryId, command: command.name, actorKind: authorization.actorKind, runId: bundle?.run.id ?? null },
   });
+  await recordAgentCommandUsage(env, {
+    repoFullName,
+    targetKey,
+    actor: commenter,
+    command: command.name,
+    actorKind: authorization.actorKind,
+    outcome: "replied",
+    detail: bundle?.run.status ?? "no_run",
+    runId: bundle?.run.id ?? null,
+  });
   return true;
+}
+
+async function buildMentionCommandBundle(
+  env: Env,
+  commandName: GittensoryMentionCommandName,
+  context: {
+    login: string;
+    repoFullName: string;
+    issue: NonNullable<GitHubWebhookPayload["issue"]>;
+    pullRequest: Awaited<ReturnType<typeof getPullRequest>>;
+  },
+) {
+  if (commandName === "help" || commandName === "miner-context") return null;
+  if (commandName === "blockers") return explainBlockersWithAgent(env, { login: context.login, repoFullName: context.repoFullName, surface: "github_comment" });
+  if (commandName === "preflight" || commandName === "reviewability") return preflightBranchWithAgent(env, buildMentionBranchInput(context), "github_comment");
+  if (commandName === "packet") return preparePrPacketWithAgent(env, buildMentionBranchInput(context), "github_comment");
+  return planNextWork(env, {
+    login: context.login,
+    repoFullName: context.repoFullName,
+    surface: "github_comment",
+    objective: `Respond to @gittensory ${commandName} for ${context.repoFullName}#${context.issue.number}.`,
+  });
+}
+
+function buildMentionBranchInput(context: {
+  login: string;
+  repoFullName: string;
+  issue: NonNullable<GitHubWebhookPayload["issue"]>;
+  pullRequest: Awaited<ReturnType<typeof getPullRequest>>;
+}): LocalBranchAnalysisInput {
+  return {
+    login: context.login,
+    repoFullName: context.repoFullName,
+    branchName: `github-pr-${context.issue.number}`,
+    headRef: context.pullRequest?.headRef ?? undefined,
+    headSha: context.pullRequest?.headSha ?? undefined,
+    title: context.pullRequest?.title ?? context.issue.title,
+    body: context.pullRequest?.body ?? undefined,
+    labels: context.pullRequest?.labels ?? [],
+    linkedIssues: context.pullRequest?.linkedIssues ?? [],
+  };
+}
+
+async function recordAgentCommandUsage(
+  env: Env,
+  args: {
+    repoFullName?: string | null | undefined;
+    targetKey?: string | null | undefined;
+    actor?: string | null | undefined;
+    command: string;
+    actorKind: "maintainer" | "author" | "none";
+    outcome: "replied" | "skipped" | "error";
+    detail?: string | null | undefined;
+    runId?: string | null | undefined;
+  },
+): Promise<void> {
+  try {
+    const actorHash = args.actor ? await sha256Hex(`github:${args.actor.toLowerCase()}`) : null;
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: "github-agent-command-usage",
+      targetKey: args.targetKey ?? args.repoFullName ?? "unknown",
+      repoFullName: args.repoFullName ?? null,
+      payload: {
+        command: args.command,
+        actorKind: args.actorKind,
+        actorHash,
+        outcome: args.outcome,
+        detail: args.detail ?? null,
+        runId: args.runId ?? null,
+      },
+      generatedAt: nowIso(),
+    });
+  } catch (error) {
+    console.warn("Failed to record GitHub agent command usage", { command: args.command, outcome: args.outcome, error: errorMessage(error) });
+  }
 }
 
 async function auditPrVisibilitySkip(

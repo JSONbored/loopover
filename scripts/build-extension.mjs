@@ -18,7 +18,7 @@ rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 mkdirSync(dirname(zipPath), { recursive: true });
 
-for (const file of ["manifest.json", "background.js", "content.js", "styles.css", "options.html", "options.js"]) {
+for (const file of ["manifest.json", "auth.js", "background.js", "content.js", "styles.css", "options.html", "options.js"]) {
   cpSync(resolve(source, file), resolve(outDir, file));
 }
 

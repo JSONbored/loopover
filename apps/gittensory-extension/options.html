@@ -39,6 +39,20 @@
         font-weight: 700;
         padding: 9px 12px;
       }
+      button.secondary {
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: transparent;
+        color: inherit;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
       p {
         color: rgba(244, 247, 245, 0.68);
       }
@@ -50,7 +64,7 @@
   <body>
     <main>
       <h1>Gittensory extension</h1>
-      <p>Paste an extension session token from the Gittensory app. The token is stored in browser sync storage and only sent to the Gittensory API.</p>
+      <p>Paste an extension session token from the Gittensory app. Session tokens stay in browser local storage, are never synced, and GitHub personal access tokens are rejected.</p>
       <form id="settings">
         <label>
           API origin
@@ -60,7 +74,16 @@
           Extension session token
           <input id="sessionToken" name="sessionToken" type="password" autocomplete="off" />
         </label>
-        <button type="submit">Save</button>
+        <label>
+          Expires at
+          <input id="sessionExpiresAt" name="sessionExpiresAt" placeholder="Optional ISO timestamp" autocomplete="off" />
+        </label>
+        <p id="sessionSummary"></p>
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button id="logout" class="secondary" type="button">Log out</button>
+          <button id="clearLocal" class="secondary" type="button">Clear local</button>
+        </div>
       </form>
       <p id="status" role="status"></p>
     </main>

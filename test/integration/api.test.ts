@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSessionForGitHubUser } from "../../src/auth/security";
+import { createSessionForGitHubUser, hashToken } from "../../src/auth/security";
 import {
   upsertBounty,
   upsertBurdenForecast,
@@ -1020,8 +1020,20 @@ describe("api routes", () => {
     expect(overview.status).toBe(200);
     await expect(overview.json()).resolves.toMatchObject({
       actor: { kind: "session", login: "oktofeesh1" },
+      roleSummary: {
+        roles: ["operator"],
+        onboarding: { status: "ready", primaryRole: "operator" },
+      },
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Registered repos" })]),
       upstreamDrift: expect.any(Object),
+    });
+    const roleSummary = await app.request("/v1/app/roles", { headers: cookieHeaders }, env);
+    expect(roleSummary.status).toBe(200);
+    await expect(roleSummary.json()).resolves.toMatchObject({
+      login: "oktofeesh1",
+      roles: ["operator"],
+      roleCards: expect.arrayContaining([expect.objectContaining({ role: "operator", status: "active" })]),
+      publicSafe: true,
     });
 
     const emptyEnv = createTestEnv();
@@ -1050,6 +1062,12 @@ describe("api routes", () => {
       signal: "warn",
       items: expect.arrayContaining([expect.objectContaining({ kind: "drift", meta: "watch" })]),
     });
+    const emptyMinerDashboard = await app.request("/v1/app/miner-dashboard?login=empty-user", { headers: apiHeaders(emptyEnv) }, emptyEnv);
+    expect(emptyMinerDashboard.status).toBe(200);
+    await expect(emptyMinerDashboard.json()).resolves.toMatchObject({
+      status: "needs_refresh",
+      mcp: { snapshot: null, lastRun: null },
+    });
 
     const missingMinerLogin = await app.request("/v1/app/miner-dashboard", { headers: apiHeaders(env) }, env);
     expect(missingMinerLogin.status).toBe(400);
@@ -1057,6 +1075,58 @@ describe("api routes", () => {
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
     const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(forbiddenMiner.status).toBe(403);
+
+    const unknownEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
+    const { token: unknownToken } = await createSessionForGitHubUser(unknownEnv, { login: "new-user", id: 2468 });
+    const unknownHeaders = { cookie: `gittensory_session=${unknownToken}`, "content-type": "application/json" };
+    const unknownSession = await app.request("/v1/auth/session", { headers: unknownHeaders }, unknownEnv);
+    expect(unknownSession.status).toBe(200);
+    const unknownSessionBody = await unknownSession.json();
+    expect(unknownSessionBody).toMatchObject({
+      status: "authenticated",
+      login: "new-user",
+      roles: [],
+      roleSummary: { onboarding: { status: "needs_setup" } },
+    });
+    expect(JSON.stringify(unknownSessionBody)).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|private reviewability|public score estimate|\/Users|github_pat|ghp_/i);
+    const unknownOverview = await app.request("/v1/app/overview", { headers: unknownHeaders }, unknownEnv);
+    expect(unknownOverview.status).toBe(200);
+    await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
+    expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/contributors/new-user/decision-pack", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/auth/extension/session", { method: "POST", headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+
+    const ownerEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
+    await upsertInstallation(ownerEnv, {
+      installation: {
+        id: 777,
+        account: { login: "repo-owner", id: 777, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(ownerEnv, { name: "owned-repo", full_name: "repo-owner/owned-repo", private: false, default_branch: "main", owner: { login: "repo-owner" } }, 777);
+    const { token: ownerToken } = await createSessionForGitHubUser(ownerEnv, { login: "repo-owner", id: 777 });
+    const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
+    const ownerRoles = await app.request("/v1/app/roles", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerRoles.status).toBe(200);
+    await expect(ownerRoles.json()).resolves.toMatchObject({
+      roles: ["maintainer", "owner"],
+      evidence: { ownedInstalledRepos: 1, accountInstallations: 1, operator: false },
+    });
+    expect((await app.request("/v1/app/maintainer-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(200);
+    expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
+    expect(ownerExtensionSession.status).toBe(201);
+    const ownerExtensionSessionBody = (await ownerExtensionSession.json()) as { token: string; login: string; scopes: string[] };
+    expect(ownerExtensionSessionBody).toMatchObject({ login: "repo-owner", scopes: ["extension:pull_context"] });
+    const ownerExtensionMissingPull = await app.request(
+      "/v1/extension/pull-context?owner=repo-owner&repo=owned-repo",
+      { headers: { authorization: `Bearer ${ownerExtensionSessionBody.token}` } },
+      ownerEnv,
+    );
+    expect(ownerExtensionMissingPull.status).toBe(400);
 
     const minerNeedsRefresh = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: apiHeaders(env) }, env);
     expect(minerNeedsRefresh.status).toBe(200);
@@ -1102,10 +1172,10 @@ describe("api routes", () => {
         scoringModelSnapshotId: "scoring-1",
         repoDecisions: [{ recommendation: "fallback" }, { priorityScore: 250 }, {}],
         topActions: undefined,
-        cleanupFirst: undefined,
-        pursueRepos: undefined,
-        avoidRepos: undefined,
-        maintainerLaneRepos: undefined,
+        cleanupFirst: [{ repoFullName: "entrius/allways-ui", reason: "cached queue needs cleanup before new work" }],
+        pursueRepos: [{ repoFullName: "owner/stable", reason: "fresh low-risk queue" }],
+        avoidRepos: [{ repoFullName: "owner/removed", reason: "removed from registry" }],
+        maintainerLaneRepos: [{ repoFullName: "repo-owner/owned-repo", reason: "owner-maintained repo" }],
         scoreBlockers: ["legacy blocker", { code: "open_pr_pressure", detail: "Too many open PRs" }],
         dataQuality: { signalFidelity: { status: "degraded" } },
       } as never,
@@ -1117,7 +1187,40 @@ describe("api routes", () => {
       status: "ready",
       blockers: expect.arrayContaining([expect.objectContaining({ group: "scoreability" })]),
       projections: expect.arrayContaining([expect.objectContaining({ name: "fallback" }), expect.objectContaining({ name: "repo" })]),
+      repoFit: expect.arrayContaining([
+        expect.objectContaining({ repoFullName: "owner/stable", lane: "pursue" }),
+        expect.objectContaining({ repoFullName: "entrius/allways-ui", lane: "cleanup-first" }),
+        expect.objectContaining({ repoFullName: "repo-owner/owned-repo", lane: "maintainer-lane" }),
+        expect.objectContaining({ repoFullName: "owner/removed", lane: "avoid" }),
+      ]),
+    });
+
+    await persistSignalSnapshot(env, {
+      id: "sparse-pack",
+      signalType: "contributor-decision-pack",
+      targetKey: "sparse-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "sparse-user",
+        generatedAt: new Date().toISOString(),
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [],
+      } as never,
+      generatedAt: new Date().toISOString(),
+    });
+    const sparseMiner = await app.request("/v1/app/miner-dashboard?login=sparse-user", { headers: apiHeaders(env) }, env);
+    expect(sparseMiner.status).toBe(200);
+    await expect(sparseMiner.json()).resolves.toMatchObject({
+      status: "ready",
+      nextActions: [],
+      blockers: [],
+      projections: [],
       repoFit: [],
+      mcp: { snapshot: "scoring-1", lastRun: null },
     });
 
     await recordGitHubRateLimitObservation(env, {
@@ -1336,6 +1439,13 @@ describe("api routes", () => {
     expect(extensionOverview.status).toBe(403);
     await expect(extensionOverview.json()).resolves.toMatchObject({ error: "insufficient_scope" });
 
+    const staticExtensionContext = await app.request("/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12", { headers: apiHeaders(env) }, env);
+    expect(staticExtensionContext.status).toBe(403);
+    await expect(staticExtensionContext.json()).resolves.toMatchObject({ error: "extension_session_required" });
+    const fullBrowserSessionExtensionContext = await app.request("/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12", { headers: cookieHeaders }, env);
+    expect(fullBrowserSessionExtensionContext.status).toBe(403);
+    await expect(fullBrowserSessionExtensionContext.json()).resolves.toMatchObject({ error: "extension_session_required" });
+
     const fallbackOriginEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" });
     delete (fallbackOriginEnv as Partial<Env>).PUBLIC_API_ORIGIN;
     const { token: noIdToken } = await createSessionForGitHubUser(fallbackOriginEnv, { login: "oktofeesh1" });
@@ -1378,6 +1488,29 @@ describe("api routes", () => {
       pullNumber: 99,
       panels: expect.arrayContaining([expect.objectContaining({ label: "Contributor", badge: "unknown" })]),
     });
+
+    const expiringExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: cookieHeaders }, env);
+    expect(expiringExtensionSession.status).toBe(201);
+    const expiringExtensionSessionBody = (await expiringExtensionSession.json()) as { token: string };
+    await env.DB.prepare("update auth_sessions set expires_at = ? where token_hash = ?").bind("2020-01-01T00:00:00.000Z", await hashToken(expiringExtensionSessionBody.token)).run();
+    const expiredExtensionContext = await app.request(
+      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
+      { headers: { authorization: `Bearer ${expiringExtensionSessionBody.token}` } },
+      env,
+    );
+    expect(expiredExtensionContext.status).toBe(401);
+    await expect(expiredExtensionContext.json()).resolves.toMatchObject({ error: "unauthorized" });
+
+    const extensionLogout = await app.request("/v1/auth/logout", { method: "POST", headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
+    expect(extensionLogout.status).toBe(200);
+    await expect(extensionLogout.json()).resolves.toMatchObject({ ok: true, revoked: true });
+    const revokedExtensionContext = await app.request(
+      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
+      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
+      env,
+    );
+    expect(revokedExtensionContext.status).toBe(401);
+    await expect(revokedExtensionContext.json()).resolves.toMatchObject({ error: "unauthorized" });
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {
@@ -1417,7 +1550,8 @@ describe("api routes", () => {
       login: "jsonbored",
       githubId: null,
       github_id: null,
-      roles: ["miner", "maintainer", "owner", "operator"],
+      roles: ["operator"],
+      roleSummary: { onboarding: { status: "ready", primaryRole: "operator" } },
     });
 
     for (const [path, error] of [
@@ -1891,6 +2025,35 @@ describe("api routes", () => {
       env,
     );
     expect(unauthorized.status).toBe(401);
+    const { token: noRoleMcpToken } = await createSessionForGitHubUser(env, { login: "new-user", id: 222 });
+    const noRoleMcp = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${noRoleMcpToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "no-role", method: "tools/list" }),
+      },
+      env,
+    );
+    expect(noRoleMcp.status).toBe(401);
+
+    const { token: operatorMcpToken } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 12345 });
+    const forbiddenContributorMcp = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${operatorMcpToken}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "wrong-login", method: "tools/call", params: { name: "gittensory_get_decision_pack", arguments: { login: "other-user" } } }),
+      },
+      env,
+    );
+    expect(forbiddenContributorMcp.status).toBe(200);
+    await expect(mcpJson(forbiddenContributorMcp)).resolves.toMatchObject({
+      result: {
+        isError: true,
+        content: [expect.objectContaining({ text: expect.stringContaining("authenticated GitHub login") })],
+      },
+    });
 
     const tools = await app.request(
       "/mcp",

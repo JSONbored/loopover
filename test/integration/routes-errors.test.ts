@@ -82,7 +82,8 @@ describe("api route guards and error branches", () => {
     await expect(session.json()).resolves.toMatchObject({
       status: "authenticated",
       login: "jsonbored",
-      roles: ["miner", "maintainer", "owner", "operator"],
+      roles: ["operator"],
+      roleSummary: { onboarding: { status: "ready", primaryRole: "operator" } },
     });
 
     const reposWithCookie = await app.request("/v1/repos", { headers: { cookie: sessionCookie } }, env);

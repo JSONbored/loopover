@@ -12,6 +12,9 @@ describe("GitHub mention commands", () => {
     expect(parseGittensoryMentionCommand("@gittensory")?.name).toBe("help");
     expect(parseGittensoryMentionCommand("@gittensory preflight")?.name).toBe("preflight");
     expect(parseGittensoryMentionCommand("please @gittensory duplicate-check now")?.name).toBe("duplicate-check");
+    expect(parseGittensoryMentionCommand("@gittensory reviewability")?.name).toBe("reviewability");
+    expect(parseGittensoryMentionCommand("@gittensory repo-fit")?.name).toBe("repo-fit");
+    expect(parseGittensoryMentionCommand("@gittensory packet")?.name).toBe("packet");
     expect(parseGittensoryMentionCommand("@gittensory unknown")?.name).toBe("help");
     expect(parseGittensoryMentionCommand("gittensory preflight")).toBeNull();
   });
@@ -103,6 +106,8 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("wallet hotkey payout reviewability private ranking")).not.toMatch(
       /wallet|hotkey|payout|reviewability|private ranking/i,
     );
+    expect(sanitizePublicComment("public score estimate and scoreability should stay private")).not.toMatch(/public score estimate|scoreability/i);
+    expect(sanitizePublicComment("Command: @gittensory reviewability")).toContain("@gittensory reviewability");
     expect(sanitizePublicComment("private ranking, wallet, payout")).toBe("private context");
   });
 
@@ -478,6 +483,229 @@ describe("GitHub mention commands", () => {
     });
     expect(duplicateFallbackPick).toContain("No duplicate signal in this fallback action.");
   });
+
+  it("renders v2 reviewability, repo-fit, and packet sections without private internals", () => {
+    const reviewability = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory reviewability")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 31, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: preflightBundle(),
+    });
+    expect(reviewability).toContain("### Gittensory PR readiness");
+    expect(reviewability).toContain("Command: `@gittensory reviewability`");
+    expect(reviewability).toContain("**PR readiness**");
+    expect(reviewability).toContain("Run local branch preflight first.");
+    expect(reviewability).not.toMatch(/private reviewability|reviewability internals|scoreability|public score estimate|wallet|hotkey|payout|farming/i);
+
+    const repoFit = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory repo-fit")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 32, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: repoFitBundle(),
+    });
+    expect(repoFit).toContain("### Gittensory repository fit");
+    expect(repoFit).toContain("**Repository fit**");
+    expect(repoFit).toContain("Target: `owner/repo`");
+    expect(repoFit).toContain("Use local branch preflight before posting.");
+    expect(repoFit).not.toMatch(/private reviewability|scoreability|public score estimate|wallet|hotkey|payout|farming/i);
+
+    const packet = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory packet")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 33, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: packetBundle(),
+    });
+    expect(packet).toContain("### Gittensory public packet");
+    expect(packet).toContain("**Public packet**");
+    expect(packet).toContain("public-safe PR packet prepared from metadata only.");
+    expect(packet).toContain("Use this as public PR-thread guidance only");
+    expect(packet).not.toMatch(/private reviewability|scoreability|public score estimate|wallet|hotkey|payout|farming/i);
+  });
+
+  it("covers v2 refresh, empty, rerun, and duplicate-line fallbacks", () => {
+    const preflightRefresh = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory preflight")!,
+      repo: null,
+      issue: { number: 40, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle: refreshBundle(),
+    });
+    expect(preflightRefresh).toContain("**Preflight snapshot refresh**");
+
+    for (const [commandText, title, fallback] of [
+      ["@gittensory blockers", "Readiness blockers", "No public readiness blockers are visible"],
+      ["@gittensory duplicate-check", "Duplicate & WIP caution", "No duplicate or work-in-progress collision signal is visible"],
+    ] as const) {
+      const body = buildPublicAgentCommandComment({
+        command: parseGittensoryMentionCommand(commandText)!,
+        repo: null,
+        issue: { number: 40, title: "PR", state: "open", pull_request: {} },
+        pullRequest: null,
+        actorKind: "author",
+        bundle: emptyBundle(),
+      });
+      expect(body).toContain(`**${title}**`);
+      expect(body).toContain(fallback);
+    }
+
+    for (const [commandText, title] of [
+      ["@gittensory reviewability", "PR readiness snapshot refresh"],
+      ["@gittensory repo-fit", "Repository fit snapshot refresh"],
+      ["@gittensory packet", "Public packet snapshot refresh"],
+    ] as const) {
+      const body = buildPublicAgentCommandComment({
+        command: parseGittensoryMentionCommand(commandText)!,
+        repo: null,
+        issue: { number: 41, title: "PR", state: "open", pull_request: {} },
+        pullRequest: null,
+        actorKind: "author",
+        bundle: refreshBundle(),
+      });
+      expect(body).toContain(`**${title}**`);
+    }
+
+    for (const [commandText, title] of [
+      ["@gittensory reviewability", "PR readiness"],
+      ["@gittensory repo-fit", "Repository fit"],
+      ["@gittensory packet", "Public packet"],
+    ] as const) {
+      const body = buildPublicAgentCommandComment({
+        command: parseGittensoryMentionCommand(commandText)!,
+        repo: null,
+        issue: { number: 42, title: "PR", state: "open", pull_request: {} },
+        pullRequest: null,
+        actorKind: "author",
+        bundle: emptyBundle(),
+      });
+      expect(body).toContain(`**${title}**`);
+      expect(body).toContain("No public-safe context is available");
+    }
+
+    const repoFitWithRerun = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory repo-fit")!,
+      repo: null,
+      issue: { number: 43, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-repo-fit-rerun"),
+        actions: [
+          {
+            id: "repo-fit-rerun",
+            runId: "run-repo-fit-rerun",
+            actionType: "choose_next_work" as const,
+            status: "recommended" as const,
+            recommendation: "Choose next work",
+            why: [],
+            blockedBy: [],
+            publicSafeSummary: "Repository fit is acceptable after public checks.",
+            rerunWhen: "After queue changes.",
+            approvalRequired: true,
+            safetyClass: "private" as const,
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "repo fit",
+      },
+    });
+    expect(repoFitWithRerun).toContain("Rerun when: After queue changes.");
+    expect(repoFitWithRerun).not.toContain("Target:");
+
+    const repoFitFromSummary = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory repo-fit")!,
+      repo: null,
+      issue: { number: 43, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-repo-fit-summary"),
+        actions: [
+          {
+            id: "repo-fit-summary",
+            runId: "run-repo-fit-summary",
+            actionType: "monitor_existing_pr" as const,
+            status: "recommended" as const,
+            recommendation: "Explain repository fit",
+            why: [],
+            blockedBy: [],
+            publicSafeSummary: "Repository fit looks clean from cached public evidence.",
+            approvalRequired: true,
+            safetyClass: "private" as const,
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "repo fit",
+      },
+    });
+    expect(repoFitFromSummary).toContain("Repository fit looks clean");
+
+    const packetFromSafetyClass = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory packet")!,
+      repo: null,
+      issue: { number: 43, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-packet-safety-class"),
+        actions: [
+          {
+            id: "packet-safety-class",
+            runId: "run-packet-safety-class",
+            actionType: "monitor_existing_pr" as const,
+            status: "recommended" as const,
+            recommendation: "Use packet",
+            why: [],
+            blockedBy: [],
+            publicSafeSummary: "Post the public-safe PR packet after validation.",
+            approvalRequired: false,
+            safetyClass: "public_safe" as const,
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "packet",
+      },
+    });
+    expect(packetFromSafetyClass).toContain("Post the public-safe PR packet");
+
+    const duplicateBlockers = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory blockers")!,
+      repo: null,
+      issue: { number: 44, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      bundle: {
+        run: completedRun("run-duplicate-blockers"),
+        actions: [
+          {
+            id: "duplicate-blockers",
+            runId: "run-duplicate-blockers",
+            actionType: "explain_score_blockers" as const,
+            status: "blocked" as const,
+            recommendation: "Resolve blockers",
+            why: [],
+            blockedBy: ["open_pr_pressure", "open_pr_pressure"],
+            publicSafeSummary: "Resolve queue pressure before opening more work.",
+            approvalRequired: true,
+            safetyClass: "private" as const,
+            payload: {},
+          },
+        ],
+        contextSnapshots: [],
+        summary: "blockers",
+      },
+    });
+    expect(duplicateBlockers.match(/Open pull request queue pressure/g)).toHaveLength(1);
+  });
 });
 
 function completedRun(id: string) {
@@ -588,6 +816,100 @@ function duplicateBundle() {
     ],
     contextSnapshots: [],
     summary: "duplicate",
+  };
+}
+
+function preflightBundle() {
+  return {
+    run: completedRun("run-preflight-v2"),
+    actions: [
+      {
+        id: "preflight",
+        runId: "run-preflight-v2",
+        actionType: "preflight_branch" as const,
+        status: "ready" as const,
+        recommendation: "Preflight passed",
+        why: [],
+        blockedBy: [],
+        publicSafeSummary: "Run local branch preflight first.",
+        rerunWhen: "After CI completes.",
+        approvalRequired: true,
+        safetyClass: "private" as const,
+        payload: {},
+      },
+    ],
+    contextSnapshots: [],
+    summary: "preflight",
+  };
+}
+
+function repoFitBundle() {
+  return {
+    run: completedRun("run-repo-fit-v2"),
+    actions: [
+      {
+        id: "repo-fit",
+        runId: "run-repo-fit-v2",
+        actionType: "explain_repo_fit" as const,
+        targetRepoFullName: "owner/repo",
+        status: "recommended" as const,
+        recommendation: "Use repo fit context",
+        why: [],
+        blockedBy: [],
+        publicSafeSummary: "Use local branch preflight before posting.",
+        approvalRequired: true,
+        safetyClass: "private" as const,
+        payload: {},
+      },
+    ],
+    contextSnapshots: [],
+    summary: "repo fit",
+  };
+}
+
+function packetBundle() {
+  return {
+    run: completedRun("run-packet-v2"),
+    actions: [
+      {
+        id: "packet",
+        runId: "run-packet-v2",
+        actionType: "prepare_pr_packet" as const,
+        status: "ready" as const,
+        recommendation: "Prepare packet",
+        why: [],
+        blockedBy: [],
+        publicSafeSummary: "owner/repo: public-safe PR packet prepared from metadata only.",
+        rerunWhen: "After validation changes.",
+        approvalRequired: false,
+        safetyClass: "public_safe" as const,
+        payload: {},
+      },
+    ],
+    contextSnapshots: [],
+    summary: "packet",
+  };
+}
+
+function refreshBundle() {
+  return {
+    run: {
+      ...completedRun("run-refresh-v2"),
+      status: "needs_snapshot_refresh" as const,
+      dataQualityStatus: "unknown" as const,
+    },
+    actions: [],
+    contextSnapshots: [],
+    summary: "refresh",
+  };
+}
+
+function emptyBundle() {
+  return {
+    run: completedRun("run-empty-v2"),
+    actions: [],
+    contextSnapshots: [],
+    summary: "empty",
   };
 }
 

@@ -328,6 +328,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     scoringSnapshot,
     scoringProfile,
     issueQuality: issueQuality?.report,
+    gittensorSnapshot,
   });
 }
 

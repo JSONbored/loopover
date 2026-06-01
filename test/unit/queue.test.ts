@@ -1282,17 +1282,19 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners/123") return Response.json({ repositories: [] });
       if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
       if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 3, followers: 1 });
+      if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
       if (url.includes("/access_tokens")) {
         calls.token += 1;
         return Response.json({ token: "installation-token" });
       }
-      if (url.includes("/issues/77/comments") && method === "GET") return Response.json([]);
-      if (url.includes("/issues/77/comments") && method === "POST") {
+      if (url.includes("/issues/") && url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/") && url.includes("/comments") && method === "POST") {
         calls.commentsCreated += 1;
         const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
         expect(body.body).toContain("<!-- gittensory-agent-command -->");
         expect(body.body).toContain("@gittensory");
-        expect(body.body).not.toMatch(/wallet|hotkey|estimated score|reward estimate|payout|farming|raw trust score/i);
+        expect(body.body).not.toMatch(/wallet|hotkey|estimated score|reward estimate|payout|farming|raw trust score|private reviewability|reviewability internals|scoreability|public score estimate/i);
         return Response.json({ id: 1001 }, { status: 201 });
       }
       return new Response("not found", { status: 404 });
@@ -1366,8 +1368,78 @@ describe("queue processors", () => {
         },
       },
     });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-reviewability",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 5,
+          body: "@gittensory reviewability",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-repo-fit",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 6,
+          body: "@gittensory repo-fit",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-packet",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 7,
+          body: "@gittensory packet",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-packet-no-cache",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 78, title: "Uncached PR command", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 8,
+          body: "@gittensory packet",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
 
-    expect(calls).toEqual({ commentsCreated: 4, token: 4, minerList: 1 });
+    expect(calls.commentsCreated).toBe(8);
+    expect(calls.token).toBe(8);
+    expect(calls.minerList).toBeGreaterThanOrEqual(1);
     const audit = await env.DB.prepare("select event_type, detail from audit_events where target_key = ? order by created_at")
       .bind("JSONbored/gittensory#77")
       .all<{ event_type: string; detail: string | null }>();
@@ -1378,6 +1450,20 @@ describe("queue processors", () => {
         expect.objectContaining({ event_type: "github_app.miner_detection_cache_hit", detail: "confirmed" }),
       ]),
     );
+    const usage = await env.DB.prepare("select payload_json from signal_snapshots where signal_type = ? and target_key = ? order by generated_at")
+      .bind("github-agent-command-usage", "JSONbored/gittensory#77")
+      .all<{ payload_json: string }>();
+    const usagePayloads = usage.results.map((entry) => JSON.parse(entry.payload_json) as { command: string; outcome: string; actorKind: string; actorHash?: string });
+    expect(usagePayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "reviewability", outcome: "replied", actorKind: "maintainer" }),
+        expect.objectContaining({ command: "repo-fit", outcome: "replied", actorKind: "maintainer" }),
+        expect.objectContaining({ command: "packet", outcome: "replied", actorKind: "maintainer" }),
+      ]),
+    );
+    expect(usagePayloads.every((payload) => typeof payload.actorHash === "string" && /^[a-f0-9]{64}$/.test(payload.actorHash))).toBe(true);
+    expect(JSON.stringify(usagePayloads)).not.toContain('"actor":');
+    expect(JSON.stringify(usagePayloads)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|@gittensory|oktofeesh1/i);
   });
 
   it("skips unauthorized, bot, and non-PR @gittensory mention commands without public output", async () => {

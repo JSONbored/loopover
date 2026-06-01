@@ -105,7 +105,10 @@ function ExtensionPage() {
         <Callout variant="safety">
           <strong>Privacy posture.</strong> The extension does not read the PR diff, post comments,
           or open issues. It calls the same private Gittensory API endpoints you already use, then
-          renders the response in your local DOM. No analytics SDKs, no third-party trackers.
+          renders the response in your local DOM. Its permission boundary is storage, GitHub PR
+          pages, and the configured Gittensory API origin. Extension tokens are scoped to pull
+          context, stored in browser local storage rather than sync storage, and cleared on logout,
+          expiry, or revoked-session responses. GitHub personal access tokens are rejected.
         </Callout>
       </Section>
     </>

@@ -20,7 +20,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { StatusPill } from "@/components/site/control-primitives";
 import { PageHeader } from "@/components/site/primitives";
 import { TrendChart } from "@/components/site/trend-chart";
-import { useSession } from "@/lib/api/session";
+import { type AppRole, useSession } from "@/lib/api/session";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
 import { useLocalStorage } from "@/lib/use-local-storage";
@@ -36,30 +36,35 @@ const CARDS = [
     title: "Workbench",
     desc: "Plan next work, preflight branches, preview maintainer commands, and inspect digests.",
     icon: Workflow,
+    roles: ["miner", "maintainer", "owner", "operator"],
   },
   {
     to: "/app/repos",
     title: "Repositories",
     desc: "Maintainer console, install health, and registration readiness for repo owners.",
     icon: FolderGit2,
+    roles: ["maintainer", "owner", "operator"],
   },
   {
     to: "/app/runs",
     title: "Agent runs",
     desc: "Unified feed of MCP, API, and @gittensory runs with evidence and boundary tags.",
     icon: Activity,
+    roles: ["miner", "maintainer", "owner", "operator"],
   },
   {
     to: "/app/analytics",
     title: "Analytics",
     desc: "Adoption, command usage, and noise-reduction trends across deployments.",
     icon: BarChart3,
+    roles: ["maintainer", "operator"],
   },
   {
     to: "/app/operator",
     title: "Operator dashboard",
     desc: "Active users, installs, noise reduction, and drift incidents.",
     icon: Wrench,
+    roles: ["operator"],
   },
 ] as const;
 
@@ -137,9 +142,11 @@ function AppOverview() {
         description="Live control-panel metrics from the Gittensory API. Missing backend data renders as empty states instead of demo records."
       />
 
+      <RoleSummaryPanel session={session} />
+
       <OnboardingChecklist />
 
-      <QuickActions lastRunId={lastRun?.id} />
+      <QuickActions lastRunId={lastRun?.id} roles={session.roles} />
 
       <TooltipProvider delayDuration={150}>
         <section
@@ -177,7 +184,9 @@ function AppOverview() {
       <RecentActivity runs={recentRuns} />
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {CARDS.map((c) => (
+        {CARDS.filter((card) =>
+          card.roles.some((role) => session.roles.includes(role as AppRole)),
+        ).map((c) => (
           <Link
             key={c.to}
             to={c.to}
@@ -219,25 +228,104 @@ function mapOverviewRun(bundle: AppOverviewResponse["recentRuns"][number]): Rece
   };
 }
 
-function QuickActions({ lastRunId }: { lastRunId?: string }) {
+function RoleSummaryPanel({
+  session,
+}: {
+  session: NonNullable<ReturnType<typeof useSession>["session"]>;
+}) {
+  const summary = session.roleSummary;
+  if (!summary) return null;
+  const activeCards = summary.roleCards.filter((card) => card.status === "active");
+  const visibleCards =
+    activeCards.length > 0
+      ? activeCards
+      : summary.roleCards.filter((card) => card.status === "needs_setup").slice(0, 3);
+  return (
+    <section aria-label="Role summary" className="rounded-token border-hairline bg-card/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            Role routing
+          </div>
+          <h2 className="mt-1 font-display text-token-base font-semibold">
+            {summary.onboarding.status === "ready" ? "Active workspace paths" : "Setup needed"}
+          </h2>
+        </div>
+        <StatusPill status={summary.onboarding.status === "ready" ? "ready" : "warn"}>
+          {summary.roles.length > 0 ? summary.roles.join(" · ") : "no active role"}
+        </StatusPill>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {visibleCards.map((card) => (
+          <Link
+            key={card.role}
+            to={card.href as never}
+            className={cn(
+              "rounded-token border p-3 transition-colors focus-ring",
+              card.status === "active"
+                ? "border-mint/30 bg-mint/[0.04] hover:bg-mint/[0.07]"
+                : "border-border bg-background/30 hover:bg-accent/50",
+            )}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-display text-token-sm font-semibold">{card.title}</div>
+              <StatusPill status={card.status === "active" ? "ready" : "warn"}>
+                {card.status === "active" ? "active" : "setup"}
+              </StatusPill>
+            </div>
+            <p className="mt-2 text-token-xs leading-token-relaxed text-muted-foreground">
+              {card.detail}
+            </p>
+            {card.sampleRepos.length > 0 && (
+              <div className="mt-2 truncate font-mono text-token-2xs text-muted-foreground">
+                {card.sampleRepos.join(" · ")}
+              </div>
+            )}
+          </Link>
+        ))}
+      </div>
+      {summary.onboarding.nextActions.length > 0 && (
+        <ul className="mt-3 grid gap-1.5 text-token-xs text-muted-foreground md:grid-cols-2">
+          {summary.onboarding.nextActions.slice(0, 4).map((action) => (
+            <li key={action} className="flex gap-2">
+              <Check className="mt-0.5 size-3 shrink-0 text-mint" aria-hidden />
+              <span>{action}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function QuickActions({ lastRunId, roles }: { lastRunId?: string; roles: AppRole[] }) {
   const items: Array<{
     to: string;
     search?: Record<string, string>;
     label: string;
     icon: typeof Sparkles;
+    roles: AppRole[];
   }> = [
-    { to: "/app/workbench", search: { tab: "miner" }, label: "Plan next work", icon: Sparkles },
+    {
+      to: "/app/workbench",
+      search: { tab: "miner" },
+      label: "Plan next work",
+      icon: Sparkles,
+      roles: ["miner", "operator"],
+    },
     {
       to: "/app/workbench",
       search: { tab: "playground" },
       label: "Run preflight",
       icon: PlayCircle,
+      roles: ["miner", "maintainer", "owner", "operator"],
     },
     {
       to: "/app/workbench",
       search: { tab: "commands" },
       label: "@gittensory commands",
       icon: TerminalSquare,
+      roles: ["maintainer", "owner", "operator"],
     },
     ...(lastRunId
       ? [
@@ -246,13 +334,16 @@ function QuickActions({ lastRunId }: { lastRunId?: string }) {
             search: { selected: lastRunId },
             label: "Open last run",
             icon: Activity,
+            roles: ["miner", "maintainer", "owner", "operator"] as AppRole[],
           },
         ]
       : []),
   ];
+  const visibleItems = items.filter((item) => item.roles.some((role) => roles.includes(role)));
+  if (visibleItems.length === 0) return null;
   return (
     <section aria-label="Quick actions" className="flex flex-wrap gap-2">
-      {items.map((i) => {
+      {visibleItems.map((i) => {
         const Icon = i.icon;
         return (
           <Link

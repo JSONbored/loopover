@@ -1248,6 +1248,16 @@ describe("api routes", () => {
     expect(unknownOverview.status).toBe(200);
     await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/commands/usefulness", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect(
+      (
+        await app.request("/v1/app/commands/feedback", {
+          method: "POST",
+          headers: unknownHeaders,
+          body: JSON.stringify({ answerId: "missing-answer", vote: "useful" }),
+        }, unknownEnv)
+      ).status,
+    ).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/weekly-value-report", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);

@@ -971,13 +971,15 @@ export function createApp() {
   });
 
   app.get("/v1/app/commands/usefulness", async (c) => {
-    const identity = await authenticateRequestIdentity(c);
-    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
     const days = Number(c.req.query("days") ?? 30);
     return c.json(await getCommandUsefulnessSummary(c.env, { windowDays: clampInteger(days, 1, 180) }));
   });
 
   app.post("/v1/app/commands/feedback", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
     const identity = await authenticateRequestIdentity(c);
     if (!identity) return c.json({ error: "unauthorized" }, 401);
     const body = await c.req.json().catch(() => null);

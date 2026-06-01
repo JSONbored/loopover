@@ -1230,6 +1230,8 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).toContain("## Maintainer Focus");
     expect(analysis.prPacket.markdown).toContain("Prefer small, focused PRs.");
     expect(analysis.prPacket.markdown).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.manifestGuidance)).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis)).not.toMatch(/ping @owner/);
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/ping @owner/);
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });

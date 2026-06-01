@@ -303,6 +303,7 @@ function upstream(input: Pick<UpstreamStatus, "status" | "openReportCount">): Up
     activeModel: "current_density_model",
     highestSeverity: null,
     affectedAreas: [],
+    registryHyperparameterDrift: { totalEvents: 0, omittedEvents: 0, highImpactCount: 0, affectedRepoCount: 0, affectedFields: [], affectedSurfaces: [] },
     openReportCount: input.openReportCount,
     reports: [],
   };

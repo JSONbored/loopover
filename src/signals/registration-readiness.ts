@@ -73,6 +73,7 @@ export type RegistrationReadinessInput = {
   maintainerCutReadiness: MaintainerCutReadiness;
   contributorIntakeHealth: ContributorIntakeHealth;
   installation: InstallationHealthSummary | null;
+  upstreamRegistryDriftWarnings?: string[] | undefined;
 };
 
 const REQUIRED_DOCS = ["README", "CONTRIBUTING", "SECURITY", "SUPPORT"];
@@ -133,7 +134,7 @@ function buildGithubAppBehavior(repo: RepositoryRecord | null, settings: Reposit
  * Advisory and private/API-first: no public GitHub output, no wallet/score exposure.
  */
 export function buildRegistrationReadiness(input: RegistrationReadinessInput): RegistrationReadinessReport {
-  const { repoFullName, repo, settings, lane, configQuality, labelAudit, queueHealth, maintainerCutReadiness, contributorIntakeHealth, installation } = input;
+  const { repoFullName, repo, settings, lane, configQuality, labelAudit, queueHealth, maintainerCutReadiness, contributorIntakeHealth, installation, upstreamRegistryDriftWarnings = [] } = input;
   const isRegistered = Boolean(repo?.isRegistered);
   const configFragile = configQuality.level === "fragile";
   const configNeedsAttention = configQuality.level === "needs_attention";
@@ -173,6 +174,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
     ...(settings.publicSurface === "off" ? ["GitHub App public surface is disabled; maintainers will not get comment/label assistance."] : []),
     ...testCoverageHealth.warnings,
     ...labelAudit.missingConfiguredLabels.map((label) => `Configured registry label "${label}" is missing from live GitHub labels.`),
+    ...upstreamRegistryDriftWarnings,
   ];
 
   const ready = blockers.length === 0 && !configFragile && !configNeedsAttention;

@@ -8006,6 +8006,62 @@
           "historyCoverage"
         ]
       },
+      "RegistryHyperparameterDriftSummary": {
+        "type": "object",
+        "properties": {
+          "totalEvents": {
+            "type": "number"
+          },
+          "omittedEvents": {
+            "type": "number"
+          },
+          "highImpactCount": {
+            "type": "number"
+          },
+          "affectedRepoCount": {
+            "type": "number"
+          },
+          "affectedFields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "repo",
+                "emissionShare",
+                "issueDiscoveryShare",
+                "maintainerCut",
+                "labelMultipliers",
+                "trustedLabelPipeline",
+                "defaultLabelMultiplier",
+                "fixedBaseScore",
+                "eligibilityMode"
+              ]
+            }
+          },
+          "affectedSurfaces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "allocation",
+                "lane_fit",
+                "scoreability_assumptions",
+                "maintainer_economics",
+                "issue_discovery_behavior",
+                "label_policy"
+              ]
+            }
+          }
+        },
+        "required": [
+          "totalEvents",
+          "omittedEvents",
+          "highImpactCount",
+          "affectedRepoCount",
+          "affectedFields",
+          "affectedSurfaces"
+        ]
+      },
       "UpstreamDriftReport": {
         "type": "object",
         "properties": {
@@ -8151,6 +8207,9 @@
               ]
             }
           },
+          "registryHyperparameterDrift": {
+            "$ref": "#/components/schemas/RegistryHyperparameterDriftSummary"
+          },
           "openReportCount": {
             "type": "number"
           },
@@ -8165,6 +8224,7 @@
           "generatedAt",
           "status",
           "affectedAreas",
+          "registryHyperparameterDrift",
           "openReportCount",
           "reports"
         ]

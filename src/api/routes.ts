@@ -157,7 +157,7 @@ import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signa
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
-import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
+import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
 import type {
   BountyLifecycleEventRecord,
   ControlPanelRoleName,
@@ -1222,6 +1222,11 @@ export function createApp() {
       ...(upstreamDrift.status === "drift_detected"
         ? [`Upstream Gittensor ruleset drift detected (${upstreamDrift.highestSeverity ?? "unknown"}): ${Array.isArray(upstreamDrift.affectedAreas) ? upstreamDrift.affectedAreas.join(", ") : "unknown"}.`]
         : []),
+      ...(upstreamDrift.registryHyperparameterDrift.highImpactCount > 0
+        ? [
+            `High-impact registry hyperparameter drift detected (${upstreamDrift.registryHyperparameterDrift.highImpactCount} event(s) across ${upstreamDrift.registryHyperparameterDrift.affectedRepoCount} repo(s)): ${upstreamDrift.registryHyperparameterDrift.affectedFields.join(", ")}.`,
+          ]
+        : []),
       ...(upstreamDrift.status === "stale" ? ["Upstream Gittensor ruleset snapshot is stale."] : []),
       ...(upstreamDrift.status === "unavailable" ? ["Upstream Gittensor ruleset snapshot is unavailable."] : []),
       ...(installationHealth.some((health) => health.status !== "healthy") ? ["One or more GitHub App installations need attention."] : []),
@@ -2247,10 +2252,14 @@ function buildDigestItems(args: {
     });
   }
   if (args.upstreamDrift.status !== "current") {
+    const registryDrift = args.upstreamDrift.registryHyperparameterDrift;
     items.push({
       kind: "drift",
       title: "Upstream ruleset drift check is not current",
-      detail: `Current upstream status: ${args.upstreamDrift.status}.`,
+      detail:
+        registryDrift.highImpactCount > 0
+          ? `Current upstream status: ${args.upstreamDrift.status}; ${registryDrift.highImpactCount} high-impact registry hyperparameter drift event(s) are open.`
+          : `Current upstream status: ${args.upstreamDrift.status}.`,
       meta: args.upstreamDrift.highestSeverity ?? "watch",
     });
   }
@@ -2380,8 +2389,11 @@ async function buildRepoOutcomePatternsResponse(env: Env, fullName: string) {
 
 async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
   /* v8 ignore start -- Registration readiness route-level shaping over covered signal helpers. */
-  const intelligence = await buildRepoIntelligenceResponse(env, fullName);
-  const settings = await getRepositorySettings(env, fullName);
+  const [intelligence, settings, upstreamReports] = await Promise.all([
+    buildRepoIntelligenceResponse(env, fullName),
+    getRepositorySettings(env, fullName),
+    listUpstreamDriftReports(env, 20),
+  ]);
   const repo = intelligence.repo;
   const installation = await loadInstallationHealthSummary(env, repo);
   const report = buildRegistrationReadiness({
@@ -2395,6 +2407,7 @@ async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
     maintainerCutReadiness: intelligence.maintainerCutReadiness as ReturnType<typeof buildMaintainerCutReadiness>,
     contributorIntakeHealth: intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>,
     installation,
+    upstreamRegistryDriftWarnings: registryHyperparameterDriftWarningsForRepo(upstreamReports, fullName),
   });
   return { ...report, dataQuality: intelligence.dataQuality };
   /* v8 ignore stop */

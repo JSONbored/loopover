@@ -727,6 +727,34 @@ export type UpstreamSourceSnapshotRecord = {
 export type UpstreamDriftSeverity = "low" | "medium" | "high" | "blocking";
 export type UpstreamDriftStatus = "open" | "acknowledged" | "resolved" | "ignored";
 export type UpstreamDriftArea = "registry" | "scoring_model" | "issue_discovery" | "mirror_linkage" | "language_weights" | "source";
+export type RegistryHyperparameterDriftField =
+  | "repo"
+  | "emissionShare"
+  | "issueDiscoveryShare"
+  | "maintainerCut"
+  | "labelMultipliers"
+  | "trustedLabelPipeline"
+  | "defaultLabelMultiplier"
+  | "fixedBaseScore"
+  | "eligibilityMode";
+export type RegistryDriftSurface = "allocation" | "lane_fit" | "scoreability_assumptions" | "maintainer_economics" | "issue_discovery_behavior" | "label_policy";
+export type RegistryHyperparameterDriftEvent = {
+  repoFullName: string;
+  field: RegistryHyperparameterDriftField;
+  previous: JsonValue;
+  current: JsonValue;
+  severity: UpstreamDriftSeverity;
+  affectedSurfaces: RegistryDriftSurface[];
+  summary: string;
+};
+export type RegistryHyperparameterDriftSummary = {
+  totalEvents: number;
+  omittedEvents: number;
+  highImpactCount: number;
+  affectedRepoCount: number;
+  affectedFields: RegistryHyperparameterDriftField[];
+  affectedSurfaces: RegistryDriftSurface[];
+};
 
 export type UpstreamRulesetSnapshotRecord = {
   id: string;

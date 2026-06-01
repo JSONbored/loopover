@@ -763,6 +763,31 @@ export const UpstreamDriftReportSchema = z
   })
   .openapi("UpstreamDriftReport");
 
+const RegistryHyperparameterDriftFieldSchema = z.enum([
+  "repo",
+  "emissionShare",
+  "issueDiscoveryShare",
+  "maintainerCut",
+  "labelMultipliers",
+  "trustedLabelPipeline",
+  "defaultLabelMultiplier",
+  "fixedBaseScore",
+  "eligibilityMode",
+]);
+
+const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);
+
+export const RegistryHyperparameterDriftSummarySchema = z
+  .object({
+    totalEvents: z.number(),
+    omittedEvents: z.number(),
+    highImpactCount: z.number(),
+    affectedRepoCount: z.number(),
+    affectedFields: z.array(RegistryHyperparameterDriftFieldSchema),
+    affectedSurfaces: z.array(RegistryDriftSurfaceSchema),
+  })
+  .openapi("RegistryHyperparameterDriftSummary");
+
 export const UpstreamRulesetSnapshotSchema = z
   .object({
     id: z.string(),
@@ -790,6 +815,7 @@ export const UpstreamStatusSchema = z
     activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]).nullable().optional(),
     highestSeverity: z.enum(["low", "medium", "high", "blocking"]).nullable().optional(),
     affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    registryHyperparameterDrift: RegistryHyperparameterDriftSummarySchema,
     openReportCount: z.number(),
     reports: z.array(UpstreamDriftReportSchema),
   })

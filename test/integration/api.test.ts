@@ -18,6 +18,7 @@ import {
   listProductUsageEvents,
   listLatestSignalSnapshotsByTarget,
   persistUpstreamRulesetSnapshot,
+  upsertUpstreamDriftReport,
   upsertRepoLabel,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
@@ -3455,6 +3456,47 @@ describe("api routes", () => {
     await expect(issueDiscoveryReadiness.json()).resolves.toMatchObject({
       recommendedRegistrationMode: "split",
       issuePolicy: "split_pr_and_issue_discovery_enabled",
+    });
+
+    await upsertUpstreamDriftReport(env, {
+      id: "report-registration-maintainer-cut-drift",
+      fingerprint: "registration-maintainer-cut-drift",
+      severity: "high",
+      status: "open",
+      summary: "1 registry hyperparameter drift event(s)",
+      affectedAreas: ["registry"],
+      previousRulesetId: "previous-ruleset",
+      currentRulesetId: "current-ruleset",
+      payload: {
+        registryHyperparameterDrift: {
+          totalEvents: 1,
+          omittedEvents: 0,
+          highImpactCount: 1,
+          affectedRepoCount: 1,
+          affectedFields: ["maintainerCut"],
+          affectedSurfaces: ["maintainer_economics"],
+          events: [
+            {
+              repoFullName: "entrius/allways-ui",
+              field: "maintainerCut",
+              previous: 0.03,
+              current: 0.1,
+              severity: "high",
+              affectedSurfaces: ["maintainer_economics"],
+              summary: "maintainerCut 0.03 -> 0.1",
+            },
+          ],
+        },
+      },
+      generatedAt: "2026-05-27T00:00:00.000Z",
+      updatedAt: "2026-05-27T00:00:00.000Z",
+    });
+    const driftReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(driftReadiness.status).toBe(200);
+    await expect(driftReadiness.json()).resolves.toMatchObject({
+      warnings: expect.arrayContaining([
+        "Upstream registry drift is open for entrius/allways-ui: maintainer cut changed; affected surface(s): maintainer_economics.",
+      ]),
     });
 
     const recommendation = await app.request("/v1/repos/entrius/allways-ui/gittensor-config-recommendation", { headers: apiHeaders(env) }, env);

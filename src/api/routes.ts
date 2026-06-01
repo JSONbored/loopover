@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
@@ -69,6 +69,8 @@ import {
   persistBountyLifecycleEvent,
   persistScorePreview,
   persistSignalSnapshot,
+  recordProductUsageEvent,
+  summarizeProductUsageEvents,
   upsertDigestSubscription,
   upsertBounty,
   upsertContributorEvidence,
@@ -144,10 +146,58 @@ import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signa
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
-import type { BountyLifecycleEventRecord, ControlPanelRoleName, ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
+import type {
+  BountyLifecycleEventRecord,
+  ControlPanelRoleName,
+  ContributorEvidenceRecord,
+  DataQuality,
+  InstallationHealthRecord,
+  JobMessage,
+  JsonValue,
+  ProductUsageOutcome,
+  ProductUsageSurface,
+  RegistrySnapshot,
+  RepoSyncSegmentRecord,
+  RepositoryRecord,
+  ScoringModelSnapshotRecord,
+} from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
+type AppContext = Context<AppBindings>;
+
+async function recordRouteProductUsage(
+  c: AppContext,
+  event: {
+    surface: ProductUsageSurface;
+    eventName: string;
+    outcome?: ProductUsageOutcome;
+    identity?: AuthIdentity | null | undefined;
+    actor?: string | null | undefined;
+    sessionId?: string | null | undefined;
+    repoFullName?: string | null | undefined;
+    targetKey?: string | null | undefined;
+    latencyMs?: number | null | undefined;
+    clientName?: string | null | undefined;
+    clientVersion?: string | null | undefined;
+    metadata?: Record<string, unknown> | null | undefined;
+  },
+): Promise<void> {
+  await recordProductUsageEvent(c.env, {
+    surface: event.surface,
+    eventName: event.eventName,
+    route: c.req.path,
+    actor: event.actor ?? event.identity?.actor,
+    sessionId: event.sessionId ?? (event.identity?.kind === "session" ? event.identity.session.id : undefined),
+    repoFullName: event.repoFullName,
+    targetKey: event.targetKey,
+    outcome: event.outcome,
+    latencyMs: event.latencyMs,
+    clientName: event.clientName,
+    clientVersion: event.clientVersion,
+    metadata: event.metadata,
+  }).catch(() => undefined);
+}
 
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
@@ -487,7 +537,15 @@ export function createApp() {
     const githubToken = typeof body?.githubToken === "string" ? body.githubToken : "";
     if (!githubToken) return c.json({ error: "github_token_required" }, 400);
     try {
-      return c.json(await createSessionFromGitHubToken(c.env, githubToken, { source: "github_token_exchange" }), 201);
+      const session = await createSessionFromGitHubToken(c.env, githubToken, { source: "github_token_exchange" });
+      await recordRouteProductUsage(c, {
+        surface: "api",
+        eventName: "auth_session_created",
+        actor: session.login,
+        outcome: "success",
+        metadata: { source: "github_token_exchange", scopeCount: session.scopes.length },
+      });
+      return c.json(session, 201);
     } catch (error) {
       return c.json({ error: errorMessage(error, "github_session_create_failed") }, 401);
     }
@@ -524,6 +582,15 @@ export function createApp() {
         },
       },
     );
+    await recordRouteProductUsage(c, {
+      surface: "browser_extension",
+      eventName: "extension_session_created",
+      identity,
+      sessionId: session.id,
+      outcome: "success",
+      clientName: "browser_extension",
+      metadata: { scopeCount: session.scopes.length },
+    });
     return c.json(
       {
         token,
@@ -684,7 +751,8 @@ export function createApp() {
   app.get("/v1/app/operator-dashboard", async (c) => {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
-    const [repositories, installations, health, registry, scoring, upstreamDrift, activeSessions, digestSubscriptions, rateLimits] = await Promise.all([
+    const usageSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const [repositories, installations, health, registry, scoring, upstreamDrift, activeSessions, digestSubscriptions, rateLimits, usageSummary] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
       listInstallationHealth(c.env),
@@ -694,6 +762,7 @@ export function createApp() {
       countActiveAuthSessions(c.env),
       countActiveDigestSubscriptions(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
+      summarizeProductUsageEvents(c.env, usageSince),
     ]);
     const installedRepos = repositories.filter((repo) => repo.isInstalled).length;
     const registeredRepos = repositories.filter((repo) => repo.isRegistered).length;
@@ -704,6 +773,8 @@ export function createApp() {
         { label: "Installations", value: String(installations.length), delta: `${installedRepos} installed repos` },
         { label: "Registered repos", value: String(registeredRepos), delta: registry ? `${registry.repoCount} in latest registry` : "registry missing" },
         { label: "Digest subscriptions", value: String(digestSubscriptions), delta: "store-only" },
+        { label: "Product events", value: String(usageSummary.totalEvents), delta: "last 7 days" },
+        { label: "Active users", value: String(usageSummary.activeActors), delta: "hashed, last 7 days" },
         { label: "Install issues", value: String(health.filter((record) => record.status !== "healthy").length), delta: "current health cache" },
         { label: "Rate-limit events", value: String(rateLimits.length), delta: "latest observations" },
       ],
@@ -713,6 +784,7 @@ export function createApp() {
         { label: "Installed coverage", value: installedRepos, spark: sparklineFromCounts(installedRepos, Math.max(repositories.length, 1)) },
       ],
       weeklyReport: buildOperatorWeeklyReport({ repositories, installations, health, registry, scoring, upstreamDrift }),
+      usageSummary,
       registry,
       scoringModel: scoring,
       upstreamDrift,
@@ -732,11 +804,22 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_command_preview_request", issues: parsed.error.issues }, 400);
     const command = APP_COMMANDS.find((candidate) => candidate.command === parsed.data.command || candidate.id === parsed.data.command.replace(/^@gittensory\s+/, ""));
     if (!command) return c.json({ error: "command_not_found" }, 404);
+    const identity = await authenticateRequestIdentity(c).catch(() => null);
+    const preview = buildCommandPreview(command, parsed.data);
+    await recordRouteProductUsage(c, {
+      surface: "control_panel",
+      eventName: "command_previewed",
+      identity,
+      repoFullName: parsed.data.repoFullName,
+      targetKey: parsed.data.pullNumber ? `${parsed.data.repoFullName ?? "unknown"}#${parsed.data.pullNumber}` : parsed.data.repoFullName,
+      outcome: "success",
+      metadata: { command: command.id, audience: command.audience, boundary: command.boundary },
+    });
     return c.json({
       generatedAt: nowIso(),
       command,
       request: parsed.data,
-      preview: buildCommandPreview(command, parsed.data),
+      preview,
     });
   });
 
@@ -772,6 +855,13 @@ export function createApp() {
     const parsed = digestSubscriptionSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_digest_subscription_request", issues: parsed.error.issues }, 400);
     const subscription = await upsertDigestSubscription(c.env, { login: identity.actor, email: parsed.data.email, source: "app" });
+    await recordRouteProductUsage(c, {
+      surface: "control_panel",
+      eventName: "digest_subscription_stored",
+      identity,
+      outcome: "success",
+      metadata: { source: "app", deliveryMode: "store_only" },
+    });
     return c.json({ status: "stored", subscription, delivery: { mode: "store_only", emailDeliveryEnabled: false } }, 201);
   });
 
@@ -808,6 +898,16 @@ export function createApp() {
       pullNumber,
       profile: contributorContext?.profile,
       outcomeHistory: contributorContext?.outcomeHistory,
+    });
+    await recordRouteProductUsage(c, {
+      surface: "browser_extension",
+      eventName: "pull_context_viewed",
+      identity,
+      repoFullName: fullName,
+      targetKey: `${fullName}#${pullNumber}`,
+      outcome: "success",
+      clientName: "browser_extension",
+      metadata: { hasContributorContext: Boolean(contributorContext), hasCachedPullRequest: Boolean(pullRequest) },
     });
     return c.json({
       generatedAt: nowIso(),
@@ -1287,6 +1387,15 @@ export function createApp() {
     });
     const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
+    await recordRouteProductUsage(c, {
+      surface: "api",
+      eventName: "local_branch_analysis_completed",
+      actor: parsed.data.login,
+      repoFullName: parsed.data.repoFullName,
+      targetKey: `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`,
+      outcome: "success",
+      metadata: { hasLocalScorer: Boolean(parsed.data.localScorer), changedFileCount: parsed.data.changedFiles?.length ?? 0, linkedIssueCount: parsed.data.linkedIssues?.length ?? 0 },
+    });
     return c.json(response);
   });
 
@@ -1297,6 +1406,17 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, parsed.data.actorLogin);
     if (unauthorized) return unauthorized;
     const bundle = await startAgentRun(c.env, parsed.data);
+    await recordRouteProductUsage(c, {
+      surface: "api",
+      eventName: "agent_run_started",
+      actor: parsed.data.actorLogin,
+      repoFullName: parsed.data.target?.repoFullName,
+      targetKey: parsed.data.target?.repoFullName
+        ? `${parsed.data.target.repoFullName}${parsed.data.target.pullNumber ? `#${parsed.data.target.pullNumber}` : parsed.data.target.issueNumber ? `#${parsed.data.target.issueNumber}` : ""}`
+        : undefined,
+      outcome: "queued",
+      metadata: { surface: parsed.data.surface ?? "api", status: bundle.run.status },
+    });
     return c.json(bundle, 202);
   });
 
@@ -1327,6 +1447,15 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
     if (unauthorized) return unauthorized;
     const bundle = await planNextWork(c.env, parsed.data);
+    await recordRouteProductUsage(c, {
+      surface: "api",
+      eventName: "agent_plan_next_work_completed",
+      actor: parsed.data.login,
+      repoFullName: parsed.data.repoFullName,
+      targetKey: parsed.data.repoFullName,
+      outcome: bundle.run.status === "needs_snapshot_refresh" ? "queued" : "success",
+      metadata: { requestedSurface: parsed.data.surface ?? "api", status: bundle.run.status },
+    });
     return c.json(bundle, bundle.run.status === "needs_snapshot_refresh" ? 202 : 200);
   });
 
@@ -1337,6 +1466,15 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
     if (unauthorized) return unauthorized;
     const bundle = await preflightBranchWithAgent(c.env, parsed.data);
+    await recordRouteProductUsage(c, {
+      surface: "api",
+      eventName: "agent_preflight_branch_completed",
+      actor: parsed.data.login,
+      repoFullName: parsed.data.repoFullName,
+      targetKey: `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`,
+      outcome: bundle.run.status === "needs_snapshot_refresh" ? "queued" : "success",
+      metadata: { status: bundle.run.status },
+    });
     return c.json(bundle);
   });
 
@@ -1347,6 +1485,15 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
     if (unauthorized) return unauthorized;
     const bundle = await preparePrPacketWithAgent(c.env, parsed.data);
+    await recordRouteProductUsage(c, {
+      surface: "api",
+      eventName: "agent_pr_packet_completed",
+      actor: parsed.data.login,
+      repoFullName: parsed.data.repoFullName,
+      targetKey: `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`,
+      outcome: bundle.run.status === "needs_snapshot_refresh" ? "queued" : "success",
+      metadata: { status: bundle.run.status },
+    });
     return c.json(bundle);
   });
 
@@ -1357,6 +1504,15 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
     if (unauthorized) return unauthorized;
     const bundle = await explainBlockersWithAgent(c.env, parsed.data);
+    await recordRouteProductUsage(c, {
+      surface: "api",
+      eventName: "agent_blockers_completed",
+      actor: parsed.data.login,
+      repoFullName: "repoFullName" in parsed.data ? parsed.data.repoFullName : undefined,
+      targetKey: "repoFullName" in parsed.data ? parsed.data.repoFullName : undefined,
+      outcome: bundle.run.status === "needs_snapshot_refresh" ? "queued" : "success",
+      metadata: { requestedSurface: "surface" in parsed.data ? (parsed.data.surface ?? "api") : "api", status: bundle.run.status },
+    });
     return c.json(bundle, bundle.run.status === "needs_snapshot_refresh" ? 202 : 200);
   });
 

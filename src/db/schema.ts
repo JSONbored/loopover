@@ -749,6 +749,32 @@ export const auditEvents = sqliteTable(
   }),
 );
 
+export const productUsageEvents = sqliteTable(
+  "product_usage_events",
+  {
+    id: text("id").primaryKey(),
+    surface: text("surface").notNull(),
+    eventName: text("event_name").notNull(),
+    route: text("route"),
+    actorHash: text("actor_hash"),
+    sessionHash: text("session_hash"),
+    repoFullName: text("repo_full_name"),
+    targetKey: text("target_key"),
+    outcome: text("outcome").notNull(),
+    latencyMs: integer("latency_ms"),
+    clientName: text("client_name"),
+    clientVersion: text("client_version"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    occurredAt: text("occurred_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    surfaceOccurred: index("product_usage_events_surface_occurred_idx").on(table.surface, table.occurredAt),
+    eventOccurred: index("product_usage_events_event_occurred_idx").on(table.eventName, table.occurredAt),
+    actorOccurred: index("product_usage_events_actor_occurred_idx").on(table.actorHash, table.occurredAt),
+    repoOccurred: index("product_usage_events_repo_occurred_idx").on(table.repoFullName, table.occurredAt),
+  }),
+);
+
 export const aiUsageEvents = sqliteTable(
   "ai_usage_events",
   {

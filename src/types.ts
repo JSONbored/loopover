@@ -861,3 +861,33 @@ export type AuditEventRecord = {
   metadata?: Record<string, JsonValue> | undefined;
   createdAt?: string | null | undefined;
 };
+
+export type ProductUsageSurface = "api" | "mcp" | "github_app" | "control_panel" | "browser_extension" | "internal";
+
+export type ProductUsageOutcome = "success" | "denied" | "error" | "queued" | "completed" | "skipped";
+
+export type ProductUsageEventRecord = {
+  id: string;
+  surface: ProductUsageSurface;
+  eventName: string;
+  route?: string | null | undefined;
+  actorHash?: string | null | undefined;
+  sessionHash?: string | null | undefined;
+  repoFullName?: string | null | undefined;
+  targetKey?: string | null | undefined;
+  outcome: ProductUsageOutcome;
+  latencyMs?: number | null | undefined;
+  clientName?: string | null | undefined;
+  clientVersion?: string | null | undefined;
+  metadata: Record<string, JsonValue>;
+  occurredAt: string;
+};
+
+export type ProductUsageSummary = {
+  since?: string | null | undefined;
+  totalEvents: number;
+  activeActors: number;
+  bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
+  byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
+  byEvent: Array<{ eventName: string; count: number }>;
+};

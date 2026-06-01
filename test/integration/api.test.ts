@@ -13,6 +13,7 @@ import {
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
   recordGitHubRateLimitObservation,
+  listProductUsageEvents,
   listLatestSignalSnapshotsByTarget,
   persistUpstreamRulesetSnapshot,
   upsertRepoLabel,
@@ -1223,6 +1224,28 @@ describe("api routes", () => {
       mcp: { snapshot: "scoring-1", lastRun: null },
     });
 
+    await persistSignalSnapshot(env, {
+      id: "empty-fit-pack",
+      signalType: "contributor-decision-pack",
+      targetKey: "empty-fit-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "empty-fit-user",
+        generatedAt: new Date().toISOString(),
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [],
+        dataQuality: { signalFidelity: { status: "complete" } },
+      } as never,
+      generatedAt: new Date().toISOString(),
+    });
+    const minerWithEmptyFit = await app.request("/v1/app/miner-dashboard?login=empty-fit-user", { headers: apiHeaders(env) }, env);
+    expect(minerWithEmptyFit.status).toBe(200);
+    await expect(minerWithEmptyFit.json()).resolves.toMatchObject({ status: "ready", repoFit: [] });
+
     await recordGitHubRateLimitObservation(env, {
       id: "rate-limit-healthy",
       repoFullName: "entrius/allways-ui",
@@ -1309,6 +1332,29 @@ describe("api routes", () => {
     await expect(privatePreviewWithoutTarget.json()).resolves.toMatchObject({
       preview: { body: expect.stringContaining("selected target") },
     });
+
+    const previewWithoutRepo = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "public-summary", pullNumber: 12 }),
+      },
+      env,
+    );
+    expect(previewWithoutRepo.status).toBe(200);
+
+    const telemetryDownPreviewEnv = withProductUsageInsertFailure(createTestEnv());
+    const telemetryDownPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(telemetryDownPreviewEnv),
+        body: JSON.stringify({ command: "public-summary", repoFullName: "entrius/allways-ui", pullNumber: 12 }),
+      },
+      telemetryDownPreviewEnv,
+    );
+    expect(telemetryDownPreview.status).toBe(200);
 
     expect((await app.request("/v1/app/commands/preview", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/app/commands/preview", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ command: "unknown" }) }, env)).status).toBe(404);
@@ -1412,6 +1458,50 @@ describe("api routes", () => {
     const invalidLimitRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1&limit=not-a-number", { headers: cookieHeaders }, env);
     expect(invalidLimitRuns.status).toBe(200);
 
+    const queuedAgentRun = await app.request(
+      "/v1/agent/runs",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ objective: "Plan work without a repo target", actorLogin: "oktofeesh1" }) },
+      env,
+    );
+    expect(queuedAgentRun.status).toBe(202);
+    const queuedPullAgentRun = await app.request(
+      "/v1/agent/runs",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ objective: "Plan PR work", actorLogin: "oktofeesh1", target: { repoFullName: "entrius/allways-ui", pullNumber: 12 } }) },
+      env,
+    );
+    expect(queuedPullAgentRun.status).toBe(202);
+    const queuedIssueAgentRun = await app.request(
+      "/v1/agent/runs",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ objective: "Plan issue work", actorLogin: "oktofeesh1", target: { repoFullName: "entrius/allways-ui", issueNumber: 1 } }) },
+      env,
+    );
+    expect(queuedIssueAgentRun.status).toBe(202);
+
+    const localAnalysis = await app.request(
+      "/v1/local/branch-analysis",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }) },
+      env,
+    );
+    expect(localAnalysis.status).toBe(200);
+    const agentPreflight = await app.request(
+      "/v1/agent/preflight-branch",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui" }) },
+      env,
+    );
+    expect(agentPreflight.status).toBe(200);
+    const agentPacket = await app.request(
+      "/v1/agent/prepare-pr-packet",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", headRef: "usage-spine" }) },
+      env,
+    );
+    expect(agentPacket.status).toBe(200);
+    const agentBlockers = await app.request(
+      "/v1/agent/explain-blockers",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }) },
+      env,
+    );
+    expect(agentBlockers.status).toBe(200);
+
     const staticExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: apiHeaders(env) }, env);
     expect(staticExtensionSession.status).toBe(403);
 
@@ -1511,6 +1601,28 @@ describe("api routes", () => {
     );
     expect(revokedExtensionContext.status).toBe(401);
     await expect(revokedExtensionContext.json()).resolves.toMatchObject({ error: "unauthorized" });
+
+    const productUsageEvents = await listProductUsageEvents(env, { limit: 20 });
+    expect(productUsageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "control_panel", eventName: "command_previewed", outcome: "success" }),
+        expect.objectContaining({ surface: "control_panel", eventName: "digest_subscription_stored", outcome: "success" }),
+        expect.objectContaining({ surface: "browser_extension", eventName: "extension_session_created", outcome: "success" }),
+        expect.objectContaining({ surface: "browser_extension", eventName: "pull_context_viewed", outcome: "success" }),
+      ]),
+    );
+    expect(JSON.stringify(productUsageEvents)).not.toMatch(/oktofeesh1|operator@example.com|gittensory_session|\/Users|github_pat|ghp_|source code|raw trust|wallet|hotkey/i);
+
+    const usageOperator = await app.request("/v1/app/operator-dashboard", { headers: apiHeaders(env) }, env);
+    expect(usageOperator.status).toBe(200);
+    const usageOperatorBody = (await usageOperator.json()) as { metrics: Array<{ label: string; value: string }>; usageSummary: { totalEvents: number } };
+    expect(usageOperatorBody.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Product events", value: String(productUsageEvents.length) }),
+        expect.objectContaining({ label: "Active users" }),
+      ]),
+    );
+    expect(usageOperatorBody.usageSummary.totalEvents).toBe(productUsageEvents.length);
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {
@@ -2054,6 +2166,49 @@ describe("api routes", () => {
         content: [expect.objectContaining({ text: expect.stringContaining("authenticated GitHub login") })],
       },
     });
+
+    const malformedMcp = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: "not-json",
+      },
+      env,
+    );
+    expect(malformedMcp.status).toBeGreaterThanOrEqual(400);
+
+    const missingMethodMcp = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-method", params: { name: "gittensory_get_repo_context" } }),
+      },
+      env,
+    );
+    expect(missingMethodMcp.status).toBeGreaterThanOrEqual(400);
+
+    const telemetryDownEnv = withProductUsageInsertFailure(createTestEnv());
+    const telemetryDownInitialize = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(telemetryDownEnv),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "telemetry-down",
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: { name: "gittensory-tests", version: "0.1.0" },
+          },
+        }),
+      },
+      telemetryDownEnv,
+    );
+    expect(telemetryDownInitialize.status).toBe(200);
 
     const tools = await app.request(
       "/mcp",
@@ -2680,6 +2835,29 @@ describe("api routes", () => {
     expect(missingBounty.status).toBe(200);
     const missingBountyPayload = await mcpJson(missingBounty);
     expect(JSON.stringify(missingBountyPayload)).toMatch(/Bounty not found|error|isError/i);
+
+    const sessionEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" });
+    const { token: mcpSessionToken } = await createSessionForGitHubUser(sessionEnv, { login: "oktofeesh1", id: 12345 });
+    const forbiddenSessionTool = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(sessionEnv), authorization: `Bearer ${mcpSessionToken}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-session-tool", method: "tools/call", params: { name: "gittensory_get_decision_pack", arguments: { login: "other-user" } } }),
+      },
+      sessionEnv,
+    );
+    expect(forbiddenSessionTool.status).toBe(200);
+    expect(JSON.stringify(await mcpJson(forbiddenSessionTool))).toMatch(/Forbidden|session can only access/i);
+
+    const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
+    expect(mcpUsageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_tool_called", outcome: "success", metadata: expect.objectContaining({ toolName: "gittensory_get_bounty_advisory" }) }),
+      ]),
+    );
+    expect(JSON.stringify(mcpUsageEvents)).not.toMatch(/oktofeesh1|\/Users|github_pat|ghp_|source code|wallet|hotkey|raw trust/i);
   }, 15_000);
 
   it("covers registration-readiness policy variants for repo-owner launch planning", async () => {
@@ -3145,6 +3323,22 @@ function internalHeaders(env: Env): Record<string, string> {
   return {
     authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`,
     "content-type": "application/json",
+  };
+}
+
+function withProductUsageInsertFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
   };
 }
 

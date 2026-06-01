@@ -25,6 +25,7 @@ declare global {
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;
+    PRODUCT_USAGE_HASH_SALT?: string;
     GITTENSORY_API_TOKEN: string;
     GITTENSORY_MCP_TOKEN: string;
     INTERNAL_JOB_TOKEN: string;

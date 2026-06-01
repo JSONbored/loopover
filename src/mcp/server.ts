@@ -25,6 +25,7 @@ import {
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
+  recordProductUsageEvent,
 } from "../db/repositories";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -242,8 +243,52 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   const identity = await authenticateMcpRequest(c);
   if (!identity) return c.json({ error: "unauthorized" }, 401);
 
+  const usageMetadata = await describeMcpUsageRequest(c.req.raw);
+  const startedAt = Date.now();
   const server = new GittensoryMcp(c.env, identity).createServer();
-  return createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
+  try {
+    const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
+    await recordProductUsageEvent(c.env, {
+      surface: "mcp",
+      eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
+      route: "/mcp",
+      actor: identity.actor,
+      sessionId: identity.kind === "session" ? identity.session.id : undefined,
+      outcome: response.status >= 400 ? "error" : "success",
+      latencyMs: Date.now() - startedAt,
+      clientName: "mcp",
+      clientVersion: c.req.header("mcp-protocol-version"),
+      metadata: usageMetadata,
+    }).catch(() => undefined);
+    return response;
+  } catch (error) {
+    await recordProductUsageEvent(c.env, {
+      surface: "mcp",
+      eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
+      route: "/mcp",
+      actor: identity.actor,
+      sessionId: identity.kind === "session" ? identity.session.id : undefined,
+      outcome: "error",
+      latencyMs: Date.now() - startedAt,
+      clientName: "mcp",
+      clientVersion: c.req.header("mcp-protocol-version"),
+      metadata: usageMetadata,
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function describeMcpUsageRequest(request: Request): Promise<Record<string, unknown>> {
+  const body = await request.clone().json().catch(() => null);
+  if (!body || typeof body !== "object") return { transport: "http", method: request.method };
+  const envelope = body as { method?: unknown; params?: { name?: unknown } };
+  const rpcMethod = typeof envelope.method === "string" ? envelope.method : undefined;
+  const toolName = envelope.params && typeof envelope.params.name === "string" ? envelope.params.name : undefined;
+  return {
+    transport: "http",
+    rpcMethod,
+    toolName,
+  };
 }
 
 export class GittensoryMcp {

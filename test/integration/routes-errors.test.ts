@@ -780,6 +780,52 @@ describe("api route guards and error branches", () => {
 
     expect((await app.request("/mcp", { method: "OPTIONS" }, env)).status).toBe(204);
     expect(await handleMcpRequest({ req: { method: "OPTIONS" } } as never)).toMatchObject({ status: 204 });
+    const defensiveEnv = withProductUsageInsertFailure(createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" }));
+    const { token: defensiveSessionToken } = await createSessionForGitHubUser(defensiveEnv, { login: "oktofeesh1", id: 12345 });
+    const rawRequest = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${defensiveSessionToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "raw-failure", method: "tools/call", params: { name: "gittensory_get_repo_context", arguments: { owner: "JSONbored", repo: "gittensory" } } }),
+    });
+    let rawReads = 0;
+    await expect(
+      handleMcpRequest({
+        env: defensiveEnv,
+        req: {
+          method: "POST",
+          header(name: string) {
+            return name.toLowerCase() === "authorization" ? `Bearer ${defensiveSessionToken}` : undefined;
+          },
+          get raw() {
+            rawReads += 1;
+            if (rawReads === 1) return rawRequest;
+            throw new Error("raw request unavailable");
+          },
+        },
+      } as never),
+    ).rejects.toThrow("raw request unavailable");
+    const staticRawRequest = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${defensiveEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "static-raw-failure", method: "tools/list" }),
+    });
+    let staticRawReads = 0;
+    await expect(
+      handleMcpRequest({
+        env: createTestEnv(),
+        req: {
+          method: "POST",
+          header(name: string) {
+            return name.toLowerCase() === "authorization" ? `Bearer ${defensiveEnv.GITTENSORY_MCP_TOKEN}` : undefined;
+          },
+          get raw() {
+            staticRawReads += 1;
+            if (staticRawReads === 1) return staticRawRequest;
+            throw new Error("static raw request unavailable");
+          },
+        },
+      } as never),
+    ).rejects.toThrow("static raw request unavailable");
     expect(
       (
         await app.request(
@@ -828,6 +874,22 @@ function internalHeaders(env: Env): Record<string, string> {
   return {
     authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`,
     "content-type": "application/json",
+  };
+}
+
+function withProductUsageInsertFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
   };
 }
 

@@ -28,6 +28,7 @@ import {
   pullRequestDetailSyncState,
   pullRequestReviews,
   pullRequests,
+  productUsageEvents,
   recentMergedPullRequests,
   repositories,
   repoGithubTotalsSnapshots,
@@ -78,6 +79,10 @@ import type {
   IssueRecord,
   IssueQualityReportRecord,
   JsonValue,
+  ProductUsageEventRecord,
+  ProductUsageOutcome,
+  ProductUsageSummary,
+  ProductUsageSurface,
   PullRequestFileRecord,
   PullRequestDetailSyncStateRecord,
   PullRequestRecord,
@@ -104,6 +109,7 @@ import type {
   UpstreamSourceStatus,
 } from "../types";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
+import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
@@ -940,6 +946,130 @@ export async function countActiveDigestSubscriptions(env: Env): Promise<number> 
   const [row] = await db.select({ count: sql<number>`count(*)` }).from(digestSubscriptions).where(eq(digestSubscriptions.status, "active"));
   /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   return Number(row?.count ?? 0);
+}
+
+export async function recordProductUsageEvent(
+  env: Env,
+  event: {
+    surface: ProductUsageSurface;
+    eventName: string;
+    actor?: string | null | undefined;
+    sessionId?: string | null | undefined;
+    route?: string | null | undefined;
+    repoFullName?: string | null | undefined;
+    targetKey?: string | null | undefined;
+    outcome?: ProductUsageOutcome | null | undefined;
+    latencyMs?: number | null | undefined;
+    clientName?: string | null | undefined;
+    clientVersion?: string | null | undefined;
+    metadata?: Record<string, unknown> | null | undefined;
+    occurredAt?: string | null | undefined;
+  },
+): Promise<ProductUsageEventRecord> {
+  const db = getDb(env.DB);
+  const actorRedactor = buildProductUsageActorRedactor(event.actor);
+  const record: ProductUsageEventRecord = {
+    id: crypto.randomUUID(),
+    surface: normalizeProductUsageSurface(event.surface),
+    eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
+    route: boundedProductUsageField(event.route, 160),
+    actorHash: await hashProductUsageIdentifier(env, "actor", event.actor),
+    sessionHash: await hashProductUsageIdentifier(env, "session", event.sessionId),
+    repoFullName: redactProductUsageActor(boundedProductUsageField(event.repoFullName, 256), actorRedactor),
+    targetKey: redactProductUsageActor(boundedProductUsageField(event.targetKey, 256), actorRedactor),
+    outcome: normalizeProductUsageOutcome(event.outcome),
+    latencyMs: normalizeProductUsageLatency(event.latencyMs),
+    clientName: boundedProductUsageField(event.clientName, 80),
+    clientVersion: boundedProductUsageField(event.clientVersion, 80),
+    metadata: sanitizeProductUsageMetadata(event.metadata, actorRedactor),
+    occurredAt: event.occurredAt ?? nowIso(),
+  };
+  await db.insert(productUsageEvents).values({
+    id: record.id,
+    surface: record.surface,
+    eventName: record.eventName,
+    route: record.route ?? null,
+    actorHash: record.actorHash ?? null,
+    sessionHash: record.sessionHash ?? null,
+    repoFullName: record.repoFullName ?? null,
+    targetKey: record.targetKey ?? null,
+    outcome: record.outcome,
+    latencyMs: record.latencyMs ?? null,
+    clientName: record.clientName ?? null,
+    clientVersion: record.clientVersion ?? null,
+    metadataJson: jsonString(record.metadata),
+    occurredAt: record.occurredAt,
+  });
+  return record;
+}
+
+export async function listProductUsageEvents(
+  env: Env,
+  options: { limit?: number; sinceIso?: string } = {},
+): Promise<ProductUsageEventRecord[]> {
+  const db = getDb(env.DB);
+  const limit = Math.max(1, Math.min(500, Math.round(options.limit ?? 100)));
+  const rows = options.sinceIso
+    ? await db
+        .select()
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, options.sinceIso))
+        .orderBy(desc(productUsageEvents.occurredAt))
+        .limit(limit)
+    : await db.select().from(productUsageEvents).orderBy(desc(productUsageEvents.occurredAt)).limit(limit);
+  return rows.map(toProductUsageEventRecord);
+}
+
+export async function summarizeProductUsageEvents(env: Env, sinceIso?: string): Promise<ProductUsageSummary> {
+  const db = getDb(env.DB);
+  const [totalRow] = sinceIso
+    ? await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents).where(gte(productUsageEvents.occurredAt, sinceIso))
+    : await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents);
+  const [activeActorRow] = sinceIso
+    ? await db
+        .select({ count: sql<number>`count(distinct ${productUsageEvents.actorHash})` })
+        .from(productUsageEvents)
+        .where(and(gte(productUsageEvents.occurredAt, sinceIso), sql`${productUsageEvents.actorHash} is not null`))
+    : await db
+        .select({ count: sql<number>`count(distinct ${productUsageEvents.actorHash})` })
+        .from(productUsageEvents)
+        .where(sql`${productUsageEvents.actorHash} is not null`);
+  const bySurfaceRows = sinceIso
+    ? await db
+        .select({ surface: productUsageEvents.surface, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, sinceIso))
+        .groupBy(productUsageEvents.surface)
+    : await db.select({ surface: productUsageEvents.surface, count: sql<number>`count(*)` }).from(productUsageEvents).groupBy(productUsageEvents.surface);
+  const byOutcomeRows = sinceIso
+    ? await db
+        .select({ outcome: productUsageEvents.outcome, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, sinceIso))
+        .groupBy(productUsageEvents.outcome)
+    : await db.select({ outcome: productUsageEvents.outcome, count: sql<number>`count(*)` }).from(productUsageEvents).groupBy(productUsageEvents.outcome);
+  const byEventRows = sinceIso
+    ? await db
+        .select({ eventName: productUsageEvents.eventName, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .where(gte(productUsageEvents.occurredAt, sinceIso))
+        .groupBy(productUsageEvents.eventName)
+        .orderBy(sql`count(*) desc`)
+        .limit(20)
+    : await db
+        .select({ eventName: productUsageEvents.eventName, count: sql<number>`count(*)` })
+        .from(productUsageEvents)
+        .groupBy(productUsageEvents.eventName)
+        .orderBy(sql`count(*) desc`)
+        .limit(20);
+  return {
+    since: sinceIso,
+    totalEvents: Number(totalRow?.count ?? 0),
+    activeActors: Number(activeActorRow?.count ?? 0),
+    bySurface: bySurfaceRows.map((row) => ({ surface: normalizeProductUsageSurface(row.surface), count: Number(row.count ?? 0) })),
+    byOutcome: byOutcomeRows.map((row) => ({ outcome: normalizeProductUsageOutcome(row.outcome), count: Number(row.count ?? 0) })),
+    byEvent: byEventRows.map((row) => ({ eventName: row.eventName, count: Number(row.count ?? 0) })),
+  };
 }
 
 export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promise<void> {
@@ -2623,6 +2753,129 @@ function toDigestSubscriptionRecord(row: typeof digestSubscriptions.$inferSelect
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function toProductUsageEventRecord(row: typeof productUsageEvents.$inferSelect): ProductUsageEventRecord {
+  return {
+    id: row.id,
+    surface: normalizeProductUsageSurface(row.surface),
+    eventName: row.eventName,
+    route: row.route,
+    actorHash: row.actorHash,
+    sessionHash: row.sessionHash,
+    repoFullName: row.repoFullName,
+    targetKey: row.targetKey,
+    outcome: normalizeProductUsageOutcome(row.outcome),
+    latencyMs: row.latencyMs,
+    clientName: row.clientName,
+    clientVersion: row.clientVersion,
+    metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
+    occurredAt: row.occurredAt,
+  };
+}
+
+function normalizeProductUsageSurface(surface: unknown): ProductUsageSurface {
+  if (typeof surface === "string" && PRODUCT_USAGE_SURFACES.has(surface as ProductUsageSurface)) return surface as ProductUsageSurface;
+  return "api";
+}
+
+function normalizeProductUsageOutcome(outcome: unknown): ProductUsageOutcome {
+  if (typeof outcome === "string" && PRODUCT_USAGE_OUTCOMES.has(outcome as ProductUsageOutcome)) return outcome as ProductUsageOutcome;
+  return "success";
+}
+
+function normalizeProductUsageLatency(latencyMs: unknown): number | null {
+  return typeof latencyMs === "number" && Number.isFinite(latencyMs) ? Math.max(0, Math.round(latencyMs)) : null;
+}
+
+async function hashProductUsageIdentifier(env: Env, kind: "actor" | "session", value: unknown): Promise<string | null> {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized) return null;
+  const salt = env.PRODUCT_USAGE_HASH_SALT || env.GITTENSORY_API_TOKEN;
+  if (!salt) return null;
+  return sha256Hex(`gittensory:product-usage:v1:${kind}:${salt}:${normalized}`);
+}
+
+function boundedProductUsageField(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const safe = sanitizeProductUsageString(value.trim(), maxLength);
+  return safe ? safe : null;
+}
+
+function buildProductUsageActorRedactor(actor: unknown): RegExp | null {
+  const normalized = typeof actor === "string" ? actor.trim() : "";
+  if (normalized.length < 4) return null;
+  return new RegExp(escapeRegExp(normalized), "gi");
+}
+
+function redactProductUsageActor(value: string | null, actorRedactor: RegExp | null): string | null {
+  return value && actorRedactor ? value.replace(actorRedactor, "<redacted-actor>") : value;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const PRODUCT_USAGE_METADATA_MAX_DEPTH = 3;
+const PRODUCT_USAGE_METADATA_MAX_KEYS = 20;
+const PRODUCT_USAGE_METADATA_MAX_ARRAY_ITEMS = 20;
+const PRODUCT_USAGE_METADATA_MAX_KEY_CHARS = 64;
+const PRODUCT_USAGE_METADATA_MAX_STRING_CHARS = 200;
+const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"]);
+const PRODUCT_USAGE_OUTCOMES = new Set<ProductUsageOutcome>(["success", "denied", "error", "queued", "completed", "skipped"]);
+const PRODUCT_USAGE_SENSITIVE_KEY =
+  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd/i;
+const PRODUCT_USAGE_SENSITIVE_VALUE = /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey)\b/i;
+const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
+const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
+const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
+
+function sanitizeProductUsageMetadata(value: Record<string, unknown> | null | undefined, actorRedactor: RegExp | null): Record<string, JsonValue> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const output: Record<string, JsonValue> = {};
+  for (const [key, entryValue] of Object.entries(value).slice(0, PRODUCT_USAGE_METADATA_MAX_KEYS)) {
+    if (PRODUCT_USAGE_SENSITIVE_KEY.test(key)) continue;
+    const safeKey = redactProductUsageActor(sanitizeProductUsageString(key, PRODUCT_USAGE_METADATA_MAX_KEY_CHARS), actorRedactor);
+    if (!safeKey) continue;
+    const safeValue = sanitizeProductUsageJson(entryValue, 0, actorRedactor);
+    if (safeValue !== undefined) output[safeKey] = safeValue;
+  }
+  return output;
+}
+
+function sanitizeProductUsageJson(value: unknown, depth: number, actorRedactor: RegExp | null): JsonValue | undefined {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return undefined;
+  if (value === null) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return redactProductUsageActor(sanitizeProductUsageString(String(value), PRODUCT_USAGE_METADATA_MAX_STRING_CHARS), actorRedactor);
+  if (typeof value === "string") return redactProductUsageActor(sanitizeProductUsageString(value, PRODUCT_USAGE_METADATA_MAX_STRING_CHARS), actorRedactor);
+  if (value instanceof Date) return value.toISOString();
+  if (depth >= PRODUCT_USAGE_METADATA_MAX_DEPTH) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, PRODUCT_USAGE_METADATA_MAX_ARRAY_ITEMS)
+      .map((item) => sanitizeProductUsageJson(item, depth + 1, actorRedactor))
+      .filter((item): item is JsonValue => item !== undefined);
+  }
+  const output: Record<string, JsonValue> = {};
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>).slice(0, PRODUCT_USAGE_METADATA_MAX_KEYS)) {
+    if (PRODUCT_USAGE_SENSITIVE_KEY.test(key)) continue;
+    const safeKey = redactProductUsageActor(sanitizeProductUsageString(key, PRODUCT_USAGE_METADATA_MAX_KEY_CHARS), actorRedactor);
+    if (!safeKey) continue;
+    const safeValue = sanitizeProductUsageJson(entryValue, depth + 1, actorRedactor);
+    if (safeValue !== undefined) output[safeKey] = safeValue;
+  }
+  return output;
+}
+
+function sanitizeProductUsageString(value: string, maxLength: number): string {
+  const redacted = value
+    .replace(PRODUCT_USAGE_LOCAL_PATH, "<redacted-path>")
+    .replace(PRODUCT_USAGE_TOKEN_VALUE, "<redacted-token>")
+    .replace(PRODUCT_USAGE_BEARER_VALUE, "Bearer <redacted-token>");
+  if (PRODUCT_USAGE_SENSITIVE_VALUE.test(redacted)) return "<redacted>";
+  return redacted.slice(0, maxLength);
 }
 
 function parseAgentSurface(value: string): AgentSurface {

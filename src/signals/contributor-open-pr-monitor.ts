@@ -48,7 +48,7 @@ export type ContributorOpenPrMonitor = {
 
 export async function buildContributorOpenPrMonitor(env: Env, login: string): Promise<ContributorOpenPrMonitor> {
   const [pullRequests, repositories] = await Promise.all([listContributorPullRequests(env, login), listRepositories(env)]);
-  const registered = new Set(repositories.map((repo) => repo.fullName.toLowerCase()));
+  const registered = new Set(repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName.toLowerCase()));
   const openByContributor = pullRequests.filter(
     (pr) => pr.state === "open" && sameLogin(pr.authorLogin, login) && registered.has(pr.repoFullName.toLowerCase()),
   );

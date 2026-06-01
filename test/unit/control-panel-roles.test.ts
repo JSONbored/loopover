@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildControlPanelRoleSummary, loadControlPanelRoleSummary } from "../../src/services/control-panel-roles";
+import { buildControlPanelAccessScope, buildControlPanelRoleSummary, loadControlPanelRoleSummary } from "../../src/services/control-panel-roles";
 import type { InstallationRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -91,6 +91,49 @@ describe("control panel role summaries", () => {
         }),
       ]),
     );
+  });
+
+  it("builds repository and installation scopes from role evidence", () => {
+    const scope = buildControlPanelAccessScope({
+      login: "repo-owner",
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      confirmedMiner: false,
+      operator: false,
+      repositories: [repo("repo-owner/owned-repo", "repo-owner", 21), repo("victim-org/secret-repo", "victim-org", 99)],
+      installations: [installation(21, "repo-owner"), installation(99, "victim-org")],
+      pullRequests: [],
+    });
+
+    expect(scope).toMatchObject({
+      operator: false,
+      repositoryFullNames: ["repo-owner/owned-repo"],
+      installationIds: [21],
+      accountLogins: ["repo-owner"],
+    });
+  });
+
+  it("includes installed maintainer repositories from cached PR evidence", () => {
+    const scope = buildControlPanelAccessScope({
+      login: "maintainer",
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      confirmedMiner: false,
+      operator: false,
+      repositories: [repo("upstream/project", "upstream", 31), repo("victim-org/secret-repo", "victim-org", 99)],
+      installations: [installation(31, "upstream"), installation(99, "victim-org")],
+      pullRequests: [
+        pull("upstream/project", "maintainer", "MEMBER"),
+        pull("victim-org/secret-repo", "maintainer", "CONTRIBUTOR"),
+        pull("missing/repo", "maintainer", "MEMBER"),
+        pull("upstream/project", "other-user", "MEMBER"),
+      ],
+    });
+
+    expect(scope).toMatchObject({
+      operator: false,
+      repositoryFullNames: ["upstream/project"],
+      installationIds: [31],
+      accountLogins: [],
+    });
   });
 
   it("keeps onboarding available when cached miner lookup fails", async () => {

@@ -18,6 +18,7 @@ import {
 import { buildRepoRewardRisk, type RepoRewardRisk, type RewardRiskAction } from "./reward-risk";
 import { buildLocalWorkspaceIntelligence, type LocalWorkspaceIntelligence } from "./local-workspace-intelligence";
 import { buildFocusManifestGuidance, parseFocusManifest, type FocusManifestGuidance } from "./focus-manifest";
+import { sanitizeLocalScorerWarnings } from "./local-scorer-diagnostics";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -704,6 +705,7 @@ function buildLocalFindings(
   githubBranchStatus: GitHubBranchStatus,
 ): LocalBranchAnalysis["localFindings"] {
   const failedValidation = (input.validation ?? []).filter((entry) => entry.status === "failed");
+  const localScorerWarnings = sanitizeLocalScorerWarnings(input.localScorer?.warnings);
   return [
     {
       code: "source_upload_disabled",
@@ -773,13 +775,13 @@ function buildLocalFindings(
           },
         ]
       : []),
-    ...(input.localScorer?.warnings?.length
+    ...(localScorerWarnings.length
       ? [
           {
             code: "local_scorer_warning",
             severity: "info" as const,
             title: "Local scorer diagnostics",
-            detail: input.localScorer.warnings.join(" "),
+            detail: localScorerWarnings.join(" "),
           },
         ]
       : []),

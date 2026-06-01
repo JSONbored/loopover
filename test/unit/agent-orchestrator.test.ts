@@ -146,6 +146,27 @@ describe("agent orchestrator", () => {
             publicNextActions: [],
           },
         ],
+        openPrMonitor: {
+          login: "oktofeesh1",
+          generatedAt: nowIso(),
+          openPrCount: 1,
+          registeredRepoCount: 1,
+          cleanupFirst: true,
+          summary: "One open PR needs cleanup.",
+          guidance: ["Clean up private queue pressure first."],
+          pendingScenarios: [],
+          pullRequests: [
+            {
+              repoFullName: "private-org/secret-alpha",
+              number: 77,
+              title: "secret-alpha patch",
+              classification: "stale",
+              summary: "secret-alpha patch is stale.",
+              reasons: ["No updates in 30 days."],
+              nextSteps: ["Privately prioritize the secret-alpha patch before opening more public work."],
+            },
+          ],
+        },
       }),
     );
 
@@ -357,7 +378,7 @@ describe("agent orchestrator", () => {
         pendingScenarios: [],
         pullRequests: [
           {
-            repoFullName: "we-promise/sure",
+            repoFullName: "owner/ready",
             number: 9,
             title: "Stale fix",
             classification: "stale",
@@ -366,7 +387,7 @@ describe("agent orchestrator", () => {
             nextSteps: ["Rebase or close the PR."],
           },
           {
-            repoFullName: "entrius/gittensor",
+            repoFullName: "owner/critical",
             number: 4,
             title: "Overlapping change",
             classification: "duplicate_prone",
@@ -381,19 +402,20 @@ describe("agent orchestrator", () => {
     expect(monitorActions).toHaveLength(2);
     expect(monitorActions[0]).toMatchObject({
       actionType: "cleanup_existing_prs",
-      targetRepoFullName: "we-promise/sure",
+      targetRepoFullName: "owner/ready",
       targetPullNumber: 9,
       status: "blocked",
     });
     expect(monitorActions[0]?.scoreabilityImpact).toMatch(/queue pressure/);
     expect(monitorActions[1]?.riskImpact).toMatch(/Duplicate/);
-    expect(monitorActions[1]?.payload).toMatchObject({ decision: null });
+    expect(monitorActions[1]?.payload).toMatchObject({ decision: expect.objectContaining({ repoFullName: "owner/critical" }) });
+    expect(__agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, monitorPack, [readyDecision])).toHaveLength(1);
     expect(__agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, { ...monitorPack, openPrMonitor: undefined }, [readyDecision])).toEqual([]);
     expect(
       __agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, { ...monitorPack, openPrMonitor: { ...monitorPack.openPrMonitor!, pullRequests: [] } }, []),
     ).toEqual([]);
     const mergedActions = __agentOrchestratorInternals.buildDecisionActions(monitorRun, monitorPack, [readyDecision]);
-    expect(mergedActions.slice(0, 2).map((entry) => entry.actionType)).toEqual(["cleanup_existing_prs", "cleanup_existing_prs"]);
+    expect(mergedActions.slice(0, 2).map((entry) => entry.actionType)).toEqual(["cleanup_existing_prs", "explain_repo_fit"]);
     expect(mergedActions.some((entry) => entry.actionType === "explain_repo_fit")).toBe(true);
 
     const approvedPack = decisionPackFixture({

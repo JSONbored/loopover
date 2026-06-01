@@ -227,7 +227,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   let updated = 0;
   let skipped = 0;
   for (const report of reports) {
-    const existing = recordedGitHubIssue(report) ?? (await findGitHubIssueForFingerprint(repo, token, report.fingerprint));
+    const existing = (await validateRecordedGitHubIssue(repo, token, report)) ?? (await findGitHubIssueForFingerprint(repo, token, report.fingerprint));
     if (existing) {
       const issue = await updateGitHubDriftIssue(repo, token, existing.number, report);
       if (!issue) {
@@ -646,11 +646,39 @@ async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: 
   return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
 }
 
-function recordedGitHubIssue(report: UpstreamDriftReportRecord): { number: number; url: string } | null {
-  if (Number.isInteger(report.issueNumber) && report.issueNumber && report.issueNumber > 0 && report.issueUrl) {
-    return { number: report.issueNumber, url: report.issueUrl };
+async function validateRecordedGitHubIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<{ number: number; url: string } | null> {
+  if (!Number.isInteger(report.issueNumber) || !report.issueNumber || report.issueNumber <= 0 || !report.issueUrl) return null;
+  const parsedUrl = parseGitHubIssueUrl(report.issueUrl);
+  const [owner, name] = repo.split("/");
+  if (!owner || !name || !parsedUrl || parsedUrl.number !== report.issueNumber) return null;
+  if (parsedUrl.owner.toLowerCase() !== owner.toLowerCase() || parsedUrl.name.toLowerCase() !== name.toLowerCase()) return null;
+  try {
+    const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders(token, "application/vnd.github+json") });
+    if (!response.ok) return null;
+    const issue = (await response.json()) as { number?: number; html_url?: string; state?: string; body?: string | null; labels?: Array<string | { name?: string }> };
+    if (issue.number !== report.issueNumber || !issue.html_url || issue.state !== "open") return null;
+    if (!issue.body?.includes(`gittensory-upstream-drift:${report.fingerprint}`)) return null;
+    if (!issue.labels?.some((label) => (typeof label === "string" ? label : label.name) === "signals")) return null;
+    const issueUrl = parseGitHubIssueUrl(issue.html_url);
+    if (!issueUrl || issueUrl.number !== report.issueNumber) return null;
+    if (issueUrl.owner.toLowerCase() !== owner.toLowerCase() || issueUrl.name.toLowerCase() !== name.toLowerCase()) return null;
+    return { number: report.issueNumber, url: issue.html_url };
+  } catch {
+    return null;
   }
-  return null;
+}
+
+function parseGitHubIssueUrl(issueUrl: string): { owner: string; name: string; number: number } | null {
+  try {
+    const url = new URL(issueUrl);
+    if (url.hostname.toLowerCase() !== "github.com") return null;
+    const [owner, name, issues, issueNumber, ...rest] = url.pathname.split("/").filter(Boolean);
+    const number = Number(issueNumber);
+    if (!owner || !name || issues !== "issues" || rest.length > 0 || !Number.isInteger(number) || number <= 0) return null;
+    return { owner, name, number };
+  } catch {
+    return null;
+  }
 }
 
 function githubDriftIssueTitle(report: UpstreamDriftReportRecord): string {

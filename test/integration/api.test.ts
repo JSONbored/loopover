@@ -1275,6 +1275,46 @@ describe("api routes", () => {
       },
     });
     await upsertRepositoryFromGitHub(ownerEnv, { name: "owned-repo", full_name: "repo-owner/owned-repo", private: false, default_branch: "main", owner: { login: "repo-owner" } }, 777);
+    await upsertInstallation(ownerEnv, {
+      installation: {
+        id: 888,
+        account: { login: "victim-org", id: 888, type: "Organization" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(ownerEnv, { name: "secret-repo", full_name: "victim-org/secret-repo", private: true, default_branch: "main", owner: { login: "victim-org" } }, 888);
+    await upsertInstallationHealth(ownerEnv, {
+      installationId: 888,
+      accountLogin: "victim-org",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 1,
+      status: "needs_attention",
+      missingPermissions: ["checks"],
+      missingEvents: [],
+      permissions: { metadata: "read" },
+      events: ["pull_request"],
+      checkedAt: "2026-05-31T12:00:00.000Z",
+      errorSummary: "victim install needs privileged recovery",
+    });
+    await recordGitHubRateLimitObservation(ownerEnv, {
+      id: "victim-rate-limit",
+      repoFullName: "victim-org/secret-repo",
+      resource: "graphql",
+      path: "/graphql",
+      statusCode: 403,
+      remaining: 0,
+      observedAt: "2026-05-31T12:00:00.000Z",
+    });
+    await upsertPullRequestFromGitHub(ownerEnv, "victim-org/secret-repo", {
+      number: 42,
+      title: "Victim confidential release plan",
+      state: "open",
+      html_url: "https://github.com/victim-org/secret-repo/pull/42",
+      labels: [],
+    });
     const { token: ownerToken } = await createSessionForGitHubUser(ownerEnv, { login: "repo-owner", id: 777 });
     const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
     const ownerRoles = await app.request("/v1/app/roles", { headers: ownerHeaders }, ownerEnv);
@@ -1283,7 +1323,16 @@ describe("api routes", () => {
       roles: ["maintainer", "owner"],
       evidence: { ownedInstalledRepos: 1, accountInstallations: 1, operator: false },
     });
-    expect((await app.request("/v1/app/maintainer-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(200);
+    const ownerMaintainerDashboard = await app.request("/v1/app/maintainer-dashboard", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerMaintainerDashboard.status).toBe(200);
+    const ownerMaintainerDashboardBody = (await ownerMaintainerDashboard.json()) as { installations: unknown[]; health: unknown[]; reviewability: unknown[]; metrics: unknown[] };
+    expect(ownerMaintainerDashboardBody.installations).toEqual([expect.objectContaining({ id: 777, accountLogin: "repo-owner" })]);
+    expect(ownerMaintainerDashboardBody.health).toEqual([]);
+    expect(ownerMaintainerDashboardBody.reviewability).toEqual([]);
+    expect(ownerMaintainerDashboardBody.metrics).toEqual(expect.arrayContaining([expect.objectContaining({ label: "Rate-limit events", value: 0 })]));
+    expect(JSON.stringify(ownerMaintainerDashboardBody)).not.toContain("victim-org");
+    expect(JSON.stringify(ownerMaintainerDashboardBody)).not.toContain("Victim confidential release plan");
+    expect(JSON.stringify(ownerMaintainerDashboardBody)).not.toContain("victim install needs privileged recovery");
     expect((await app.request("/v1/app/notification-model", { headers: ownerHeaders }, ownerEnv)).status).toBe(200);
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);

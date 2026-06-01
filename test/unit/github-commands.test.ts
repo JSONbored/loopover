@@ -1075,6 +1075,61 @@ describe("GitHub mention commands", () => {
     expect(defensiveSummary).toContain("Use the authenticated maintainer dashboard and private API");
     expect(defensiveDigest.needsAuthorPullRequests.find((pr) => pr.number === 18)?.reasons).toContain("Maintainer-authored PR; review as repo stewardship.");
   });
+
+  it("neutralizes attacker-controlled queue digest titles in public comments", () => {
+    const attackerTitle = "[x](http://e.test) ![i](http://e.test/i) @org/team <b>x</b>";
+    const digest = {
+      ...sampleMaintainerDigest(),
+      reviewNowPullRequests: [
+        {
+          number: 77,
+          title: attackerTitle,
+          authorLogin: "attacker",
+          linkedIssues: [7],
+          labels: [],
+          confirmedMiner: false,
+          ageDays: 0,
+          reasons: ["Linked issue is present."],
+          signals: [],
+        },
+      ],
+      duplicateClusters: [
+        {
+          id: "attacker-title",
+          risk: "high",
+          reason: "Likely_duplicate title cluster",
+          items: [{ type: "pull_request", number: 77, title: attackerTitle }],
+        },
+      ],
+    } satisfies ReturnType<typeof sampleMaintainerDigest>;
+
+    const reviewNow = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory review-now")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      maintainerDigest: digest,
+    });
+    const duplicateClusters = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory duplicate-clusters")!,
+      repo: { fullName: "owner/repo" } as any,
+      issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "maintainer",
+      maintainerDigest: digest,
+    });
+
+    for (const body of [reviewNow, duplicateClusters]) {
+      expect(body).not.toContain("[x](http://e.test)");
+      expect(body).not.toContain("![i](http://e.test/i)");
+      expect(body).not.toContain("@org/team");
+      expect(body).not.toContain("<b>x</b>");
+      expect(body).toContain("\\[x\\]");
+      expect(body).toContain("@\u200Borg/team");
+      expect(body).toContain("&lt;b&gt;x&lt;/b&gt;");
+    }
+  });
 });
 
 function completedRun(id: string) {

@@ -6029,12 +6029,6 @@
                   "type": "string"
                 }
               },
-              "maintainerNotes": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
               "warnings": {
                 "type": "array",
                 "items": {
@@ -6055,7 +6049,6 @@
               "preferredLabelHits",
               "findings",
               "publicNextSteps",
-              "maintainerNotes",
               "warnings",
               "summary"
             ]

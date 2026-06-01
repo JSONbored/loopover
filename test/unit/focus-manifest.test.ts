@@ -216,10 +216,10 @@ describe("buildFocusManifestGuidance", () => {
     expect(guidance.findings.some((finding) => finding.code === "manifest_issue_discovery_discouraged")).toBe(true);
   });
 
-  it("never leaks maintainer-private notes into public next steps", () => {
+  it("never exposes maintainer-private notes in contributor guidance", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["migrations/x.sql"] });
-    expect(guidance.maintainerNotes.join(" ")).toMatch(/ping @owner/);
-    expect(guidance.publicNextSteps.join(" ")).not.toMatch(/ping @owner/);
+    expect(guidance).not.toHaveProperty("maintainerNotes");
+    expect(JSON.stringify(guidance)).not.toMatch(/ping @owner/);
     expect(guidance.publicNextSteps.every(isFocusManifestPublicSafe)).toBe(true);
   });
 

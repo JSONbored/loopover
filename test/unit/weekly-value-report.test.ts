@@ -68,11 +68,12 @@ describe("weekly value reports", () => {
     expect(report.operatorDetails).toBeUndefined();
     expect(report.summary).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("4 active user(s), 2 active repo(s), 18 product event(s)"),
+        expect.stringContaining("4 active user(s) and 2 active repo(s)"),
         expect.stringContaining("3 MCP event(s), 3 GitHub command event(s), 3 PR preflight event(s), and 3 PR packet event(s)"),
         expect.stringContaining("1 quiet skip(s), 5 maintainer-value signal(s)"),
       ]),
     );
+    expect(report.summary).not.toEqual(expect.arrayContaining([expect.stringMatching(/product event|registered repo|installed repo|GitHub App installation/i)]));
     expect(report.metrics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "active_users", value: 4, visibility: "public" }),
@@ -80,6 +81,7 @@ describe("weekly value reports", () => {
       ]),
     );
     expect(report.metrics.some((metric) => metric.visibility === "operator")).toBe(false);
+    expect(report.metrics.map((metric) => metric.id)).not.toEqual(expect.arrayContaining(["product_events", "registered_repos", "installed_repos", "installations"]));
     expect(report.warnings).toEqual(
       expect.arrayContaining(["Product usage rollups have 1 freshness warning(s).", "Registry data has 1 warning(s).", "Scoring model data has 1 warning(s)."]),
     );
@@ -125,6 +127,12 @@ describe("weekly value reports", () => {
       topCommands: [{ key: "Bearer <redacted-token>", count: 1 }],
       topTools: [{ key: "<redacted>", count: 1 }],
     });
+    expect(report.summary).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("2 product event(s)"),
+        expect.stringContaining("1 registered repo(s), 1 installed repo(s), 1 GitHub App installation(s)"),
+      ]),
+    );
     expect(report.metrics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "active_sessions", value: 3, visibility: "operator" }),

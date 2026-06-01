@@ -860,7 +860,18 @@ function normalizeLogin(value: string): string {
 
 function shortText(value: string, maxLength: number): string {
   const sanitized = publicBlockerDetail(value).replace(/\s+/g, " ").trim();
-  return sanitized.length > maxLength ? `${sanitized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...` : sanitized;
+  const safeText = neutralizePublicMarkdownText(sanitized);
+  return safeText.length > maxLength ? `${safeText.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...` : safeText;
+}
+
+function neutralizePublicMarkdownText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([\\`*_{}[\]()#+\-.!|])/g, "\\$1")
+    .replace(/@(?=[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)/gi, "@\u200B")
+    .replace(/\bhttps?:\/\//gi, (match) => `${match.slice(0, -2)}\u200B//`);
 }
 
 function pickActions(

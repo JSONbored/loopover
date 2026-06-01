@@ -119,6 +119,7 @@ import {
 } from "../services/decision-pack";
 import {
   buildStaticControlPanelRoleSummary,
+  loadControlPanelAccessScope,
   loadControlPanelRoleSummary,
 } from "../services/control-panel-roles";
 import {
@@ -154,6 +155,7 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
@@ -261,7 +263,7 @@ const localBranchScorerSchema = z
     sourceLines: z.number().min(0).optional(),
     testTokenScore: z.number().min(0).optional(),
     nonCodeTokenScore: z.number().min(0).optional(),
-    warnings: z.array(z.string()).optional(),
+    warnings: z.array(z.string().max(MAX_LOCAL_SCORER_WARNING_CHARS)).max(MAX_LOCAL_SCORER_WARNING_COUNT).optional(),
   })
   .strict();
 
@@ -735,14 +737,29 @@ export function createApp() {
   });
 
   app.get("/v1/app/maintainer-dashboard", async (c) => {
-    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
-    if (forbidden) return forbidden;
-    const [repositories, installations, health, rateLimits] = await Promise.all([
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const summary = await getRoleSummaryForIdentity(c.env, identity);
+    if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
+
+    const [allRepositories, allInstallations, allHealth, allRateLimits] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
       listInstallationHealth(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
     ]);
+    const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
+    const scopedRepoNames = new Set(scope?.repositoryFullNames.map((repo) => repo.toLowerCase()) ?? []);
+    const scopedInstallationIds = new Set(scope?.installationIds ?? []);
+    const scopedAccountLogins = new Set(scope?.accountLogins.map((login) => login.toLowerCase()) ?? []);
+    const repositories = scope ? allRepositories.filter((repo) => scopedRepoNames.has(repo.fullName.toLowerCase())) : allRepositories;
+    const installations = scope
+      ? allInstallations.filter((installation) => scopedInstallationIds.has(installation.id) || scopedAccountLogins.has(installation.accountLogin.toLowerCase()))
+      : allInstallations;
+    const health = scope
+      ? allHealth.filter((record) => scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase()))
+      : allHealth;
+    const rateLimits = scope ? allRateLimits.filter((record) => record.repoFullName !== undefined && record.repoFullName !== null && scopedRepoNames.has(record.repoFullName.toLowerCase())) : allRateLimits;
     const openPullRequests = (
       await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
     ).flat();

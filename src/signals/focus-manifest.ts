@@ -51,7 +51,6 @@ export type FocusManifestGuidance = {
   preferredLabelHits: string[];
   findings: FocusManifestFinding[];
   publicNextSteps: string[];
-  maintainerNotes: string[];
   warnings: string[];
   summary: string;
 };
@@ -249,7 +248,6 @@ export function buildFocusManifestGuidance(args: {
       preferredLabelHits: [],
       findings,
       publicNextSteps: [],
-      maintainerNotes: [],
       warnings: manifest.warnings,
       summary: "No maintainer focus manifest applied; using deterministic signals only.",
     };
@@ -351,7 +349,6 @@ export function buildFocusManifestGuidance(args: {
     preferredLabelHits,
     findings,
     publicNextSteps: safeNextSteps,
-    maintainerNotes: manifest.maintainerNotes,
     warnings: manifest.warnings,
     summary: summarize(manifest, matchedBlockedPaths, matchedWantedPaths),
   };

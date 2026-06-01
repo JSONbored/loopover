@@ -711,6 +711,24 @@ export const authSessions = sqliteTable(
   }),
 );
 
+export const digestSubscriptions = sqliteTable(
+  "digest_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    email: text("email").notNull(),
+    status: text("status").notNull().default("active"),
+    source: text("source").notNull().default("app"),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    loginEmail: uniqueIndex("digest_subscriptions_login_email_unique").on(table.login, table.email),
+    login: index("digest_subscriptions_login_idx").on(table.login),
+    status: index("digest_subscriptions_status_idx").on(table.status),
+  }),
+);
+
 export const auditEvents = sqliteTable(
   "audit_events",
   {

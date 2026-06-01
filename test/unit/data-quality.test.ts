@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity, freshnessAuditMetadata } from "../../src/signals/data-quality";
 import type { PullRequestDetailSyncStateRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord } from "../../src/types";
 
+const TEST_NOW_MS = Date.parse("2026-05-25T01:00:00.000Z");
+
 describe("sync data quality", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TEST_NOW_MS);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("marks capped and partial segments as degraded instead of complete", () => {
     const state = repoState({ status: "capped", warnings: ["GitHub sync reached local cap of 100 item(s)."] });
     const quality = buildRepoDataQuality("owner/repo", state, [
@@ -410,6 +421,27 @@ describe("sync data quality", () => {
       rateLimitedRepos: ["owner/waiting"],
       nextRecoverableAt: "2026-05-27T00:00:00.000Z",
     });
+  });
+
+  it("normalizes malformed persisted freshness snapshots without crashing report generation", () => {
+    const report = buildFreshnessSloReport({
+      signalSnapshots: [
+        { id: "malformed", payload: {}, generatedAt: "2026-05-25T00:00:00.000Z" } as never,
+        { id: "decision", signalType: "contributor-decision-pack", targetKey: undefined, payload: {}, generatedAt: "2026-05-25T00:30:00.000Z" } as never,
+      ],
+      expectedDecisionPackKeys: ["jsonbored"],
+      bounties: [{ id: "bounty", repoFullName: "owner/repo", issueNumber: 1, status: "open", payload: {}, discoveredAt: "2026-05-25T00:30:00.000Z", updatedAt: undefined }],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(report.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ area: "signal_snapshot", targetKey: "undefined\u0000undefined", status: "fresh" }),
+        expect.objectContaining({ area: "decision_pack", targetKey: "contributor-decision-pack", status: "fresh" }),
+        expect.objectContaining({ area: "decision_pack", targetKey: "jsonbored", status: "missing" }),
+        expect.objectContaining({ area: "bounty_data", targetKey: "all_bounties", observedAt: "2026-05-25T00:30:00.000Z" }),
+      ]),
+    );
   });
 
   it("requires authoritative open-data totals for core fidelity and treats history as sampled", () => {

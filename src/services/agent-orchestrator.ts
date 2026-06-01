@@ -2,6 +2,7 @@ import {
   createAgentRun,
   getAgentRun,
   getRepository,
+  listBountiesByRepo,
   listCheckSummaries,
   listAgentActions,
   listAgentContextSnapshots,
@@ -142,10 +143,11 @@ export async function explainBlockersWithAgent(env: Env, input: AgentPlanRequest
   const login = input.login;
   const repoFullName = input.repoFullName;
   const isLocalBranch = "changedFiles" in input || "branchName" in input || "headRef" in input;
+  const surface = "surface" in input ? (input.surface ?? "api") : "api";
   const run = buildRunRecord({
     objective: `Explain scoreability and review blockers${repoFullName ? ` for ${repoFullName}` : ""}.`,
     actorLogin: login,
-    surface: isLocalBranch ? "api" : ((input as AgentPlanRequest).surface ?? "api"),
+    surface,
     status: "running",
     payload: isLocalBranch
       ? { kind: "explain_branch_blockers", input: input as unknown as Record<string, JsonValue> }
@@ -284,7 +286,7 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
 }
 
 async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Promise<LocalBranchAnalysis & { dataQuality?: { status: "complete" | "degraded" | "blocked" | "unknown"; warnings: string[] } }> {
-  const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, scoringSnapshot, issueQuality] =
+  const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, bounties, scoringSnapshot, issueQuality] =
     await Promise.all([
       fetchPublicContributorProfile(input.login),
       listContributorPullRequests(env, input.login),
@@ -297,6 +299,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
       listIssues(env, input.repoFullName),
       listPullRequests(env, input.repoFullName),
       listRecentMergedPullRequests(env, input.repoFullName),
+      listBountiesByRepo(env, input.repoFullName),
       getOrCreateScoringModelSnapshot(env),
       loadOrComputeIssueQualityResponse(env, input.repoFullName),
     ]);
@@ -313,6 +316,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     pullRequests,
     contributorPullRequests,
     recentMergedPullRequests,
+    bounties,
     repositories,
     checkSummaries,
     profile,

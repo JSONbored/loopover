@@ -10,10 +10,11 @@ import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadat
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
 const packageName = "@jsonbored/gittensory-mcp";
-const packageVersion = "0.2.0";
+const packageVersion = "0.3.0";
 const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
 const upgradeCommand = `npm install -g ${packageName}@latest`;
 const npxFallbackCommand = `npx ${packageName}@latest <command>`;
+const compatibilityPath = "/v1/mcp/compatibility";
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
@@ -717,12 +718,14 @@ async function status(options) {
   } catch (error) {
     health = { status: "unreachable", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "health_check_failed") };
   }
-  const pkg = await inspectInstallVersion();
-  const apiCompatibility = evaluateApiCompatibility(health);
+  const compatibility = await inspectApiCompatibility(health);
+  const pkg = await inspectInstallVersion(compatibilityLatestRecommendedVersion(compatibility.report) ?? compatibilityLatestRecommendedVersion(health));
+  const apiCompatibility = compatibility.evaluation;
   const payload = {
     apiUrl,
     package: pkg,
     apiCompatibility,
+    compatibility: compatibility.report,
     api: health,
     auth,
     config: { configured: existsSync(configPath) },
@@ -744,6 +747,10 @@ async function status(options) {
     }
     if (apiCompatibility.status === "incompatible") {
       process.stdout.write(`API requires at least ${packageName}@${apiCompatibility.minVersion}. Upgrade with:\n  ${apiCompatibility.upgradeCommand}\n`);
+    } else if (apiCompatibility.status === "compatible") {
+      process.stdout.write(`API compatibility: compatible (minimum ${packageName}@${apiCompatibility.minVersion}).\n`);
+    } else if (apiCompatibility.status === "unavailable") {
+      process.stdout.write(`API compatibility: unavailable (${apiCompatibility.reason ?? "unknown"}).\n`);
     }
   }
 }
@@ -782,7 +789,8 @@ async function doctor(options) {
     add("api_health", "fail", error instanceof Error ? error.message : "health_check_failed", "Check GITTENSORY_API_URL or network access.");
   }
 
-  const pkg = await inspectInstallVersion();
+  const compatibility = await inspectApiCompatibility(health);
+  const pkg = await inspectInstallVersion(compatibilityLatestRecommendedVersion(compatibility.report) ?? compatibilityLatestRecommendedVersion(health));
   if (pkg.state === "stale") {
     add("version", "warn", `Installed ${packageVersion} is behind npm latest ${pkg.latestVersion}.`, `${pkg.upgradeCommand} (no-install fallback: ${pkg.npxFallback})`);
   } else if (pkg.state === "unavailable") {
@@ -797,13 +805,15 @@ async function doctor(options) {
     add("version", "pass", `Installed ${packageVersion} matches npm latest ${pkg.latestVersion}.`);
   }
 
-  const apiCompatibility = evaluateApiCompatibility(health);
+  const apiCompatibility = compatibility.evaluation;
   if (apiCompatibility.status === "incompatible") {
     add("api_compatibility", "fail", `API requires at least ${packageName}@${apiCompatibility.minVersion}; local is ${packageVersion}.`, apiCompatibility.upgradeCommand);
   } else if (apiCompatibility.status === "compatible") {
     add("api_compatibility", "pass", `Local ${packageVersion} meets the API minimum ${apiCompatibility.minVersion}.`);
   } else if (apiCompatibility.reason === "api_unreachable") {
     add("api_compatibility", "warn", "API compatibility check was unavailable because API health was unreachable.");
+  } else if (apiCompatibility.reason === "compatibility_endpoint_unavailable") {
+    add("api_compatibility", "warn", "API compatibility endpoint was unavailable; compatibility could not be confirmed.");
   } else if (apiCompatibility.status === "unknown") {
     add("api_compatibility", "warn", `API reported an unsupported minimum client version (${apiCompatibility.minVersion}).`);
   } else {
@@ -1229,12 +1239,15 @@ function classifyVersionState(latestStatus, latestVersion, comparison) {
 
 // Shared by `status` and `doctor`: compares the local install against npm latest and
 // produces deterministic upgrade guidance. Never throws and never returns sensitive data.
-async function inspectInstallVersion() {
+async function inspectInstallVersion(apiRecommendedVersion) {
   let latest;
   try {
     latest = await fetchLatestPackageVersion();
   } catch (error) {
     latest = { status: "unavailable", error: sanitizeDiagnosticText(error instanceof Error ? error.message : "npm_version_check_failed") };
+  }
+  if (latest.status === "unavailable" && typeof apiRecommendedVersion === "string" && apiRecommendedVersion.length > 0) {
+    latest = { status: "api", version: apiRecommendedVersion };
   }
   const latestVersion = typeof latest.version === "string" ? latest.version : null;
   const comparison = latestVersion ? compareSemver(packageVersion, latestVersion) : null;
@@ -1253,18 +1266,57 @@ async function inspectInstallVersion() {
   });
 }
 
-// Optional API compatibility check. The backend MAY advertise a minimum supported client
-// version via `minMcpVersion`/`minClientVersion` on /health; when it does not, this degrades
-// gracefully to "unavailable" instead of failing.
-function evaluateApiCompatibility(health) {
-  if (!health || health.status === "unreachable") return { status: "unavailable", reason: "api_unreachable" };
-  const minVersion =
-    typeof health.minMcpVersion === "string" ? health.minMcpVersion : typeof health.minClientVersion === "string" ? health.minClientVersion : null;
-  if (!minVersion) return { status: "unavailable", reason: "not_reported" };
+async function inspectApiCompatibility(health) {
+  try {
+    const report = await apiFetch(compatibilityPath, { method: "GET" }, { auth: false, timeoutMs: 5000 });
+    return { report, evaluation: evaluateApiCompatibility(report, "compatibility_endpoint") };
+  } catch (error) {
+    const report = {
+      status: "unavailable",
+      reason: "compatibility_endpoint_unavailable",
+      error: sanitizeDiagnosticText(error instanceof Error ? error.message : "compatibility_check_failed"),
+    };
+    const fallback = evaluateApiCompatibility(health, "health");
+    return {
+      report,
+      evaluation: fallback.reason === "not_reported" ? evaluateApiCompatibility(report, "compatibility_endpoint") : fallback,
+    };
+  }
+}
+
+// Prefer the first-class compatibility endpoint, but keep supporting older APIs that only
+// advertise `minMcpVersion`/`minClientVersion` on /health.
+function evaluateApiCompatibility(report, source) {
+  if (!report || report.status === "unreachable") return { status: "unavailable", reason: "api_unreachable", source };
+  if (report.status === "unavailable") {
+    return stripUndefined({ status: "unavailable", reason: report.reason ?? "compatibility_unavailable", source, detail: report.error });
+  }
+  const minVersion = compatibilityMinimumVersion(report);
+  if (!minVersion) return { status: "unavailable", reason: "not_reported", source };
   const comparison = compareSemver(packageVersion, minVersion);
-  if (comparison === null) return { status: "unknown", minVersion };
-  if (comparison < 0) return stripUndefined({ status: "incompatible", minVersion, upgradeCommand });
-  return { status: "compatible", minVersion };
+  const latestRecommendedVersion = compatibilityLatestRecommendedVersion(report);
+  const apiVersion = typeof report.apiVersion === "string" ? report.apiVersion : undefined;
+  const warnings = Array.isArray(report.compatibilityWarnings) ? report.compatibilityWarnings : Array.isArray(report.warnings) ? report.warnings : [];
+  const breakingChanges = Array.isArray(report.breakingChanges) ? report.breakingChanges : [];
+  if (comparison === null) return stripUndefined({ status: "unknown", source, minVersion, latestRecommendedVersion, apiVersion, warnings, breakingChanges });
+  if (comparison < 0) return stripUndefined({ status: "incompatible", source, minVersion, latestRecommendedVersion, apiVersion, warnings, breakingChanges, upgradeCommand });
+  return stripUndefined({ status: "compatible", source, minVersion, latestRecommendedVersion, apiVersion, warnings, breakingChanges });
+}
+
+function compatibilityMinimumVersion(report) {
+  if (typeof report?.mcp?.minimumSupportedVersion === "string") return report.mcp.minimumSupportedVersion;
+  if (typeof report?.minimumSupportedMcpVersion === "string") return report.minimumSupportedMcpVersion;
+  if (typeof report?.minMcpVersion === "string") return report.minMcpVersion;
+  if (typeof report?.minClientVersion === "string") return report.minClientVersion;
+  return null;
+}
+
+function compatibilityLatestRecommendedVersion(report) {
+  if (typeof report?.mcp?.latestRecommendedVersion === "string") return report.mcp.latestRecommendedVersion;
+  if (typeof report?.mcp?.latestPackageVersion === "string") return report.mcp.latestPackageVersion;
+  if (typeof report?.latestRecommendedMcpVersion === "string") return report.latestRecommendedMcpVersion;
+  if (typeof report?.latestPackageVersion === "string") return report.latestPackageVersion;
+  return null;
 }
 
 async function analyzeCurrentBranch(input) {

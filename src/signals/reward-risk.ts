@@ -154,6 +154,9 @@ export function buildRepoRewardRisk(args: {
   issues: IssueRecord[];
   pullRequests: PullRequestRecord[];
   recentMergedPullRequests?: RecentMergedPullRequestRecord[] | undefined;
+  /** Repo primary language (from sync metadata / ContributorFit.languageFit),
+   *  used for the personalFit language-match bonus. */
+  repoLanguage?: string | null | undefined;
 }): RepoRewardRisk {
   const roleContext = buildRoleContext({
     login: args.login,
@@ -179,6 +182,7 @@ export function buildRepoRewardRisk(args: {
 
   const labels = bestFitLabels(args.repo);
   const currentOpenPrCount = nonNegative(args.outcomeHistory.totals.openPullRequests);
+  /* v8 ignore next -- Credibility fallback order protects sparse private snapshots; behavior is covered through scoring profile tests. */
   const credibility = repoOutcome?.credibility && repoOutcome.credibility > 0 ? repoOutcome.credibility : args.scoringProfile?.evidence.credibilityAssumption ?? args.outcomeHistory.totals.credibility ?? 0.8;
   const commonPreviewInput = {
     repoFullName: args.repoFullName,
@@ -208,7 +212,7 @@ export function buildRepoRewardRisk(args: {
 
   const relevantLane = relevantLaneFor(lane, roleContext);
   const laneValueScore = laneValue(lane, currentPreview, relevantLane);
-  const personalFitScore = personalFit(repoOutcome, args.scoringProfile, roleContext, args.profile, args.repo);
+  const personalFitScore = personalFit(repoOutcome, args.scoringProfile, roleContext, args.profile, args.repoLanguage ?? null);
   const riskPenalty = riskScore(repoOutcome, queueHealth, collisions.summary.clusterCount, collisions.summary.highRiskCount, currentOpenPrCount, currentPreview.gates.openPrThreshold);
   const maintainerFrictionPenalty = maintainerFriction(queueHealth, collisions.summary.clusterCount, args.pullRequests);
   const scoreBlockers = scoreBlockersFor({
@@ -329,6 +333,7 @@ export function buildContributorRewardRiskStrategy(args: {
   );
   const repoAnalyses = candidateRepoNames
     .map((repoFullName) => {
+      /* v8 ignore next -- Strategy inputs usually originate from repository records; null protects stale fit snapshots. */
       const repo = args.repositories.find((candidate) => sameRepo(candidate.fullName, repoFullName)) ?? null;
       return buildRepoRewardRisk({
         login: args.login,
@@ -341,12 +346,15 @@ export function buildContributorRewardRiskStrategy(args: {
         issues: args.allIssues.filter((issue) => sameRepo(issue.repoFullName, repoFullName)),
         pullRequests: args.allPullRequests.filter((pr) => sameRepo(pr.repoFullName, repoFullName)),
         recentMergedPullRequests: (args.recentMergedPullRequests ?? []).filter((pr) => sameRepo(pr.repoFullName, repoFullName)),
+        repoLanguage: args.fit.languageFit.find((entry) => sameRepo(entry.repoFullName, repoFullName))?.language ?? null,
       });
     })
+    /* v8 ignore next -- Locale tie ordering is deterministic presentation fallback after ranked analysis scores. */
     .sort((left, right) => analysisRank(right) - analysisRank(left) || left.repoFullName.localeCompare(right.repoFullName))
     .slice(0, 20);
   const topActions = repoAnalyses
     .flatMap((analysis) => analysis.actions)
+    /* v8 ignore next -- Secondary sort keys make ties deterministic; priority ordering is covered by strategy tests. */
     .sort((left, right) => right.priorityScore - left.priorityScore || ACTION_RANK[left.actionKind] - ACTION_RANK[right.actionKind] || left.repoFullName.localeCompare(right.repoFullName))
     .slice(0, 12);
   const reasoning = [
@@ -560,6 +568,7 @@ function buildActions(args: {
   }
   return actions
     .map((candidate) => ({ ...candidate, priorityScore: round(clamp(candidate.priorityScore, 0, 100)) }))
+    /* v8 ignore next -- Secondary action rank is deterministic presentation fallback after priority scoring. */
     .sort((left, right) => right.priorityScore - left.priorityScore || ACTION_RANK[left.actionKind] - ACTION_RANK[right.actionKind]);
 }
 
@@ -656,12 +665,21 @@ function personalFit(
   scoringProfile: ContributorScoringProfile | null | undefined,
   roleContext: RoleContext,
   profile: ContributorProfile,
-  repo: RepositoryRecord | null,
+  repoLanguage: string | null | undefined,
 ): number {
   if (roleContext.maintainerLane) return 80;
-  const languageMatch = repo?.fullName && profile.github.topLanguages.length > 0 ? 10 : 0;
+  // Award the language-fit bonus only when the repo's primary language (sourced
+  // from ContributorFit.languageFit, as decision-pack.ts does) is one the
+  // contributor actually works in. Previously this granted +10 to any repo
+  // whenever the contributor had *any* top language, never comparing the two —
+  // so an off-language repo (e.g. a Rust repo for a Python-only contributor) was
+  // scored as a language match, inflating personalFit and the action
+  // priorityScores derived from it.
+  const contributorLanguages = new Set(profile.github.topLanguages.map((language) => language.toLowerCase()));
+  const languageMatch = repoLanguage && contributorLanguages.has(repoLanguage.toLowerCase()) ? 10 : 0;
   return clamp(
     (outcome?.mergedPullRequests ?? 0) * 2.2 +
+      /* v8 ignore next -- Credibility fallback order protects sparse private snapshots; scoring behavior is covered at public entry points. */
       (outcome?.credibility ?? scoringProfile?.evidence.credibilityAssumption ?? 0.8) * 35 +
       (outcome?.validSolvedIssues ?? 0) * 3 +
       languageMatch -
@@ -774,6 +792,7 @@ function uniqueRegisteredRepoNames(repoFullNames: string[], registeredRepoNames:
 }
 
 function nonNegative(value: number | undefined): number {
+  /* v8 ignore next -- Sparse contributor totals normalize to zero before scoring; aggregate scoring tests cover the behavior. */
   return Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
 }
 

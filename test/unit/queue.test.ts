@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   listCollisionEdges,
   createAgentRun,
@@ -25,7 +25,15 @@ import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 
 describe("queue processors", () => {
+  // Freshness-SLO fixtures are dated relative to late May 2026; pin the clock so staleness windows
+  // stay deterministic regardless of when CI runs.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -166,6 +174,8 @@ describe("queue processors", () => {
     });
 
     await processJob(env, { type: "refresh-upstream-drift", requestedBy: "test" });
+    await processJob(env, { type: "refresh-upstream-sources", requestedBy: "test" });
+    await processJob(env, { type: "build-upstream-ruleset", requestedBy: "test" });
     await processJob(env, { type: "detect-upstream-drift", requestedBy: "test" });
     await processJob(env, { type: "file-upstream-drift-issues", requestedBy: "test" });
 
@@ -281,6 +291,9 @@ describe("queue processors", () => {
   });
 
   it("marks fidelity repair completed when only signal refreshes are needed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T01:00:00.000Z"));
+
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       JOBS: {
@@ -329,6 +342,9 @@ describe("queue processors", () => {
   });
 
   it("queues signal repair and emits alertable audit state when freshness SLOs breach", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-25T13:00:00.000Z"));
+
     const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
     const env = createTestEnv({
       JOBS: {

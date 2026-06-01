@@ -8,6 +8,7 @@ interface __BaseEnv_Env {
 	GITHUB_APP_ID: "3824093";
 	GITHUB_APP_SLUG: "gittensory";
 	GITHUB_OAUTH_CLIENT_ID: "Iv23li574mpdLo2PnVN4";
+	GITHUB_OAUTH_CLIENT_SECRET: string;
 	GITTENSOR_REGISTRY_URL: "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json";
 	PUBLIC_API_ORIGIN: "https://gittensory-api.aethereal.dev";
 	AI_SUMMARIES_ENABLED: "false";
@@ -35,7 +36,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "GITHUB_APP_ID" | "GITHUB_APP_SLUG" | "GITHUB_OAUTH_CLIENT_ID" | "GITTENSOR_REGISTRY_URL" | "PUBLIC_API_ORIGIN" | "AI_SUMMARIES_ENABLED" | "AI_PUBLIC_COMMENTS_ENABLED" | "WORKERS_AI_SUMMARY_MODEL" | "AI_DAILY_NEURON_BUDGET" | "AI_MAX_OUTPUT_TOKENS" | "ADMIN_GITHUB_LOGINS" | "GITTENSORY_API_TOKEN" | "GITTENSORY_MCP_TOKEN" | "INTERNAL_JOB_TOKEN" | "GITHUB_WEBHOOK_SECRET" | "GITHUB_APP_PRIVATE_KEY">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "GITHUB_APP_ID" | "GITHUB_APP_SLUG" | "GITHUB_OAUTH_CLIENT_ID" | "GITHUB_OAUTH_CLIENT_SECRET" | "GITTENSOR_REGISTRY_URL" | "PUBLIC_API_ORIGIN" | "AI_SUMMARIES_ENABLED" | "AI_PUBLIC_COMMENTS_ENABLED" | "WORKERS_AI_SUMMARY_MODEL" | "AI_DAILY_NEURON_BUDGET" | "AI_MAX_OUTPUT_TOKENS" | "ADMIN_GITHUB_LOGINS" | "GITTENSORY_API_TOKEN" | "GITTENSORY_MCP_TOKEN" | "INTERNAL_JOB_TOKEN" | "GITHUB_WEBHOOK_SECRET" | "GITHUB_APP_PRIVATE_KEY">> {}
 }
 
 // Begin runtime types

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gittensory Extension</title>
+    <style>
+      body {
+        margin: 0;
+        background: #0f1117;
+        color: #f4f7f5;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 32px 20px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        margin-top: 16px;
+      }
+      input {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.06);
+        color: inherit;
+        font: inherit;
+        padding: 9px 10px;
+      }
+      button {
+        margin-top: 18px;
+        border: 0;
+        border-radius: 7px;
+        background: #7ee7bc;
+        color: #111317;
+        cursor: pointer;
+        font-weight: 700;
+        padding: 9px 12px;
+      }
+      p {
+        color: rgba(244, 247, 245, 0.68);
+      }
+      #status {
+        min-height: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Gittensory extension</h1>
+      <p>Paste an extension session token from the Gittensory app. The token is stored in browser sync storage and only sent to the Gittensory API.</p>
+      <form id="settings">
+        <label>
+          API origin
+          <input id="apiOrigin" name="apiOrigin" autocomplete="off" />
+        </label>
+        <label>
+          Extension session token
+          <input id="sessionToken" name="sessionToken" type="password" autocomplete="off" />
+        </label>
+        <button type="submit">Save</button>
+      </form>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

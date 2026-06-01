@@ -100,6 +100,12 @@ export type JobMessage =
       days?: number;
     }
   | {
+      type: "generate-weekly-value-report";
+      requestedBy: "schedule" | "api" | "test";
+      variant?: WeeklyValueReportVariant;
+      days?: number;
+    }
+  | {
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
@@ -973,4 +979,54 @@ export type ProductUsageRollupStatus = {
   staleDays: string[];
   incompleteDays: string[];
   warnings: string[];
+};
+
+export type WeeklyValueReportVariant = "public" | "operator";
+
+export type WeeklyValueReportMetric = {
+  id: string;
+  label: string;
+  value: number;
+  detail: string;
+  visibility: "public" | "operator";
+};
+
+export type WeeklyValueReport = {
+  generatedAt: string;
+  variant: WeeklyValueReportVariant;
+  publicSafe: boolean;
+  period: {
+    days: number;
+    startDay?: string | null | undefined;
+    endDay?: string | null | undefined;
+    rollupDays: string[];
+  };
+  summary: string[];
+  metrics: WeeklyValueReportMetric[];
+  warnings: string[];
+  freshness: {
+    status: ProductUsageRollupStatus["status"];
+    latestEventAt?: string | null | undefined;
+    latestRollupDay?: string | null | undefined;
+    latestRollupGeneratedAt?: string | null | undefined;
+    warnings: string[];
+  };
+  dataQuality: {
+    status: "ready" | "warn";
+    warnings: string[];
+  };
+  operatorDetails?: {
+    topRepos: ProductUsageDimensionCount[];
+    topCommands: ProductUsageDimensionCount[];
+    topTools: ProductUsageDimensionCount[];
+    topRouteClasses: ProductUsageDimensionCount[];
+    daily: Array<{
+      day: string;
+      status: ProductUsageDailyRollupStatus;
+      totalEvents: number;
+      activeActors: number;
+      activeRepos: number;
+    }>;
+    activation: ProductUsageActivationFunnel;
+  };
 };

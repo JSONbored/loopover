@@ -187,15 +187,32 @@ describe("queue processors", () => {
     });
 
     await processJob(env, { type: "rollup-product-usage", requestedBy: "test", day: "2026-05-27" });
+    await processJob(env, { type: "rollup-product-usage", requestedBy: "test", days: 1 });
 
-    await expect(listProductUsageDailyRollups(env)).resolves.toEqual([
+    await expect(listProductUsageDailyRollups(env)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
         day: "2026-05-27",
         totalEvents: 1,
         activeActors: 1,
         activation: expect.objectContaining({ firstUsefulActionActors: 1 }),
       }),
-    ]);
+    ]));
+  });
+
+  it("runs weekly value report generation through the queue processor", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    await processJob(env, { type: "generate-weekly-value-report", requestedBy: "test", variant: "operator", days: 7 });
+    await processJob(env, { type: "generate-weekly-value-report", requestedBy: "test" });
+
+    const row = await env.DB.prepare("select event_type, target_key, outcome from audit_events where event_type = ? order by created_at limit 1").bind("weekly_value_report_generated").first();
+    expect(row).toMatchObject({
+      event_type: "weekly_value_report_generated",
+      target_key: "weekly-value-report:operator:7",
+      outcome: "success",
+    });
+    const auditCount = await env.DB.prepare("select count(*) as count from audit_events where event_type = ?").bind("weekly_value_report_generated").first<{ count: number }>();
+    expect(auditCount?.count).toBe(2);
   });
 
   it("routes upstream drift jobs through queue processors", async () => {

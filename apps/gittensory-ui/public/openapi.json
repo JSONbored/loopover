@@ -10880,6 +10880,36 @@
         ]
       }
     },
+    "/v1/app/analytics/weekly-value-report": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Live app API response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/app/commands/preview": {
       "post": {
         "responses": {
@@ -11250,6 +11280,26 @@
       }
     },
     "/v1/internal/jobs/generate-signal-snapshots": {
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Internal job queued"
+          },
+          "401": {
+            "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/internal/jobs/generate-weekly-value-report": {
       "post": {
         "responses": {
           "202": {

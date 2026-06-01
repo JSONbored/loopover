@@ -522,7 +522,16 @@ export function buildOpenApiSpec() {
       401: { description: "Unauthorized" },
     },
   });
-  for (const path of ["/v1/app/roles", "/v1/app/miner-dashboard", "/v1/app/maintainer-dashboard", "/v1/app/operator-dashboard", "/v1/app/commands", "/v1/app/digest", "/v1/app/analytics/mcp-compatibility"]) {
+  for (const path of [
+    "/v1/app/roles",
+    "/v1/app/miner-dashboard",
+    "/v1/app/maintainer-dashboard",
+    "/v1/app/operator-dashboard",
+    "/v1/app/commands",
+    "/v1/app/digest",
+    "/v1/app/analytics/mcp-compatibility",
+    "/v1/app/analytics/weekly-value-report",
+  ]) {
     registry.registerPath({
       method: "get",
       path,
@@ -603,6 +612,7 @@ export function buildOpenApiSpec() {
     "/v1/internal/jobs/build-contributor-decision-packs",
     "/v1/internal/jobs/build-burden-forecasts",
     "/v1/internal/jobs/generate-signal-snapshots",
+    "/v1/internal/jobs/generate-weekly-value-report",
     "/v1/internal/jobs/repair-data-fidelity",
   ]) {
     registry.registerPath({

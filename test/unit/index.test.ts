@@ -140,6 +140,28 @@ describe("worker entrypoint", () => {
       { type: "file-upstream-drift-issues", requestedBy: "schedule" },
     ]);
   });
+
+  it("enqueues weekly value report generation during the Monday report window", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-06-01T12:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
+        { type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 },
+      ]),
+    );
+  });
 });
 
 function controllerFor(iso: string): ScheduledController {

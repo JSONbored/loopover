@@ -25,6 +25,7 @@ import {
   persistScoringModelSnapshot,
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
+  createAgentRun,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
@@ -1098,6 +1099,7 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/analytics/weekly-value-report", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/contributors/new-user/decision-pack", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/auth/extension/session", { method: "POST", headers: unknownHeaders }, unknownEnv)).status).toBe(403);
 
@@ -1124,6 +1126,12 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    const ownerWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerWeeklyReport.status).toBe(200);
+    const ownerWeeklyReportBody = await ownerWeeklyReport.json();
+    expect(ownerWeeklyReportBody).toMatchObject({ variant: "public", publicSafe: true });
+    expect(ownerWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    expect((await app.request("/v1/app/analytics/weekly-value-report?variant=operator", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
     expect(ownerExtensionSession.status).toBe(201);
     const ownerExtensionSessionBody = (await ownerExtensionSession.json()) as { token: string; login: string; scopes: string[] };
@@ -1288,7 +1296,7 @@ describe("api routes", () => {
     await expect(operator.json()).resolves.toMatchObject({
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Active sessions" }), expect.objectContaining({ label: "Digest subscriptions" })]),
       noiseReduction: expect.any(Array),
-      weeklyReport: expect.arrayContaining([expect.stringContaining("registered repos")]),
+      weeklyReport: expect.arrayContaining([expect.stringContaining("registered repo")]),
     });
 
     const commands = await app.request("/v1/app/commands", { headers: apiHeaders(env) }, env);
@@ -1458,6 +1466,24 @@ describe("api routes", () => {
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Install issues", delta: "needs attention" })]),
       rateLimits: expect.arrayContaining([expect.objectContaining({ id: "rate-limit-rest" })]),
     });
+    await createAgentRun(env, {
+      id: "completed-overview-run",
+      objective: "Show completed overview run",
+      actorLogin: "oktofeesh1",
+      surface: "api",
+      mode: "copilot",
+      status: "completed",
+      dataQualityStatus: "complete",
+      payload: { kind: "plan_next_work" },
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:05:00.000Z",
+    });
+    const overviewWithRuns = await app.request("/v1/app/overview", { headers: cookieHeaders }, env);
+    expect(overviewWithRuns.status).toBe(200);
+    await expect(overviewWithRuns.json()).resolves.toMatchObject({
+      metrics: expect.arrayContaining([expect.objectContaining({ label: "Agent runs", total: 1 })]),
+      recentRuns: expect.arrayContaining([expect.objectContaining({ run: expect.objectContaining({ id: "completed-overview-run", status: "completed" }) })]),
+    });
 
     const forbiddenRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(forbiddenRuns.status).toBe(403);
@@ -1482,10 +1508,10 @@ describe("api routes", () => {
       env,
     );
     expect(queuedIssueAgentRun.status).toBe(202);
-    const overviewWithRuns = await app.request("/v1/app/overview", { headers: cookieHeaders }, env);
-    expect(overviewWithRuns.status).toBe(200);
-    await expect(overviewWithRuns.json()).resolves.toMatchObject({
-      metrics: expect.arrayContaining([expect.objectContaining({ label: "Agent runs", total: 3 })]),
+    const overviewWithQueuedRuns = await app.request("/v1/app/overview", { headers: cookieHeaders }, env);
+    expect(overviewWithQueuedRuns.status).toBe(200);
+    await expect(overviewWithQueuedRuns.json()).resolves.toMatchObject({
+      metrics: expect.arrayContaining([expect.objectContaining({ label: "Agent runs", total: 4 })]),
       recentRuns: expect.arrayContaining([expect.objectContaining({ run: expect.objectContaining({ actorLogin: "oktofeesh1" }) })]),
     });
 
@@ -1725,6 +1751,13 @@ describe("api routes", () => {
         byProtocolVersion: Array<{ key: string; count: number }>;
         byCompatibilityStatus: Array<{ status: string; count: number }>;
       };
+      weeklyValueReport: {
+        variant: string;
+        summary: string[];
+        metrics: Array<{ id: string; value: number; visibility: string }>;
+        operatorDetails?: { daily: Array<{ day: string }>; topRouteClasses: Array<{ key: string; count: number }> };
+        warnings: string[];
+      };
     };
     expect(usageOperatorBody.metrics).toEqual(
       expect.arrayContaining([
@@ -1775,6 +1808,43 @@ describe("api routes", () => {
     await expect((await app.request("/v1/app/analytics/mcp-compatibility?days=invalid", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 7 });
     await expect((await app.request("/v1/app/analytics/mcp-compatibility?days=999", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 90 });
     await expect((await app.request("/v1/app/analytics/mcp-compatibility?days=-5", { headers: apiHeaders(env) }, env)).json()).resolves.toMatchObject({ days: 1 });
+
+    expect(usageOperatorBody.weeklyValueReport).toMatchObject({
+      variant: "operator",
+      summary: expect.arrayContaining([expect.stringContaining("active user"), expect.stringContaining("PR packet")]),
+      metrics: expect.arrayContaining([
+        expect.objectContaining({ id: "active_users", visibility: "public" }),
+        expect.objectContaining({ id: "product_events", value: productUsageEvents.length, visibility: "operator" }),
+      ]),
+      operatorDetails: expect.objectContaining({
+        daily: [expect.objectContaining({ day: "2026-05-28" })],
+        topRouteClasses: expect.any(Array),
+      }),
+    });
+
+    const publicWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report?variant=public&days=999", { headers: apiHeaders(env) }, env);
+    expect(publicWeeklyReport.status).toBe(200);
+    const publicWeeklyReportBody = await publicWeeklyReport.json();
+    expect(publicWeeklyReportBody).toMatchObject({
+      variant: "public",
+      publicSafe: true,
+      period: expect.objectContaining({ days: 31 }),
+      metrics: expect.arrayContaining([expect.objectContaining({ id: "active_users", visibility: "public" })]),
+    });
+    expect(publicWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    expect(JSON.stringify(publicWeeklyReportBody)).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|private reviewability|public score estimate|\/Users|github_pat|ghp_/i);
+
+    const defaultWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: apiHeaders(env) }, env);
+    expect(defaultWeeklyReport.status).toBe(200);
+    await expect(defaultWeeklyReport.json()).resolves.toMatchObject({ variant: "public", publicSafe: true });
+
+    const operatorWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report?variant=operator&days=invalid", { headers: apiHeaders(env) }, env);
+    expect(operatorWeeklyReport.status).toBe(200);
+    await expect(operatorWeeklyReport.json()).resolves.toMatchObject({
+      variant: "operator",
+      period: expect.objectContaining({ days: 7 }),
+      operatorDetails: expect.any(Object),
+    });
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {

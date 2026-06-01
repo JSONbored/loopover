@@ -66,6 +66,7 @@ import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "..
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
+import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import {
   buildUpstreamRulesetSnapshot,
   detectAndPersistUpstreamDrift,
@@ -210,6 +211,9 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "rollup-product-usage":
       await rollupProductUsageDaily(env, { ...(message.day ? { day: message.day } : {}), ...(message.days === undefined ? {} : { days: message.days }) });
+      return;
+    case "generate-weekly-value-report":
+      await generateWeeklyValueReport(env, { variant: message.variant ?? "operator", ...(message.days === undefined ? {} : { days: message.days }) });
       return;
     case "run-agent":
       await executeAgentRun(env, message.runId);

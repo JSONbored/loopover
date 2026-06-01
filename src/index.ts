@@ -50,6 +50,9 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     jobs.push({ type: "refresh-upstream-drift", requestedBy: "schedule" });
     jobs.push({ type: "rollup-product-usage", requestedBy: "schedule", days: 7 });
   }
+  if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
+    jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });
+  }
   if (isFullSyncWindow) {
     jobs.push({ type: "generate-signal-snapshots", requestedBy: "schedule" });
     jobs.push({ type: "build-burden-forecasts", requestedBy: "schedule" });

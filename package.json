@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "type": "module",
-  "description": "Deterministic base-agent backend for Gittensor OSS contribution mining.",
+  "description": "Deterministic base-agent platform for Gittensor OSS contribution intelligence.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
@@ -45,6 +45,9 @@
     "test:upstream-contract": "vitest run test/contract/upstream-contract.test.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:coverage": "vitest run --coverage",
+    "test:smoke:production": "node scripts/smoke-production.mjs",
+    "test:smoke:browser:install": "playwright install chromium",
+    "test:smoke:browser": "node scripts/smoke-ui-browser.mjs",
     "test:ci": "git diff --check && npm run actionlint && npm run typecheck && npm run test:coverage && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run ui:build && npm audit --audit-level=moderate",
     "test:release": "npm run test:ci && npm run changelog:check",
     "test:release:mcp": "npm run test:ci && npm run changelog:check:mcp",
@@ -54,15 +57,15 @@
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.4",
     "@hono/zod-validator": "^0.7.4",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "1.26.0",
     "@octokit/core": "^7.0.6",
     "agents": "^0.7.9",
     "drizzle-orm": "^0.45.0",
-    "hono": "^4.12.22",
+    "hono": "^4.12.23",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.9",
+    "@cloudflare/vitest-pool-workers": "^0.16.10",
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.1.7",
     "drizzle-kit": "^0.31.7",
@@ -71,10 +74,11 @@
     "github-actionlint": "^1.7.12",
     "node-addon-api": "^8.5.0",
     "node-gyp": "^12.1.0",
-    "tsx": "^4.21.0",
+    "playwright": "^1.56.1",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "vitest": "^4.1.7",
-    "wrangler": "^4.51.0"
+    "wrangler": "^4.95.0"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -1,21 +1,47 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBountyAdvisory,
+  buildBurdenForecast,
   buildCollisionReport,
   buildConfigQuality,
   buildContributorOpportunities,
   buildContributorFit,
+  buildContributorIntakeHealth,
+  buildContributorOutcomeHistory,
   buildContributorProfile,
   buildContributorScoringProfile,
+  buildContributorStrategy,
+  buildIssueDiscoveryLifecycleReport,
+  buildIssueQualityReport,
   buildLabelAudit,
   buildLaneAdvice,
+  buildLocalDiffPreflightResult,
+  buildMaintainerCutReadiness,
+  buildMaintainerLaneReport,
   buildPreflightResult,
+  buildPullRequestMaintainerPacket,
+  buildPullRequestReviewIntelligence,
   buildPublicPrIntelligenceComment,
   buildQueueHealth,
+  buildRegistryChangeReport,
+  buildRepoFitRecommendation,
   detectGittensorContributor,
   shouldPublishPrIntelligenceComment,
 } from "../../src/signals/engine";
-import type { BountyRecord, ContributorRepoStatRecord, IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings, ScoringModelSnapshotRecord } from "../../src/types";
+import type {
+  BountyRecord,
+  CheckSummaryRecord,
+  ContributorRepoStatRecord,
+  IssueRecord,
+  PullRequestFileRecord,
+  PullRequestRecord,
+  PullRequestReviewRecord,
+  RecentMergedPullRequestRecord,
+  RegistrySnapshot,
+  RepositoryRecord,
+  RepositorySettings,
+  ScoringModelSnapshotRecord,
+} from "../../src/types";
 
 const repo: RepositoryRecord = {
   fullName: "entrius/allways-ui",
@@ -494,6 +520,246 @@ describe("world-class backend signals", () => {
 
     expect(detection).toMatchObject({ detected: true, priorPullRequests: 1, priorMergedPullRequests: 0 });
   });
+
+  it("builds private contributor outcome and strategy reports across maintainer and cleanup lanes", () => {
+    const ownerRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "jsonbored/gittensory",
+      owner: "jsonbored",
+      name: "gittensory",
+      registryConfig: { ...repo.registryConfig!, repo: "jsonbored/gittensory", maintainerCut: 0.1 },
+    };
+    const riskyRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "owner/risky",
+      owner: "owner",
+      name: "risky",
+      registryConfig: { ...repo.registryConfig!, repo: "owner/risky" },
+    };
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      fullName: "owner/issues",
+      owner: "owner",
+      name: "issues",
+      registryConfig: { ...repo.registryConfig!, repo: "owner/issues", issueDiscoveryShare: 1 },
+    };
+    const profile = buildContributorProfile("jsonbored", { login: "JSONbored", topLanguages: ["TypeScript"], source: "github" }, [], [], [], {
+      source: "gittensor_api",
+      githubId: "49853598",
+      githubUsername: "JSONbored",
+      uid: 29,
+      hotkey: "hotkey",
+      evaluatedAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      isEligible: true,
+      credibility: 0.76,
+      eligibleRepoCount: 2,
+      issueDiscoveryScore: 12,
+      issueTokenScore: 3,
+      issueCredibility: 0.7,
+      isIssueEligible: true,
+      issueEligibleRepoCount: 1,
+      alphaPerDay: 12,
+      taoPerDay: 0.05,
+      usdPerDay: 18,
+      totals: {
+        pullRequests: 10,
+        mergedPullRequests: 2,
+        openPullRequests: 5,
+        closedPullRequests: 3,
+        openIssues: 12,
+        closedIssues: 2,
+        solvedIssues: 1,
+        validSolvedIssues: 1,
+      },
+      repositories: [
+        {
+          repoFullName: ownerRepo.fullName,
+          pullRequests: 1,
+          mergedPullRequests: 1,
+          openPullRequests: 0,
+          closedPullRequests: 0,
+          openIssues: 0,
+          closedIssues: 0,
+          solvedIssues: 0,
+          validSolvedIssues: 0,
+          isEligible: true,
+          isIssueEligible: false,
+          credibility: 0.95,
+          issueCredibility: 0,
+          totalScore: 10,
+          baseTotalScore: 10,
+        },
+        {
+          repoFullName: riskyRepo.fullName,
+          pullRequests: 8,
+          mergedPullRequests: 1,
+          openPullRequests: 5,
+          closedPullRequests: 2,
+          openIssues: 12,
+          closedIssues: 1,
+          solvedIssues: 0,
+          validSolvedIssues: 0,
+          isEligible: true,
+          isIssueEligible: false,
+          credibility: 0.4,
+          issueCredibility: 0.1,
+          totalScore: 6,
+          baseTotalScore: 20,
+        },
+        {
+          repoFullName: issueDiscoveryRepo.fullName,
+          pullRequests: 1,
+          mergedPullRequests: 0,
+          openPullRequests: 0,
+          closedPullRequests: 1,
+          openIssues: 0,
+          closedIssues: 1,
+          solvedIssues: 1,
+          validSolvedIssues: 1,
+          isEligible: false,
+          isIssueEligible: true,
+          credibility: 0.9,
+          issueCredibility: 0.95,
+          totalScore: 3,
+          baseTotalScore: 4,
+        },
+      ],
+      pullRequests: [{ repoFullName: riskyRepo.fullName, number: 44, title: "Risky PR", state: "OPEN", label: "bug", score: 1, baseScore: 1, tokenScore: 1 }],
+      issueLabels: ["bug", "feature"],
+    });
+    const contributorPrs: PullRequestRecord[] = [
+      { ...pullRequests[0]!, repoFullName: ownerRepo.fullName, authorLogin: "jsonbored", authorAssociation: "OWNER", number: 1, state: "merged", mergedAt: "2026-05-20T00:00:00.000Z" },
+      ...Array.from({ length: 5 }, (_, index): PullRequestRecord => ({
+        ...pullRequests[0]!,
+        repoFullName: riskyRepo.fullName,
+        authorLogin: "jsonbored",
+        authorAssociation: "NONE",
+        number: 10 + index,
+        state: "open",
+        linkedIssues: [100 + index],
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      })),
+    ];
+    const contributorIssues: IssueRecord[] = Array.from({ length: 12 }, (_, index): IssueRecord => ({
+      repoFullName: riskyRepo.fullName,
+      number: 100 + index,
+      title: `Risky issue ${index}`,
+      state: "open",
+      authorLogin: "jsonbored",
+      labels: ["bug"],
+      linkedPrs: [],
+    }));
+    const repoStats: ContributorRepoStatRecord[] = [
+      { login: "jsonbored", repoFullName: riskyRepo.fullName, pullRequests: 8, mergedPullRequests: 1, openPullRequests: 5, issues: 12, stalePullRequests: 1, unlinkedPullRequests: 1, dominantLabels: ["bug"], lastActivityAt: "2026-05-25T00:00:00.000Z" },
+      { login: "jsonbored", repoFullName: ownerRepo.fullName, pullRequests: 1, mergedPullRequests: 1, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["feature"], lastActivityAt: "2026-05-25T00:00:00.000Z" },
+    ];
+
+    const repositories = [ownerRepo, riskyRepo, issueDiscoveryRepo];
+    const history = buildContributorOutcomeHistory({ login: "jsonbored", profile, repositories, pullRequests: contributorPrs, issues: contributorIssues, repoStats });
+    const fit = buildContributorFit(
+      profile,
+      repositories,
+      [{ ...issues[0]!, repoFullName: riskyRepo.fullName, number: 100, title: "Risky issue" }],
+      contributorPrs,
+      [{ repoFullName: riskyRepo.fullName, status: "success", sourceKind: "github", openIssuesCount: 12, openPullRequestsCount: 5, recentMergedPullRequestsCount: 0, primaryLanguage: "TypeScript", warnings: [] }],
+      repoStats,
+    );
+    const scoring = buildContributorScoringProfile({ login: "jsonbored", fit, scoringSnapshot: scoringModelSnapshot() });
+    const strategy = buildContributorStrategy({ login: "jsonbored", fit, scoringProfile: scoring, scoringSnapshot: scoringModelSnapshot(), outcomeHistory: history });
+    const ownerRecommendation = buildRepoFitRecommendation({ login: "jsonbored", repo: ownerRepo, repoFullName: ownerRepo.fullName, profile, issues: [], pullRequests: contributorPrs, outcomeHistory: history });
+    const riskyRecommendation = buildRepoFitRecommendation({ login: "jsonbored", repo: riskyRepo, repoFullName: riskyRepo.fullName, profile, issues: contributorIssues, pullRequests: contributorPrs, outcomeHistory: history });
+
+    expect(history.reconciliation?.officialAuthoritative).toBe(true);
+    expect(history.failurePatterns.map((pattern) => pattern.title)).toEqual(expect.arrayContaining(["Open PR pressure", "Raw issue activity is not solved discovery evidence"]));
+    expect(strategy.cleanupFirst.map((entry) => entry.repoFullName)).toContain(riskyRepo.fullName);
+    expect(strategy.maintainerLaneRepos.map((entry) => entry.repoFullName)).toContain(ownerRepo.fullName);
+    expect(strategy.avoidRepos.map((entry) => entry.repoFullName)).toContain(riskyRepo.fullName);
+    expect(ownerRecommendation.recommendation).toBe("maintainer_lane");
+    expect(riskyRecommendation.recommendation).toBe("cleanup_first");
+  });
+
+  it("covers issue lifecycle, review intelligence, registry diffs, and maintainer forecast boundaries", () => {
+    const issueDiscoveryRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 1, maintainerCut: 0 },
+    };
+    const staleIso = "2025-01-01T00:00:00.000Z";
+    const lifecycleIssues: IssueRecord[] = [
+      { ...issues[0]!, number: 21, title: "Duplicate report", labels: ["duplicate"], body: "Duplicate body".repeat(20), linkedPrs: [], updatedAt: staleIso },
+      { ...issues[0]!, number: 22, title: "Invalid report", labels: ["not planned"], body: "Invalid body".repeat(20), linkedPrs: [], updatedAt: "2026-05-20T00:00:00.000Z" },
+      { ...issues[0]!, number: 23, title: "Solved issue", labels: ["bug"], body: "Detailed solved body ".repeat(20), linkedPrs: [33], updatedAt: "2026-05-20T00:00:00.000Z" },
+      { ...issues[0]!, number: 24, title: "Closed stale issue", state: "closed", labels: ["feature"], body: "Closed body".repeat(20), linkedPrs: [], updatedAt: staleIso },
+      { ...issues[0]!, number: 25, title: "Ready issue", labels: ["feature"], body: "This issue includes a complete reproduction, expected result, actual result, and scoped acceptance criteria. ".repeat(3), linkedPrs: [], updatedAt: "2026-05-20T00:00:00.000Z" },
+    ];
+    const reviewPr: PullRequestRecord = {
+      ...pullRequests[0]!,
+      repoFullName: repo.fullName,
+      number: 33,
+      title: "Fix solved issue",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      linkedIssues: [23],
+      labels: ["bug"],
+      body: "Fixes #23",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    };
+    const recentMerged: RecentMergedPullRequestRecord[] = [
+      { repoFullName: repo.fullName, number: 33, title: "Fix solved issue", authorLogin: "oktofeesh1", mergedAt: "2026-05-25T00:00:00.000Z", labels: ["bug"], linkedIssues: [23], changedFiles: ["src/fix.ts"], payload: {} },
+    ];
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 33, path: "src/fix.ts", status: "modified", additions: 20, deletions: 2, changes: 22, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 33, path: "README.md", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} },
+    ];
+    const reviews: PullRequestReviewRecord[] = [{ id: "review-1", repoFullName: repo.fullName, pullNumber: 33, reviewerLogin: "maintainer", state: "APPROVED", authorAssociation: "MEMBER", submittedAt: "2026-05-25T00:00:00.000Z", payload: {} }];
+    const failedChecks: CheckSummaryRecord[] = [{ id: "check-1", repoFullName: repo.fullName, pullNumber: 33, headSha: "sha", name: "test", status: "completed", conclusion: "failure", payload: {} }];
+    const lifecycle = buildIssueDiscoveryLifecycleReport(issueDiscoveryRepo, lifecycleIssues, [reviewPr], repo.fullName, recentMerged);
+    const quality = buildIssueQualityReport(issueDiscoveryRepo, lifecycleIssues, [reviewPr], repo.fullName, undefined, recentMerged);
+    const localPreflight = buildLocalDiffPreflightResult(
+      { repoFullName: repo.fullName, title: "Fix solved issue", body: "Fixes #23", changedFiles: ["src/fix.ts"], testFiles: [], changedLineCount: 900, commitMessage: "fix: close #23" },
+      issueDiscoveryRepo,
+      lifecycleIssues,
+      [reviewPr],
+      quality,
+    );
+    const maintainerPacket = buildPullRequestMaintainerPacket({ repo: repo, pullRequest: reviewPr, issues: lifecycleIssues, pullRequests: [reviewPr], files, reviews, checks: failedChecks, recentMergedPullRequests: recentMerged, repoFullName: repo.fullName, pullNumber: 33 });
+    const reviewIntel = buildPullRequestReviewIntelligence({ repo, pullRequest: reviewPr, issues: lifecycleIssues, pullRequests: [reviewPr], files, reviews, checks: failedChecks, recentMergedPullRequests: recentMerged, repoFullName: repo.fullName, pullNumber: 33 });
+    const missingPacket = buildPullRequestMaintainerPacket({ repo, pullRequest: null, issues: lifecycleIssues, pullRequests: [reviewPr], files: [], reviews: [], checks: [], recentMergedPullRequests: [], repoFullName: repo.fullName, pullNumber: 999 });
+    const manyOpenPrs = Array.from({ length: 20 }, (_, index): PullRequestRecord => ({
+      ...reviewPr,
+      number: 100 + index,
+      title: `Unlinked queue item ${index}`,
+      linkedIssues: [],
+      updatedAt: staleIso,
+    }));
+    const collisions = buildCollisionReport(repo.fullName, lifecycleIssues, manyOpenPrs);
+    const forecast = buildBurdenForecast(repo, lifecycleIssues, manyOpenPrs, collisions, 7);
+    const readiness = buildMaintainerCutReadiness({ ...repo, registryConfig: { ...repo.registryConfig!, maintainerCut: 0 } }, lifecycleIssues, manyOpenPrs, repo.fullName, { openPullRequests: 20 });
+    const maintainerReport = buildMaintainerLaneReport({ ...repo, registryConfig: { ...repo.registryConfig!, maintainerCut: 0 } }, lifecycleIssues, manyOpenPrs, repo.fullName, collisions, { openPullRequests: 20 });
+    const intake = buildContributorIntakeHealth(repo, lifecycleIssues, manyOpenPrs, repo.fullName, collisions, { openPullRequests: 20 });
+    const previous: RegistrySnapshot = registrySnapshot("previous", [
+      { ...repo.registryConfig!, repo: "owner/changed", emissionShare: 0.1, issueDiscoveryShare: 0, maintainerCut: 0, trustedLabelPipeline: null, labelMultipliers: { bug: 1 }, raw: {} },
+      { ...repo.registryConfig!, repo: "owner/removed", raw: {} },
+    ]);
+    const current: RegistrySnapshot = registrySnapshot("current", [
+      { ...repo.registryConfig!, repo: "owner/changed", emissionShare: 0.2, issueDiscoveryShare: 0.5, maintainerCut: 0.1, trustedLabelPipeline: true, labelMultipliers: { feature: 2 }, raw: {} },
+      { ...repo.registryConfig!, repo: "owner/added", raw: {} },
+    ]);
+    const changeReport = buildRegistryChangeReport([current, previous]);
+
+    expect(lifecycle.states.map((state) => state.state)).toEqual(expect.arrayContaining(["duplicate", "invalid", "valid_solved", "closed_not_solved", "open"]));
+    expect(quality.issues.map((issue) => issue.status)).toEqual(expect.arrayContaining(["ready", "do_not_use"]));
+    expect(localPreflight.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["large_local_diff", "local_diff_missing_tests", "issue_quality_do_not_use"]));
+    expect(maintainerPacket.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["checks_need_attention", "missing_test_files"]));
+    expect(missingPacket.findings.map((finding) => finding.code)).toContain("pr_not_cached");
+    expect(reviewIntel.recommendation).toBe("likely_duplicate");
+    expect(forecast.level).toBe("critical");
+    expect(readiness.recommendedAction).toBe("fix_config_first");
+    expect(maintainerReport.findings.map((finding) => finding.code)).toContain("maintainer_cut_not_configured");
+    expect(intake.level).toBe("blocked");
+    expect(changeReport).toMatchObject({ addedRepos: ["owner/added"], removedRepos: ["owner/removed"] });
+    expect(changeReport.changedRepos[0]?.changes).toEqual(expect.arrayContaining(["label_multipliers changed", "trusted_label_pipeline false -> true"]));
+  });
 });
 
 function scoringModelSnapshot(): ScoringModelSnapshotRecord {
@@ -507,5 +773,18 @@ function scoringModelSnapshot(): ScoringModelSnapshotRecord {
     programmingLanguages: {},
     warnings: [],
     payload: {},
+  };
+}
+
+function registrySnapshot(id: string, repositories: RegistrySnapshot["repositories"]): RegistrySnapshot {
+  return {
+    id,
+    generatedAt: "2026-05-25T00:00:00.000Z",
+    fetchedAt: "2026-05-25T00:00:00.000Z",
+    source: { kind: "raw-github", url: `fixture://${id}` },
+    repoCount: repositories.length,
+    totalEmissionShare: repositories.reduce((sum, record) => sum + record.emissionShare, 0),
+    warnings: [],
+    repositories,
   };
 }

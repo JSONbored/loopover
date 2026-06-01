@@ -6,6 +6,7 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("private-beta auth and rate limiting", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -56,6 +57,8 @@ describe("private-beta auth and rate limiting", () => {
 
     const invalid = await limiter.fetch(new Request("https://rate-limit/check", { method: "POST", body: "{}" }));
     expect(invalid.status).toBe(400);
+    const invalidJson = await limiter.fetch(new Request("https://rate-limit/check", { method: "POST", body: "{" }));
+    expect(invalidJson.status).toBe(400);
   });
 
   it("resets Durable Object buckets after the configured window expires", async () => {
@@ -101,6 +104,14 @@ describe("private-beta auth and rate limiting", () => {
     expect(fallbackHeaders.res.headers.get("x-ratelimit-limit")).toBe("120");
     expect(fallbackHeaders.res.headers.get("x-ratelimit-remaining")).toBe("120");
     expect(fallbackHeaders.res.headers.get("x-ratelimit-reset")).toBeNull();
+
+    const malformedDecision = fakeContext(
+      createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: "not-json" }) as unknown as DurableObjectNamespace }),
+      "/v1/repos/JSONbored/gittensory",
+    );
+    await expect(enforceRateLimit(malformedDecision, "normal")).resolves.toBeNull();
+    expect(malformedDecision.res.headers.get("x-ratelimit-limit")).toBe("120");
+    expect(malformedDecision.res.headers.get("x-ratelimit-remaining")).toBe("120");
 
     const allowed = fakeContext(
       createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: { limit: 3, remaining: 2, resetAt: "2026-05-25T00:01:00.000Z" } }) as unknown as DurableObjectNamespace }),
@@ -168,6 +179,9 @@ describe("private-beta auth and rate limiting", () => {
     await expect(startGitHubDeviceFlow(env)).rejects.toThrow(/bad/);
 
     vi.stubGlobal("fetch", async () => Response.json({}, { status: 502 }));
+    await expect(startGitHubDeviceFlow(env)).rejects.toThrow(/github_device_flow_start_failed/);
+
+    vi.stubGlobal("fetch", async () => new Response("{", { status: 502 }));
     await expect(startGitHubDeviceFlow(env)).rejects.toThrow(/github_device_flow_start_failed/);
 
     vi.stubGlobal("fetch", async () => Response.json({ device_code: "missing" }));
@@ -312,6 +326,19 @@ describe("private-beta auth and rate limiting", () => {
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      if (url.includes("access_token")) return new Response("{", { status: 502 });
+      return Response.json({});
+    });
+    await expect(
+      completeGitHubWebOAuth(env, "https://preview.example.workers.dev/v1/auth/github/callback", {
+        code: "code",
+        state: invalidReturnTo.state,
+        cookieState: invalidReturnTo.state,
+      }),
+    ).rejects.toThrow(/token_exchange_failed/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
       if (url.includes("access_token")) return Response.json({});
       return Response.json({});
     });
@@ -390,6 +417,13 @@ describe("private-beta auth and rate limiting", () => {
       return Response.json({});
     });
     await expect(pollGitHubDeviceFlow(env, "device-code")).rejects.toThrow(/access_token_missing/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("access_token")) return new Response("{");
+      return Response.json({});
+    });
+    await expect(pollGitHubDeviceFlow(env, "device-code")).rejects.toThrow(/access_token_missing/);
     await expect(pollGitHubDeviceFlow(createTestEnv(), "device-code")).rejects.toThrow(/not_configured/);
   });
 
@@ -427,7 +461,7 @@ function memoryDurableObjectState() {
   };
 }
 
-function rateLimiterNamespace(decision: { status: number; body: Record<string, unknown> }) {
+function rateLimiterNamespace(decision: { status: number; body: Record<string, unknown> | string }) {
   return {
     idFromName(name: string) {
       expect(name).toMatch(/^(normal|expensive):/);
@@ -438,6 +472,7 @@ function rateLimiterNamespace(decision: { status: number; body: Record<string, u
         async fetch(_url: string, init?: RequestInit) {
           expect(init?.method).toBe("POST");
           expect(JSON.parse(String(init?.body ?? "{}"))).toEqual(expect.objectContaining({ key: expect.any(String), limit: expect.any(Number), windowSeconds: expect.any(Number) }));
+          if (typeof decision.body === "string") return new Response(decision.body, { status: decision.status });
           return Response.json(decision.body, { status: decision.status });
         },
       };

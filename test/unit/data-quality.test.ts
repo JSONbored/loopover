@@ -412,6 +412,27 @@ describe("sync data quality", () => {
     });
   });
 
+  it("normalizes malformed persisted freshness snapshots without crashing report generation", () => {
+    const report = buildFreshnessSloReport({
+      signalSnapshots: [
+        { id: "malformed", payload: {}, generatedAt: "2026-05-25T00:00:00.000Z" } as never,
+        { id: "decision", signalType: "contributor-decision-pack", targetKey: undefined, payload: {}, generatedAt: "2026-05-25T00:30:00.000Z" } as never,
+      ],
+      expectedDecisionPackKeys: ["jsonbored"],
+      bounties: [{ id: "bounty", repoFullName: "owner/repo", issueNumber: 1, status: "open", payload: {}, discoveredAt: "2026-05-25T00:30:00.000Z", updatedAt: undefined }],
+      nowMs: Date.parse("2026-05-25T01:00:00.000Z"),
+    });
+
+    expect(report.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ area: "signal_snapshot", targetKey: "undefined\u0000undefined", status: "fresh" }),
+        expect.objectContaining({ area: "decision_pack", targetKey: "contributor-decision-pack", status: "fresh" }),
+        expect.objectContaining({ area: "decision_pack", targetKey: "jsonbored", status: "missing" }),
+        expect.objectContaining({ area: "bounty_data", targetKey: "all_bounties", observedAt: "2026-05-25T00:30:00.000Z" }),
+      ]),
+    );
+  });
+
   it("requires authoritative open-data totals for core fidelity and treats history as sampled", () => {
     const segments = [
       segment({ segment: "metadata", fetchedCount: 1, expectedCount: 1 }),

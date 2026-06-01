@@ -9,7 +9,7 @@ export const Route = createFileRoute("/app")({
       {
         name: "description",
         content:
-          "Preview-only Gittensory control panels: miner command center, maintainer console, agent run history, and operator dashboard.",
+          "Gittensory control panels: miner command center, maintainer console, agent run history, and operator dashboard.",
       },
       { name: "robots", content: "noindex" },
     ],

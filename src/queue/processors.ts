@@ -1,6 +1,7 @@
 import {
   countOpenIssues,
   countOpenPullRequests,
+  getAgentCommandAnswer,
   getLatestRepoGithubTotalsSnapshot,
   getFreshOfficialMinerDetection,
   getPullRequest,
@@ -27,11 +28,13 @@ import {
   listRepositories,
   markInstallationDeleted,
   persistAdvisory,
+  recordAgentCommandFeedback,
   recordAuditEvent,
   recordProductUsageEvent,
   persistSignalSnapshot,
   recordWebhookEvent,
   replaceCollisionEdges,
+  upsertAgentCommandAnswer,
   upsertOfficialMinerDetection,
   rollupProductUsageDaily,
   upsertBurdenForecast,
@@ -61,6 +64,7 @@ import {
   isMaintainerAssociation,
   isMaintainerOnlyCommand,
   isMaintainerQueueDigestCommand,
+  parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
 } from "../github/commands";
 import { ensurePullRequestLabel } from "../github/labels";
@@ -70,6 +74,7 @@ import { buildIssueAdvisory, buildPullRequestAdvisory } from "../rules/advisory"
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
+import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
@@ -536,6 +541,19 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
     }
     if (payload.repository) await upsertRepositoryFromGitHub(env, payload.repository, installationId ?? undefined);
 
+    if (eventName === "reaction" && (await maybeProcessAgentCommandFeedbackReaction(env, deliveryId, payload))) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
+    }
+
     if (eventName === "issue_comment" && (await maybeProcessGittensoryMentionCommand(env, deliveryId, payload))) {
       await recordWebhookEvent(env, {
         deliveryId,
@@ -905,6 +923,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     return true;
   }
 
+  const answerId = crypto.randomUUID();
   const login = pullRequestAuthor ?? commenter;
   const maintainerDigest = isMaintainerQueueDigestCommand(command.name)
     ? await buildMaintainerQueueDigestForCommand(env, repo, repoFullName)
@@ -923,17 +942,32 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     issue,
     pullRequest: cachedPullRequest,
     actorKind: authorization.actorKind === "maintainer" ? "maintainer" : "author",
+    answerId,
     officialMiner: official?.status === "confirmed" ? official.snapshot : null,
     bundle,
     maintainerDigest,
   });
-  await createOrUpdateAgentCommandComment(env, installationId, repoFullName, issue.number, body);
+  const responseComment = await createOrUpdateAgentCommandComment(env, installationId, repoFullName, issue.number, body);
+  await upsertAgentCommandAnswer(env, {
+    id: answerId,
+    repoFullName,
+    issueNumber: issue.number,
+    command: command.name,
+    requestCommentId: payload.comment?.id ?? null,
+    responseCommentId: responseComment?.id ?? null,
+    responseUrl: responseComment?.html_url ?? null,
+    actorKind: authorization.actorKind === "maintainer" ? "maintainer" : "author",
+    metadata: {
+      publicSurface: "github_comment",
+      responseCommentStored: Boolean(responseComment?.id),
+    },
+  });
   await recordAuditEvent(env, {
     eventType: "github_app.agent_command_replied",
     actor: commenter,
     targetKey: `${repoFullName}#${issue.number}`,
     outcome: "completed",
-    metadata: { deliveryId, command: command.name, actorKind: authorization.actorKind, runId: bundle?.run.id ?? null },
+    metadata: { deliveryId, command: command.name, actorKind: authorization.actorKind, runId: bundle?.run.id ?? null, answerId },
   });
   await recordAgentCommandUsage(env, {
     repoFullName,
@@ -1127,6 +1161,157 @@ async function recordAgentCommandFeedbackPrompt(
       scoringImpact: "none",
     },
   });
+}
+
+async function maybeProcessAgentCommandFeedbackReaction(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  const repoFullName = payload.repository?.full_name;
+  const issue = payload.issue;
+  const actor = payload.reaction?.user?.login ?? payload.sender?.login;
+  const vote = reactionVote(payload.reaction?.content);
+  const feedback = parseAgentCommandFeedbackContext(payload.comment?.body);
+  if (!repoFullName || !issue || !actor || !feedback || !vote) return false;
+
+  const targetKey = `${repoFullName}#${issue.number}`;
+  if (payload.action !== "created") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_command_feedback_skipped",
+      actor,
+      targetKey,
+      outcome: "completed",
+      detail: "unsupported_reaction_action",
+      metadata: { deliveryId, action: payload.action ?? null, answerId: feedback.answerId },
+    });
+    return true;
+  }
+  if (payload.reaction?.user?.type === "Bot" || /\[bot\]$/i.test(actor)) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_command_feedback_skipped",
+      actor,
+      targetKey,
+      outcome: "completed",
+      detail: "bot_reaction",
+      metadata: { deliveryId, answerId: feedback.answerId },
+    });
+    return true;
+  }
+  const [answer, cachedPullRequest] = await Promise.all([
+    getAgentCommandAnswer(env, feedback.answerId),
+    getPullRequest(env, repoFullName, issue.number),
+  ]);
+  const command = answer?.command ?? feedback.command ?? "unknown";
+  if (!answer) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_command_feedback_skipped",
+      actor,
+      targetKey,
+      outcome: "completed",
+      detail: "unknown_answer",
+      metadata: { deliveryId, answerId: feedback.answerId, command, vote },
+    });
+    return true;
+  }
+  const contextMismatch = answer.repoFullName.toLowerCase() !== repoFullName.toLowerCase() || answer.issueNumber !== issue.number;
+  if (contextMismatch) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_command_feedback_skipped",
+      actor,
+      targetKey,
+      outcome: "completed",
+      detail: "answer_context_mismatch",
+      metadata: { deliveryId, answerId: feedback.answerId, command, vote },
+    });
+    return true;
+  }
+  if (!answer.responseCommentId || answer.responseCommentId !== payload.comment?.id) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_command_feedback_skipped",
+      actor,
+      targetKey,
+      outcome: "completed",
+      detail: "answer_comment_mismatch",
+      metadata: { deliveryId, answerId: feedback.answerId, command, vote, commentId: payload.comment?.id ?? null },
+    });
+    return true;
+  }
+  const pullRequestAuthor = cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
+  const official = pullRequestAuthor && actor.toLowerCase() === pullRequestAuthor.toLowerCase()
+    ? await getCachedOfficialMinerDetection(env, actor, { targetKey, deliveryId })
+    : undefined;
+  const authorization = authorizeFeedbackActor(env, {
+    actor,
+    repoFullName,
+    pullRequestAuthor,
+    officialAuthorDetection: official,
+  });
+  if (!authorization.authorized) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.agent_command_feedback_denied",
+      actor,
+      targetKey,
+      outcome: "denied",
+      detail: authorization.reason,
+      metadata: { deliveryId, answerId: feedback.answerId, command, vote },
+    });
+    return true;
+  }
+
+  await recordAgentCommandFeedback(env, {
+    answerId: feedback.answerId,
+    repoFullName,
+    issueNumber: issue.number,
+    command,
+    actorLogin: actor,
+    vote,
+    source: "github_reaction",
+    actorKind: authorization.actorKind,
+    metadata: {
+      deliveryId,
+      reactionId: payload.reaction?.id ?? null,
+    },
+  });
+  await recordAuditEvent(env, {
+    eventType: "github_app.agent_command_feedback_recorded",
+    actor,
+    targetKey,
+    outcome: "completed",
+    metadata: { deliveryId, answerId: feedback.answerId, command, vote, source: "github_reaction", actorKind: authorization.actorKind },
+  });
+  return true;
+}
+
+function reactionVote(content: string | null | undefined): "useful" | "not_useful" | null {
+  if (content === "+1") return "useful";
+  if (content === "-1") return "not_useful";
+  return null;
+}
+
+function authorizeFeedbackActor(
+  env: Env,
+  args: {
+    actor: string;
+    repoFullName: string;
+    pullRequestAuthor?: string | null | undefined;
+    officialAuthorDetection?: OfficialGittensorMinerDetection | undefined;
+  },
+): { authorized: boolean; reason: string; actorKind: "maintainer" | "author" } {
+  const [owner] = args.repoFullName.split("/");
+  if (owner && owner.toLowerCase() === args.actor.toLowerCase()) {
+    return { authorized: true, reason: "repo_owner_feedback", actorKind: "maintainer" };
+  }
+  if (isAuthorizedGitHubSessionLogin(env, args.actor)) {
+    return { authorized: true, reason: "operator_feedback", actorKind: "maintainer" };
+  }
+  const authorAuthorization = isAuthorizedCommandActor({
+    commenterLogin: args.actor,
+    commenterAssociation: null,
+    pullRequestAuthorLogin: args.pullRequestAuthor,
+    officialAuthorDetection: args.officialAuthorDetection,
+  });
+  return {
+    authorized: authorAuthorization.authorized,
+    reason: authorAuthorization.reason,
+    actorKind: "author",
+  };
 }
 
 async function auditPrVisibilitySkip(

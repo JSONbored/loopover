@@ -729,6 +729,52 @@ export const digestSubscriptions = sqliteTable(
   }),
 );
 
+export const githubAgentCommandAnswers = sqliteTable(
+  "github_agent_command_answers",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    issueNumber: integer("issue_number").notNull(),
+    command: text("command").notNull(),
+    requestCommentId: integer("request_comment_id"),
+    responseCommentId: integer("response_comment_id"),
+    responseUrl: text("response_url"),
+    actorKind: text("actor_kind").notNull(),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+  },
+  (table) => ({
+    repoIssue: index("github_agent_command_answers_repo_issue_idx").on(table.repoFullName, table.issueNumber),
+    commandUpdated: index("github_agent_command_answers_command_updated_idx").on(table.command, table.updatedAt),
+  }),
+);
+
+export const githubAgentCommandFeedback = sqliteTable(
+  "github_agent_command_feedback",
+  {
+    id: text("id").primaryKey(),
+    answerId: text("answer_id")
+      .notNull()
+      .references(() => githubAgentCommandAnswers.id),
+    repoFullName: text("repo_full_name").notNull(),
+    issueNumber: integer("issue_number").notNull(),
+    command: text("command").notNull(),
+    actorHash: text("actor_hash").notNull(),
+    vote: text("vote").notNull(),
+    source: text("source").notNull(),
+    actorKind: text("actor_kind").notNull(),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+  },
+  (table) => ({
+    actorAnswer: uniqueIndex("github_agent_command_feedback_actor_answer_unique").on(table.answerId, table.actorHash),
+    commandUpdated: index("github_agent_command_feedback_command_updated_idx").on(table.command, table.updatedAt),
+    repoIssue: index("github_agent_command_feedback_repo_issue_idx").on(table.repoFullName, table.issueNumber),
+  }),
+);
+
 export const auditEvents = sqliteTable(
   "audit_events",
   {

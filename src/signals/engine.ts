@@ -428,14 +428,24 @@ export type PullRequestMaintainerPacket = {
   maintainerNotes: string[];
 };
 
+export type BountyLifecycle = "active" | "historical" | "completed" | "cancelled" | "stale" | "ambiguous" | "unknown";
+
+export type BountyLinkedPr = {
+  number: number;
+  state: "open" | "closed" | "merged" | "unknown";
+  isActive: boolean;
+};
+
 export type BountyAdvisory = {
   id: string;
   repoFullName: string;
   issueNumber: number;
   status: string;
-  lifecycle: "active" | "historical" | "unknown";
+  lifecycle: BountyLifecycle;
+  isActiveOpportunity: boolean;
   fundingStatus: "funded" | "target_only" | "unknown";
   consensusRisk: "low" | "medium" | "high";
+  linkedPrs: BountyLinkedPr[];
   findings: SignalFinding[];
 };
 
@@ -1115,11 +1125,13 @@ export function buildContributorOpportunities(
   repositories: RepositoryRecord[],
   issues: IssueRecord[],
   pullRequests: PullRequestRecord[],
+  bounties: BountyRecord[] = [],
   issueQualityByRepo?: Map<string, IssueQualityReport>,
 ): ContributorOpportunity[] {
   const opportunities: ContributorOpportunity[] = [];
   const touchedRepos = new Set(profile.registeredRepoActivity.reposTouched);
   const labelHistory = new Set(profile.registeredRepoActivity.dominantLabels);
+  const bountyByIssue = indexBountiesByIssue(bounties);
   const qualityByKey = issueQualityByRepo
     ? new Map(Array.from(issueQualityByRepo.entries()).map(([key, value]) => [key.toLowerCase(), value]))
     : null;
@@ -1140,6 +1152,11 @@ export function buildContributorOpportunities(
       : availableIssues;
     for (const issue of rankable.slice(0, 5)) {
       const quality = qualityByIssue?.get(issue.number);
+      const bounty = bountyByIssue.get(bountyIssueKey(repo.fullName, issue.number)) ?? null;
+      const bountyLifecycle = bounty ? classifyBountyLifecycle(bounty, issue) : null;
+      // Never steer contributors toward completed, cancelled, or otherwise historical bounty work.
+      if (bountyLifecycle && isHistoricalBountyLifecycle(bountyLifecycle)) continue;
+      const bountyPenalty = bountyLifecycle === "stale" || bountyLifecycle === "ambiguous" ? 30 : 0;
       const labelFit = issue.labels.filter((label) => labelHistory.has(label)).length;
       const qualityAdjustment =
         quality?.status === "ready"
@@ -1156,29 +1173,34 @@ export function buildContributorOpportunities(
           (lane.lane === "split" ? 8 : 0) +
           (lane.lane === "direct_pr" ? 5 : 0) -
           queuePenalty -
+          bountyPenalty -
           (lane.lane === "inactive" || lane.lane === "unknown" ? 35 : 0) +
           qualityAdjustment,
         0,
         100,
       );
-      const downgradeToCaution = quality?.status === "needs_proof" && score >= 70;
+      const baseFit = score >= 70 ? "good" : score >= 40 ? "caution" : "hold";
+      const downgradeToCaution = (bountyPenalty > 0 || quality?.status === "needs_proof") && baseFit === "good";
       opportunities.push({
         repoFullName: repo.fullName,
         issueNumber: issue.number,
         title: issue.title,
-        fit: downgradeToCaution ? "caution" : score >= 70 ? "good" : score >= 40 ? "caution" : "hold",
+        fit: downgradeToCaution ? "caution" : baseFit,
         score,
         lane: lane.lane,
         reasons: [
           lane.summary,
           ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
           ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
+          ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),
         ],
         warnings: [
           ...(repoPullRequests.length >= 8 ? ["This repo has a busy open PR queue."] : []),
           ...(lane.lane === "issue_discovery" ? ["This repo is not a direct-PR-first lane."] : []),
           ...(lane.lane === "unknown" || lane.lane === "inactive" ? ["Gittensory cannot recommend this as a strong contribution target right now."] : []),
+          ...(bountyLifecycle === "stale" ? ["Attached bounty context looks stale; confirm it is still active before acting."] : []),
+          ...(bountyLifecycle === "ambiguous" ? ["Attached bounty state is ambiguous; verify it before acting."] : []),
           ...(quality?.status === "needs_proof" ? ["Issue quality report flags this issue as needing more proof before acting."] : []),
           ...(quality?.status === "hold" ? ["Issue quality report rates this issue as hold; consider skipping."] : []),
         ],
@@ -1197,9 +1219,10 @@ export function buildContributorFit(
   pullRequests: PullRequestRecord[],
   repoSyncStates: RepoSyncStateRecord[],
   repoStats: ContributorRepoStatRecord[],
+  bounties: BountyRecord[] = [],
   issueQualityByRepo?: Map<string, IssueQualityReport>,
 ): ContributorFit {
-  const opportunities = buildContributorOpportunities(profile, repositories, issues, pullRequests, issueQualityByRepo);
+  const opportunities = buildContributorOpportunities(profile, repositories, issues, pullRequests, bounties, issueQualityByRepo);
   const languageSet = new Set(profile.github.topLanguages.map((language) => language.toLowerCase()));
   const syncByRepo = new Map(repoSyncStates.map((state) => [state.repoFullName, state]));
   const languageFit = repositories
@@ -1831,6 +1854,7 @@ export function buildPreflightResult(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
   pullRequests: PullRequestRecord[],
+  bounties: BountyRecord[] = [],
   issueQuality?: IssueQualityReport | null | undefined,
 ): PreflightResult {
   const lane = buildLaneAdvice(repo, input.repoFullName);
@@ -1867,6 +1891,30 @@ export function buildPreflightResult(
       action: "Check active issues and PRs before submitting.",
     });
   }
+  const bountyByIssue = indexBountiesByIssue(bounties);
+  for (const issueNumber of linkedIssues) {
+    const bounty = bountyByIssue.get(bountyIssueKey(input.repoFullName, issueNumber));
+    if (!bounty) continue;
+    const linkedIssue = issues.find((candidate) => candidate.repoFullName.toLowerCase() === input.repoFullName.toLowerCase() && candidate.number === issueNumber) ?? null;
+    const lifecycle = classifyBountyLifecycle(bounty, linkedIssue);
+    if (isHistoricalBountyLifecycle(lifecycle)) {
+      findings.push({
+        code: "linked_issue_bounty_historical",
+        severity: "info",
+        title: "Linked issue bounty is historical",
+        detail: `Issue #${issueNumber} has a ${lifecycle} bounty; confirm the work is still wanted before investing in it.`,
+        action: "Verify the bounty and issue are still open upstream.",
+      });
+    } else if (lifecycle === "stale" || lifecycle === "ambiguous") {
+      findings.push({
+        code: "linked_issue_bounty_unverified",
+        severity: "warning",
+        title: "Linked issue bounty needs verification",
+        detail: `Issue #${issueNumber} has a ${lifecycle} bounty; confirm it is still active before relying on it as contribution context.`,
+        action: "Re-check the upstream bounty source before submitting.",
+      });
+    }
+  }
   findings.push(...issueQualityFindings(linkedIssues, issueQuality));
   const changedFiles = input.changedFiles ?? [];
   const tests = input.tests ?? [];
@@ -1898,6 +1946,7 @@ export function buildLocalDiffPreflightResult(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
   pullRequests: PullRequestRecord[],
+  bounties: BountyRecord[] = [],
   issueQuality?: IssueQualityReport | null | undefined,
 ): LocalDiffPreflightResult {
   /* v8 ignore next -- Undefined metadata arrays are normalized at API/MCP boundaries; local analysis tests cover empty metadata behavior. */
@@ -1913,6 +1962,7 @@ export function buildLocalDiffPreflightResult(
     repo,
     issues,
     pullRequests,
+    bounties,
     issueQuality,
   );
   const codeFileCount = changedFiles.filter(isCodeFile).length;
@@ -2157,11 +2207,13 @@ export function buildIssueQualityReport(
   issues: IssueRecord[],
   pullRequests: PullRequestRecord[],
   fullName: string,
+  bounties: BountyRecord[] = [],
   prebuiltCollisions?: CollisionReport,
   recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
 ): IssueQualityReport {
   const lane = buildLaneAdvice(repo, fullName);
   const collisions = prebuiltCollisions ?? buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
+  const bountyByIssue = indexBountiesByIssue(bounties);
   const lifecycleByIssue = new Map(buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests).states.map((entry) => [entry.number, entry]));
   const reports = issues
     .filter((issue) => issue.state === "open")
@@ -2175,11 +2227,14 @@ export function buildIssueQualityReport(
       /* v8 ignore next -- Lifecycle map is built from the same issue set; fallback protects malformed external issue-quality payloads. */
       const lifecycle = lifecycleByIssue.get(issue.number)?.state ?? "open";
       const bodyLength = issue.body?.trim().length ?? 0;
+      const bounty = bountyByIssue.get(bountyIssueKey(fullName, issue.number)) ?? null;
+      const bountyLifecycle = bounty ? classifyBountyLifecycle(bounty, issue) : null;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
       const reasons = [
         ...(bodyLength >= 200 ? ["Issue has enough body detail to evaluate."] : []),
         ...(issue.labels.length > 0 ? [`Labels: ${issue.labels.join(", ")}.`] : []),
         ...(linkedWorkCount === 0 ? ["No active PR is linked in cached metadata."] : []),
+        ...(bountyLifecycle === "active" ? ["Active bounty context is attached (contribution context, not guaranteed payout)."] : []),
       ];
       const warnings = [
         ...(bodyLength < 80 ? ["Issue body is thin; contributor may need more proof before acting."] : []),
@@ -2190,12 +2245,19 @@ export function buildIssueQualityReport(
         ...(age > 90 ? ["Issue is stale in cached metadata."] : []),
         ...(lifecycle !== "open" ? [`Issue lifecycle is ${lifecycle.replace(/_/g, " ")}.`] : []),
         ...(lane.lane === "direct_pr" ? ["Repo is direct-PR first; issue filing is not the primary Gittensor lane."] : []),
+        ...(bountyLifecycle === "completed" ? ["A completed bounty is attached; the work is likely already solved, not an open opportunity."] : []),
+        ...(bountyLifecycle === "cancelled" ? ["A cancelled bounty is attached; this is not an active opportunity."] : []),
+        ...(bountyLifecycle === "historical" ? ["Historical bounty context is attached; this is not an active opportunity without upstream confirmation."] : []),
+        ...(bountyLifecycle === "stale" ? ["Bounty context for this issue looks stale; confirm it is still active before acting."] : []),
+        ...(bountyLifecycle === "ambiguous" ? ["Bounty state for this issue is ambiguous; verify it before acting."] : []),
       ];
       const score = clamp(100 - warnings.length * 18 + reasons.length * 5 - (age > 180 ? 15 : 0), 0, 100);
+      const bountyBlocks = bountyLifecycle === "completed" || bountyLifecycle === "cancelled" || bountyLifecycle === "historical";
+      const bountyCaution = bountyLifecycle === "stale" || bountyLifecycle === "ambiguous";
       const status: IssueQualityReport["issues"][number]["status"] =
-        linkedWorkCount > 0 || issueCollisions.some((cluster) => cluster.risk === "high") || ["duplicate", "invalid", "solved", "valid_solved"].includes(lifecycle)
+        linkedWorkCount > 0 || issueCollisions.some((cluster) => cluster.risk === "high") || bountyBlocks || ["duplicate", "invalid", "solved", "valid_solved"].includes(lifecycle)
           ? "do_not_use"
-          : warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || lifecycle === "stale"
+          : warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || bountyCaution || lifecycle === "stale"
             ? "needs_proof"
             : score < 45
               ? "hold"
@@ -2566,21 +2628,129 @@ export function buildRegistryChangeReport(snapshots: RegistrySnapshot[]): Regist
   };
 }
 
-export function buildBountyAdvisory(bounty: BountyRecord, repo: RepositoryRecord | null, issue: IssueRecord | null): BountyAdvisory {
-  const status = bounty.status.toLowerCase();
-  /* v8 ignore next -- Empty bounty status is a legacy-cache fallback; active and historical lifecycles are covered. */
-  const lifecycle = status.includes("complete") || status.includes("cancel") || status.includes("closed") ? "historical" : status ? "active" : "unknown";
+export const BOUNTY_STALE_DAYS = 45;
+
+export function bountyIssueKey(repoFullName: string, issueNumber: number): string {
+  return `${repoFullName.toLowerCase()}#${issueNumber}`;
+}
+
+export function indexBountiesByIssue(bounties: BountyRecord[]): Map<string, BountyRecord> {
+  const map = new Map<string, BountyRecord>();
+  for (const bounty of bounties) {
+    map.set(bountyIssueKey(bounty.repoFullName, bounty.issueNumber), bounty);
+  }
+  return map;
+}
+
+export function classifyBountyLifecycle(bounty: BountyRecord, issue: IssueRecord | null): BountyLifecycle {
+  const status = bounty.status.trim().toLowerCase();
+  if (!status) return "unknown";
+  if (/cancel|void|expired|withdrawn|rejected|abandon/.test(status)) return "cancelled";
+  // Only past-tense payout phrasing (rewarded/awarded) marks completion; a bounty that merely
+  // advertises a "reward"/"award" is an active offer, not already-completed work.
+  if (/complete|paid|resolved|rewarded|awarded|fulfil|merged|claimed|done/.test(status)) return "completed";
+  if (/historical|archived|closed/.test(status)) return "historical";
+  const looksActive = /open|active|live|available|ready|funded|reward|award|in[\s_-]?progress|todo|new/.test(status);
+  if (!looksActive) return "ambiguous";
+  // Active-looking status: reconcile against the linked issue and freshness so dead context is not treated as live.
+  if (issue && issue.state !== "open") return "ambiguous";
+  if (daysSince(bounty.updatedAt ?? bounty.discoveredAt) > BOUNTY_STALE_DAYS) return "stale";
+  return "active";
+}
+
+export function isHistoricalBountyLifecycle(lifecycle: BountyLifecycle): boolean {
+  return lifecycle === "historical" || lifecycle === "completed" || lifecycle === "cancelled";
+}
+
+function buildBountyLinkedPrs(issue: IssueRecord | null, pullRequests: PullRequestRecord[]): BountyLinkedPr[] {
+  if (!issue) return [];
+  const linkedNumbers = new Set<number>(issue.linkedPrs);
+  for (const pr of pullRequests) {
+    if (pr.linkedIssues.includes(issue.number)) linkedNumbers.add(pr.number);
+  }
+  const byNumber = new Map(pullRequests.map((pr) => [pr.number, pr]));
+  return [...linkedNumbers].sort((left, right) => left - right).map((number) => {
+    const pr = byNumber.get(number);
+    const state: BountyLinkedPr["state"] = !pr ? "unknown" : pr.mergedAt ? "merged" : pr.state === "open" ? "open" : "closed";
+    return { number, state, isActive: state === "open" };
+  });
+}
+
+/**
+ * Bounty/issue consensus risk derived from linked PR STATE, not raw count, so historical or closed
+ * attempts are never scored the same as multiple active open PRs:
+ *  - multiple open PRs    -> high (concurrent active overlap / strong duplicate-work risk)
+ *  - a single open PR     -> medium (active overlap, but not yet crowded)
+ *  - any merged PR        -> medium (work may already be solved)
+ *  - several closed or otherwise unresolved PRs -> medium (ambiguous history worth caution)
+ */
+function computeBountyConsensusRisk(
+  lifecycle: BountyLifecycle,
+  issue: IssueRecord | null,
+  open: number,
+  merged: number,
+  closed: number,
+  unknown: number,
+): BountyAdvisory["consensusRisk"] {
+  if (open > 1) return "high";
+  if (lifecycle === "active" && !issue) return "high";
+  if (open === 1 || merged > 0 || closed > 1 || unknown > 1) return "medium";
+  return "low";
+}
+
+export function buildBountyAdvisory(
+  bounty: BountyRecord,
+  repo: RepositoryRecord | null,
+  issue: IssueRecord | null,
+  pullRequests: PullRequestRecord[] = [],
+): BountyAdvisory {
+  const lifecycle = classifyBountyLifecycle(bounty, issue);
   const target = bounty.payload.target_bounty ?? bounty.payload.target_alpha;
   const amount = bounty.payload.bounty_amount ?? bounty.payload.bounty_alpha;
   /* v8 ignore next -- Unknown funding is a sparse-cache fallback; funded and target-only states are covered. */
   const fundingStatus = amount && amount !== 0 && amount !== "0.0000" ? "funded" : target ? "target_only" : "unknown";
+  const linkedPrs = buildBountyLinkedPrs(issue, pullRequests);
   const findings: SignalFinding[] = [];
+  if (lifecycle === "completed") {
+    findings.push({
+      code: "completed_bounty",
+      severity: "info",
+      title: "Bounty is completed",
+      detail: "This bounty is marked completed in the local cache; treat it as historical context, not an open contribution opportunity.",
+    });
+  }
   if (lifecycle === "historical") {
     findings.push({
       code: "historical_bounty",
       severity: "info",
       title: "Bounty is historical",
-      detail: "This bounty is completed, cancelled, or otherwise not active in the local bounty cache.",
+      detail: "This bounty is marked historical in the local cache; treat it as contribution context, not an active opportunity.",
+    });
+  }
+  if (lifecycle === "cancelled") {
+    findings.push({
+      code: "cancelled_bounty",
+      severity: "info",
+      title: "Bounty is cancelled",
+      detail: "This bounty is marked cancelled in the local cache and is not an active contribution opportunity.",
+    });
+  }
+  if (lifecycle === "stale") {
+    findings.push({
+      code: "stale_bounty",
+      severity: "warning",
+      title: "Bounty context may be stale",
+      detail: `This bounty has not been refreshed in over ${BOUNTY_STALE_DAYS} days; confirm it is still active before acting on it.`,
+      action: "Re-check the upstream bounty source before treating this as active contribution context.",
+    });
+  }
+  if (lifecycle === "ambiguous") {
+    findings.push({
+      code: "ambiguous_bounty",
+      severity: "warning",
+      title: "Bounty state is ambiguous",
+      detail: "The bounty status or its linked issue state is inconsistent, so its current state cannot be confirmed from the local cache.",
+      action: "Confirm the bounty and issue state upstream before treating this as active contribution context.",
     });
   }
   if (!repo?.isRegistered) {
@@ -2599,14 +2769,51 @@ export function buildBountyAdvisory(bounty: BountyRecord, repo: RepositoryRecord
       detail: "Gittensory has not cached the GitHub issue associated with this bounty.",
     });
   }
+  // Linked PRs carry different risk by state: open = active overlap, merged = possibly solved,
+  // closed-unmerged = historical attempts. Surface each class with its own wording so contributors
+  // know whether they are avoiding duplicate active work, verifying a solved bounty, or reviewing history.
+  const openLinkedPrs = linkedPrs.filter((pr) => pr.state === "open");
+  const mergedLinkedPrs = linkedPrs.filter((pr) => pr.state === "merged");
+  const closedLinkedPrs = linkedPrs.filter((pr) => pr.state === "closed");
+  const unknownLinkedPrs = linkedPrs.filter((pr) => pr.state === "unknown");
+  const prRefs = (prs: BountyLinkedPr[]): string => prs.map((pr) => `#${pr.number}`).join(", ");
+  if (openLinkedPrs.length > 0) {
+    findings.push({
+      code: "bounty_has_active_pr",
+      severity: openLinkedPrs.length > 1 ? "warning" : "info",
+      title: openLinkedPrs.length > 1 ? "Multiple open PRs are actively working this bounty issue" : "An open PR is actively working this bounty issue",
+      detail: `${openLinkedPrs.length} open PR(s) (${prRefs(openLinkedPrs)}) already reference this bounty's issue; you may be duplicating active in-progress work. Confirm solver state before starting overlapping work.`,
+      action: "Review the open PR(s) before starting so you do not duplicate active work.",
+    });
+  }
+  if (mergedLinkedPrs.length > 0) {
+    findings.push({
+      code: "bounty_linked_pr_merged",
+      severity: "warning",
+      title: "A merged PR may already resolve this bounty",
+      detail: `${mergedLinkedPrs.length} merged PR(s) (${prRefs(mergedLinkedPrs)}) reference this bounty's issue; the work may already be solved. Verify the bounty is still open before investing in it.`,
+      action: "Verify upstream that the bounty is still unsolved before starting.",
+    });
+  }
+  if (closedLinkedPrs.length > 0) {
+    findings.push({
+      code: "bounty_linked_pr_closed_history",
+      severity: closedLinkedPrs.length > 1 ? "warning" : "info",
+      title: closedLinkedPrs.length > 1 ? "Several closed (unmerged) PRs attempted this bounty issue" : "A closed (unmerged) PR attempted this bounty issue",
+      detail: `${closedLinkedPrs.length} closed, unmerged PR(s) (${prRefs(closedLinkedPrs)}) reference this bounty's issue. These are historical attempts, not active competing work; review why they were closed before re-attempting.`,
+      action: "Review the closed attempt(s) to understand why they did not land.",
+    });
+  }
   return {
     id: bounty.id,
     repoFullName: bounty.repoFullName,
     issueNumber: bounty.issueNumber,
     status: bounty.status,
     lifecycle,
+    isActiveOpportunity: lifecycle === "active",
     fundingStatus,
-    consensusRisk: issue && issue.linkedPrs.length > 1 ? "medium" : lifecycle === "active" && !issue ? "high" : "low",
+    consensusRisk: computeBountyConsensusRisk(lifecycle, issue, openLinkedPrs.length, mergedLinkedPrs.length, closedLinkedPrs.length, unknownLinkedPrs.length),
+    linkedPrs,
     findings,
   };
 }

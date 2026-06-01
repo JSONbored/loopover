@@ -1962,6 +1962,12 @@
               "$ref": "#/components/schemas/RoleContext"
             }
           },
+          "opportunities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContributorOpportunity"
+            }
+          },
           "repoDecisions": {
             "type": "array",
             "items": {
@@ -2053,6 +2059,7 @@
           "profile",
           "outcomeHistory",
           "roleContexts",
+          "opportunities",
           "repoDecisions",
           "topActions",
           "cleanupFirst",
@@ -5148,8 +5155,15 @@
             "enum": [
               "active",
               "historical",
+              "completed",
+              "cancelled",
+              "stale",
+              "ambiguous",
               "unknown"
             ]
+          },
+          "isActiveOpportunity": {
+            "type": "boolean"
           },
           "fundingStatus": {
             "type": "string",
@@ -5167,6 +5181,34 @@
               "high"
             ]
           },
+          "linkedPrs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "merged",
+                    "unknown"
+                  ]
+                },
+                "isActive": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "number",
+                "state",
+                "isActive"
+              ]
+            }
+          },
           "findings": {
             "type": "array",
             "items": {
@@ -5180,9 +5222,64 @@
           "issueNumber",
           "status",
           "lifecycle",
+          "isActiveOpportunity",
           "fundingStatus",
           "consensusRisk",
+          "linkedPrs",
           "findings"
+        ]
+      },
+      "BountyLifecycleEvents": {
+        "type": "object",
+        "properties": {
+          "bountyId": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "bountyId": {
+                  "type": "string"
+                },
+                "repoFullName": {
+                  "type": "string"
+                },
+                "issueNumber": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "payload": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                },
+                "generatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "bountyId",
+                "repoFullName",
+                "issueNumber",
+                "status",
+                "payload",
+                "generatedAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "bountyId",
+          "events"
         ]
       },
       "RepositorySettings": {
@@ -9069,6 +9166,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BountyAdvisory"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Bounty not found"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/bounties/{id}/lifecycle": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Bounty lifecycle transition history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BountyLifecycleEvents"
                 }
               }
             }

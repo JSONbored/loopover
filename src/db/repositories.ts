@@ -1637,6 +1637,18 @@ export async function listBounties(env: Env): Promise<BountyRecord[]> {
   return rows.map(toBountyRecord);
 }
 
+export async function listBountiesByRepo(env: Env, fullName: string): Promise<BountyRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(bounties).where(eq(bounties.repoFullName, fullName)).orderBy(desc(bounties.updatedAt)).limit(500);
+  return rows.map(toBountyRecord);
+}
+
+export async function listBountyLifecycleEvents(env: Env, bountyId: string): Promise<BountyLifecycleEventRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(bountyLifecycleEvents).where(eq(bountyLifecycleEvents.bountyId, bountyId)).orderBy(desc(bountyLifecycleEvents.generatedAt)).limit(100);
+  return rows.map(toBountyLifecycleEventRecord);
+}
+
 export async function getBounty(env: Env, id: string): Promise<BountyRecord | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(bounties).where(eq(bounties.id, id)).limit(1);
@@ -2461,6 +2473,18 @@ function toBountyRecord(row: typeof bounties.$inferSelect): BountyRecord {
     payload: parseJson<Record<string, never>>(row.payloadJson, {}),
     discoveredAt: row.discoveredAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toBountyLifecycleEventRecord(row: typeof bountyLifecycleEvents.$inferSelect): BountyLifecycleEventRecord {
+  return {
+    id: row.id,
+    bountyId: row.bountyId,
+    repoFullName: row.repoFullName,
+    issueNumber: row.issueNumber,
+    status: row.status,
+    payload: parseJson<Record<string, never>>(row.payloadJson, {}),
+    generatedAt: row.generatedAt,
   };
 }
 

@@ -1,5 +1,8 @@
 import {
   hasRecentAuditEvent,
+  listAllIssues,
+  listAllPullRequests,
+  listBounties,
   listContributorIssues,
   listContributorPullRequests,
   listContributorRepoStats,
@@ -23,6 +26,7 @@ import {
   buildContributorScoringProfile,
   buildLaneAdvice,
   buildRoleContext,
+  type ContributorOpportunity,
   type ContributorOutcomeHistory,
   type ContributorProfile,
   type IssueQualityReport,
@@ -31,7 +35,19 @@ import {
 import { buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { loadIssueQualityReportMap } from "./issue-quality";
-import type { ContributorRepoStatRecord, JsonValue, RepositoryRecord, RepoGithubTotalsSnapshotRecord, RepoSyncSegmentRecord, RepoSyncStateRecord, SignalSnapshotRecord } from "../types";
+import type {
+  BountyRecord,
+  ContributorRepoStatRecord,
+  IssueRecord,
+  JsonValue,
+  PullRequestRecord,
+  RepositoryRecord,
+  RepoGithubTotalsSnapshotRecord,
+  RepoSyncSegmentRecord,
+  RepoSyncStateRecord,
+  ScoringModelSnapshotRecord,
+  SignalSnapshotRecord,
+} from "../types";
 import { nowIso } from "../utils/json";
 
 export const CONTRIBUTOR_DECISION_PACK_SIGNAL = "contributor-decision-pack";
@@ -63,6 +79,7 @@ export type ContributorDecisionPack = {
   };
   outcomeHistory: ContributorOutcomeHistory;
   roleContexts: RoleContext[];
+  opportunities: ContributorOpportunity[];
   repoDecisions: RepoDecision[];
   topActions: DecisionAction[];
   cleanupFirst: RepoDecision[];
@@ -230,29 +247,45 @@ async function enqueueDecisionPackRebuild(env: Env, login: string): Promise<bool
   }
 }
 
-export async function buildAndPersistContributorDecisionPack(env: Env, login: string): Promise<ContributorDecisionPack> {
-  const [
-    github,
-    contributorPullRequests,
-    contributorIssues,
-    repositories,
-    syncStates,
-    syncSegments,
-    totals,
-    cachedRepoStats,
-    gittensorSnapshot,
-    scoringSnapshot,
-  ] = await Promise.all([
-    fetchPublicContributorProfile(login),
-    listContributorPullRequests(env, login),
-    listContributorIssues(env, login),
+/**
+ * Login-independent datasets used to build a decision pack. These are full-table reads, so the
+ * batch job loads them ONCE via {@link loadDecisionPackSharedInputs} and reuses them across logins
+ * instead of re-scanning per contributor.
+ */
+export type DecisionPackSharedInputs = {
+  repositories: RepositoryRecord[];
+  syncStates: RepoSyncStateRecord[];
+  syncSegments: RepoSyncSegmentRecord[];
+  totals: RepoGithubTotalsSnapshotRecord[];
+  allIssues: IssueRecord[];
+  allPullRequests: PullRequestRecord[];
+  bounties: BountyRecord[];
+  scoringSnapshot: ScoringModelSnapshotRecord;
+};
+
+export async function loadDecisionPackSharedInputs(env: Env): Promise<DecisionPackSharedInputs> {
+  const [repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot] = await Promise.all([
     listRepositories(env),
     listRepoSyncStates(env),
     listRepoSyncSegments(env),
     listLatestRepoGithubTotalsSnapshots(env),
+    listAllIssues(env),
+    listAllPullRequests(env),
+    listBounties(env),
+    getOrCreateScoringModelSnapshot(env),
+  ]);
+  return { repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot };
+}
+
+export async function buildAndPersistContributorDecisionPack(env: Env, login: string, shared?: DecisionPackSharedInputs): Promise<ContributorDecisionPack> {
+  // The heavy full-table reads are login-independent; reuse caller-provided context (batch job) or load once here (single-login run).
+  const { repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot } = shared ?? (await loadDecisionPackSharedInputs(env));
+  const [github, contributorPullRequests, contributorIssues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
+    fetchPublicContributorProfile(login),
+    listContributorPullRequests(env, login),
+    listContributorIssues(env, login),
     listContributorRepoStats(env, login),
     fetchGittensorContributorSnapshot(login),
-    getOrCreateScoringModelSnapshot(env),
   ]);
   const repoStats = authoritativeContributorRepoStats(gittensorSnapshot, cachedRepoStats);
   const issueQualityByRepo = await loadIssueQualityReportMap(env, repositories);
@@ -266,7 +299,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     repoStats,
     cachedRepoStats,
   });
-  const fit = buildContributorFit(profile, repositories, [], [], syncStates, repoStats);
+  const fit = buildContributorFit(profile, repositories, allIssues, allPullRequests, syncStates, repoStats, bounties, issueQualityByRepo);
   const scoringProfile = buildContributorScoringProfile({ login, fit, scoringSnapshot });
   const openPrMonitor = await buildContributorOpenPrMonitor(env, login);
   const pack = buildContributorDecisionPack({
@@ -277,6 +310,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     syncStates,
     syncSegments,
     totals,
+    opportunities: fit.opportunities,
     scoringModelSnapshotId: scoringSnapshot.id,
     contributorPullRequests,
     contributorIssues,
@@ -327,6 +361,7 @@ function buildContributorDecisionPack(args: {
   syncStates: RepoSyncStateRecord[];
   syncSegments: RepoSyncSegmentRecord[];
   totals: RepoGithubTotalsSnapshotRecord[];
+  opportunities?: ContributorOpportunity[] | undefined;
   scoringModelSnapshotId: string;
   contributorPullRequests: Parameters<typeof buildRoleContext>[0]["pullRequests"];
   contributorIssues: Parameters<typeof buildRoleContext>[0]["issues"];
@@ -396,6 +431,7 @@ function buildContributorDecisionPack(args: {
     },
     outcomeHistory: args.outcomeHistory,
     roleContexts: roleContexts.filter((role) => role.role !== "unknown" || role.maintainerLane),
+    opportunities: args.opportunities ?? [],
     repoDecisions,
     topActions,
     cleanupFirst: repoDecisions.filter((decision) => decision.recommendation === "cleanup_first").slice(0, 8),
@@ -701,6 +737,7 @@ function withSnapshotMetadata(snapshot: SignalSnapshotRecord): ContributorDecisi
     stale,
     freshness: stale ? "stale" : "fresh",
     rebuildEnqueued: false,
+    opportunities: payload.opportunities ?? [],
   };
 }
 

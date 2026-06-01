@@ -40,6 +40,8 @@ import {
   listAllPullRequestDetailSyncStates,
   listCheckSummaries,
   listBounties,
+  listBountiesByRepo,
+  listBountyLifecycleEvents,
   listContributorIssues,
   listContributorPullRequests,
   listContributorRepoStats,
@@ -64,6 +66,7 @@ import {
   listRepositories,
   getLatestUpstreamRulesetSnapshot,
   listUpstreamDriftReports,
+  persistBountyLifecycleEvent,
   persistScorePreview,
   persistSignalSnapshot,
   upsertDigestSubscription,
@@ -135,7 +138,7 @@ import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildRepoSettingsPreview } from "../signals/settings-preview";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift } from "../upstream/ruleset";
-import type { ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
+import type { BountyLifecycleEventRecord, ContributorEvidenceRecord, DataQuality, InstallationHealthRecord, JobMessage, JsonValue, RegistrySnapshot, RepoSyncSegmentRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
 type AppBindings = { Bindings: Env };
@@ -1181,26 +1184,28 @@ export function createApp() {
     const body = await c.req.json().catch(() => null);
     const parsed = preflightSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_preflight_request", issues: parsed.error.issues }, 400);
-    const [repo, issues, pullRequests, issueQuality] = await Promise.all([
+    const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       listIssues(c.env, parsed.data.repoFullName),
       listPullRequests(c.env, parsed.data.repoFullName),
+      listBountiesByRepo(c.env, parsed.data.repoFullName),
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
     ]);
-    return c.json(buildPreflightResult(parsed.data, repo, issues, pullRequests, issueQuality?.report));
+    return c.json(buildPreflightResult(parsed.data, repo, issues, pullRequests, bounties, issueQuality?.report));
   });
 
   app.post("/v1/preflight/local-diff", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = localDiffPreflightSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_local_diff_preflight_request", issues: parsed.error.issues }, 400);
-    const [repo, issues, pullRequests, issueQuality] = await Promise.all([
+    const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       listIssues(c.env, parsed.data.repoFullName),
       listPullRequests(c.env, parsed.data.repoFullName),
+      listBountiesByRepo(c.env, parsed.data.repoFullName),
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
     ]);
-    return c.json(buildLocalDiffPreflightResult(parsed.data, repo, issues, pullRequests, issueQuality?.report));
+    return c.json(buildLocalDiffPreflightResult(parsed.data, repo, issues, pullRequests, bounties, issueQuality?.report));
   });
 
   app.post("/v1/local/branch-analysis", async (c) => {
@@ -1209,12 +1214,13 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
     if (unauthorized) return unauthorized;
-    const [context, repo, issues, pullRequests, recentMergedPullRequests, snapshot, issueQuality] = await Promise.all([
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality] = await Promise.all([
       loadContributorFastContext(c.env, parsed.data.login),
       getRepository(c.env, parsed.data.repoFullName),
       listIssues(c.env, parsed.data.repoFullName),
       listPullRequests(c.env, parsed.data.repoFullName),
       listRecentMergedPullRequests(c.env, parsed.data.repoFullName),
+      listBountiesByRepo(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
     ]);
@@ -1228,6 +1234,7 @@ export function createApp() {
       pullRequests,
       contributorPullRequests: context.contributorPullRequests,
       recentMergedPullRequests,
+      bounties,
       repositories: context.repositories,
       checkSummaries,
       profile: context.profile,
@@ -1316,11 +1323,19 @@ export function createApp() {
   app.get("/v1/bounties/:id/advisory", async (c) => {
     const bounty = await getBounty(c.env, c.req.param("id"));
     if (!bounty) return c.json({ error: "bounty_not_found" }, 404);
-    const [repo, issue] = await Promise.all([
+    const [repo, issue, pullRequests] = await Promise.all([
       getRepository(c.env, bounty.repoFullName),
       getIssue(c.env, bounty.repoFullName, bounty.issueNumber),
+      listPullRequests(c.env, bounty.repoFullName),
     ]);
-    return c.json(buildBountyAdvisory(bounty, repo, issue));
+    return c.json(buildBountyAdvisory(bounty, repo, issue, pullRequests));
+  });
+
+  app.get("/v1/bounties/:id/lifecycle", async (c) => {
+    const id = c.req.param("id");
+    const bounty = await getBounty(c.env, id);
+    if (!bounty) return c.json({ error: "bounty_not_found" }, 404);
+    return c.json({ bountyId: id, events: await listBountyLifecycleEvents(c.env, id) });
   });
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
@@ -1512,8 +1527,24 @@ export function createApp() {
   app.post("/v1/internal/bounties/import", async (c) => {
     const body = await c.req.json().catch(() => null);
     const bounties = normalizeGittBountySnapshot(body);
-    await Promise.all(bounties.map((bounty) => upsertBounty(c.env, bounty)));
-    return c.json({ ok: true, imported: bounties.length });
+    const events: BountyLifecycleEventRecord[] = [];
+    for (const bounty of bounties) {
+      const existing = await getBounty(c.env, bounty.id);
+      await upsertBounty(c.env, bounty);
+      if (!existing || existing.status !== bounty.status) {
+        events.push({
+          id: crypto.randomUUID(),
+          bountyId: bounty.id,
+          repoFullName: bounty.repoFullName,
+          issueNumber: bounty.issueNumber,
+          status: bounty.status,
+          payload: { previousStatus: existing?.status ?? null, source: "gitt_import" },
+          generatedAt: nowIso(),
+        });
+      }
+    }
+    await Promise.all(events.map((event) => persistBountyLifecycleEvent(c.env, event)));
+    return c.json({ ok: true, imported: bounties.length, lifecycleEvents: events.length });
   });
 
   app.post("/v1/internal/repos/:owner/:repo/settings", async (c) => {

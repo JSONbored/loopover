@@ -23,6 +23,16 @@ export type GittensoryMentionCommand = {
   raw: string;
 };
 
+type PublicAnswerCard = {
+  title: string;
+  summary: string;
+  findings: string[];
+  evidence: string[];
+  nextActions: string[];
+  sourceNotes: string[];
+  safeDetails?: string[] | undefined;
+};
+
 const COMMANDS = new Set<GittensoryMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
@@ -91,6 +101,13 @@ export function buildPublicAgentCommandComment(args: {
 }): string {
   const repoFullName = args.repo?.fullName ?? args.pullRequest?.repoFullName ?? "this repository";
   const sections = commandSections(args.command.name, args.bundle, args.officialMiner);
+  const card = buildPublicAnswerCard({
+    command: args.command.name,
+    sections,
+    bundle: args.bundle,
+    officialMiner: args.officialMiner,
+    actorKind: args.actorKind,
+  });
   const body = [
     AGENT_COMMAND_COMMENT_MARKER,
     `### ${COMMAND_TITLES[args.command.name]}`,
@@ -98,11 +115,165 @@ export function buildPublicAgentCommandComment(args: {
     `Command: \`@gittensory ${args.command.name}\``,
     `Scope: ${repoFullName}#${args.issue.number}`,
     "",
-    ...sections,
+    ...renderPublicAnswerCard(card),
     "",
-    "_Advisory context only. Public comments exclude non-public contributor signals and reviewability internals._",
+    "_Advisory context only. Public comments exclude non-public contributor signals and private planning internals._",
   ].join("\n");
   return sanitizePublicComment(body);
+}
+
+function buildPublicAnswerCard(args: {
+  command: GittensoryMentionCommandName;
+  sections: string[];
+  bundle: AgentRunBundle | null | undefined;
+  officialMiner: GittensorContributorSnapshot | null | undefined;
+  actorKind: "maintainer" | "author";
+}): PublicAnswerCard {
+  const [titleLine, ...contentLines] = args.sections;
+  const safeContent = contentLines.map(stripBulletPrefix).filter((line) => line.length > 0);
+  const findings = safeContent.length > 0 ? safeContent.slice(0, 5) : ["No public-safe findings are available from the current cached context."];
+  return {
+    title: stripEmphasis(titleLine ?? "Answer"),
+    summary: commandSummary(args.command),
+    findings,
+    evidence: commandEvidence(args.command, args.bundle, args.officialMiner, args.actorKind),
+    nextActions: commandNextActions(args.command, args.bundle),
+    sourceNotes: commandSourceNotes(args.command, args.bundle, args.officialMiner),
+    safeDetails: safeContent.slice(5),
+  };
+}
+
+function renderPublicAnswerCard(card: PublicAnswerCard): string[] {
+  const lines = [
+    `**${sanitizePublicComment(card.title)}**`,
+    "",
+    `- ${sanitizePublicComment(card.summary)}`,
+    "",
+    "**Findings**",
+    "",
+    ...card.findings.map((line) => `- ${sanitizePublicComment(line)}`),
+    "",
+    "**Evidence**",
+    "",
+    ...card.evidence.map((line) => `- ${sanitizePublicComment(line)}`),
+    "",
+    "**Next actions**",
+    "",
+    ...card.nextActions.map((line) => `- ${sanitizePublicComment(line)}`),
+    "",
+    "<details>",
+    "<summary>Source and freshness</summary>",
+    "",
+    ...card.sourceNotes.map((line) => `- ${sanitizePublicComment(line)}`),
+    "",
+    "</details>",
+  ];
+  if (card.safeDetails && card.safeDetails.length > 0) {
+    lines.push("", "<details>", "<summary>Additional safe details</summary>", "", ...card.safeDetails.map((line) => `- ${sanitizePublicComment(line)}`), "", "</details>");
+  }
+  return lines;
+}
+
+function commandSummary(command: GittensoryMentionCommandName): string {
+  switch (command) {
+    case "help":
+      return "Available public commands and their safest use on a PR thread.";
+    case "miner-context":
+      return "Public miner context from official Gittensor data when available.";
+    case "preflight":
+      return "Public PR hygiene and validation readiness for this thread.";
+    case "blockers":
+      return "Public readiness blockers that are safe to show in a PR comment.";
+    case "duplicate-check":
+      return "Public duplicate, WIP, and queue-overlap caution.";
+    case "next-action":
+      return "One public-safe next step for the contributor or maintainer.";
+    case "reviewability":
+      return "Maintainer-friendly PR readiness without private review internals.";
+    case "repo-fit":
+      return "Public-safe repository fit signals from cached context.";
+    case "packet":
+      return "Public-safe PR packet guidance for the current thread.";
+  }
+}
+
+function commandEvidence(
+  command: GittensoryMentionCommandName,
+  bundle: AgentRunBundle | null | undefined,
+  officialMiner: GittensorContributorSnapshot | null | undefined,
+  actorKind: "maintainer" | "author",
+): string[] {
+  const evidence = [`Invocation authorized for ${actorKind} command use.`, "Output is sanitized before posting to GitHub."];
+  if (command === "miner-context") {
+    evidence.push(officialMiner ? "Official Gittensor miner context was available." : "Official Gittensor miner context was unavailable.");
+  }
+  if (bundle) {
+    evidence.push(`Agent response status: ${publicStatus(bundle.run.status)}.`);
+  }
+  return evidence;
+}
+
+function commandNextActions(command: GittensoryMentionCommandName, bundle: AgentRunBundle | null | undefined): string[] {
+  if (bundle?.run.status === "needs_snapshot_refresh") return ["Retry after the contributor decision snapshot refresh completes."];
+  switch (command) {
+    case "help":
+      return ["Comment one listed command on the PR thread when more context is needed."];
+    case "miner-context":
+      return ["Use MCP or the authenticated control panel for private contributor planning."];
+    case "preflight":
+      return ["Run local validation and rerun before asking for maintainer review."];
+    case "blockers":
+      return ["Resolve visible blockers before requesting detailed review."];
+    case "duplicate-check":
+      return ["Compare linked issues, open PRs, and recent merges before expanding the branch."];
+    case "next-action":
+      return ["Follow the recommended public-safe action, then rerun if PR state changes."];
+    case "reviewability":
+      return ["Use this as public readiness guidance, then rerun after validation or maintainer state changes."];
+    case "repo-fit":
+      return ["Use MCP or the authenticated control panel for deeper private repository-fit planning."];
+    case "packet":
+      return ["Use this as public PR-thread guidance only; keep private scoring and planning details out of comments."];
+  }
+}
+
+function commandSourceNotes(
+  command: GittensoryMentionCommandName,
+  bundle: AgentRunBundle | null | undefined,
+  officialMiner: GittensorContributorSnapshot | null | undefined,
+): string[] {
+  const source =
+    command === "help"
+      ? "static command catalog"
+      : command === "miner-context"
+        ? officialMiner
+          ? "official Gittensor miner API"
+          : "official miner check fallback"
+        : "cached Gittensory agent context";
+  return [
+    `Source: ${source}.`,
+    `Freshness: ${publicFreshness(bundle, command)}.`,
+    "Boundary: public GitHub comment; non-public scoring and planning context is omitted.",
+  ];
+}
+
+function publicFreshness(bundle: AgentRunBundle | null | undefined, command: GittensoryMentionCommandName): string {
+  if (command === "help") return "shipped command list";
+  if (!bundle) return "no agent run was required or available";
+  if (bundle.run.status === "needs_snapshot_refresh") return "snapshot refresh in progress";
+  return `agent run status ${publicStatus(bundle.run.status)}`;
+}
+
+function publicStatus(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
+function stripBulletPrefix(value: string): string {
+  return stripEmphasis(value).replace(/^-\s+/, "").trim();
+}
+
+function stripEmphasis(value: string): string {
+  return value.replace(/^\*\*/, "").replace(/\*\*$/, "").trim();
 }
 
 function commandSections(

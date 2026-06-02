@@ -4,6 +4,13 @@ import { ArrowRight, ShieldCheck } from "lucide-react";
 import { CodeBlock, Callout, Eyebrow } from "@/components/site/primitives";
 import { MethodPill, BoundaryBadge } from "@/components/site/control-primitives";
 import { openapi } from "@/lib/openapi";
+import {
+  MCP_MINIMUM_SUPPORTED_VERSION,
+  MCP_PACKAGE_NAME,
+  getLatestMcpVersion,
+  getMcpInstallCommand,
+  useMcpPackageMetadata,
+} from "@/lib/mcp-package";
 
 export const Route = createFileRoute("/api/")({
   component: ApiOverview,
@@ -11,6 +18,8 @@ export const Route = createFileRoute("/api/")({
 
 function ApiOverview() {
   const server = openapi.servers[0]?.url ?? "";
+  const { data } = useMcpPackageMetadata();
+  const latestMcpVersion = getLatestMcpVersion(data);
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-10 lg:px-10">
       <Eyebrow>API reference</Eyebrow>
@@ -47,6 +56,35 @@ function ApiOverview() {
             <code>private-api</code> must never land in public GitHub output (comments, checks,
             labels). Public surfaces are sanitized server-side.
           </p>
+        </div>
+
+        <div className="rounded-token border border-border bg-transparent p-5">
+          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            MCP version contract
+          </div>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <dt className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Current npm latest
+              </dt>
+              <dd className="mt-1 font-mono text-token-sm text-foreground">
+                {MCP_PACKAGE_NAME} v{latestMcpVersion}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Minimum supported
+              </dt>
+              <dd className="mt-1 font-mono text-token-sm text-foreground">
+                {MCP_MINIMUM_SUPPORTED_VERSION}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-token-sm text-muted-foreground">
+            Use npm <code>dist-tags.latest</code> for current-version display.{" "}
+            <code>/v1/mcp/compatibility</code> stays the API compatibility metadata source.
+          </p>
+          <CodeBlock className="mt-3" code={getMcpInstallCommand(latestMcpVersion)} />
         </div>
 
         <div>

@@ -96,7 +96,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("reports a current install without upgrade guidance", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ latestVersion: "0.3.0" });
+    const url = await startFixtureServer({ latestVersion: "0.4.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -115,16 +115,16 @@ describe("gittensory-mcp CLI", () => {
     expect(payload.apiCompatibility).toMatchObject({
       status: "compatible",
       source: "compatibility_endpoint",
-      minVersion: "0.2.0",
-      latestRecommendedVersion: "0.3.0",
+      minVersion: "0.4.0",
+      latestRecommendedVersion: "0.4.0",
       apiVersion: "0.1.0",
     });
   });
 
   it("orders prerelease npm versions correctly (release outranks prerelease of the same core)", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    // Local 0.3.0 (release) vs latest 0.3.0-rc.1 (prerelease) -> local is ahead, not stale.
-    const aheadUrl = await startFixtureServer({ latestVersion: "0.3.0-rc.1" });
+    // Local 0.4.0 (release) vs latest 0.4.0-rc.1 (prerelease) -> local is ahead, not stale.
+    const aheadUrl = await startFixtureServer({ latestVersion: "0.4.0-rc.1" });
     const ahead = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: aheadUrl,
@@ -136,8 +136,8 @@ describe("gittensory-mcp CLI", () => {
     expect(ahead.package).toMatchObject({ state: "ahead", updateAvailable: false });
     await new Promise<void>((resolve) => server?.close(() => resolve()));
 
-    // Local 0.3.0 vs a higher-core prerelease 0.4.0-rc.1 -> stale.
-    const staleUrl = await startFixtureServer({ latestVersion: "0.4.0-rc.1" });
+    // Local 0.4.0 vs a higher-core prerelease 0.5.0-rc.1 -> stale.
+    const staleUrl = await startFixtureServer({ latestVersion: "0.5.0-rc.1" });
     const stale = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: staleUrl,
@@ -218,7 +218,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("falls back to legacy health compatibility when the endpoint is unavailable", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.2.0" });
+    const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.4.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -227,12 +227,12 @@ describe("gittensory-mcp CLI", () => {
         GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { apiCompatibility: { status: string; source: string; minVersion: string } };
-    expect(payload.apiCompatibility).toMatchObject({ status: "compatible", source: "health", minVersion: "0.2.0" });
+    expect(payload.apiCompatibility).toMatchObject({ status: "compatible", source: "health", minVersion: "0.4.0" });
   });
 
   it("uses API recommended package metadata when the npm registry is unavailable", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.4.0" });
+    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.5.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -244,7 +244,7 @@ describe("gittensory-mcp CLI", () => {
     expect(payload.package).toMatchObject({
       state: "stale",
       latestStatus: "api",
-      latestVersion: "0.4.0",
+      latestVersion: "0.5.0",
       upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
     });
   });
@@ -314,12 +314,12 @@ describe("gittensory-mcp CLI", () => {
       }),
     ) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
 
-    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.3.0", latestStatus: "skipped" });
+    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.4.0", latestStatus: "skipped" });
     expect(status.api.status).toBe("ok");
     expect(status.auth.login).toBe("JSONbored");
 
     const changelog = JSON.parse(run(["changelog", "--json"])) as { package: { version: string }; changelog: string };
-    expect(changelog.package.version).toBe("0.3.0");
+    expect(changelog.package.version).toBe("0.4.0");
     expect(changelog.changelog).toContain("# Changelog");
   });
 
@@ -337,7 +337,7 @@ describe("gittensory-mcp CLI", () => {
 
     const sessionRequest = requests.find((request) => request.url === "/v1/auth/session");
     expect(sessionRequest?.headers["x-gittensory-mcp-package"]).toBe("@jsonbored/gittensory-mcp");
-    expect(sessionRequest?.headers["x-gittensory-mcp-version"]).toBe("0.3.0");
+    expect(sessionRequest?.headers["x-gittensory-mcp-version"]).toBe("0.4.0");
     expect(sessionRequest?.headers["x-gittensory-mcp-client"]).toBe("gittensory-mcp-cli");
     const telemetryHeaders = JSON.stringify({
       package: sessionRequest?.headers["x-gittensory-mcp-package"],
@@ -846,7 +846,7 @@ async function startFixtureServer(
         response.end(JSON.stringify({ error: "registry_error" }));
         return;
       }
-      response.end(JSON.stringify({ version: options.latestVersion ?? "0.3.0" }));
+      response.end(JSON.stringify({ version: options.latestVersion ?? "0.4.0" }));
       return;
     }
     if (request.url === "/v1/mcp/compatibility") {
@@ -855,8 +855,8 @@ async function startFixtureServer(
         response.end(JSON.stringify({ error: "compatibility_unavailable" }));
         return;
       }
-      const minimumSupportedVersion = options.minMcpVersion ?? "0.2.0";
-      const latestRecommendedVersion = options.latestRecommendedMcpVersion ?? options.latestVersion ?? "0.3.0";
+      const minimumSupportedVersion = options.minMcpVersion ?? "0.4.0";
+      const latestRecommendedVersion = options.latestRecommendedMcpVersion ?? options.latestVersion ?? "0.4.0";
       response.end(
         JSON.stringify({
           status: "ok",

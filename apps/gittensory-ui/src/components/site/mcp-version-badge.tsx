@@ -1,34 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
 import { Package, ExternalLink, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 
 import { cn } from "@/lib/utils";
-import { apiFetch, notifyApiFailure, notifyApiRecovered } from "@/lib/api/request";
-
-type NpmPackage = {
-  "dist-tags": { latest: string };
-  time: Record<string, string>;
-  versions: Record<string, unknown>;
-};
-
-async function fetchNpm(): Promise<NpmPackage> {
-  const result = await apiFetch<NpmPackage>(
-    "https://registry.npmjs.org/@jsonbored/gittensory-mcp",
-    { label: "MCP package version", timeoutMs: 6000, silentStatus: true },
-  );
-  if (!result.ok) throw new Error(result.message);
-  return result.data;
-}
+import { notifyApiFailure, notifyApiRecovered } from "@/lib/api/request";
+import {
+  MCP_PACKAGE_NAME,
+  MCP_PACKAGE_NPM_URL,
+  getLatestMcpVersion,
+  getRecentMcpVersions,
+  useMcpPackageMetadata,
+} from "@/lib/mcp-package";
 
 export function McpVersionBadge({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
-  const { data, isLoading, isError, isFetching, refetch } = useQuery({
-    queryKey: ["npm", "@jsonbored/gittensory-mcp"],
-    queryFn: fetchNpm,
-    staleTime: 1000 * 60 * 30,
-    retry: 1,
-  });
+  const { data, isError, isFetching, refetch } = useMcpPackageMetadata();
 
   const wasError = useRef(false);
   useEffect(() => {
@@ -48,12 +34,8 @@ export function McpVersionBadge({ className }: { className?: string }) {
     }
   }, [isError, isFetching, data, refetch]);
 
-  const latest = data?.["dist-tags"].latest;
-  const versions = data
-    ? Object.keys(data.versions)
-        .sort((a, b) => (data.time[b] ?? "").localeCompare(data.time[a] ?? ""))
-        .slice(0, 6)
-    : [];
+  const latest = getLatestMcpVersion(data);
+  const versions = getRecentMcpVersions(data);
 
   return (
     <div className={cn("relative", className)}>
@@ -70,15 +52,13 @@ export function McpVersionBadge({ className }: { className?: string }) {
         </span>
         <Package className="size-3 shrink-0 opacity-70" />
         <span>mcp</span>
-        <span className="truncate text-foreground">
-          {isLoading ? "…" : isError ? "offline" : `v${latest}`}
-        </span>
+        <span className="truncate text-foreground">v{latest}</span>
         <ChevronDown
           className={`size-2.5 shrink-0 opacity-50 transition-transform duration-150 motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
         />
       </button>
       <AnimatePresence>
-        {open && data && (
+        {open && (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -91,14 +71,14 @@ export function McpVersionBadge({ className }: { className?: string }) {
                 npm package
               </div>
               <div className="mt-0.5 font-mono text-token-sm text-foreground">
-                @jsonbored/gittensory-mcp
+                {MCP_PACKAGE_NAME}
               </div>
             </div>
             <ul className="max-h-64 overflow-auto p-2 text-token-sm">
               {versions.map((v) => (
                 <li key={v}>
                   <a
-                    href={`https://www.npmjs.com/package/@jsonbored/gittensory-mcp/v/${v}`}
+                    href={`${MCP_PACKAGE_NPM_URL}/v/${v}`}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center justify-between rounded-token px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -112,14 +92,19 @@ export function McpVersionBadge({ className }: { className?: string }) {
                       )}
                     </span>
                     <span className="text-token-2xs">
-                      {new Date(data.time[v] ?? "").toLocaleDateString()}
+                      {data?.time[v] ? new Date(data.time[v]).toLocaleDateString() : "cached"}
                     </span>
                   </a>
                 </li>
               ))}
             </ul>
+            {isError && (
+              <div className="border-t border-border px-4 py-2 text-token-2xs text-muted-foreground">
+                npm is unreachable; showing the last known latest version.
+              </div>
+            )}
             <a
-              href="https://www.npmjs.com/package/@jsonbored/gittensory-mcp"
+              href={MCP_PACKAGE_NPM_URL}
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-between border-t border-border px-4 py-2.5 text-token-xs text-muted-foreground hover:text-foreground"

@@ -5,8 +5,9 @@ import { classifyMcpClientVersion, compareMcpSemver } from "../../src/services/m
 describe("MCP compatibility telemetry", () => {
   it("classifies local MCP package versions against the advertised support window", () => {
     expect(classifyMcpClientVersion("0.1.9")).toBe("incompatible");
-    expect(classifyMcpClientVersion("0.2.1")).toBe("stale");
-    expect(classifyMcpClientVersion("0.3.0")).toBe("current");
+    expect(classifyMcpClientVersion("0.2.1")).toBe("incompatible");
+    expect(classifyMcpClientVersion("0.3.0")).toBe("incompatible");
+    expect(classifyMcpClientVersion("0.4.0")).toBe("current");
     expect(classifyMcpClientVersion("not-a-version")).toBe("unknown");
     expect(classifyMcpClientVersion(undefined)).toBe("unknown");
   });
@@ -29,7 +30,7 @@ describe("MCP compatibility telemetry", () => {
         packageName: "@jsonbored/gittensory-mcp",
         packageVersion: "0.2.1",
         protocolVersion: "2025-03-26",
-        compatibilityStatus: "stale",
+        compatibilityStatus: "incompatible",
       },
     });
   });
@@ -38,14 +39,14 @@ describe("MCP compatibility telemetry", () => {
     const telemetry = buildMcpClientTelemetry(
       new Headers({
         "x-gittensory-mcp-package": "@example/custom-mcp",
-        "x-gittensory-mcp-version": "0.3.0",
+        "x-gittensory-mcp-version": "0.4.0",
       }),
       { requireGittensoryHeader: true },
     );
 
     expect(telemetry).toMatchObject({
       clientName: "custom-mcp",
-      clientVersion: "0.3.0",
+      clientVersion: "0.4.0",
       metadata: {
         packageName: "@example/custom-mcp",
         compatibilityStatus: "current",
@@ -57,11 +58,11 @@ describe("MCP compatibility telemetry", () => {
     const canonical = buildMcpClientTelemetry(
       new Headers({
         "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
-        "x-gittensory-mcp-version": "0.3.0",
+        "x-gittensory-mcp-version": "0.4.0",
       }),
       { requireGittensoryHeader: true },
     );
-    expect(canonical).toMatchObject({ clientName: "gittensory-mcp", clientVersion: "0.3.0" });
+    expect(canonical).toMatchObject({ clientName: "gittensory-mcp", clientVersion: "0.4.0" });
 
     const defaulted = buildMcpClientTelemetry(new Headers(), { defaultClientName: "mcp" });
     expect(defaulted).toMatchObject({

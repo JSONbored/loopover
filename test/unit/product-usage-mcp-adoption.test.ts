@@ -37,7 +37,7 @@ describe("MCP compatibility adoption summaries", () => {
         { key: "unknown", count: 1 },
       ]),
       byCompatibilityStatus: expect.arrayContaining([
-        { status: "stale", count: 1 },
+        { status: "incompatible", count: 1 },
         { status: "unknown", count: 1 },
       ]),
     });

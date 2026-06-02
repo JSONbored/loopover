@@ -26,61 +26,86 @@ export const Route = createFileRoute("/roadmap")({
 });
 
 const COLUMNS = [
-  { key: "shipping-soon", title: "Now", hint: "Shipping in the current cycle." },
-  { key: "planned", title: "Next", hint: "Designed, queued for the next cycle." },
-  { key: "exploring", title: "Later", hint: "Open questions, no commit date." },
+  { key: "shipping-soon", title: "Now", hint: "Phase 0/1: stabilize and ship the miner loop." },
+  { key: "planned", title: "Next", hint: "Phase 2/3: maintainer trust and repo-owner intake." },
+  { key: "exploring", title: "Later", hint: "Phase 4/5: analytics, launch system, distribution." },
 ] as const;
 
-const LAST_UPDATED = "2026-05-30";
-const LAST_UPDATED_LABEL = "May 30, 2026";
+const LAST_UPDATED = "2026-06-01";
+const LAST_UPDATED_LABEL = "June 1, 2026";
 
 const ROADMAP_ITEMS: Array<{
   title: string;
   status: (typeof COLUMNS)[number]["key"];
   description: string;
+  issue: number;
 }> = [
   {
-    title: "@gittensory GitHub command agent",
+    title: "Phase 0: stabilize while shipping",
     status: "shipping-soon",
-    description: "Quiet, opt-in @-commands maintainers can use inside PR threads.",
+    issue: 233,
+    description:
+      "Current-version MCP display, stale PR queue triage, install/docs cleanup, and high-confidence polish before broader launch work.",
   },
   {
-    title: "Product usage analytics",
+    title: "Phase 1: miner command center",
     status: "shipping-soon",
-    description: "Weekly value report and operator dashboard.",
+    issue: 234,
+    description:
+      "MCP doctor/status/init-client clarity, last-good decision packs, recommendation-change explanations, and command-copy flows for miners.",
   },
   {
-    title: "Browser extension PR overlays",
+    title: "Phase 2: maintainer trust and browser extension",
     status: "planned",
-    description: "Private maintainer overlays on github.com, never shown to PR authors.",
+    issue: 235,
+    description:
+      "Maintainer trust checklist, install health next actions, screenshot-backed extension states, and private/public rendering checks.",
   },
   {
-    title: "PWA maintainer digest",
+    title: "Phase 3: repo owner intake console",
     status: "planned",
-    description: "Mobile-friendly daily digest of reviewability and install health.",
+    issue: 236,
+    description:
+      "Guided registration readiness, config recommendations, repo onboarding packs, and source-quality next actions.",
   },
   {
-    title: "Optional AI summaries",
+    title: "Phase 4: adoption analytics and launch system",
     status: "exploring",
-    description: "Strictly over deterministic signals; never replaces evidence.",
+    issue: 237,
+    description:
+      "Privacy-safe product events, role activation/retention metrics, weekly value reports, and operator export paths.",
+  },
+  {
+    title: "Phase 5: ecosystem distribution",
+    status: "exploring",
+    issue: 238,
+    description:
+      "PWA/digest delivery, documentation distribution, launch loops, and ecosystem packaging once the core surfaces are durable.",
   },
 ];
 
 // Titles with live or self-hosted surfaces in the imported frontend.
 const BUILT_TITLES = new Set<string>([
-  "@gittensory GitHub command agent",
-  "Product usage analytics",
-  "Browser extension PR overlays",
-  "PWA maintainer digest",
-  "Optional AI summaries",
+  "Phase 0: stabilize while shipping",
+  "Phase 1: miner command center",
+  "Phase 2: maintainer trust and browser extension",
+  "Phase 3: repo owner intake console",
+  "Phase 4: adoption analytics and launch system",
+  "Phase 5: ecosystem distribution",
 ]);
 
 const LINK_MAP: Record<string, { to: string; label: string }> = {
-  "@gittensory GitHub command agent": { to: "/app/commands", label: "Open command simulator" },
-  "Product usage analytics": { to: "/app/analytics", label: "Open analytics" },
-  "Browser extension PR overlays": { to: "/extension", label: "Open extension page" },
-  "PWA maintainer digest": { to: "/app/digest", label: "Preview the digest" },
-  "Optional AI summaries": { to: "/docs/ai-summaries", label: "Read the policy" },
+  "Phase 1: miner command center": { to: "/app/miner", label: "Open miner dashboard" },
+  "Phase 2: maintainer trust and browser extension": {
+    to: "/extension",
+    label: "Open extension page",
+  },
+  "Phase 3: repo owner intake console": { to: "/app/repos", label: "Open repos console" },
+  "Phase 4: adoption analytics and launch system": {
+    to: "/app/analytics",
+    label: "Open analytics",
+  },
+  "Phase 5: ecosystem distribution": { to: "/app/digest", label: "Preview the digest" },
 };
 
 function RoadmapPage() {
@@ -97,9 +122,17 @@ function RoadmapPage() {
           What&apos;s next for Gittensory
         </h1>
         <p className="mt-3 text-muted-foreground">
-          Each surface below maps to either live API-backed app wiring, a self-hosted package, or a
-          clearly scoped future lane.
+          This reflects the live roadmap issue #127 and phase epics #233-#238. Project-board linkage
+          waits until the GitHub project scope is available.
         </p>
+        <a
+          href="https://github.com/JSONbored/gittensory/issues/127"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 inline-flex rounded-token border-hairline px-2.5 py-1 font-mono text-token-2xs text-muted-foreground transition-colors duration-150 hover:border-strong hover:text-mint focus-ring"
+        >
+          Roadmap #127 →
+        </a>
         <div className="mt-4 inline-flex items-center gap-2 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
           <span className="size-1.5 rounded-full bg-mint" aria-hidden />
           Last updated <time dateTime={LAST_UPDATED}>{LAST_UPDATED_LABEL}</time>
@@ -143,11 +176,19 @@ function RoadmapPage() {
                       {built && (
                         <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-mint/40 bg-mint/10 px-1.5 py-0.5 font-mono text-token-2xs uppercase tracking-wider text-mint">
                           <span className="size-1 rounded-full bg-mint" aria-hidden />
-                          Preview
+                          Tracked
                         </span>
                       )}
                     </div>
                     <p className="mt-1.5 text-token-xs text-muted-foreground">{item.description}</p>
+                    <a
+                      href={`https://github.com/JSONbored/gittensory/issues/${item.issue}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-1 rounded-token text-token-xs font-medium text-muted-foreground transition-colors duration-150 hover:text-mint hover:underline focus-ring"
+                    >
+                      Issue #{item.issue} <ArrowRight className="size-3" aria-hidden />
+                    </a>
                     {link && (
                       <Link
                         to={link.to}

@@ -13,7 +13,7 @@ The package is public. Gittensory keeps sensitive score, trust, wallet, and main
 Public npm:
 
 ```sh
-npm install -g @jsonbored/gittensory-mcp
+npm install -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp login
 ```
 
@@ -33,9 +33,13 @@ gittensory-mcp whoami
 gittensory-mcp status
 gittensory-mcp changelog
 gittensory-mcp doctor
+gittensory-mcp cache status
+gittensory-mcp cache clear
 gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
+gittensory-mcp decision-pack --login jsonbored --json
+gittensory-mcp repo-decision --login jsonbored --repo we-promise/sure --json
 gittensory-mcp analyze-branch --login jsonbored --json
 gittensory-mcp preflight --login jsonbored --json
 gittensory-mcp agent plan --login jsonbored --json
@@ -140,3 +144,13 @@ gittensory-mcp changelog
 ```
 
 `gittensory-mcp status` also reports the local package version, latest npm version when reachable, API health, auth state, and source-upload posture.
+
+## Offline decision-pack fallback
+
+Successful `decision-pack` and MCP `gittensory_get_decision_pack` calls store a bounded last-good local cache entry keyed by API version and login. If the API or network is temporarily unavailable, the wrapper can return that last-good guidance as `source: "local_cache"` with `stale: true`, `cachedAt`, and rerun guidance. Auth and permission failures do not use stale fallback data.
+
+The cache excludes source contents and local paths, is bounded, and can be removed with:
+
+```sh
+gittensory-mcp cache clear
+```

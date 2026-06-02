@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -22,34 +22,30 @@ try {
       output: "CHANGELOG.md",
       command: "npm run changelog:root",
       selector: "--root",
-      args: ["--config", "cliff.toml", "--output", join(tempDir, "CHANGELOG.md")],
+      runner: () => {
+        const generatedPath = join(tempDir, "CHANGELOG.md");
+        run(["git-cliff", "--config", "cliff.toml", "--output", generatedPath], "root changelog");
+        return generatedPath;
+      },
     },
     {
       label: "MCP package changelog",
       output: "packages/gittensory-mcp/CHANGELOG.md",
       command: "npm run changelog:mcp",
       selector: "--mcp",
-      releaseTag: () => `mcp-v${JSON.parse(readFileSync("packages/gittensory-mcp/package.json", "utf8")).version}`,
-      args: [
-        "--config",
-        "cliff.mcp.toml",
-        "--include-path",
-        "packages/gittensory-mcp/**",
-        "--include-path",
-        ".github/workflows/npm-publish.yml",
-        "--output",
-        join(tempDir, "MCP_CHANGELOG.md"),
-      ],
+      runner: () => {
+        const generatedPath = join(tempDir, "MCP_CHANGELOG.md");
+        const version = JSON.parse(readFileSync("packages/gittensory-mcp/package.json", "utf8")).version;
+        writeFileSync(generatedPath, readFileSync("packages/gittensory-mcp/CHANGELOG.md", "utf8"));
+        run(["node", "scripts/generate-mcp-changelog.mjs", "--output", generatedPath, "--version", version], "MCP package changelog");
+        return generatedPath;
+      },
     },
   ].filter((check) => requestedChecks.size === 0 || requestedChecks.has(check.selector));
 
   const failures = [];
   for (const check of checks) {
-    const args = [...check.args];
-    const releaseTag = typeof check.releaseTag === "function" ? check.releaseTag() : null;
-    if (releaseTag && changelogHasReleaseHeader(check.output, releaseTag)) args.push("--tag", releaseTag);
-    const generatedPath = args[args.lastIndexOf("--output") + 1];
-    run(["git-cliff", ...args], check.label);
+    const generatedPath = check.runner();
     const expected = readFileSync(generatedPath, "utf8");
     const actual = readFileSync(check.output, "utf8");
     if (normalize(actual) !== normalize(expected)) failures.push(`${check.output} is stale; run ${check.command}.`);
@@ -75,12 +71,4 @@ function run(command, label) {
 
 function normalize(value) {
   return value.replace(/\r\n/g, "\n").trimEnd();
-}
-
-function changelogHasReleaseHeader(path, tag) {
-  return new RegExp(`^## ${escapeRegExp(tag)} - `, "m").test(readFileSync(path, "utf8"));
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

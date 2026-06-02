@@ -39,10 +39,10 @@ function Quickstart() {
       </p>
       <CodeBlock
         code={`# one-off
-npx -y @jsonbored/gittensory-mcp --help
+npx -y @jsonbored/gittensory-mcp@latest --help
 
 # install
-npm i -g @jsonbored/gittensory-mcp`}
+npm i -g @jsonbored/gittensory-mcp@latest`}
       />
 
       <h2>2. Sign in (GitHub Device Flow)</h2>
@@ -76,9 +76,9 @@ gittensory-mcp preflight --login your-login --json`}
         <a href="/docs/beta-onboarding">Beta onboarding</a>.
       </p>
       <CodeBlock
-        code={`gittensory-mcp init-client --target codex
-gittensory-mcp init-client --target claude-desktop
-gittensory-mcp init-client --target cursor`}
+        code={`gittensory-mcp init-client --print codex
+gittensory-mcp init-client --print claude
+gittensory-mcp init-client --print cursor`}
       />
     </DocsPage>
   );

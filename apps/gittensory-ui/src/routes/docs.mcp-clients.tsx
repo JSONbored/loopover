@@ -52,7 +52,7 @@ gittensory-mcp init-client --print mcp`}
         lang="toml"
         code={`[mcp_servers.gittensory]
 command = "npx"
-args = ["-y", "@jsonbored/gittensory-mcp", "--stdio"]`}
+args = ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]`}
       />
 
       <h2>Claude Desktop</h2>
@@ -60,10 +60,10 @@ args = ["-y", "@jsonbored/gittensory-mcp", "--stdio"]`}
         filename="claude_desktop_config.json"
         lang="json"
         code={`{
-  "mcpServers": {
+      "mcpServers": {
     "gittensory": {
       "command": "npx",
-      "args": ["-y", "@jsonbored/gittensory-mcp", "--stdio"]
+      "args": ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]
     }
   }
 }`}
@@ -74,10 +74,10 @@ args = ["-y", "@jsonbored/gittensory-mcp", "--stdio"]`}
         filename=".cursor/mcp.json"
         lang="json"
         code={`{
-  "mcpServers": {
+      "mcpServers": {
     "gittensory": {
       "command": "npx",
-      "args": ["-y", "@jsonbored/gittensory-mcp", "--stdio"]
+      "args": ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]
     }
   }
 }`}

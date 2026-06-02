@@ -203,6 +203,37 @@ export function buildWeeklyValueReport(args: WeeklyValueReportInputs): WeeklyVal
   };
 }
 
+export function formatWeeklyValueReportMarkdown(report: WeeklyValueReport): string {
+  const lines = [
+    "# Weekly Gittensory value report",
+    "",
+    `- Generated: ${markdownText(report.generatedAt)}`,
+    `- Variant: ${markdownText(report.variant)}`,
+    `- Window: ${report.period.days} day(s)${report.period.startDay && report.period.endDay ? `, ${markdownText(report.period.startDay)} to ${markdownText(report.period.endDay)}` : ""}`,
+    `- Public-safe: ${report.publicSafe ? "yes" : "operator-only"}`,
+    "",
+    "## Summary",
+    ...listLines(report.summary),
+    "",
+    "## Adoption metrics",
+    ...metricLines(report, ["active_users", "active_repos", "product_events", "active_sessions", "digest_subscriptions"]),
+    "",
+    "## Miner utility",
+    ...metricLines(report, ["mcp_usage", "pr_preflights", "pr_packets"]),
+    "",
+    "## Maintainer trust",
+    ...metricLines(report, ["github_commands", "quiet_skips", "maintainer_signals", "drift_reports"]),
+    "",
+    "## Repo-owner readiness",
+    ...metricLines(report, ["registered_repos", "installed_repos", "installations", "install_issues", "active_repos"]),
+    "",
+    "## Known blockers",
+    ...knownBlockerLines(report),
+    ...operatorDetailLines(report),
+  ];
+  return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
 function buildWeeklyMetrics(args: {
   activeActors: number;
   aggregate: WeeklyAggregate;
@@ -322,6 +353,48 @@ function countDimensions(entries: ProductUsageDimensionCount[], limit = 10): Pro
     .slice(0, limit);
 }
 
+function metricLines(report: WeeklyValueReport, ids: string[]): string[] {
+  const metrics = new Map(report.metrics.map((metric) => [metric.id, metric]));
+  const lines = ids.flatMap((id) => {
+    const metric = metrics.get(id);
+    if (!metric) return [];
+    const detail = markdownText(metric.detail);
+    return [`- ${markdownText(metric.label)}: ${metric.value}${detail ? ` (${detail})` : ""}`];
+  });
+  return lines.length > 0 ? lines : ["- No rollup-backed metric is available for this section."];
+}
+
+function knownBlockerLines(report: WeeklyValueReport): string[] {
+  const blockers = [...report.warnings, ...report.freshness.warnings];
+  return blockers.length > 0 ? listLines([...new Set(blockers)]) : ["- No known blocker surfaced by the current report window."];
+}
+
+function operatorDetailLines(report: WeeklyValueReport): string[] {
+  if (!report.operatorDetails) return [];
+  return [
+    "",
+    "## Operator detail",
+    `- Activation: ${report.operatorDetails.activation.fullyActivatedActors} fully activated actor(s), ${report.operatorDetails.activation.githubActivatedRepos} GitHub activated repo(s).`,
+    ...dimensionLines("Top repos", report.operatorDetails.topRepos),
+    ...dimensionLines("Top commands", report.operatorDetails.topCommands),
+    ...dimensionLines("Top tools", report.operatorDetails.topTools),
+    ...dimensionLines("Top route classes", report.operatorDetails.topRouteClasses),
+  ];
+}
+
+function dimensionLines(title: string, entries: ProductUsageDimensionCount[]): string[] {
+  if (entries.length === 0) return [];
+  return [`- ${title}: ${entries.slice(0, 5).map((entry) => `${markdownText(entry.key)} (${entry.count})`).join(", ")}`];
+}
+
+function listLines(items: string[]): string[] {
+  return items.length > 0 ? items.map((item) => `- ${markdownText(item)}`) : ["- No report data available."];
+}
+
+function markdownText(value: string): string {
+  return sanitizeReportText(value).replace(/\s+/g, " ").trim();
+}
+
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
@@ -339,6 +412,11 @@ function sanitizeReportText(value: string): string {
     .replace(/(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g, "<redacted-path>")
     .replace(/\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer <redacted-token>");
-  if (/\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|payout|reward estimate|farming|private reviewability|public score estimate)\b/i.test(redacted)) return "<redacted>";
+  if (
+    /\b(seed phrase|mnemonic|private key|raw[-\s]?trust|trust[-\s]?score|wallet|hotkey|coldkey|payout|reward(?:[-\s]?(?:estimate|prediction|claim|score|payout|risk))?|farming|private[-\s]?reviewability|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)|score[-\s]?(?:estimate|prediction|preview))\b/i.test(
+      redacted,
+    )
+  )
+    return "<redacted>";
   return redacted.slice(0, 240);
 }

@@ -10,6 +10,9 @@ import {
 } from "../../src/services/decision-pack";
 import { createTestEnv } from "../helpers/d1";
 
+const FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE =
+  /\b(wallet|hotkey|coldkey|raw[-\s]?trust|trust[-\s]?score|reward|reward[-\s]?estimate|payout|farming(?:[-\s]?language)?|private[-\s]?reviewability|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction)|estimated[-\s]?score|score[-\s]?estimate)\b/i;
+
 describe("decision-pack service", () => {
   it("classifies score blockers, recommendations, actions, and explanations deterministically", () => {
     const maintainerRole = { maintainerLane: true } as any;
@@ -142,6 +145,195 @@ describe("decision-pack service", () => {
     expect(maintainer.riskReasons.some((line) => line.includes("high closure risk"))).toBe(false);
   });
 
+  it("feeds private recommendation outcome feedback without changing public next actions", () => {
+    const baseline = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+    });
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 4,
+        accepted: 1,
+        ignored: 1,
+        stale: 0,
+        merged: 1,
+        closed: 1,
+        improved: 1,
+        positive: 3,
+        negative: 1,
+        maintainerLaneTotal: 2,
+        latestOutcomeAt: "2026-05-30T00:00:00.000Z",
+        signal: "positive",
+      },
+    });
+
+    expect(decision.recommendationOutcomeFeedback).toMatchObject({ signal: "positive", positive: 3, negative: 1, maintainerLaneTotal: 2 });
+    expect(decision.priorityScore).toBeGreaterThan(baseline.priorityScore);
+    expect(decision.whyThisHelps.some((line) => line.includes("Private recommendation feedback"))).toBe(true);
+    expect(decision.riskReasons.some((line) => line.includes("Private recommendation feedback"))).toBe(true);
+    expect(decision.publicNextActions.join(" ")).not.toMatch(/Private recommendation feedback|wallet|hotkey|raw trust score|reward estimate|payout|farming/i);
+  });
+
+  it("penalizes negative and mixed private recommendation feedback without leaking it publicly", () => {
+    const baseline = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+    });
+    const negative = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 6,
+        accepted: 0,
+        ignored: 2,
+        stale: 2,
+        merged: 0,
+        closed: 2,
+        improved: 0,
+        positive: 0,
+        negative: 6,
+        maintainerLaneTotal: 0,
+        latestOutcomeAt: "2026-05-30T00:00:00.000Z",
+        signal: "negative",
+      },
+    });
+    const mixed = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 4,
+        accepted: 1,
+        ignored: 1,
+        stale: 0,
+        merged: 1,
+        closed: 1,
+        improved: 0,
+        positive: 2,
+        negative: 2,
+        maintainerLaneTotal: 1,
+        latestOutcomeAt: null,
+        signal: "mixed",
+      },
+    });
+
+    expect(negative.priorityScore).toBeLessThan(baseline.priorityScore);
+    expect(negative.riskReasons.join(" ")).toMatch(/6 unresolved or negative/);
+    expect(negative.whyThisHelps.some((line) => line.includes("Private recommendation feedback"))).toBe(false);
+    expect(mixed.priorityScore).toBeLessThan(baseline.priorityScore);
+    expect(mixed.riskReasons.join(" ")).toMatch(/2 unresolved or negative/);
+    expect(mixed.whyThisHelps.join(" ")).toMatch(/2 positive/);
+    expect(`${negative.publicNextActions.join(" ")} ${mixed.publicNextActions.join(" ")}`).not.toMatch(/Private recommendation feedback/i);
+  });
+
+  it("keeps zero-count and maintainer-lane private feedback from changing repo decisions", () => {
+    const baseline = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+    });
+    const zero = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 0,
+        accepted: 0,
+        ignored: 0,
+        stale: 0,
+        merged: 0,
+        closed: 0,
+        improved: 0,
+        positive: 0,
+        negative: 0,
+        maintainerLaneTotal: 3,
+        latestOutcomeAt: null,
+        signal: "neutral",
+      },
+    });
+    const maintainerLane = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: true } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 2,
+        accepted: 0,
+        ignored: 1,
+        stale: 0,
+        merged: 0,
+        closed: 1,
+        improved: 0,
+        positive: 0,
+        negative: 2,
+        maintainerLaneTotal: 0,
+        latestOutcomeAt: null,
+        signal: "negative",
+      },
+    });
+
+    expect(zero.recommendationOutcomeFeedback).toBeUndefined();
+    expect(zero.priorityScore).toBe(baseline.priorityScore);
+    expect(maintainerLane.recommendation).toBe("maintainer_lane");
+    expect(maintainerLane.riskReasons.join(" ")).not.toMatch(/Private recommendation feedback/);
+  });
+
+  it("summarizes non-empty recommendation feedback in contributor decision packs", () => {
+    const pack = __decisionPackInternals.buildContributorDecisionPack({
+      login: "dev",
+      profile: {
+        login: "dev",
+        github: {},
+        source: {},
+        gittensor: null,
+        registeredRepoActivity: {},
+        trustSignals: {},
+      } as any,
+      outcomeHistory: { login: "dev", totals: {}, repoOutcomes: [], successPatterns: [], failurePatterns: [], summary: "" } as any,
+      repositories: [],
+      syncStates: [],
+      syncSegments: [],
+      totals: [],
+      scoringModelSnapshotId: "scoring-1",
+      contributorPullRequests: [],
+      contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("dev"),
+      recommendationOutcomeFeedback: {
+        login: "dev",
+        generatedAt: "2026-05-30T00:00:00.000Z",
+        windowDays: 90,
+        totals: {
+          total: 1,
+          accepted: 1,
+          ignored: 0,
+          stale: 0,
+          merged: 0,
+          closed: 0,
+          improved: 0,
+          positive: 1,
+          negative: 0,
+          maintainerLaneTotal: 1,
+        },
+        states: [{ state: "accepted", count: 1 }],
+        repos: [],
+        maintainerLane: { total: 1, states: [{ state: "merged", count: 1 }] },
+        privateSummary: "dev has feedback.",
+      },
+    });
+
+    expect(pack.summary).toContain("Recommendation feedback: 1 positive, 0 negative, 1 maintainer-lane separated.");
+  });
+
   it("redacts official hotkeys, loads stale snapshots, and resolves repo decisions case-insensitively", async () => {
     const env = createTestEnv();
     const pack = {
@@ -177,6 +369,7 @@ describe("decision-pack service", () => {
 
     const loaded = await loadContributorDecisionPack(env, "jsonbored");
     expect(loaded).toMatchObject({ source: "snapshot", snapshotAgeSeconds: expect.any(Number), stale: expect.any(Boolean), freshness: "stale", rebuildEnqueued: false });
+    expect(loaded?.recommendationOutcomeFeedback).toMatchObject({ login: "jsonbored", totals: { total: 0, maintainerLaneTotal: 0 } });
     expect(repoDecisionFromPack(loaded!, "jsonbored/AWESOME-CLAUDE")).toMatchObject({ recommendation: "maintainer_lane" });
     expect(repoDecisionFromPack(loaded!, "missing/repo")).toBeNull();
 
@@ -981,6 +1174,84 @@ describe("decision-pack service", () => {
       expect(joined).not.toMatch(/share|emission|priority/i);
       expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
     }
+  });
+
+  it("separates direct-PR, issue-discovery, burden, queue, and policy tradeoff dimensions", async () => {
+    const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
+    const direct = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/direct-fit", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 2, closedPullRequestRate: 0, credibility: 1 } as any,
+      totals: { openPullRequestsTotal: 1, openIssuesTotal: 8, mergedPullRequestsTotal: 4, closedUnmergedPullRequestsTotal: 0 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(direct.tradeoffSummary).toMatchObject({
+      directPrFit: { level: "strong" },
+      issueDiscoveryFit: { level: "weak" },
+      maintainerBurden: { level: "low" },
+      queuePressure: { level: "low" },
+      policyConfidence: { level: "medium" },
+    });
+    expect(direct.tradeoffSummary?.publicSummary).toMatch(/direct PR work is the clearest path/i);
+
+    const issueOnly = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/issue-fit", 0.03, 1, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      issueQuality: {
+        repoFullName: "owner/issue-fit",
+        generatedAt: "2026-06-02T00:00:00.000Z",
+        lane: { repoFullName: "owner/issue-fit", lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 7, title: "Ready duplicate-safe issue", status: "ready", score: 88, reasons: [], warnings: [] }],
+        summary: "1 issue evaluated.",
+      },
+    });
+    expect(issueOnly.tradeoffSummary).toMatchObject({
+      directPrFit: { level: "blocked" },
+      issueDiscoveryFit: { level: "strong" },
+    });
+    expect(issueOnly.tradeoffSummary?.publicSummary).toMatch(/issue discovery is the clearest path/i);
+
+    const splitBusy = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/split-busy", 0.03, 0.5, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequestRate: 0, credibility: 1 } as any,
+      totals: { openPullRequestsTotal: 12, openIssuesTotal: 120, mergedPullRequestsTotal: 4, closedUnmergedPullRequestsTotal: 0 } as any,
+      focusManifest: parseFocusManifest({ source: "repo_file", issueDiscoveryPolicy: "encouraged" }),
+      issueQuality: {
+        repoFullName: "owner/split-busy",
+        generatedAt: "2026-06-02T00:00:00.000Z",
+        lane: { repoFullName: "owner/split-busy", lane: "split", issueDiscoveryShare: 0.5, directPrShare: 0.5, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 8, title: "Ready split issue", status: "ready", score: 90, reasons: [], warnings: [] }],
+        summary: "1 issue evaluated.",
+      },
+    });
+    expect(splitBusy.tradeoffSummary).toMatchObject({
+      directPrFit: { level: "moderate" },
+      issueDiscoveryFit: { level: "strong" },
+      maintainerBurden: { level: "high" },
+      queuePressure: { level: "high" },
+      policyConfidence: { level: "high" },
+    });
+
+    const policyConflict = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/policy-conflict", 0.03, 0.5, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      focusManifest: parseFocusManifest({ source: "repo_file", issueDiscoveryPolicy: "discouraged" }),
+    });
+    expect(policyConflict.tradeoffSummary).toMatchObject({
+      issueDiscoveryFit: { level: "weak" },
+      policyConfidence: { level: "low" },
+    });
+
+    const serialized = JSON.stringify([direct.tradeoffSummary, issueOnly.tradeoffSummary, splitBusy.tradeoffSummary, policyConflict.tradeoffSummary]);
+    expect(serialized).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
+    expect(
+      __decisionPackInternals.sanitizeTradeoffPublicText(
+        "wallet hotkey reward-estimate payout scoreability public-score-prediction trust-score private-reviewability private-scoreability farming-language",
+      ),
+    ).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
   });
 
   it("covers languageMatch true/false and labelFit empty/non-empty paths", () => {

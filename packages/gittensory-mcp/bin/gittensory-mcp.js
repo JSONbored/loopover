@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -20,6 +21,8 @@ const decisionPackCacheSchemaVersion = 1;
 const decisionPackCacheMaxEntries = 25;
 const decisionPackCacheMaxBytes = 512 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
+const cliArgs = process.argv.slice(2);
+const defaultProfileName = "default";
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
@@ -28,7 +31,10 @@ const configPath =
 const cacheDir = process.env.GITTENSORY_CACHE_DIR ?? join(dirname(configPath), "cache");
 const decisionPackCacheDir = join(cacheDir, "decision-packs");
 const config = loadConfig();
-const configuredApiUrl = typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
+const requestedProfileName = cliOptionValue(cliArgs, "profile") ?? process.env.GITTENSORY_PROFILE;
+const activeProfileName = selectProfileName(config, requestedProfileName);
+const activeProfile = config.profiles?.[activeProfileName] ?? {};
+const configuredApiUrl = typeof activeProfile.apiUrl === "string" ? activeProfile.apiUrl.replace(/\/+$/, "") : typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
 const apiUrl = (process.env.GITTENSORY_API_URL ?? (configuredApiUrl && !legacyDefaultApiUrls.has(configuredApiUrl) ? configuredApiUrl : defaultApiUrl)).replace(/\/+$/, "");
 
 const ownerRepoShape = {
@@ -158,7 +164,6 @@ const agentRunIdShape = {
   runId: z.string().min(1),
 };
 
-const cliArgs = process.argv.slice(2);
 if (cliArgs[0] && cliArgs[0] !== "--stdio") {
   await runCli(cliArgs);
   process.exit(0);
@@ -296,8 +301,9 @@ server.registerTool(
         version: packageVersion,
       },
       hasToken: Boolean(getApiToken()),
-      authLogin: config.session?.login ?? null,
-      sessionExpiresAt: config.session?.expiresAt ?? null,
+      profile: profilePublicState(activeProfileName),
+      authLogin: activeProfile.session?.login ?? null,
+      sessionExpiresAt: activeProfile.session?.expiresAt ?? null,
       sourceUploadDefault: false,
       sourceUploadSupported: false,
       git,
@@ -484,6 +490,7 @@ async function runCli(args) {
   const options = parseOptions(args.slice(1));
   if (command === "login") return login(options);
   if (command === "logout") return logout(options);
+  if (command === "profile" || command === "profiles") return profileCommand(args.slice(1));
   if (command === "whoami") return whoami(options);
   if (command === "status") return status(options);
   if (command === "changelog") return changelog(options);
@@ -641,7 +648,13 @@ function outputAgentPayload(payload, options, summary) {
     const label = action.actionType ?? action.actionKind ?? action.recommendation ?? "action";
     const detail = action.recommendation ?? action.actionKind ?? action.summary ?? label;
     process.stdout.write(`- ${label}: ${detail}\n`);
-    if (action.rerunWhen) process.stdout.write(`  rerun: ${action.rerunWhen}\n`);
+    if (action.explanationCard) {
+      process.stdout.write(`  why now: ${action.explanationCard.whyNow}\n`);
+      process.stdout.write(`  impact: ${action.explanationCard.expectedImpact}\n`);
+      process.stdout.write(`  rerun: ${action.explanationCard.rerunWhen}\n`);
+    } else if (action.rerunWhen) {
+      process.stdout.write(`  rerun: ${action.rerunWhen}\n`);
+    }
   }
 }
 
@@ -709,12 +722,13 @@ function isUnsafePublicPacketText(value) {
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
-  gittensory-mcp login [--github-token <token>] [--json]
-  gittensory-mcp logout [--json]
-  gittensory-mcp whoami [--json]
-  gittensory-mcp status [--json]
+  gittensory-mcp login [--profile name] [--github-token <token>] [--json]
+  gittensory-mcp logout [--profile name] [--all] [--json]
+  gittensory-mcp whoami [--profile name] [--json]
+  gittensory-mcp status [--profile name] [--json]
+  gittensory-mcp profile list|create|switch|remove [name] [--json]
   gittensory-mcp changelog [--json]
-  gittensory-mcp doctor [--cwd path] [--json]
+  gittensory-mcp doctor [--profile name] [--cwd path] [--json]
   gittensory-mcp cache status|clear [--json]
   gittensory-mcp init-client --print codex|claude|cursor|mcp [--json]
   gittensory-mcp decision-pack --login <github-login> [--json]
@@ -726,8 +740,9 @@ function printHelp() {
   gittensory-mcp agent explain <run-id> [--json]
   gittensory-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
 
-Environment:
+  Environment:
   GITTENSORY_API_URL
+  GITTENSORY_PROFILE
   GITTENSORY_CONFIG_PATH or GITTENSORY_CONFIG_DIR
   GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, GITTENSORY_TOKEN, or a session from gittensory-mcp login
   GITHUB_TOKEN for non-interactive login bootstrap
@@ -757,6 +772,17 @@ function printAgentHelp() {
 
 The agent is copilot-only: it ranks, explains, and drafts public-safe packets. It does not edit code, open PRs, or post comments from the local MCP wrapper.
 Source upload remains disabled.
+  `);
+}
+
+function printProfileHelp() {
+  process.stdout.write(`Usage:
+  gittensory-mcp profile list [--json]
+  gittensory-mcp profile create <name> [--json]
+  gittensory-mcp profile switch <name> [--json]
+  gittensory-mcp profile remove <name> [--json]
+
+Use --profile <name> or GITTENSORY_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.
 `);
 }
 
@@ -784,10 +810,10 @@ function parseOptions(args) {
 }
 
 async function login(options) {
+  const profileName = selectedProfileName(options);
   const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
   const session = githubToken ? await apiFetch("/v1/auth/github/session", { method: "POST", body: JSON.stringify({ githubToken }) }, { auth: false }) : await loginWithDeviceFlow();
-  saveConfig({
-    ...config,
+  const nextConfig = upsertProfile(config, profileName, {
     apiUrl,
     session: {
       token: session.token,
@@ -796,9 +822,10 @@ async function login(options) {
       scopes: session.scopes ?? [],
     },
   });
-  const payload = { status: "authenticated", login: session.login, apiUrl, expiresAt: session.expiresAt };
+  saveConfig(nextConfig);
+  const payload = { status: "authenticated", profile: profileName, login: session.login, apiUrl, expiresAt: session.expiresAt };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  else process.stdout.write(`Authenticated as ${session.login}. Session expires ${session.expiresAt}.\n`);
+  else process.stdout.write(`Authenticated profile ${profileName} as ${session.login}. Session expires ${session.expiresAt}.\n`);
 }
 
 async function loginWithDeviceFlow() {
@@ -817,26 +844,86 @@ async function loginWithDeviceFlow() {
 }
 
 async function logout(options) {
-  const token = getApiToken();
-  let remote = null;
-  if (token) {
+  const profileName = selectedProfileName(options);
+  const all = options.all === true;
+  const envToken = getEnvApiToken();
+  const tokens = all
+    ? [envToken, ...profileSessions(config).map((entry) => entry.session.token)].filter(Boolean)
+    : [envToken ?? configuredProfileToken(profileName)].filter(Boolean);
+  const remote = [];
+  for (const token of [...new Set(tokens)]) {
     try {
-      remote = await apiFetch("/v1/auth/logout", { method: "POST", body: "{}" });
+      remote.push(await apiFetch("/v1/auth/logout", { method: "POST", body: "{}" }, { token }));
     } catch (error) {
-      remote = { error: error instanceof Error ? error.message : "logout_failed" };
+      remote.push({ error: sanitizeDiagnosticText(error instanceof Error ? error.message : "logout_failed") });
     }
   }
-  if (existsSync(configPath)) rmSync(configPath, { force: true });
+  const nextConfig = all ? clearAllProfileSessions(config) : clearProfileSession(config, profileName);
+  if (hasPersistedConfigState(nextConfig)) saveConfig(nextConfig);
+  else if (existsSync(configPath)) rmSync(configPath, { force: true });
   const decisionPackCache = clearDecisionPackCache();
-  const payload = { status: "logged_out", apiUrl, remote, decisionPackCache };
+  const payload = { status: "logged_out", profile: all ? "all" : profileName, apiUrl, remote: remote.length > 0 ? remote : null, decisionPackCache };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  else process.stdout.write("Logged out.\n");
+  else process.stdout.write(all ? "Logged out all profiles.\n" : `Logged out profile ${profileName}.\n`);
+}
+
+function profileCommand(args) {
+  const subcommand = args[0] ?? "list";
+  const options = parseOptions(args.slice(1));
+  if (subcommand === "--help" || subcommand === "help") return printProfileHelp();
+  if (subcommand === "list" || subcommand === "ls") {
+    const profiles = profileList(config);
+    const payload = { activeProfile: activeProfileName, profiles };
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else {
+      process.stdout.write(`Active profile: ${activeProfileName}\n`);
+      for (const profile of profiles) {
+        process.stdout.write(`- ${profile.name}${profile.active ? " (active)" : ""}: ${profile.login ?? "not authenticated"}\n`);
+      }
+    }
+    return;
+  }
+
+  const rawName = args[1] && !args[1].startsWith("--") ? args[1] : options.name ?? options.profile;
+  if (!rawName) throw new Error(`Usage: gittensory-mcp profile ${subcommand} <name>`);
+  const profileName = normalizeProfileName(rawName);
+
+  if (subcommand === "create") {
+    const nextConfig = ensureProfile(config, profileName, { activate: true });
+    saveConfig(nextConfig);
+    const payload = { status: "created", activeProfile: profileName, profile: profilePublicState(profileName, nextConfig) };
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`Created and selected profile ${profileName}.\n`);
+    return;
+  }
+
+  if (subcommand === "switch" || subcommand === "use") {
+    if (!config.profiles?.[profileName]) throw new Error(`Profile ${profileName} does not exist. Run \`gittensory-mcp profile create ${profileName}\` or \`gittensory-mcp login --profile ${profileName}\`.`);
+    const nextConfig = setActiveProfile(config, profileName);
+    saveConfig(nextConfig);
+    const payload = { status: "switched", activeProfile: profileName, profile: profilePublicState(profileName, nextConfig) };
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`Selected profile ${profileName}.\n`);
+    return;
+  }
+
+  if (subcommand === "remove" || subcommand === "rm" || subcommand === "delete") {
+    const nextConfig = removeProfile(config, profileName);
+    if (hasPersistedConfigState(nextConfig)) saveConfig(nextConfig);
+    else if (existsSync(configPath)) rmSync(configPath, { force: true });
+    const payload = { status: "removed", removedProfile: profileName, activeProfile: nextConfig.activeProfile ?? defaultProfileName };
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`Removed profile ${profileName}.\n`);
+    return;
+  }
+
+  throw new Error(`Unknown profile command: ${subcommand}`);
 }
 
 async function whoami(options) {
-  const payload = await apiGet("/v1/auth/session");
+  const payload = { ...(await apiGet("/v1/auth/session")), profile: activeProfileName };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  else process.stdout.write(`${payload.login}\n`);
+  else process.stdout.write(activeProfileName === defaultProfileName ? `${payload.login}\n` : `${payload.login} (profile ${activeProfileName})\n`);
 }
 
 async function status(options) {
@@ -865,7 +952,8 @@ async function status(options) {
     compatibility: compatibility.report,
     api: health,
     auth,
-    config: { configured: existsSync(configPath) },
+    profile: profilePublicState(activeProfileName),
+    config: { configured: existsSync(configPath), activeProfile: activeProfileName, profileCount: profileList(config).length },
     decisionPackCache,
     sourceUploadDefault: false,
     sourceUploadSupported: false,
@@ -874,6 +962,7 @@ async function status(options) {
   else {
     process.stdout.write(`${packageName}: ${packageVersion}${pkg.latestVersion ? ` (latest ${pkg.latestVersion})` : ""}\n`);
     process.stdout.write(`API: ${apiUrl}\n`);
+    process.stdout.write(`Profile: ${activeProfileName}\n`);
     process.stdout.write(`API health: ${health?.status ?? "unknown"}\n`);
     process.stdout.write(`Auth: ${auth.status}${auth.login ? ` (${auth.login})` : ""}\n`);
     process.stdout.write(`Decision-pack cache: ${decisionPackCache.entries} entr${decisionPackCache.entries === 1 ? "y" : "ies"}\n`);
@@ -961,13 +1050,13 @@ async function doctor(options) {
 
   const token = getApiToken();
   if (!token) {
-    add("auth", "fail", "No Gittensory API/session token is configured.", "Run `gittensory-mcp login`.");
+    add("auth", "fail", `No Gittensory API/session token is configured for profile ${activeProfileName}.`, `Run \`gittensory-mcp login --profile ${activeProfileName}\`.`);
   } else {
     try {
       const session = await apiGet("/v1/auth/session");
-      add("auth", "pass", `Authenticated as ${session.login}; session expires ${session.expiresAt}.`);
+      add("auth", "pass", `Profile ${activeProfileName} authenticated as ${session.login}; session expires ${session.expiresAt}.`);
     } catch (error) {
-      add("auth", "warn", `A token is configured but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `gittensory-mcp login`.");
+      add("auth", "warn", `A token is configured for profile ${activeProfileName} but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `gittensory-mcp login`.");
     }
   }
 
@@ -990,7 +1079,7 @@ async function doctor(options) {
       cwd: options.cwd ?? process.cwd(),
       baseRef: options.base,
       repoFullName: options.repo,
-      login: options.login ?? config.session?.login ?? "local",
+      login: options.login ?? activeProfile.session?.login ?? "local",
     });
     add("git_metadata", "pass", `${metadata.repoFullName} on ${metadata.branchName}; ${metadata.changedFiles.length} changed file(s).`);
   } catch (error) {
@@ -1028,7 +1117,8 @@ async function doctor(options) {
   const payload = {
     status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",
     apiUrl,
-    config: { configured: existsSync(configPath) },
+    profile: profilePublicState(activeProfileName),
+    config: { configured: existsSync(configPath), activeProfile: activeProfileName, profileCount: profileList(config).length },
     decisionPackCache,
     sourceUploadSupported: false,
     checks,
@@ -1036,6 +1126,7 @@ async function doctor(options) {
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
     process.stdout.write(`Gittensory doctor: ${payload.status}\n`);
+    process.stdout.write(`Profile: ${activeProfileName}\n`);
     for (const check of checks) {
       process.stdout.write(`- ${check.status}: ${check.name} - ${check.detail}\n`);
       if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
@@ -1064,7 +1155,126 @@ function initClient(options) {
 }
 
 function getApiToken() {
-  return process.env.GITTENSORY_API_TOKEN ?? process.env.GITTENSORY_TOKEN ?? process.env.GITTENSORY_MCP_TOKEN ?? config.session?.token;
+  return getEnvApiToken() ?? configuredProfileToken(activeProfileName);
+}
+
+function getEnvApiToken() {
+  return process.env.GITTENSORY_API_TOKEN ?? process.env.GITTENSORY_TOKEN ?? process.env.GITTENSORY_MCP_TOKEN;
+}
+
+function selectedProfileName(options = {}) {
+  return normalizeProfileName(options.profile ?? activeProfileName);
+}
+
+function configuredProfileToken(profileName, currentConfig = config) {
+  return currentConfig.profiles?.[profileName]?.session?.token;
+}
+
+function profileSessions(currentConfig = config) {
+  return Object.entries(currentConfig.profiles ?? {})
+    .flatMap(([name, profile]) => (profile?.session?.token ? [{ name, session: profile.session }] : []));
+}
+
+function profilePublicState(profileName, currentConfig = config) {
+  const profile = currentConfig.profiles?.[profileName];
+  const hasEnvToken = Boolean(getEnvApiToken());
+  return {
+    name: profileName,
+    active: profileName === (currentConfig.activeProfile ?? defaultProfileName),
+    configured: Boolean(profile),
+    authenticated: Boolean(profile?.session?.token),
+    login: profile?.session?.login ?? null,
+    expiresAt: profile?.session?.expiresAt ?? null,
+    tokenSource: hasEnvToken ? "environment" : profile?.session?.token ? "profile" : "none",
+    apiUrl: profile?.apiUrl ?? currentConfig.apiUrl ?? null,
+  };
+}
+
+function profileList(currentConfig = config) {
+  const names = new Set([defaultProfileName, currentConfig.activeProfile ?? defaultProfileName, ...Object.keys(currentConfig.profiles ?? {})]);
+  return [...names].sort((left, right) => (left === currentConfig.activeProfile ? -1 : right === currentConfig.activeProfile ? 1 : left.localeCompare(right))).map((name) => profilePublicState(name, currentConfig));
+}
+
+function selectProfileName(currentConfig, requestedName) {
+  const requested = requestedName ? normalizeProfileName(requestedName) : undefined;
+  if (requested) return requested;
+  const configured = currentConfig?.activeProfile ? normalizeProfileName(currentConfig.activeProfile) : defaultProfileName;
+  if (currentConfig?.profiles?.[configured]) return configured;
+  return currentConfig?.profiles?.[defaultProfileName] || configured === defaultProfileName ? defaultProfileName : configured;
+}
+
+function normalizeProfileName(value) {
+  const name = String(value ?? defaultProfileName).trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(name)) throw new Error("Profile names must be 1-64 characters and use letters, numbers, dots, dashes, or underscores.");
+  return name;
+}
+
+function cliOptionValue(args, optionName) {
+  const dashed = `--${optionName.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === dashed) {
+      const next = args[index + 1];
+      return next && !next.startsWith("--") ? next : undefined;
+    }
+    if (value?.startsWith(`${dashed}=`)) return value.slice(dashed.length + 1);
+  }
+  return undefined;
+}
+
+function upsertProfile(currentConfig, profileName, patch) {
+  const now = new Date().toISOString();
+  const existing = currentConfig.profiles?.[profileName] ?? {};
+  const profiles = {
+    ...(currentConfig.profiles ?? {}),
+    [profileName]: stripUndefined({
+      ...existing,
+      apiUrl: patch.apiUrl ?? existing.apiUrl,
+      session: patch.session ?? existing.session,
+      createdAt: existing.createdAt ?? now,
+      updatedAt: now,
+    }),
+  };
+  return normalizeConfig({ ...currentConfig, apiUrl: patch.apiUrl ?? currentConfig.apiUrl, activeProfile: profileName, profiles });
+}
+
+function ensureProfile(currentConfig, profileName, options = {}) {
+  const existing = currentConfig.profiles?.[profileName];
+  const nextConfig = existing ? currentConfig : upsertProfile(currentConfig, profileName, {});
+  return options.activate ? setActiveProfile(nextConfig, profileName) : nextConfig;
+}
+
+function setActiveProfile(currentConfig, profileName) {
+  return normalizeConfig({ ...currentConfig, activeProfile: profileName });
+}
+
+function clearProfileSession(currentConfig, profileName) {
+  const existing = currentConfig.profiles?.[profileName];
+  if (!existing) return currentConfig;
+  const profiles = {
+    ...(currentConfig.profiles ?? {}),
+    [profileName]: stripUndefined({ ...existing, session: undefined, updatedAt: new Date().toISOString() }),
+  };
+  return normalizeConfig({ ...currentConfig, profiles });
+}
+
+function clearAllProfileSessions(currentConfig) {
+  const profiles = Object.fromEntries(
+    Object.entries(currentConfig.profiles ?? {}).map(([name, profile]) => [name, stripUndefined({ ...profile, session: undefined, updatedAt: new Date().toISOString() })]),
+  );
+  return normalizeConfig({ ...currentConfig, profiles });
+}
+
+function removeProfile(currentConfig, profileName) {
+  const profiles = { ...(currentConfig.profiles ?? {}) };
+  delete profiles[profileName];
+  const remaining = Object.keys(profiles);
+  const activeProfile = currentConfig.activeProfile === profileName ? (profiles[defaultProfileName] ? defaultProfileName : remaining[0] ?? defaultProfileName) : currentConfig.activeProfile;
+  return normalizeConfig({ ...currentConfig, activeProfile, profiles });
+}
+
+function hasPersistedConfigState(currentConfig) {
+  return Boolean(currentConfig.apiUrl || Object.keys(currentConfig.profiles ?? {}).length > 0);
 }
 
 function validationFromOptions(options) {
@@ -1272,12 +1482,21 @@ function isCacheableDecisionPack(payload, login) {
   return payload?.status === "ready" && typeof payload.login === "string" && payload.login.toLowerCase() === login.toLowerCase();
 }
 
-function decisionPackCachePath(login) {
-  const key = Buffer.from(`${apiUrl}\0${currentApiVersion}\0${login.toLowerCase()}`).toString("base64url");
+function decisionPackAuthCacheKey() {
+  const token = getApiToken();
+  if (!token) return null;
+  return createHash("sha256").update(token).digest("base64url");
+}
+
+function decisionPackCachePath(login, authCacheKey = decisionPackAuthCacheKey()) {
+  if (!authCacheKey) return null;
+  const key = Buffer.from(`${apiUrl}\0${currentApiVersion}\0${login.toLowerCase()}\0${authCacheKey}`).toString("base64url");
   return join(decisionPackCacheDir, `${key}.json`);
 }
 
 function writeDecisionPackCache(login, payload) {
+  const authCacheKey = decisionPackAuthCacheKey();
+  if (!authCacheKey) return { status: "skipped", reason: "missing_auth" };
   const cachedAt = new Date().toISOString();
   const sanitizedPayload = sanitizeDecisionPackForCache(payload);
   const entry = {
@@ -1285,6 +1504,7 @@ function writeDecisionPackCache(login, payload) {
     apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : currentApiVersion,
     packageVersion,
     apiUrl,
+    authCacheKey,
     login: login.toLowerCase(),
     cachedAt,
     payload: sanitizedPayload,
@@ -1293,30 +1513,35 @@ function writeDecisionPackCache(login, payload) {
   const serialized = `${JSON.stringify(entry, null, 2)}\n`;
   if (Buffer.byteLength(serialized, "utf8") > decisionPackCacheMaxBytes) return { status: "skipped", reason: "too_large" };
   mkdirSync(decisionPackCacheDir, { recursive: true, mode: 0o700 });
-  writeFileSync(decisionPackCachePath(login), serialized, { mode: 0o600 });
+  const path = decisionPackCachePath(login, authCacheKey);
+  if (!path) return { status: "skipped", reason: "missing_auth" };
+  writeFileSync(path, serialized, { mode: 0o600 });
   pruneDecisionPackCache();
   return { status: "stored", cachedAt };
 }
 
 function readDecisionPackCache(login) {
-  const path = decisionPackCachePath(login);
-  if (!existsSync(path)) return null;
+  const authCacheKey = decisionPackAuthCacheKey();
+  const path = decisionPackCachePath(login, authCacheKey);
+  if (!path || !existsSync(path)) return null;
   try {
     const entry = JSON.parse(readFileSync(path, "utf8"));
-    if (!isCompatibleDecisionPackCacheEntry(entry, login)) return null;
+    if (!isCompatibleDecisionPackCacheEntry(entry, login, authCacheKey)) return null;
     return entry;
   } catch {
     return null;
   }
 }
 
-function isCompatibleDecisionPackCacheEntry(entry, login) {
+function isCompatibleDecisionPackCacheEntry(entry, login, authCacheKey = decisionPackAuthCacheKey()) {
   return (
     entry &&
     typeof entry === "object" &&
     entry.schemaVersion === decisionPackCacheSchemaVersion &&
     entry.apiVersion === currentApiVersion &&
     entry.apiUrl === apiUrl &&
+    typeof entry.authCacheKey === "string" &&
+    entry.authCacheKey === authCacheKey &&
     typeof entry.cachedAt === "string" &&
     typeof entry.login === "string" &&
     entry.login.toLowerCase() === login.toLowerCase() &&
@@ -1467,6 +1692,7 @@ function sanitizeDiagnosticText(value, extraPaths = []) {
     process.env.GITTENSORY_MCP_TOKEN,
     process.env.GITTENSORY_TOKEN,
     config.session?.token,
+    ...profileSessions(config).map((entry) => entry.session.token),
   ].filter((candidate) => typeof candidate === "string" && candidate.length > 0);
   for (const token of sensitiveValues) {
     text = text.split(token).join("[redacted]");
@@ -1488,7 +1714,7 @@ function sanitizeDiagnosticText(value, extraPaths = []) {
 function loadConfig() {
   if (!existsSync(configPath)) return {};
   try {
-    return JSON.parse(readFileSync(configPath, "utf8"));
+    return normalizeConfig(JSON.parse(readFileSync(configPath, "utf8")));
   } catch {
     return {};
   }
@@ -1496,7 +1722,72 @@ function loadConfig() {
 
 function saveConfig(nextConfig) {
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
-  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(configPath, `${JSON.stringify(configForPersistence(nextConfig), null, 2)}\n`, { mode: 0o600 });
+}
+
+function normalizeConfig(rawConfig) {
+  const raw = rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig) ? rawConfig : {};
+  const profiles = {};
+  const rawProfiles = raw.profiles && typeof raw.profiles === "object" && !Array.isArray(raw.profiles) ? raw.profiles : {};
+  for (const [rawName, rawProfile] of Object.entries(rawProfiles)) {
+    try {
+      const name = normalizeProfileName(rawName);
+      const profile = normalizeProfile(rawProfile);
+      if (profile) profiles[name] = profile;
+    } catch {
+      // Ignore malformed profile names in local config instead of leaking paths or tokens.
+    }
+  }
+  if (raw.session?.token && !profiles[defaultProfileName]) {
+    profiles[defaultProfileName] = normalizeProfile({
+      apiUrl: raw.apiUrl,
+      session: raw.session,
+    });
+  }
+  let activeProfile = defaultProfileName;
+  try {
+    activeProfile = selectProfileName({ ...raw, profiles }, raw.activeProfile);
+  } catch {
+    activeProfile = defaultProfileName;
+  }
+  return stripUndefined({
+    ...raw,
+    activeProfile,
+    profiles,
+    session: profiles[defaultProfileName]?.session,
+  });
+}
+
+function normalizeProfile(rawProfile) {
+  const raw = rawProfile && typeof rawProfile === "object" && !Array.isArray(rawProfile) ? rawProfile : {};
+  const session = normalizeSession(raw.session);
+  return stripUndefined({
+    apiUrl: typeof raw.apiUrl === "string" ? raw.apiUrl.replace(/\/+$/, "") : undefined,
+    session,
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : undefined,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
+  });
+}
+
+function normalizeSession(rawSession) {
+  const raw = rawSession && typeof rawSession === "object" && !Array.isArray(rawSession) ? rawSession : {};
+  if (typeof raw.token !== "string" || raw.token.length === 0) return undefined;
+  return stripUndefined({
+    token: raw.token,
+    login: typeof raw.login === "string" ? raw.login : undefined,
+    expiresAt: typeof raw.expiresAt === "string" ? raw.expiresAt : undefined,
+    scopes: Array.isArray(raw.scopes) ? raw.scopes.filter((scope) => typeof scope === "string") : [],
+  });
+}
+
+function configForPersistence(nextConfig) {
+  const normalized = normalizeConfig(nextConfig);
+  return stripUndefined({
+    apiUrl: normalized.apiUrl,
+    activeProfile: normalized.activeProfile,
+    profiles: normalized.profiles,
+    session: normalized.profiles?.[defaultProfileName]?.session,
+  });
 }
 
 function sleep(ms) {
@@ -1512,7 +1803,7 @@ async function apiPost(path, body) {
 }
 
 async function apiFetch(path, init, options = {}) {
-  const token = getApiToken();
+  const token = options.token ?? getApiToken();
   if (options.auth !== false && !token) {
     const error = new Error("Run `gittensory-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
     error.status = 401;

@@ -382,6 +382,43 @@ describe("contributor evidence graph", () => {
     expect(graph.paths).toEqual([expect.objectContaining({ repoFullName: issueOnlyRepo, path: "src/from-merge.ts", mergedPullRequests: 1 })]);
   });
 
+  it("orders equal-weight cached labels and paths while using issue-only freshness", () => {
+    const leftRepo = "owner/a";
+    const rightRepo = "owner/b";
+    const issueOnlyRepo = "owner/c";
+    const graph = buildContributorEvidenceGraph({
+      login: "dev",
+      generatedAt: GENERATED_AT,
+      profile: profile({
+        registeredRepoActivity: { pullRequests: 3, mergedPullRequests: 1, issues: 1, reposTouched: [leftRepo, rightRepo, issueOnlyRepo], dominantLabels: [] },
+      }),
+      outcomeHistory: history([]),
+      roleContexts: [],
+      repositories: [repo(leftRepo), repo(rightRepo), repo(issueOnlyRepo)],
+      pullRequests: [
+        pr(rightRepo, 2, { labels: ["tie"], authorAssociation: "COLLABORATOR" }),
+        pr(leftRepo, 1, { state: "MERGED", labels: ["tie", "zeta", "alpha"], updatedAt: undefined, createdAt: undefined, mergedAt: FRESH_AT }),
+      ],
+      issues: [{ repoFullName: issueOnlyRepo, number: 3, title: "Issue-only", state: "open", authorLogin: "dev", authorAssociation: "CONTRIBUTOR", labels: ["issue"], linkedPrs: [], createdAt: undefined, updatedAt: FRESH_AT }],
+      pullRequestFiles: [file(rightRepo, 2, "src/a.ts"), file(leftRepo, 1, "src/z.ts"), file(leftRepo, 1, "src/a.ts")],
+    });
+
+    expect(graph.labels.map((label) => `${label.repoFullName}:${label.label}`)).toEqual([
+      "owner/a:alpha",
+      "owner/a:tie",
+      "owner/a:zeta",
+      "owner/b:tie",
+      "owner/c:issue",
+    ]);
+    expect(graph.paths.map((path) => `${path.repoFullName}:${path.path}:${path.mergedPullRequests}`)).toEqual([
+      "owner/a:src/a.ts:1",
+      "owner/a:src/z.ts:1",
+      "owner/b:src/a.ts:0",
+    ]);
+    expect(graph.repos.find((entry) => entry.repoFullName === issueOnlyRepo)).toMatchObject({ source: "github_cache", freshness: "fresh", issues: 1 });
+    expect(graph.repos.find((entry) => entry.repoFullName === rightRepo)).toMatchObject({ maintainerLane: true, normalContributorEvidenceAllowed: false });
+  });
+
   it("orders graph relationships deterministically and applies worker-safe bounds", () => {
     const repoNames = Array.from({ length: CONTRIBUTOR_EVIDENCE_GRAPH_MAX_REPOS + 5 }, (_, index) => `owner/repo-${String(index).padStart(2, "0")}`);
     const omittedRepo = repoNames[CONTRIBUTOR_EVIDENCE_GRAPH_MAX_REPOS + 1]!;
@@ -444,10 +481,61 @@ describe("contributor evidence graph", () => {
         login: "dev",
         profile: profile({ registeredRepoActivity: { pullRequests: 2, mergedPullRequests: 1, issues: 0, reposTouched: ["owner/registered", "owner/unregistered", ""], dominantLabels: [] } }),
         pullRequests: [pr("owner/registered", 1), pr("other/repo", 2, { authorLogin: "someone-else" })],
-        repoStats: [{ login: "dev", repoFullName: "owner/stats", pullRequests: 1, mergedPullRequests: 1, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] }],
+        issues: [{ repoFullName: "other/issue", number: 3, title: "Ignored issue", state: "open", authorLogin: "someone-else", authorAssociation: "CONTRIBUTOR", labels: [], linkedPrs: [], createdAt: FRESH_AT, updatedAt: FRESH_AT }],
+        repoStats: [
+          { login: "dev", repoFullName: "owner/stats", pullRequests: 1, mergedPullRequests: 1, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+          { login: "someone-else", repoFullName: "owner/ignored-stats", pullRequests: 1, mergedPullRequests: 1, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+        ],
         repositories: [repo("owner/registered"), repo("owner/stats"), { ...repo("owner/unregistered"), isRegistered: false }],
       }),
     ).toEqual(["owner/registered", "owner/stats"]);
     expect(evidenceGraphTouchedRepoFullNames({ login: "dev" })).toEqual([]);
+  });
+
+  it("keeps missing cache timestamps partial without optional cache fields", () => {
+    const repoFullName = "owner/missing-cache-dates";
+    const graph = buildContributorEvidenceGraph({
+      login: "dev",
+      generatedAt: GENERATED_AT,
+      profile: profile({ registeredRepoActivity: { pullRequests: 0, mergedPullRequests: 0, issues: 0, reposTouched: [repoFullName], dominantLabels: [] } }),
+      outcomeHistory: history([]),
+      roleContexts: [],
+      repositories: [repo(repoFullName)],
+      pullRequests: [pr(repoFullName, 4, { createdAt: undefined, updatedAt: undefined, mergedAt: undefined, authorAssociation: undefined, labels: ["cache"] })],
+      issues: [
+        {
+          repoFullName,
+          number: 5,
+          title: "Issue missing optional cache fields",
+          state: "open",
+          authorLogin: "dev",
+          authorAssociation: undefined,
+          labels: undefined,
+          linkedPrs: [],
+          createdAt: undefined,
+          updatedAt: undefined,
+        } as any,
+        {
+          repoFullName,
+          number: 6,
+          title: "Issue with label but missing cache dates",
+          state: "open",
+          authorLogin: "dev",
+          authorAssociation: "CONTRIBUTOR",
+          labels: ["cache-issue"],
+          linkedPrs: [],
+          createdAt: undefined,
+          updatedAt: undefined,
+        },
+      ],
+      pullRequestFiles: [file(repoFullName, 4, "src/undated.ts")],
+    });
+
+    expect(graph.repos).toEqual([expect.objectContaining({ repoFullName, source: "github_cache", freshness: "partial" })]);
+    expect(graph.labels).toEqual([
+      expect.objectContaining({ repoFullName, label: "cache", freshness: "partial" }),
+      expect.objectContaining({ repoFullName, label: "cache-issue", freshness: "partial" }),
+    ]);
+    expect(graph.paths).toEqual([expect.objectContaining({ repoFullName, path: "src/undated.ts", freshness: "partial" })]);
   });
 });

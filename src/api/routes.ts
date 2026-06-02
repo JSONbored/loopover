@@ -89,6 +89,7 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
+  buildInstallationRepairDiagnostics,
   enrichInstallationHealth,
   refreshContributorActivity,
   refreshInstallationHealth,
@@ -135,7 +136,12 @@ import {
   LATEST_RECOMMENDED_MCP_VERSION,
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
-import { buildWeeklyValueReport, generateWeeklyValueReport, loadWeeklyValueReport } from "../services/weekly-value-report";
+import {
+  buildWeeklyValueReport,
+  formatWeeklyValueReportMarkdown,
+  generateWeeklyValueReport,
+  loadWeeklyValueReport,
+} from "../services/weekly-value-report";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
@@ -969,11 +975,18 @@ export function createApp() {
 
   app.get("/v1/app/analytics/weekly-value-report", async (c) => {
     const variant = c.req.query("variant") === "operator" ? "operator" : "public";
-    const allowedRoles: ControlPanelRoleName[] = variant === "operator" ? ["operator"] : ["miner", "maintainer", "owner", "operator"];
+    const allowedRoles: ControlPanelRoleName[] =
+      variant === "operator" ? ["operator"] : ["miner", "maintainer", "owner", "operator"];
     const forbidden = await requireAppRole(c, allowedRoles);
     if (forbidden) return forbidden;
     const days = Math.max(1, Math.min(31, Number(c.req.query("days") ?? 7) || 7));
-    return c.json(await loadWeeklyValueReport(c.env, { variant, days }));
+    const report = await loadWeeklyValueReport(c.env, { variant, days });
+    if (c.req.query("format") === "markdown") {
+      return c.text(formatWeeklyValueReportMarkdown(report), 200, {
+        "Content-Type": "text/markdown; charset=utf-8",
+      });
+    }
+    return c.json(report);
   });
 
   app.get("/v1/app/commands", async (c) =>
@@ -1418,6 +1431,26 @@ export function createApp() {
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json(enrichInstallationHealth(health));
+  });
+
+  app.get("/v1/installations/:id/repair", async (c) => {
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    const health = await getInstallationHealth(c.env, installationId);
+    if (!health) return c.json({ error: "installation_health_not_found" }, 404);
+    return c.json(await buildInstallationRepairDiagnostics(c.env, health));
+  });
+
+  app.post("/v1/installations/:id/repair/refresh", async (c) => {
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    const refreshed = await refreshInstallationHealth(c.env);
+    if (!refreshed.installations.some((installation) => installation.installationId === installationId)) {
+      return c.json({ error: "installation_not_found" }, 404);
+    }
+    const health = await getInstallationHealth(c.env, installationId);
+    if (!health) return c.json({ error: "installation_health_not_found" }, 404);
+    return c.json({ ...(await buildInstallationRepairDiagnostics(c.env, health)), refreshed: true });
   });
 
   app.get("/v1/repos", async (c) => c.json(await listRepositories(c.env)));
@@ -3040,7 +3073,6 @@ async function requireCommandPreviewRepoAccess(
   const requestedRepo = repoFullName.toLowerCase();
   const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
   if (scopedRepoNames.has(requestedRepo)) return null;
-  if (repo?.installationId !== undefined && repo.installationId !== null && scope.installationIds.includes(repo.installationId)) return null;
   if (repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase())) return null;
   return c.json({ error: "forbidden_repo" }, 403);
 }

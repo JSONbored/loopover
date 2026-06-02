@@ -421,6 +421,231 @@
           "detail"
         ]
       },
+      "ActionPortfolio": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "bucketOrder": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionPortfolioBucketName"
+            }
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "$ref": "#/components/schemas/ActionPortfolioBucketName"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ActionPortfolioItem"
+                  }
+                }
+              },
+              "required": [
+                "bucket",
+                "label",
+                "summary",
+                "actions"
+              ]
+            }
+          },
+          "topActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionPortfolioItem"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "bucketOrder",
+          "buckets",
+          "topActions",
+          "counts",
+          "summary"
+        ]
+      },
+      "ActionPortfolioBucketName": {
+        "type": "string",
+        "enum": [
+          "cleanup",
+          "wait",
+          "direct_pr",
+          "issue_discovery",
+          "avoid",
+          "maintainer_lane"
+        ]
+      },
+      "ActionPortfolioItem": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "$ref": "#/components/schemas/ActionPortfolioBucketName"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "actionKind": {
+            "$ref": "#/components/schemas/DecisionActionKind"
+          },
+          "priorityScore": {
+            "type": "number"
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/DecisionRecommendation"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "recommended",
+              "blocked",
+              "watch"
+            ]
+          },
+          "whyNow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scoreabilityImpact": {
+            "type": "string"
+          },
+          "riskImpact": {
+            "type": "string"
+          },
+          "maintainerImpact": {
+            "type": "string"
+          },
+          "blockedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rerunWhen": {
+            "type": "string"
+          },
+          "publicSafeSummary": {
+            "type": "string"
+          },
+          "nextActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publicNextActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "decision_pack"
+            ]
+          },
+          "scenarioProjection": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "github_observed",
+                  "user_supplied"
+                ]
+              },
+              "pendingMergedPrCount": {
+                "type": "number"
+              },
+              "pendingClosedPrCount": {
+                "type": "number"
+              },
+              "approvedPrCount": {
+                "type": "number"
+              },
+              "expectedOpenPrCountAfterMerge": {
+                "type": "number"
+              },
+              "notes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "source",
+              "pendingMergedPrCount",
+              "pendingClosedPrCount",
+              "approvedPrCount",
+              "notes"
+            ]
+          }
+        },
+        "required": [
+          "bucket",
+          "repoFullName",
+          "priorityScore",
+          "recommendation",
+          "status",
+          "whyNow",
+          "scoreabilityImpact",
+          "riskImpact",
+          "maintainerImpact",
+          "blockedBy",
+          "rerunWhen",
+          "publicSafeSummary",
+          "nextActions",
+          "publicNextActions",
+          "source"
+        ]
+      },
+      "DecisionActionKind": {
+        "type": "string",
+        "enum": [
+          "cleanup_existing_prs",
+          "land_existing_prs",
+          "open_new_direct_pr",
+          "file_issue_discovery",
+          "maintainer_lane_improve_repo",
+          "maintainer_cut_readiness"
+        ]
+      },
+      "DecisionRecommendation": {
+        "type": "string",
+        "enum": [
+          "pursue",
+          "cleanup_first",
+          "maintainer_lane",
+          "avoid_for_now",
+          "watch"
+        ]
+      },
       "WorkboardItem": {
         "type": "object",
         "properties": {
@@ -1977,6 +2202,9 @@
               }
             }
           },
+          "actionPortfolio": {
+            "$ref": "#/components/schemas/ActionPortfolio"
+          },
           "cleanupFirst": {
             "type": "array",
             "items": {
@@ -2062,6 +2290,7 @@
           "opportunities",
           "repoDecisions",
           "topActions",
+          "actionPortfolio",
           "cleanupFirst",
           "pursueRepos",
           "avoidRepos",
@@ -7328,6 +7557,269 @@
           "summary"
         ]
       },
+      "CommandPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "command": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "audience": {
+                "type": "string"
+              },
+              "boundary": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "endpoint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "command",
+              "audience",
+              "boundary",
+              "description",
+              "endpoint"
+            ]
+          },
+          "request": {
+            "type": "object",
+            "additionalProperties": {
+              "nullable": true
+            }
+          },
+          "preview": {
+            "type": "object",
+            "properties": {
+              "boundary": {
+                "type": "string",
+                "enum": [
+                  "public",
+                  "public-safe",
+                  "private-api",
+                  "private-mcp"
+                ]
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "missingPermissions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "permissionDiagnostics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "string"
+                    },
+                    "requiredAccess": {
+                      "type": "string"
+                    },
+                    "currentAccess": {
+                      "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "action": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "requiredAccess",
+                    "currentAccess",
+                    "ok",
+                    "action"
+                  ]
+                }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "decision": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "skipped",
+                      "missing_permission",
+                      "private_api"
+                    ]
+                  },
+                  "willComment": {
+                    "type": "boolean"
+                  },
+                  "willLabel": {
+                    "type": "boolean"
+                  },
+                  "willCheckRun": {
+                    "type": "boolean"
+                  },
+                  "skipped": {
+                    "type": "boolean"
+                  },
+                  "skipReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "actions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "comment",
+                        "label",
+                        "check_run",
+                        "skip",
+                        "none"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "willComment",
+                  "willLabel",
+                  "willCheckRun",
+                  "skipped",
+                  "skipReason",
+                  "actions",
+                  "summary"
+                ]
+              },
+              "sample": {
+                "type": "object",
+                "properties": {
+                  "pullNumber": {
+                    "type": "number"
+                  },
+                  "authorLogin": {
+                    "type": "string"
+                  },
+                  "authorType": {
+                    "type": "string"
+                  },
+                  "authorAssociation": {
+                    "type": "string"
+                  },
+                  "commenterLogin": {
+                    "type": "string"
+                  },
+                  "commenterAssociation": {
+                    "type": "string"
+                  },
+                  "minerStatus": {
+                    "type": "string",
+                    "enum": [
+                      "confirmed",
+                      "not_found",
+                      "unavailable"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "linkedIssues": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "required": [
+                  "pullNumber",
+                  "authorLogin",
+                  "authorType",
+                  "authorAssociation",
+                  "commenterLogin",
+                  "commenterAssociation",
+                  "minerStatus",
+                  "title",
+                  "body",
+                  "labels",
+                  "linkedIssues"
+                ]
+              },
+              "sanitizer": {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": "boolean"
+                  },
+                  "forbiddenTerms": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "passed",
+                  "forbiddenTerms"
+                ]
+              }
+            },
+            "required": [
+              "boundary",
+              "endpoint",
+              "target",
+              "body",
+              "missingPermissions",
+              "permissionDiagnostics",
+              "warnings",
+              "decision"
+            ]
+          }
+        },
+        "required": [
+          "generatedAt",
+          "command",
+          "request",
+          "preview"
+        ]
+      },
       "AgentRun": {
         "type": "object",
         "properties": {
@@ -11698,27 +12190,11 @@
       "post": {
         "responses": {
           "200": {
-            "description": "Live app mutation or preview response",
+            "description": "Maintainer dry-run preview of a sanitized @gittensory command response (no GitHub mutation)",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
+                  "$ref": "#/components/schemas/CommandPreviewResponse"
                 }
               }
             }
@@ -11728,6 +12204,12 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role"
+          },
+          "404": {
+            "description": "Command not found"
           }
         },
         "security": [

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -1272,12 +1273,21 @@ function isCacheableDecisionPack(payload, login) {
   return payload?.status === "ready" && typeof payload.login === "string" && payload.login.toLowerCase() === login.toLowerCase();
 }
 
-function decisionPackCachePath(login) {
-  const key = Buffer.from(`${apiUrl}\0${currentApiVersion}\0${login.toLowerCase()}`).toString("base64url");
+function decisionPackAuthCacheKey() {
+  const token = getApiToken();
+  if (!token) return null;
+  return createHash("sha256").update(token).digest("base64url");
+}
+
+function decisionPackCachePath(login, authCacheKey = decisionPackAuthCacheKey()) {
+  if (!authCacheKey) return null;
+  const key = Buffer.from(`${apiUrl}\0${currentApiVersion}\0${login.toLowerCase()}\0${authCacheKey}`).toString("base64url");
   return join(decisionPackCacheDir, `${key}.json`);
 }
 
 function writeDecisionPackCache(login, payload) {
+  const authCacheKey = decisionPackAuthCacheKey();
+  if (!authCacheKey) return { status: "skipped", reason: "missing_auth" };
   const cachedAt = new Date().toISOString();
   const sanitizedPayload = sanitizeDecisionPackForCache(payload);
   const entry = {
@@ -1285,6 +1295,7 @@ function writeDecisionPackCache(login, payload) {
     apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : currentApiVersion,
     packageVersion,
     apiUrl,
+    authCacheKey,
     login: login.toLowerCase(),
     cachedAt,
     payload: sanitizedPayload,
@@ -1293,30 +1304,35 @@ function writeDecisionPackCache(login, payload) {
   const serialized = `${JSON.stringify(entry, null, 2)}\n`;
   if (Buffer.byteLength(serialized, "utf8") > decisionPackCacheMaxBytes) return { status: "skipped", reason: "too_large" };
   mkdirSync(decisionPackCacheDir, { recursive: true, mode: 0o700 });
-  writeFileSync(decisionPackCachePath(login), serialized, { mode: 0o600 });
+  const path = decisionPackCachePath(login, authCacheKey);
+  if (!path) return { status: "skipped", reason: "missing_auth" };
+  writeFileSync(path, serialized, { mode: 0o600 });
   pruneDecisionPackCache();
   return { status: "stored", cachedAt };
 }
 
 function readDecisionPackCache(login) {
-  const path = decisionPackCachePath(login);
-  if (!existsSync(path)) return null;
+  const authCacheKey = decisionPackAuthCacheKey();
+  const path = decisionPackCachePath(login, authCacheKey);
+  if (!path || !existsSync(path)) return null;
   try {
     const entry = JSON.parse(readFileSync(path, "utf8"));
-    if (!isCompatibleDecisionPackCacheEntry(entry, login)) return null;
+    if (!isCompatibleDecisionPackCacheEntry(entry, login, authCacheKey)) return null;
     return entry;
   } catch {
     return null;
   }
 }
 
-function isCompatibleDecisionPackCacheEntry(entry, login) {
+function isCompatibleDecisionPackCacheEntry(entry, login, authCacheKey = decisionPackAuthCacheKey()) {
   return (
     entry &&
     typeof entry === "object" &&
     entry.schemaVersion === decisionPackCacheSchemaVersion &&
     entry.apiVersion === currentApiVersion &&
     entry.apiUrl === apiUrl &&
+    typeof entry.authCacheKey === "string" &&
+    entry.authCacheKey === authCacheKey &&
     typeof entry.cachedAt === "string" &&
     typeof entry.login === "string" &&
     entry.login.toLowerCase() === login.toLowerCase() &&

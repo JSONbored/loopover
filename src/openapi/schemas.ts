@@ -761,8 +761,8 @@ export const InstallationRepairSchema = z
         }),
       }),
     ),
-    requiredPermissions: z.record(z.string()),
-    optionalPermissions: z.record(z.string()),
+    requiredPermissions: z.record(z.string(), z.string()),
+    optionalPermissions: z.record(z.string(), z.string()),
     requiredEvents: z.array(z.string()),
     optionalEvents: z.array(z.string()),
     modeImpacts: z.array(

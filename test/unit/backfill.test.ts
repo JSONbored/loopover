@@ -413,6 +413,47 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("counts comment-only and label-only repair surfaces separately", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "comments", full_name: "JSONbored/comments", private: true, owner: { login: "JSONbored" } }, 124);
+    await upsertRepositoryFromGitHub(env, { name: "labels", full_name: "JSONbored/labels", private: true, owner: { login: "JSONbored" } }, 124);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/comments",
+      commentMode: "detected_contributors_only",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/labels",
+      commentMode: "off",
+      publicSurface: "label_only",
+      autoLabelEnabled: true,
+      checkRunMode: "off",
+    });
+
+    const repair = await buildInstallationRepairDiagnostics(env, {
+      installationId: 124,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 2,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["issues"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(repair.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true })] }),
+      ]),
+    );
+  });
+
   it("refreshes installation health from live GitHub App metadata", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedRegisteredRepo(env);

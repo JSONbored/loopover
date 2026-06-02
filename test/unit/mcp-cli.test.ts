@@ -344,6 +344,28 @@ describe("gittensory-mcp CLI", () => {
     expect(JSON.stringify(list)).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|gittensory-cli-/);
   });
 
+  it("keeps environment tokens ahead of active profile sessions", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    await runAsync(["login", "--profile", "jsonbored", "--github-token", "github-jsonbored", "--json"], env);
+    await runAsync(["profile", "switch", "jsonbored", "--json"], env);
+    const whoami = JSON.parse(await runAsync(["whoami", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: string; login: string };
+    const status = JSON.parse(await runAsync(["status", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: { tokenSource: string }; auth: { login: string } };
+
+    expect(whoami).toMatchObject({ profile: "jsonbored", login: "oktofeesh1" });
+    expect(status).toMatchObject({ auth: { login: "oktofeesh1" }, profile: { tokenSource: "environment" } });
+    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" })]));
+  });
+
   it("logs out only the selected profile and reports missing profiles safely", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];

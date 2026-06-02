@@ -839,7 +839,10 @@ async function loginWithDeviceFlow() {
 async function logout(options) {
   const profileName = selectedProfileName(options);
   const all = options.all === true;
-  const tokens = all ? profileSessions(config).map((entry) => entry.session.token) : [configuredProfileToken(profileName) ?? getEnvApiToken()].filter(Boolean);
+  const envToken = getEnvApiToken();
+  const tokens = all
+    ? [envToken, ...profileSessions(config).map((entry) => entry.session.token)].filter(Boolean)
+    : [envToken ?? configuredProfileToken(profileName)].filter(Boolean);
   const remote = [];
   for (const token of [...new Set(tokens)]) {
     try {
@@ -1145,7 +1148,7 @@ function initClient(options) {
 }
 
 function getApiToken() {
-  return configuredProfileToken(activeProfileName) ?? getEnvApiToken();
+  return getEnvApiToken() ?? configuredProfileToken(activeProfileName);
 }
 
 function getEnvApiToken() {
@@ -1175,7 +1178,7 @@ function profilePublicState(profileName, currentConfig = config) {
     authenticated: Boolean(profile?.session?.token),
     login: profile?.session?.login ?? null,
     expiresAt: profile?.session?.expiresAt ?? null,
-    tokenSource: profile?.session?.token ? "profile" : hasEnvToken ? "environment" : "none",
+    tokenSource: hasEnvToken ? "environment" : profile?.session?.token ? "profile" : "none",
     apiUrl: profile?.apiUrl ?? currentConfig.apiUrl ?? null,
   };
 }

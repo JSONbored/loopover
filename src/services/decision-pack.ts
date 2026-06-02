@@ -130,6 +130,25 @@ export type LanguageMatch = {
   match: boolean;
 };
 
+export type RepoDecisionFitLevel = "strong" | "moderate" | "weak" | "blocked";
+export type RepoDecisionPressureLevel = "low" | "medium" | "high" | "critical";
+export type RepoDecisionPolicyConfidence = "high" | "medium" | "low";
+
+export type RepoDecisionTradeoffDimension<TLevel extends string> = {
+  level: TLevel;
+  summary: string;
+  reasons: string[];
+};
+
+export type RepoDecisionTradeoffSummary = {
+  directPrFit: RepoDecisionTradeoffDimension<RepoDecisionFitLevel>;
+  issueDiscoveryFit: RepoDecisionTradeoffDimension<RepoDecisionFitLevel>;
+  maintainerBurden: RepoDecisionTradeoffDimension<RepoDecisionPressureLevel>;
+  queuePressure: RepoDecisionTradeoffDimension<RepoDecisionPressureLevel>;
+  policyConfidence: RepoDecisionTradeoffDimension<RepoDecisionPolicyConfidence>;
+  publicSummary: string;
+};
+
 export type RepoDecision = {
   repoFullName: string;
   recommendation: DecisionRecommendation;
@@ -159,6 +178,7 @@ export type RepoDecision = {
   publicNextActions: string[];
   issueQuality?: IssueQualitySummary | undefined;
   manifestSummary?: RepoDecisionManifestSummary | undefined;
+  tradeoffSummary?: RepoDecisionTradeoffSummary | undefined;
 };
 
 export type RepoDecisionManifestSummary = {
@@ -658,6 +678,16 @@ function buildRepoDecision(args: {
   const repoOutcomePatterns = summarizeRepoOutcomePatterns(args.repoOutcomePatterns);
   const outcomeRiskLines = args.roleContext.maintainerLane ? [] : (repoOutcomePatterns?.riskPatterns ?? []).slice(0, 2).map((pattern) => pattern.detail);
   const outcomeSuccessLines = recommendation === "pursue" ? (repoOutcomePatterns?.successPatterns ?? []).slice(0, 1).map((pattern) => pattern.detail) : [];
+  const tradeoffSummary = buildRepoDecisionTradeoffSummary({
+    repoFullName: args.repo.fullName,
+    lane: lane.lane,
+    queue,
+    roleContext: args.roleContext,
+    outcome: args.outcome,
+    issueQuality,
+    manifestSummary,
+    blockers,
+  });
   return {
     repoFullName: args.repo.fullName,
     recommendation,
@@ -677,6 +707,170 @@ function buildRepoDecision(args: {
     publicNextActions: [...new Set([...publicNextActionsFor(recommendation, copyContext), ...manifestReasons.publicNextActions])],
     issueQuality,
     manifestSummary,
+    tradeoffSummary,
+  };
+}
+
+function buildRepoDecisionTradeoffSummary(args: {
+  repoFullName: string;
+  lane: string;
+  queue: RepoDecision["queue"];
+  roleContext: RoleContext;
+  outcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined;
+  issueQuality: IssueQualitySummary | undefined;
+  manifestSummary: RepoDecisionManifestSummary | undefined;
+  blockers: ScoreBlocker[];
+}): RepoDecisionTradeoffSummary {
+  const directPrFit = tradeoffDimension(...directPrFitFor(args));
+  const issueDiscoveryFit = tradeoffDimension(...issueDiscoveryFitFor(args));
+  const maintainerBurden = tradeoffDimension(...maintainerBurdenFor(args));
+  const queuePressure = tradeoffDimension(...queuePressureFor(args.queue));
+  const policyConfidence = tradeoffDimension(...policyConfidenceFor(args));
+  const publicSummary = sanitizeTradeoffPublicText(
+    `${args.repoFullName}: ${tradeoffPrimaryPath(directPrFit.level, issueDiscoveryFit.level)}. Maintainer burden is ${maintainerBurden.level}; queue pressure is ${queuePressure.level}; policy confidence is ${policyConfidence.level}.`,
+  );
+  return { directPrFit, issueDiscoveryFit, maintainerBurden, queuePressure, policyConfidence, publicSummary };
+}
+
+function directPrFitFor(args: {
+  lane: string;
+  roleContext: RoleContext;
+  outcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined;
+  blockers: ScoreBlocker[];
+}): [RepoDecisionFitLevel, string, string[]] {
+  if (args.roleContext.maintainerLane) {
+    return ["weak", "Direct PR fit is weak for normal contributor work because this is a maintainer-owned lane.", ["Treat this repo as owner health and intake work rather than a normal outside-contributor target."]];
+  }
+  if (args.lane === "inactive" || args.lane === "unknown") {
+    return ["blocked", "Direct PR fit is blocked until the repo has a clear active lane.", ["Refresh registry data or choose a repo with an active contribution lane."]];
+  }
+  if (args.lane === "issue_discovery") {
+    return ["blocked", "Direct PR fit is blocked because the repo is configured for issue-discovery flow.", ["Use actionable issue reports instead of implementation-first work here."]];
+  }
+  if (args.blockers.some((blocker) => blocker.code === "open_pr_pressure") || (args.outcome?.openPullRequests ?? 0) >= 3) {
+    return ["weak", "Direct PR fit is weak until existing contributor work is cleaned up.", ["Resolve open contributor work before adding more review load."]];
+  }
+  if (args.lane === "split") {
+    return ["moderate", "Direct PR fit is moderate because the repo supports direct PRs and issue discovery.", ["Pick direct PR work only when the change is narrow, tested, and clearly scoped."]];
+  }
+  return ["strong", "Direct PR fit is strong for focused, well-tested implementation work.", ["Use direct PR work when the change is narrow and review-ready."]];
+}
+
+function issueDiscoveryFitFor(args: {
+  lane: string;
+  issueQuality: IssueQualitySummary | undefined;
+  manifestSummary: RepoDecisionManifestSummary | undefined;
+}): [RepoDecisionFitLevel, string, string[]] {
+  if (args.lane === "inactive" || args.lane === "unknown") {
+    return ["blocked", "Issue-discovery fit is blocked until the repo has a clear active lane.", ["Refresh registry data or choose a repo with an active contribution lane."]];
+  }
+  if (args.manifestSummary?.issueDiscoveryPolicy === "discouraged") {
+    return ["weak", "Issue-discovery fit is weak because the maintainer focus policy discourages new issue reports.", ["Prefer direct fixes or repo-owner intake work."]];
+  }
+  if (args.issueQuality && args.issueQuality.readyCount === 0 && args.issueQuality.doNotUseCount + args.issueQuality.needsProofCount + args.issueQuality.holdCount > 0) {
+    return ["weak", "Issue-discovery fit is weak because cached candidates are not ready to use.", ["Only file new reports with clear evidence and low duplicate risk."]];
+  }
+  if (args.lane === "issue_discovery") {
+    return ["strong", "Issue-discovery fit is strong for high-confidence, actionable reports.", ["Use this lane only for non-duplicate reports with clear maintainer value."]];
+  }
+  if (args.lane === "split") {
+    return args.issueQuality && args.issueQuality.readyCount > 0
+      ? ["strong", "Issue-discovery fit is strong because the split lane has ready issue-quality candidates.", ["Use ready candidates before adding new public reports."]]
+      : ["moderate", "Issue-discovery fit is moderate because the repo supports both issue reports and direct PRs.", ["Choose issue discovery only when the report is actionable and not a duplicate."]];
+  }
+  if (args.manifestSummary?.issueDiscoveryPolicy === "encouraged") {
+    return ["moderate", "Issue-discovery fit is moderate because maintainer focus policy welcomes high-quality reports.", ["Keep reports actionable, narrow, and evidence-backed."]];
+  }
+  return ["weak", "Issue-discovery fit is weak because the repo is direct-PR-first.", ["Prefer direct fixes over new issue reports."]];
+}
+
+function maintainerBurdenFor(args: {
+  queue: RepoDecision["queue"];
+  outcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined;
+  issueQuality: IssueQualitySummary | undefined;
+}): [RepoDecisionPressureLevel, string, string[]] {
+  const level = pressureLevel(args.queue);
+  const contributorOpenPrs = args.outcome?.openPullRequests ?? 0;
+  const adjustedLevel = contributorOpenPrs >= 5 ? "critical" : contributorOpenPrs >= 3 && level === "low" ? "medium" : level;
+  const duplicateRisk = (args.issueQuality?.doNotUseCount ?? 0) > 0;
+  const finalLevel = duplicateRisk && adjustedLevel === "low" ? "medium" : adjustedLevel;
+  return [
+    finalLevel,
+    finalLevel === "low"
+      ? "Maintainer burden is low for additional narrow work."
+      : finalLevel === "medium"
+        ? "Maintainer burden is medium; new work should be especially narrow and easy to review."
+        : finalLevel === "high"
+          ? "Maintainer burden is high; cleanup and issue quality matter before adding more work."
+          : "Maintainer burden is critical; avoid adding review load until the queue improves.",
+    [
+      finalLevel === "low" ? "Queue and contributor-specific pressure are low." : "Queue or contributor-specific pressure can add review friction.",
+      ...(duplicateRisk ? ["Some cached issue candidates are duplicate-prone or already covered."] : []),
+    ],
+  ];
+}
+
+function queuePressureFor(queue: RepoDecision["queue"]): [RepoDecisionPressureLevel, string, string[]] {
+  const level = pressureLevel(queue);
+  return [
+    level,
+    level === "low"
+      ? "Queue pressure is low."
+      : level === "medium"
+        ? "Queue pressure is medium."
+        : level === "high"
+          ? "Queue pressure is high."
+          : "Queue pressure is critical.",
+    [
+      level === "low"
+        ? "Cached queue counts do not show a busy review backlog."
+        : "Cached queue counts show enough open work to affect the recommended lane.",
+    ],
+  ];
+}
+
+function policyConfidenceFor(args: {
+  lane: string;
+  manifestSummary: RepoDecisionManifestSummary | undefined;
+}): [RepoDecisionPolicyConfidence, string, string[]] {
+  if (args.lane === "inactive" || args.lane === "unknown") {
+    return ["low", "Policy confidence is low because the active repo lane is unavailable.", ["Refresh registry data before relying on this recommendation."]];
+  }
+  if (args.manifestSummary?.issueDiscoveryPolicy === "discouraged" && (args.lane === "issue_discovery" || args.lane === "split")) {
+    return ["low", "Policy confidence is low because registry lane and maintainer focus policy point in different directions.", ["Ask the maintainer to clarify whether issue reports should be accepted."]];
+  }
+  if (args.manifestSummary?.issueDiscoveryPolicy === "encouraged" && args.lane === "direct_pr") {
+    return ["medium", "Policy confidence is medium because maintainer focus policy welcomes reports while the registry lane is direct-PR-first.", ["Prefer direct fixes unless the issue report is clearly actionable."]];
+  }
+  if (args.manifestSummary?.present) {
+    return ["high", "Policy confidence is high because registry lane and maintainer focus policy are aligned.", ["Follow the maintainer focus policy when choosing work."]];
+  }
+  return ["medium", "Policy confidence is medium because registry lane is available but no maintainer focus policy is cached.", ["Use registry lane guidance and rerun after focus policy is added."]];
+}
+
+function pressureLevel(queue: RepoDecision["queue"]): RepoDecisionPressureLevel {
+  if (queue.openPullRequests >= 25 || queue.openIssues >= 250) return "critical";
+  if (queue.openPullRequests >= 10 || queue.openIssues >= 100) return "high";
+  if (queue.openPullRequests >= 3 || queue.openIssues >= 50) return "medium";
+  return "low";
+}
+
+function tradeoffPrimaryPath(directPrFit: RepoDecisionFitLevel, issueDiscoveryFit: RepoDecisionFitLevel): string {
+  if (directPrFit === "strong" && (issueDiscoveryFit === "strong" || issueDiscoveryFit === "moderate")) return "direct PR work is the clearest path, with issue discovery available for strong reports";
+  if (directPrFit === "strong") return "direct PR work is the clearest path";
+  if (issueDiscoveryFit === "strong" && directPrFit === "moderate") return "both direct PR work and issue discovery can fit, but issue discovery is currently clearer";
+  if (issueDiscoveryFit === "strong") return "issue discovery is the clearest path";
+  if (directPrFit === "moderate" && issueDiscoveryFit === "moderate") return "both paths are possible with careful scope";
+  if (directPrFit === "moderate") return "direct PR work is possible with careful scope";
+  if (issueDiscoveryFit === "moderate") return "issue discovery is possible with careful evidence";
+  return "wait or choose a cleaner repo";
+}
+
+function tradeoffDimension<TLevel extends string>(level: TLevel, summary: string, reasons: string[]): RepoDecisionTradeoffDimension<TLevel> {
+  return {
+    level,
+    summary: sanitizeTradeoffPublicText(summary),
+    reasons: reasons.map(sanitizeTradeoffPublicText).filter(Boolean).slice(0, 4),
   };
 }
 
@@ -1045,6 +1239,16 @@ function sanitizePortfolioPublicSummary(value: string): string {
     .trim();
 }
 
+function sanitizeTradeoffPublicText(value: string): string {
+  return value
+    .replace(
+      /\b(wallet|hotkey|coldkey|seed phrase|mnemonic|private key|raw[-\s]?trust|trust[-\s]?score|scoreability|score[-\s]?estimate|estimated[-\s]?score|public[-\s]?score[-\s]?(?:estimate|prediction)|reward|reward[-\s]?estimate|payout|farming(?:[-\s]?language)?|private[-\s]?reviewability|private[-\s]?scoreability)\b/gi,
+      "private context",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 type RepoCopyContext = {
   repoFullName: string;
   lane: string;
@@ -1248,4 +1452,6 @@ export const __decisionPackInternals = {
   severityRank,
   clamp,
   round,
+  buildRepoDecisionTradeoffSummary,
+  sanitizeTradeoffPublicText,
 };

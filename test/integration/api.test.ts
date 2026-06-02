@@ -618,7 +618,19 @@ describe("api routes", () => {
       status: "ready",
       login: "oktofeesh1",
       repoFullName: "entrius/allways-ui",
-      decision: { repoFullName: "entrius/allways-ui", rewardUpside: expect.any(Object), roleContext: { role: "outside_contributor" } },
+      decision: {
+        repoFullName: "entrius/allways-ui",
+        rewardUpside: expect.any(Object),
+        roleContext: { role: "outside_contributor" },
+        tradeoffSummary: {
+          directPrFit: { level: expect.any(String), summary: expect.any(String) },
+          issueDiscoveryFit: { level: expect.any(String), summary: expect.any(String) },
+          maintainerBurden: { level: expect.any(String), summary: expect.any(String) },
+          queuePressure: { level: expect.any(String), summary: expect.any(String) },
+          policyConfidence: { level: expect.any(String), summary: expect.any(String) },
+          publicSummary: expect.any(String),
+        },
+      },
     });
 
     const agentPlan = await app.request(

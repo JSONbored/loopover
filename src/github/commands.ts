@@ -483,8 +483,9 @@ function helpSections(): string[] {
 
 function askSections(bundle: AgentRunBundle | null | undefined, question?: string): string[] {
   if (bundle?.run.status === "needs_snapshot_refresh") {
-    return refreshSections("next-action");
+    return refreshSections("ask");
   }
+  const sourceReferences = askSourceReferences(bundle);
   const cited = pickActions(bundle, () => true)
     .slice(0, 4)
     .map((action) => action.targetRepoFullName ? `${action.targetRepoFullName}: ${action.publicSafeSummary}` : action.publicSafeSummary)
@@ -499,12 +500,31 @@ function askSections(bundle: AgentRunBundle | null | undefined, question?: strin
     "",
     ...(cited.length > 0 ? cited : ["- No matching contribution-quality context is available in the current cached sources."]),
     "",
+    "**Citations**",
+    "",
+    ...(sourceReferences.length > 0 ? sourceReferences : ["- No concrete cached source reference is available for this response."]),
+    "",
     "**Source coverage**",
     "",
     "- Connected sources: cached issues, pull requests, recent merges, check/review status, signal snapshots, focus manifest, and upstream ruleset status.",
     "- README/docs context is used only when available from connected repo sources and app access allows it.",
     "- Source contents are not sent to optional AI unless explicitly enabled.",
   ];
+}
+
+function askSourceReferences(bundle: AgentRunBundle | null | undefined): string[] {
+  if (!bundle || bundle.actions.length === 0) return [];
+  return bundle.actions.slice(0, 6).map((action) => {
+    const target = [
+      action.targetRepoFullName ?? null,
+      action.targetPullNumber ? `PR #${action.targetPullNumber}` : null,
+      action.targetIssueNumber ? `issue #${action.targetIssueNumber}` : null,
+    ]
+      .filter((entry): entry is string => Boolean(entry))
+      .join(" ");
+    const reference = target.length > 0 ? target : "cached contributor context";
+    return `- ${reference}; source: action ${action.actionType}; freshness: ${publicStatus(bundle.run.status)}.`;
+  });
 }
 
 function minerContextSections(miner: GittensorContributorSnapshot | null | undefined): string[] {

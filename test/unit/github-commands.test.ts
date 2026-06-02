@@ -236,6 +236,11 @@ describe("GitHub mention commands", () => {
     expect(ask).toContain("### Gittensory contribution context Q&A");
     expect(ask).toContain("**Contribution context Q&A**");
     expect(ask).toContain("Question: what should I improve for contribution quality?");
+    expect(ask).toContain("Citations");
+    expect(ask).toContain("source: action choose_next_work");
+    expect(ask).toContain("freshness: completed.");
+    expect(ask).toContain("Source: cached GitHub issues/PRs/recent merges/checks, signal snapshots, focus manifest, and upstream ruleset status.");
+    expect(ask).toContain("Freshness: agent run status completed.");
     expect(ask).toContain("Connected sources: cached issues, pull requests, recent merges, check/review status");
   });
 
@@ -411,7 +416,7 @@ describe("GitHub mention commands", () => {
         summary: "refresh",
       },
     });
-    expect(askRefresh).toContain("**Next-action snapshot refresh**");
+    expect(askRefresh).toContain("**Contribution context snapshot refresh**");
 
     const empty = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory next-action")!,

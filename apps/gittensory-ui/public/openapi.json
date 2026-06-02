@@ -1910,6 +1910,201 @@
           "missing"
         ]
       },
+      "AgentRecommendationOutcomeState": {
+        "type": "string",
+        "enum": [
+          "accepted",
+          "ignored",
+          "stale",
+          "merged",
+          "closed",
+          "improved"
+        ]
+      },
+      "AgentRecommendationOutcomeStateBucket": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AgentRecommendationOutcomeState"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "state",
+          "count"
+        ]
+      },
+      "AgentRecommendationOutcomeRepoSummary": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "accepted": {
+            "type": "number"
+          },
+          "ignored": {
+            "type": "number"
+          },
+          "stale": {
+            "type": "number"
+          },
+          "merged": {
+            "type": "number"
+          },
+          "closed": {
+            "type": "number"
+          },
+          "improved": {
+            "type": "number"
+          },
+          "positive": {
+            "type": "number"
+          },
+          "negative": {
+            "type": "number"
+          },
+          "maintainerLaneTotal": {
+            "type": "number"
+          },
+          "latestOutcomeAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "signal": {
+            "type": "string",
+            "enum": [
+              "positive",
+              "negative",
+              "mixed",
+              "neutral"
+            ]
+          }
+        },
+        "required": [
+          "repoFullName",
+          "total",
+          "accepted",
+          "ignored",
+          "stale",
+          "merged",
+          "closed",
+          "improved",
+          "positive",
+          "negative",
+          "maintainerLaneTotal",
+          "signal"
+        ]
+      },
+      "AgentRecommendationOutcomeSummary": {
+        "type": "object",
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string"
+          },
+          "windowDays": {
+            "type": "number"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number"
+              },
+              "accepted": {
+                "type": "number"
+              },
+              "ignored": {
+                "type": "number"
+              },
+              "stale": {
+                "type": "number"
+              },
+              "merged": {
+                "type": "number"
+              },
+              "closed": {
+                "type": "number"
+              },
+              "improved": {
+                "type": "number"
+              },
+              "positive": {
+                "type": "number"
+              },
+              "negative": {
+                "type": "number"
+              },
+              "maintainerLaneTotal": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "total",
+              "accepted",
+              "ignored",
+              "stale",
+              "merged",
+              "closed",
+              "improved",
+              "positive",
+              "negative",
+              "maintainerLaneTotal"
+            ]
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentRecommendationOutcomeStateBucket"
+            }
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentRecommendationOutcomeRepoSummary"
+            }
+          },
+          "maintainerLane": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number"
+              },
+              "states": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AgentRecommendationOutcomeStateBucket"
+                }
+              }
+            },
+            "required": [
+              "total",
+              "states"
+            ]
+          },
+          "privateSummary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "login",
+          "generatedAt",
+          "windowDays",
+          "totals",
+          "states",
+          "repos",
+          "maintainerLane",
+          "privateSummary"
+        ]
+      },
       "ContributorOpenPrNextStepPacket": {
         "type": "object",
         "properties": {
@@ -2217,6 +2412,9 @@
               }
             }
           },
+          "recommendationOutcomeFeedback": {
+            "$ref": "#/components/schemas/AgentRecommendationOutcomeSummary"
+          },
           "dataQuality": {
             "type": "object",
             "additionalProperties": {
@@ -2256,6 +2454,7 @@
           "avoidRepos",
           "maintainerLaneRepos",
           "scoreBlockers",
+          "recommendationOutcomeFeedback",
           "dataQuality",
           "summary",
           "nextActions"

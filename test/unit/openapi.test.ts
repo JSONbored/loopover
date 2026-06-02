@@ -101,6 +101,7 @@ describe("OpenAPI contract", () => {
     expect(JSON.stringify(spec.components?.schemas?.ScorePreviewResult)).toContain("scenarioPreviews");
     expect(JSON.stringify(spec.components?.schemas?.RepoIntelligence)).toContain("burdenForecastFreshness");
     expect(JSON.stringify(spec.components?.schemas?.ContributorOutcomeHistory)).toContain("reconciliation");
+    expect(JSON.stringify(spec.components?.schemas?.ContributorDecisionPack)).toContain("recommendationOutcomeFeedback");
     expect(JSON.stringify(spec.components?.schemas?.LocalBranchAnalysis)).toContain("baseFreshness");
     expect(JSON.stringify(spec.components?.schemas?.LocalBranchAnalysis)).toContain("recommendedRerunCondition");
     expect(JSON.stringify(spec.components?.schemas?.Health)).toContain("minMcpVersion");

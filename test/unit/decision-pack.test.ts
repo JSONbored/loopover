@@ -142,6 +142,195 @@ describe("decision-pack service", () => {
     expect(maintainer.riskReasons.some((line) => line.includes("high closure risk"))).toBe(false);
   });
 
+  it("feeds private recommendation outcome feedback without changing public next actions", () => {
+    const baseline = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+    });
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 4,
+        accepted: 1,
+        ignored: 1,
+        stale: 0,
+        merged: 1,
+        closed: 1,
+        improved: 1,
+        positive: 3,
+        negative: 1,
+        maintainerLaneTotal: 2,
+        latestOutcomeAt: "2026-05-30T00:00:00.000Z",
+        signal: "positive",
+      },
+    });
+
+    expect(decision.recommendationOutcomeFeedback).toMatchObject({ signal: "positive", positive: 3, negative: 1, maintainerLaneTotal: 2 });
+    expect(decision.priorityScore).toBeGreaterThan(baseline.priorityScore);
+    expect(decision.whyThisHelps.some((line) => line.includes("Private recommendation feedback"))).toBe(true);
+    expect(decision.riskReasons.some((line) => line.includes("Private recommendation feedback"))).toBe(true);
+    expect(decision.publicNextActions.join(" ")).not.toMatch(/Private recommendation feedback|wallet|hotkey|raw trust score|reward estimate|payout|farming/i);
+  });
+
+  it("penalizes negative and mixed private recommendation feedback without leaking it publicly", () => {
+    const baseline = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+    });
+    const negative = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 6,
+        accepted: 0,
+        ignored: 2,
+        stale: 2,
+        merged: 0,
+        closed: 2,
+        improved: 0,
+        positive: 0,
+        negative: 6,
+        maintainerLaneTotal: 0,
+        latestOutcomeAt: "2026-05-30T00:00:00.000Z",
+        signal: "negative",
+      },
+    });
+    const mixed = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 4,
+        accepted: 1,
+        ignored: 1,
+        stale: 0,
+        merged: 1,
+        closed: 1,
+        improved: 0,
+        positive: 2,
+        negative: 2,
+        maintainerLaneTotal: 1,
+        latestOutcomeAt: null,
+        signal: "mixed",
+      },
+    });
+
+    expect(negative.priorityScore).toBeLessThan(baseline.priorityScore);
+    expect(negative.riskReasons.join(" ")).toMatch(/6 unresolved or negative/);
+    expect(negative.whyThisHelps.some((line) => line.includes("Private recommendation feedback"))).toBe(false);
+    expect(mixed.priorityScore).toBeLessThan(baseline.priorityScore);
+    expect(mixed.riskReasons.join(" ")).toMatch(/2 unresolved or negative/);
+    expect(mixed.whyThisHelps.join(" ")).toMatch(/2 positive/);
+    expect(`${negative.publicNextActions.join(" ")} ${mixed.publicNextActions.join(" ")}`).not.toMatch(/Private recommendation feedback/i);
+  });
+
+  it("keeps zero-count and maintainer-lane private feedback from changing repo decisions", () => {
+    const baseline = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+    });
+    const zero = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: false } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 0,
+        accepted: 0,
+        ignored: 0,
+        stale: 0,
+        merged: 0,
+        closed: 0,
+        improved: 0,
+        positive: 0,
+        negative: 0,
+        maintainerLaneTotal: 3,
+        latestOutcomeAt: null,
+        signal: "neutral",
+      },
+    });
+    const maintainerLane = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: { maintainerLane: true } as any,
+      outcome: undefined,
+      recommendationOutcomeFeedback: {
+        repoFullName: "owner/direct",
+        total: 2,
+        accepted: 0,
+        ignored: 1,
+        stale: 0,
+        merged: 0,
+        closed: 1,
+        improved: 0,
+        positive: 0,
+        negative: 2,
+        maintainerLaneTotal: 0,
+        latestOutcomeAt: null,
+        signal: "negative",
+      },
+    });
+
+    expect(zero.recommendationOutcomeFeedback).toBeUndefined();
+    expect(zero.priorityScore).toBe(baseline.priorityScore);
+    expect(maintainerLane.recommendation).toBe("maintainer_lane");
+    expect(maintainerLane.riskReasons.join(" ")).not.toMatch(/Private recommendation feedback/);
+  });
+
+  it("summarizes non-empty recommendation feedback in contributor decision packs", () => {
+    const pack = __decisionPackInternals.buildContributorDecisionPack({
+      login: "dev",
+      profile: {
+        login: "dev",
+        github: {},
+        source: {},
+        gittensor: null,
+        registeredRepoActivity: {},
+        trustSignals: {},
+      } as any,
+      outcomeHistory: { login: "dev", totals: {}, repoOutcomes: [], successPatterns: [], failurePatterns: [], summary: "" } as any,
+      repositories: [],
+      syncStates: [],
+      syncSegments: [],
+      totals: [],
+      scoringModelSnapshotId: "scoring-1",
+      contributorPullRequests: [],
+      contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("dev"),
+      recommendationOutcomeFeedback: {
+        login: "dev",
+        generatedAt: "2026-05-30T00:00:00.000Z",
+        windowDays: 90,
+        totals: {
+          total: 1,
+          accepted: 1,
+          ignored: 0,
+          stale: 0,
+          merged: 0,
+          closed: 0,
+          improved: 0,
+          positive: 1,
+          negative: 0,
+          maintainerLaneTotal: 1,
+        },
+        states: [{ state: "accepted", count: 1 }],
+        repos: [],
+        maintainerLane: { total: 1, states: [{ state: "merged", count: 1 }] },
+        privateSummary: "dev has feedback.",
+      },
+    });
+
+    expect(pack.summary).toContain("Recommendation feedback: 1 positive, 0 negative, 1 maintainer-lane separated.");
+  });
+
   it("redacts official hotkeys, loads stale snapshots, and resolves repo decisions case-insensitively", async () => {
     const env = createTestEnv();
     const pack = {
@@ -177,6 +366,7 @@ describe("decision-pack service", () => {
 
     const loaded = await loadContributorDecisionPack(env, "jsonbored");
     expect(loaded).toMatchObject({ source: "snapshot", snapshotAgeSeconds: expect.any(Number), stale: expect.any(Boolean), freshness: "stale", rebuildEnqueued: false });
+    expect(loaded?.recommendationOutcomeFeedback).toMatchObject({ login: "jsonbored", totals: { total: 0, maintainerLaneTotal: 0 } });
     expect(repoDecisionFromPack(loaded!, "jsonbored/AWESOME-CLAUDE")).toMatchObject({ recommendation: "maintainer_lane" });
     expect(repoDecisionFromPack(loaded!, "missing/repo")).toBeNull();
 

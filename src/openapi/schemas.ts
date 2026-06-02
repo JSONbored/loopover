@@ -1362,6 +1362,60 @@ export const ContributorStrategySchema = z
 
 export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]).openapi("DecisionPackFreshness");
 
+export const AgentRecommendationOutcomeStateSchema = z.enum(["accepted", "ignored", "stale", "merged", "closed", "improved"]).openapi("AgentRecommendationOutcomeState");
+
+export const AgentRecommendationOutcomeStateBucketSchema = z
+  .object({
+    state: AgentRecommendationOutcomeStateSchema,
+    count: z.number(),
+  })
+  .openapi("AgentRecommendationOutcomeStateBucket");
+
+export const AgentRecommendationOutcomeRepoSummarySchema = z
+  .object({
+    repoFullName: z.string(),
+    total: z.number(),
+    accepted: z.number(),
+    ignored: z.number(),
+    stale: z.number(),
+    merged: z.number(),
+    closed: z.number(),
+    improved: z.number(),
+    positive: z.number(),
+    negative: z.number(),
+    maintainerLaneTotal: z.number(),
+    latestOutcomeAt: z.string().nullable().optional(),
+    signal: z.enum(["positive", "negative", "mixed", "neutral"]),
+  })
+  .openapi("AgentRecommendationOutcomeRepoSummary");
+
+export const AgentRecommendationOutcomeSummarySchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    windowDays: z.number(),
+    totals: z.object({
+      total: z.number(),
+      accepted: z.number(),
+      ignored: z.number(),
+      stale: z.number(),
+      merged: z.number(),
+      closed: z.number(),
+      improved: z.number(),
+      positive: z.number(),
+      negative: z.number(),
+      maintainerLaneTotal: z.number(),
+    }),
+    states: z.array(AgentRecommendationOutcomeStateBucketSchema),
+    repos: z.array(AgentRecommendationOutcomeRepoSummarySchema),
+    maintainerLane: z.object({
+      total: z.number(),
+      states: z.array(AgentRecommendationOutcomeStateBucketSchema),
+    }),
+    privateSummary: z.string(),
+  })
+  .openapi("AgentRecommendationOutcomeSummary");
+
 export const ContributorDecisionPackSchema = z
   .object({
     status: z.enum(["ready"]),
@@ -1384,6 +1438,7 @@ export const ContributorDecisionPackSchema = z
     avoidRepos: z.array(z.record(z.unknown())),
     maintainerLaneRepos: z.array(z.record(z.unknown())),
     scoreBlockers: z.array(z.record(z.unknown())),
+    recommendationOutcomeFeedback: AgentRecommendationOutcomeSummarySchema,
     dataQuality: z.record(z.unknown()),
     summary: z.string(),
     nextActions: z.array(z.string()),

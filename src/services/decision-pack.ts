@@ -16,6 +16,7 @@ import {
   listSignalSnapshots,
   persistSignalSnapshot,
   recordAuditEvent,
+  getAgentRecommendationOutcomeSummary,
   upsertContributorEvidence,
   upsertContributorScoringProfile,
 } from "../db/repositories";
@@ -41,8 +42,11 @@ import { buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { loadIssueQualityReportMap } from "./issue-quality";
 import { loadRepoOutcomePatternsMap } from "./repo-outcome-patterns";
+import { evaluateRecommendationOutcomes } from "./recommendation-outcomes";
 import type {
   BountyRecord,
+  AgentRecommendationOutcomeRepoSummary,
+  AgentRecommendationOutcomeSummary,
   ContributorRepoStatRecord,
   IssueRecord,
   JsonValue,
@@ -93,6 +97,7 @@ export type ContributorDecisionPack = {
   avoidRepos: RepoDecision[];
   maintainerLaneRepos: RepoDecision[];
   scoreBlockers: ScoreBlocker[];
+  recommendationOutcomeFeedback: AgentRecommendationOutcomeSummary;
   dataQuality: {
     signalFidelity: ReturnType<typeof buildSignalFidelity>;
   };
@@ -142,6 +147,7 @@ export type RepoDecision = {
   labelFit: string[];
   scoreBlockers: ScoreBlocker[];
   repoOutcomePatterns?: RepoOutcomeSummary | undefined;
+  recommendationOutcomeFeedback?: RepoRecommendationOutcomeFeedback | undefined;
   riskReasons: string[];
   whyThisHelps: string[];
   nextActions: string[];
@@ -167,6 +173,20 @@ export type RepoOutcomeSummary = {
   sampleSize: number;
   successPatterns: OutcomePattern[];
   riskPatterns: OutcomePattern[];
+};
+
+export type RepoRecommendationOutcomeFeedback = {
+  signal: AgentRecommendationOutcomeRepoSummary["signal"];
+  total: number;
+  positive: number;
+  negative: number;
+  merged: number;
+  closed: number;
+  stale: number;
+  ignored: number;
+  improved: number;
+  maintainerLaneTotal: number;
+  latestOutcomeAt?: string | null | undefined;
 };
 
 export type DecisionAction = {
@@ -315,9 +335,11 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     fetchGittensorContributorSnapshot(login),
   ]);
   const repoStats = authoritativeContributorRepoStats(gittensorSnapshot, cachedRepoStats);
-  const [issueQualityByRepo, repoOutcomePatternsByRepo] = await Promise.all([
+  await evaluateRecommendationOutcomes(env, login);
+  const [issueQualityByRepo, repoOutcomePatternsByRepo, recommendationOutcomeFeedback] = await Promise.all([
     loadIssueQualityReportMap(env, repositories),
     loadRepoOutcomePatternsMap(env, repositories),
+    getAgentRecommendationOutcomeSummary(env, login),
   ]);
   const focusManifests = await loadRepoFocusManifests(
     env,
@@ -352,6 +374,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     openPrMonitor,
     focusManifests,
     repoOutcomePatternsByRepo,
+    recommendationOutcomeFeedback,
   });
 
   await upsertContributorEvidence(env, {
@@ -405,7 +428,9 @@ function buildContributorDecisionPack(args: {
   openPrMonitor: ContributorOpenPrMonitor;
   focusManifests?: Map<string, FocusManifest> | undefined;
   repoOutcomePatternsByRepo?: Map<string, RepoOutcomePatterns> | undefined;
+  recommendationOutcomeFeedback?: AgentRecommendationOutcomeSummary | undefined;
 }): ContributorDecisionPack {
+  const recommendationOutcomeFeedback = args.recommendationOutcomeFeedback ?? emptyRecommendationOutcomeFeedback(args.login);
   const registeredRepositories = args.repositories.filter((repo) => repo.isRegistered);
   const syncByRepo = new Map(args.syncStates.map((state) => [state.repoFullName.toLowerCase(), state]));
   const totalsByRepo = new Map(args.totals.map((total) => [total.repoFullName.toLowerCase(), total]));
@@ -426,6 +451,7 @@ function buildContributorDecisionPack(args: {
     }),
   );
   const roleByRepo = new Map(roleContexts.map((role) => [role.repoFullName.toLowerCase(), role]));
+  const recommendationFeedbackByRepo = new Map(recommendationOutcomeFeedback.repos.map((repo) => [repo.repoFullName.toLowerCase(), repo]));
   const repoDecisions = registeredRepositories
     .map((repo) => {
       const key = repo.fullName.toLowerCase();
@@ -440,6 +466,7 @@ function buildContributorDecisionPack(args: {
         issueQuality: issueQualityByRepo.get(key),
         focusManifest: args.focusManifests?.get(key),
         repoOutcomePatterns: args.repoOutcomePatternsByRepo?.get(key),
+        recommendationOutcomeFeedback: recommendationFeedbackByRepo.get(key),
       });
     })
     .sort((left, right) => right.priorityScore - left.priorityScore || left.repoFullName.localeCompare(right.repoFullName));
@@ -479,8 +506,9 @@ function buildContributorDecisionPack(args: {
     avoidRepos: repoDecisions.filter((decision) => decision.recommendation === "avoid_for_now").slice(0, 8),
     maintainerLaneRepos: repoDecisions.filter((decision) => decision.recommendation === "maintainer_lane").slice(0, 8),
     scoreBlockers,
+    recommendationOutcomeFeedback,
     dataQuality,
-    summary: `${args.login} has ${topActions.length} ranked action(s), ${scoreBlockers.length} scoreability blocker(s), and ${repoDecisions.length} registered repo decision(s).${monitorSummary}`,
+    summary: `${args.login} has ${topActions.length} ranked action(s), ${scoreBlockers.length} scoreability blocker(s), and ${repoDecisions.length} registered repo decision(s).${monitorSummary}${recommendationFeedbackSummary(recommendationOutcomeFeedback)}`,
     nextActions: packNextActions,
     openPrMonitor: monitor,
   };
@@ -497,6 +525,7 @@ function buildRepoDecision(args: {
   issueQuality?: IssueQualityReport | undefined;
   focusManifest?: FocusManifest | undefined;
   repoOutcomePatterns?: RepoOutcomePatterns | undefined;
+  recommendationOutcomeFeedback?: AgentRecommendationOutcomeRepoSummary | undefined;
 }): RepoDecision {
   const lane = buildLaneAdvice(args.repo, args.repo.fullName);
   const config = args.repo.registryConfig;
@@ -516,6 +545,7 @@ function buildRepoDecision(args: {
   };
   const blockers = scoreBlockersFor(args.repo.fullName, lane.lane, args.roleContext, args.outcome);
   const issueQuality = summarizeIssueQuality(args.issueQuality);
+  const recommendationFeedback = summarizeRecommendationOutcomeFeedback(args.recommendationOutcomeFeedback);
   const riskReasons = [
     ...(queue.openPullRequests >= 25 ? [`Repo queue is busy with ${queue.openPullRequests} open PR(s).`] : []),
     ...(queue.openIssues >= 100 ? [`Repo issue queue is large with ${queue.openIssues} open issue(s).`] : []),
@@ -526,7 +556,7 @@ function buildRepoDecision(args: {
     ...(issueQuality && issueQuality.readyCount === 0 && (lane.lane === "issue_discovery" || lane.lane === "split") ? ["No ready issue-quality candidate is cached for this repo."] : []),
   ];
   const recommendation = recommendationFor(lane.lane, args.roleContext, args.outcome, blockers);
-  const priorityScore = clamp(priorityFor(recommendation, rewardUpside, args.outcome, queue, blockers) + issueQualityPriorityAdjustment(lane.lane, issueQuality), 0, 100);
+  const priorityScore = clamp(priorityFor(recommendation, rewardUpside, args.outcome, queue, blockers) + issueQualityPriorityAdjustment(lane.lane, issueQuality) + recommendationOutcomePriorityAdjustment(recommendationFeedback), 0, 100);
   const syncLanguage = args.syncState?.primaryLanguage ?? null;
   const languageMatch: LanguageMatch = {
     language: syncLanguage,
@@ -552,6 +582,8 @@ function buildRepoDecision(args: {
   const repoOutcomePatterns = summarizeRepoOutcomePatterns(args.repoOutcomePatterns);
   const outcomeRiskLines = args.roleContext.maintainerLane ? [] : (repoOutcomePatterns?.riskPatterns ?? []).slice(0, 2).map((pattern) => pattern.detail);
   const outcomeSuccessLines = recommendation === "pursue" ? (repoOutcomePatterns?.successPatterns ?? []).slice(0, 1).map((pattern) => pattern.detail) : [];
+  const recommendationFeedbackRiskLines = args.roleContext.maintainerLane ? [] : recommendationFeedbackRiskReasons(recommendationFeedback);
+  const recommendationFeedbackSuccessLines = recommendationFeedbackWhyThisHelps(recommendationFeedback);
   return {
     repoFullName: args.repo.fullName,
     recommendation,
@@ -565,8 +597,9 @@ function buildRepoDecision(args: {
     labelFit,
     scoreBlockers: blockers,
     repoOutcomePatterns,
-    riskReasons: [...new Set([...riskReasons, ...manifestReasons.riskReasons, ...outcomeRiskLines])],
-    whyThisHelps: [...new Set([...whyThisHelpsFor(recommendation, copyContext), ...manifestReasons.whyThisHelps, ...outcomeSuccessLines])],
+    recommendationOutcomeFeedback: recommendationFeedback,
+    riskReasons: [...new Set([...riskReasons, ...manifestReasons.riskReasons, ...outcomeRiskLines, ...recommendationFeedbackRiskLines])],
+    whyThisHelps: [...new Set([...whyThisHelpsFor(recommendation, copyContext), ...manifestReasons.whyThisHelps, ...outcomeSuccessLines, ...recommendationFeedbackSuccessLines])],
     nextActions: [...new Set([...nextActionsFor(recommendation, copyContext), ...manifestReasons.nextActions])],
     publicNextActions: [...new Set([...publicNextActionsFor(recommendation, copyContext), ...manifestReasons.publicNextActions])],
     issueQuality,
@@ -639,6 +672,70 @@ function summarizeRepoOutcomePatterns(patterns: RepoOutcomePatterns | undefined)
     sampleSize: patterns.sampleSize,
     successPatterns: patterns.successPatterns.slice(0, 3),
     riskPatterns: patterns.riskPatterns.slice(0, 3),
+  };
+}
+
+function summarizeRecommendationOutcomeFeedback(feedback: AgentRecommendationOutcomeRepoSummary | undefined): RepoRecommendationOutcomeFeedback | undefined {
+  if (!feedback || feedback.total === 0) return undefined;
+  return {
+    signal: feedback.signal,
+    total: feedback.total,
+    positive: feedback.positive,
+    negative: feedback.negative,
+    merged: feedback.merged,
+    closed: feedback.closed,
+    stale: feedback.stale,
+    ignored: feedback.ignored,
+    improved: feedback.improved,
+    maintainerLaneTotal: feedback.maintainerLaneTotal,
+    latestOutcomeAt: feedback.latestOutcomeAt,
+  };
+}
+
+function recommendationFeedbackWhyThisHelps(feedback: RepoRecommendationOutcomeFeedback | undefined): string[] {
+  if (!feedback || feedback.positive === 0) return [];
+  return [`Private recommendation feedback has ${feedback.positive} positive contributor-lane outcome(s) for this repo (${feedback.merged} merged, ${feedback.improved} improved, ${feedback.total - feedback.negative - feedback.merged - feedback.improved} accepted).`];
+}
+
+function recommendationFeedbackRiskReasons(feedback: RepoRecommendationOutcomeFeedback | undefined): string[] {
+  if (!feedback || feedback.negative === 0) return [];
+  return [`Private recommendation feedback has ${feedback.negative} unresolved or negative contributor-lane outcome(s) for this repo (${feedback.closed} closed, ${feedback.stale} stale, ${feedback.ignored} ignored).`];
+}
+
+function recommendationOutcomePriorityAdjustment(feedback: RepoRecommendationOutcomeFeedback | undefined): number {
+  if (!feedback) return 0;
+  if (feedback.signal === "positive") return Math.min(8, feedback.positive * 2);
+  if (feedback.signal === "negative") return -Math.min(12, feedback.negative * 2);
+  if (feedback.signal === "mixed") return -Math.min(4, feedback.negative);
+  return 0;
+}
+
+function recommendationFeedbackSummary(feedback: AgentRecommendationOutcomeSummary): string {
+  if (feedback.totals.total === 0 && feedback.totals.maintainerLaneTotal === 0) return "";
+  return ` Recommendation feedback: ${feedback.totals.positive} positive, ${feedback.totals.negative} negative, ${feedback.totals.maintainerLaneTotal} maintainer-lane separated.`;
+}
+
+function emptyRecommendationOutcomeFeedback(login: string): AgentRecommendationOutcomeSummary {
+  return {
+    login,
+    generatedAt: nowIso(),
+    windowDays: 90,
+    totals: {
+      total: 0,
+      accepted: 0,
+      ignored: 0,
+      stale: 0,
+      merged: 0,
+      closed: 0,
+      improved: 0,
+      positive: 0,
+      negative: 0,
+      maintainerLaneTotal: 0,
+    },
+    states: [],
+    repos: [],
+    maintainerLane: { total: 0, states: [] },
+    privateSummary: `${login} has no evaluated recommendation outcomes in the last 90 day(s).`,
   };
 }
 
@@ -843,6 +940,7 @@ function sanitizeOfficialStats(profile: ContributorProfile): ContributorDecision
 
 function withSnapshotMetadata(snapshot: SignalSnapshotRecord): ContributorDecisionPack {
   const payload = snapshot.payload as unknown as ContributorDecisionPack;
+  const login = payload.login ?? snapshot.targetKey;
   const generatedAt = snapshot.generatedAt ?? payload.generatedAt ?? nowIso();
   const ageSeconds = Math.max(0, Math.floor(snapshotAgeMs(generatedAt) / 1000));
   const stale = snapshotAgeMs(generatedAt) > DECISION_PACK_MAX_AGE_MS;
@@ -850,12 +948,14 @@ function withSnapshotMetadata(snapshot: SignalSnapshotRecord): ContributorDecisi
     ...payload,
     status: "ready",
     source: "snapshot",
+    login,
     generatedAt,
     snapshotAgeSeconds: ageSeconds,
     stale,
     freshness: stale ? "stale" : "fresh",
     rebuildEnqueued: false,
     opportunities: payload.opportunities ?? [],
+    recommendationOutcomeFeedback: payload.recommendationOutcomeFeedback ?? emptyRecommendationOutcomeFeedback(login),
   };
 }
 

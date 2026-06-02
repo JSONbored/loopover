@@ -473,6 +473,39 @@ export const agentContextSnapshots = sqliteTable(
   }),
 );
 
+export const agentRecommendationOutcomes = sqliteTable(
+  "agent_recommendation_outcomes",
+  {
+    id: text("id").primaryKey(),
+    actionId: text("action_id").notNull(),
+    runId: text("run_id").notNull(),
+    actorLogin: text("actor_login").notNull(),
+    actionType: text("action_type").notNull(),
+    targetRepoFullName: text("target_repo_full_name"),
+    targetPullNumber: integer("target_pull_number"),
+    targetIssueNumber: integer("target_issue_number"),
+    outcomeState: text("outcome_state").notNull(),
+    outcomeTargetType: text("outcome_target_type").notNull(),
+    outcomeRepoFullName: text("outcome_repo_full_name"),
+    outcomePullNumber: integer("outcome_pull_number"),
+    outcomeIssueNumber: integer("outcome_issue_number"),
+    maintainerLane: integer("maintainer_lane", { mode: "boolean" }).notNull().default(false),
+    confidence: text("confidence").notNull(),
+    reason: text("reason").notNull(),
+    sourceUpdatedAt: text("source_updated_at"),
+    detectedAt: text("detected_at").notNull().default("CURRENT_TIMESTAMP"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    action: uniqueIndex("agent_recommendation_outcomes_action_unique").on(table.actionId),
+    actorState: index("agent_recommendation_outcomes_actor_state_idx").on(table.actorLogin, table.outcomeState, table.updatedAt),
+    target: index("agent_recommendation_outcomes_target_idx").on(table.targetRepoFullName, table.targetPullNumber, table.targetIssueNumber),
+    maintainer: index("agent_recommendation_outcomes_maintainer_idx").on(table.actorLogin, table.maintainerLane, table.updatedAt),
+  }),
+);
+
 export const installationHealth = sqliteTable("installation_health", {
   installationId: integer("installation_id").primaryKey(),
   accountLogin: text("account_login").notNull(),

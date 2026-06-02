@@ -288,7 +288,7 @@ describe("sanitizePublicComment — sanitizer regression", () => {
 
   it("generatePublicComment output never matches forbidden language across all inputs (explicit regex)", () => {
     const forbiddenPattern =
-      /wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i;
+      /wallet|hotkey|raw trust score|payout|reward|farming|private reviewability|public score estimate|ranking/i;
     const allChecksStatuses: Array<ChecksStatus> = ["passing", "failing", "pending"];
     const allRecommendations: Recommendation[] = [
       "review_now",

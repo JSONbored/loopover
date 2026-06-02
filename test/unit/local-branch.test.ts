@@ -410,6 +410,9 @@ describe("local branch analysis", () => {
         { ...basePr, repoFullName: otherRepo.fullName, number: 8, title: "Already merged branch", state: "closed", mergedAt: "2026-05-20T00:00:00.000Z" },
         { ...basePr, repoFullName: repo.fullName, number: 6, title: "Maintainer lane", state: "open", authorAssociation: "OWNER" },
         { ...basePr, repoFullName: repo.fullName, number: 7, title: "Someone else's approved PR", state: "open", authorLogin: "someone-else", reviewDecision: "APPROVED" },
+        // Both changes-requested AND stale: an actionable block takes precedence over age, so this
+        // must count as blocked (open-PR pressure stays), not stale (subtracted from projections).
+        { ...basePr, repoFullName: otherRepo.fullName, number: 9, title: "Blocked and stale", state: "open", reviewDecision: "CHANGES_REQUESTED", updatedAt: "2020-01-01T00:00:00.000Z" },
       ],
       profile,
       outcomeHistory: pressuredHistory,
@@ -417,7 +420,7 @@ describe("local branch analysis", () => {
       scoringProfile,
     });
 
-    expect(analysis.observedPullRequestScenarios).toMatchObject({ approvedOrMergeable: 1, stale: 1, closed: 1, draft: 1, blocked: 1, maintainerLane: 1 });
+    expect(analysis.observedPullRequestScenarios).toMatchObject({ approvedOrMergeable: 1, stale: 1, closed: 1, draft: 1, blocked: 2, maintainerLane: 1 });
     expect(analysis.scenarioScorePreview.afterApprovedPrsMerge).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.8 } });
     expect(analysis.scenarioScorePreview.afterStalePrsClose).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.2 } });
     expect(analysis.scenarioScorePreview.afterStalePrsClose?.assumptions.join(" ")).toMatch(/already-closed PR.*excluded/);

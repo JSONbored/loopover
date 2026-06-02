@@ -10,7 +10,7 @@ import { FORBIDDEN_PUBLIC_COMMENT_WORDS } from "../../src/queue-intelligence";
 import { createTestEnv } from "../helpers/d1";
 
 const PUBLIC_FORBIDDEN_TEXT =
-  /\b(wallets?|hotkeys?|raw trust scores?|trust scores?|payouts?|reward estimates?|farming|private reviewability|private scoreability|public score estimates?)\b/i;
+  /\b(wallets?|hotkeys?|raw trust scores?|trust scores?|payouts?|estimated rewards?|rewards?|reward estimates?|farming|private reviewability|private scoreability|private rankings?|rankings?|public score estimates?)\b/i;
 type AiRunRequest = { messages: Array<{ role: string; content: string }> };
 
 describe("Workers AI summaries", () => {
@@ -142,7 +142,22 @@ describe("Workers AI summaries", () => {
     expect(unsafe).toMatchObject({ status: "unsafe", reason: "public summary failed sanitizer" });
   });
 
-  it.each(["wallet", "hotkey", "raw trust score", "payout", "reward estimate", "farming", "private reviewability", "private scoreability", "public score estimate"])(
+  it.each([
+    "wallet",
+    "hotkey",
+    "raw trust score",
+    "payout",
+    "reward estimate",
+    "estimated reward",
+    "rewards",
+    "reward",
+    "farming",
+    "private reviewability",
+    "private scoreability",
+    "public score estimate",
+    "private ranking",
+    "ranking",
+  ])(
     "rejects unsafe public AI output containing %s",
     async (unsafeText) => {
       const run = vi.fn(async () => ({ response: `Do the next action because ${unsafeText} changed.` }));
@@ -332,6 +347,21 @@ describe("optional deterministic-summary rewrite layer", () => {
       const run = vi.fn(async () => ({ response: `Looks great, includes ${word} detail.` }));
       const result = await rewriteSignalBundleWithAi(publicEnv({}, run), rewriteReq());
       expect(result, `forbidden word: ${word}`).toMatchObject({ status: "unsafe", text: DETERMINISTIC_BODY });
+    }
+  });
+
+  it("rejects reward and ranking variants in public AI rewrites", async () => {
+    const unsafeOutputs = [
+      "The estimated reward is high.",
+      "Rewards look likely for this PR.",
+      "The private ranking looks strong.",
+      "This ranking should improve.",
+    ];
+
+    for (const output of unsafeOutputs) {
+      const run = vi.fn(async () => ({ response: output }));
+      const result = await rewriteSignalBundleWithAi(publicEnv({}, run), rewriteReq());
+      expect(result, `unsafe output: ${output}`).toMatchObject({ status: "unsafe", text: DETERMINISTIC_BODY });
     }
   });
 

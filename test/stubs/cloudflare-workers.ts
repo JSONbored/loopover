@@ -18,4 +18,7 @@ export class WorkflowEntrypoint {
   }
 }
 
+export class RpcTarget {}
+
+export const exports = {};
 export const env = {};

@@ -67,8 +67,8 @@ describe("api routes", () => {
     await expect(health.json()).resolves.toMatchObject({
       status: "ok",
       service: "gittensory-api",
-      minMcpVersion: "0.2.0",
-      latestRecommendedMcpVersion: "0.3.0",
+      minMcpVersion: "0.4.0",
+      latestRecommendedMcpVersion: "0.4.0",
     });
 
     const compatibility = await app.request("/v1/mcp/compatibility", {}, env);
@@ -80,9 +80,9 @@ describe("api routes", () => {
       apiVersion: "0.1.0",
       mcp: {
         packageName: "@jsonbored/gittensory-mcp",
-        minimumSupportedVersion: "0.2.0",
-        latestRecommendedVersion: "0.3.0",
-        latestPackageVersion: "0.3.0",
+        minimumSupportedVersion: "0.4.0",
+        latestRecommendedVersion: "0.4.0",
+        latestPackageVersion: "0.4.0",
       },
       compatibilityWarnings: [],
       breakingChanges: [],
@@ -1870,7 +1870,7 @@ describe("api routes", () => {
         headers: {
           ...apiHeaders(env),
           "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
-          "x-gittensory-mcp-version": "0.3.0",
+          "x-gittensory-mcp-version": "0.4.0",
           "x-gittensory-mcp-client": "gittensory-mcp-cli",
         },
         body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }),
@@ -2053,7 +2053,7 @@ describe("api routes", () => {
       sessionId: "current-mcp-session",
       outcome: "success",
       clientName: "gittensory-mcp",
-      clientVersion: "0.3.0",
+      clientVersion: "0.4.0",
       metadata: {
         protocolVersion: "2025-03-26",
       },
@@ -2144,7 +2144,7 @@ describe("api routes", () => {
       byClientVersion: expect.arrayContaining([
         { key: "0.1.0", count: 1 },
         { key: "0.2.1", count: 1 },
-        { key: "0.3.0", count: 2 },
+        { key: "0.4.0", count: 2 },
       ]),
       byProtocolVersion: expect.arrayContaining([
         { key: "2024-11-05", count: 1 },
@@ -2162,8 +2162,8 @@ describe("api routes", () => {
     const mcpCompatibilityBody = await mcpCompatibility.json();
     expect(mcpCompatibilityBody).toMatchObject({
       adoption: expect.objectContaining({
-        minimumSupportedVersion: "0.2.0",
-        latestRecommendedVersion: "0.3.0",
+        minimumSupportedVersion: "0.4.0",
+        latestRecommendedVersion: "0.4.0",
         staleEvents: 1,
         incompatibleEvents: 1,
         totalEvents: 4,
@@ -3519,19 +3519,19 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.3.0" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.4.0" }),
         expect.objectContaining({
           surface: "mcp",
           eventName: "mcp_tool_called",
           outcome: "success",
           clientName: "gittensory-mcp-cli",
-          clientVersion: "0.3.0",
+          clientVersion: "0.4.0",
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",
             protocolVersion: "2025-03-26",
             compatibilityStatus: "current",
-            minimumSupportedVersion: "0.2.0",
-            latestRecommendedVersion: "0.3.0",
+            minimumSupportedVersion: "0.4.0",
+            latestRecommendedVersion: "0.4.0",
           }),
         }),
       ]),
@@ -4080,7 +4080,7 @@ function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
     "content-type": "application/json",
     "mcp-protocol-version": "2025-03-26",
     "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
-    "x-gittensory-mcp-version": "0.3.0",
+    "x-gittensory-mcp-version": "0.4.0",
     "x-gittensory-mcp-client": "gittensory-mcp-cli",
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
   };

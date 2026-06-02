@@ -1,9 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { Rss } from "lucide-react";
 
 import { Section, Eyebrow, Card } from "@/components/site/primitives";
 import { cn } from "@/lib/utils";
+import {
+  MCP_PACKAGE_NAME,
+  MCP_PACKAGE_NPM_URL,
+  getLatestMcpVersion,
+  useMcpPackageMetadata,
+} from "@/lib/mcp-package";
 
 export const Route = createFileRoute("/changelog")({
   head: () => ({
@@ -25,12 +30,6 @@ export const Route = createFileRoute("/changelog")({
   component: Changelog,
 });
 
-type NpmPackage = {
-  "dist-tags": { latest: string };
-  time: Record<string, string>;
-  versions: Record<string, { description?: string }>;
-};
-
 const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",
@@ -39,15 +38,8 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 
 function Changelog() {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["npm-full", "@jsonbored/gittensory-mcp"],
-    queryFn: async (): Promise<NpmPackage> => {
-      const r = await fetch("https://registry.npmjs.org/@jsonbored/gittensory-mcp");
-      if (!r.ok) throw new Error("npm");
-      return r.json();
-    },
-    staleTime: 1000 * 60 * 30,
-  });
+  const { data, isLoading, isError } = useMcpPackageMetadata();
+  const latestVersion = getLatestMcpVersion(data);
 
   const sortedVersions = data
     ? Object.keys(data.versions)
@@ -64,12 +56,13 @@ function Changelog() {
       <Eyebrow>Releases</Eyebrow>
       <h1 className="mt-3 text-token-2xl font-medium tracking-tight text-foreground">Changelog</h1>
       <p className="mt-3 max-w-2xl text-muted-foreground">
-        Live release history for <code className="font-mono">@jsonbored/gittensory-mcp</code>,
-        sourced directly from the npm registry.
+        Live release history for <code className="font-mono">{MCP_PACKAGE_NAME}</code>, sourced
+        directly from npm <code className="font-mono">dist-tags.latest</code>. Current release:{" "}
+        <code className="font-mono">v{latestVersion}</code>.
       </p>
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <a
-          href="https://www.npmjs.com/package/@jsonbored/gittensory-mcp"
+          href={MCP_PACKAGE_NPM_URL}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 rounded-token border-hairline px-2.5 py-1 font-mono text-token-2xs text-muted-foreground transition-colors duration-150 hover:text-mint hover:border-strong focus-ring"
@@ -99,7 +92,7 @@ function Changelog() {
             </Card>
           )}
           {sortedVersions.map((v) => {
-            const isLatest = v === data?.["dist-tags"].latest;
+            const isLatest = v === latestVersion;
             const id = `v${v.replace(/\./g, "-")}`;
             return (
               <Card
@@ -127,7 +120,7 @@ function Changelog() {
                   </div>
                 </div>
                 <a
-                  href={`https://www.npmjs.com/package/@jsonbored/gittensory-mcp/v/${v}`}
+                  href={`${MCP_PACKAGE_NPM_URL}/v/${v}`}
                   target="_blank"
                   rel="noreferrer"
                   className="text-token-sm font-medium text-mint hover:underline"
@@ -166,7 +159,7 @@ function Changelog() {
             <ul className="space-y-1 border-l border-border">
               {sortedVersions.map((v) => {
                 const id = `v${v.replace(/\./g, "-")}`;
-                const isLatest = v === data?.["dist-tags"].latest;
+                const isLatest = v === latestVersion;
                 return (
                   <li key={v}>
                     <a

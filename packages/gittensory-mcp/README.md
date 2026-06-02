@@ -13,7 +13,7 @@ The package is public. Gittensory keeps sensitive score, trust, wallet, and main
 Public npm:
 
 ```sh
-npm install -g @jsonbored/gittensory-mcp
+npm install -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp login
 ```
 

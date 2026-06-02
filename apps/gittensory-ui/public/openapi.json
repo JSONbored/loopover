@@ -12418,9 +12418,49 @@
     },
     "/v1/app/analytics/weekly-value-report": {
       "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "public",
+                "operator"
+              ],
+              "example": "public"
+            },
+            "required": false,
+            "description": "Report variant. Operator reports require the operator app role.",
+            "name": "variant",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "7"
+            },
+            "required": false,
+            "description": "Report window in days, clamped from 1 to 31.",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "example": "markdown"
+            },
+            "required": false,
+            "description": "Response format. Omit or use json for the structured report; use markdown for copy-ready text.",
+            "name": "format",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Live app API response",
+            "description": "Weekly value report as structured JSON or copy-ready Markdown",
             "content": {
               "application/json": {
                 "schema": {
@@ -12429,11 +12469,20 @@
                     "nullable": true
                   }
                 }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "example": "# Weekly Gittensory value report\n\n## Adoption metrics\n- Active users: 4\n"
+                }
               }
             }
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role for requested report variant"
           }
         },
         "security": [

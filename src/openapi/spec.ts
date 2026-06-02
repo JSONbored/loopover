@@ -605,7 +605,6 @@ export function buildOpenApiSpec() {
     "/v1/app/digest",
     "/v1/app/analytics/daily-rollups",
     "/v1/app/analytics/mcp-compatibility",
-    "/v1/app/analytics/weekly-value-report",
   ]) {
     registry.registerPath({
       method: "get",
@@ -616,6 +615,45 @@ export function buildOpenApiSpec() {
       },
     });
   }
+  registry.registerPath({
+    method: "get",
+    path: "/v1/app/analytics/weekly-value-report",
+    request: {
+      query: z.object({
+        variant: z.enum(["public", "operator"]).optional().openapi({
+          param: {
+            description: "Report variant. Operator reports require the operator app role.",
+          },
+          example: "public",
+        }),
+        days: z.string().optional().openapi({
+          param: { description: "Report window in days, clamped from 1 to 31." },
+          example: "7",
+        }),
+        format: z.enum(["json", "markdown"]).optional().openapi({
+          param: {
+            description: "Response format. Omit or use json for the structured report; use markdown for copy-ready text.",
+          },
+          example: "markdown",
+        }),
+      }),
+    },
+    responses: {
+      200: {
+        description: "Weekly value report as structured JSON or copy-ready Markdown",
+        content: {
+          "application/json": { schema: z.record(z.string(), z.unknown()) },
+          "text/markdown": {
+            schema: z.string().openapi({
+              example: "# Weekly Gittensory value report\n\n## Adoption metrics\n- Active users: 4\n",
+            }),
+          },
+        },
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role for requested report variant" },
+    },
+  });
   registry.registerPath({
     method: "post",
     path: "/v1/app/commands/preview",

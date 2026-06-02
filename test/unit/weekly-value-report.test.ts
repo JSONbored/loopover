@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWeeklyValueReport, generateWeeklyValueReport } from "../../src/services/weekly-value-report";
+import { buildWeeklyValueReport, formatWeeklyValueReportMarkdown, generateWeeklyValueReport } from "../../src/services/weekly-value-report";
 import type {
   InstallationHealthRecord,
   InstallationRecord,
@@ -12,6 +12,9 @@ import type {
 } from "../../src/types";
 import type { UpstreamStatus } from "../../src/upstream/ruleset";
 import { createTestEnv } from "../helpers/d1";
+
+const FORBIDDEN_EXPORT_TERMS =
+  /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i;
 
 describe("weekly value reports", () => {
   it("builds public-safe adoption and maintainer-value summaries from daily rollups", () => {
@@ -87,6 +90,18 @@ describe("weekly value reports", () => {
     );
     expect(report.freshness.warnings).toEqual(["Product usage rollups have 1 freshness warning(s)."]);
     expect(JSON.stringify(report)).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|private reviewability|public score estimate|\/Users|github_pat/i);
+
+    const markdown = formatWeeklyValueReportMarkdown(report);
+    expect(markdown).toContain("# Weekly Gittensory value report");
+    expect(markdown).toContain("## Adoption metrics");
+    expect(markdown).toContain("## Miner utility");
+    expect(markdown).toContain("## Maintainer trust");
+    expect(markdown).toContain("## Repo-owner readiness");
+    expect(markdown).toContain("## Known blockers");
+    expect(markdown).toContain("- Active users: 4");
+    expect(markdown).toContain("- PR packets: 3");
+    expect(markdown).not.toContain("## Operator detail");
+    expect(markdown).not.toMatch(FORBIDDEN_EXPORT_TERMS);
   });
 
   it("adds operator details, freshness warnings, and redacts unsafe rollup dimensions", () => {
@@ -97,8 +112,8 @@ describe("weekly value reports", () => {
       repositories: [repo("JSONbored/gittensory", true, true)],
       installations: [installation(1)],
       health: [health(1, "needs_attention")],
-      registry: registry(["source mirror stale"]),
-      scoring: scoring(["fallback model"]),
+      registry: registry(["source mirror stale", "wallet hotkey reward-estimate trust-score public score prediction private scoreability farming"]),
+      scoring: scoring(["fallback model", "private reviewability signal"]),
       upstreamDrift: upstream({ status: "drift_detected", openReportCount: 2 }),
       usageSummary: usageSummary({ totalEvents: 2, activeActors: 1 }),
       usageRollups: [
@@ -150,6 +165,14 @@ describe("weekly value reports", () => {
       ]),
     );
     expect(JSON.stringify(report)).not.toMatch(/\/Users|github_pat|wallet|raw trust|abcdef/i);
+
+    const markdown = formatWeeklyValueReportMarkdown(report);
+    expect(markdown).toContain("## Operator detail");
+    expect(markdown).toContain("## Known blockers");
+    expect(markdown).toContain("- Product events: 2");
+    expect(markdown).toContain("Top repos: <redacted-path> <redacted-token> (2)");
+    expect(markdown).toContain("<redacted>");
+    expect(markdown).not.toMatch(FORBIDDEN_EXPORT_TERMS);
   });
 
   it("keeps clean complete windows marked ready", () => {
@@ -169,6 +192,34 @@ describe("weekly value reports", () => {
 
     expect(report.period.days).toBe(1);
     expect(report.dataQuality).toEqual({ status: "ready", warnings: [] });
+
+    const markdown = formatWeeklyValueReportMarkdown({
+      ...report,
+      summary: [],
+      metrics: [],
+      warnings: [],
+      freshness: { ...report.freshness, warnings: [] },
+      operatorDetails: {
+        ...report.operatorDetails!,
+        topRepos: [],
+        topCommands: [],
+        topTools: [],
+        topRouteClasses: [],
+      },
+    });
+    expect(markdown).toContain("- No report data available.");
+    expect(markdown).toContain("- No rollup-backed metric is available for this section.");
+    expect(markdown).toContain("- No known blocker surfaced by the current report window.");
+    expect(markdown).toContain("## Operator detail");
+
+    const { operatorDetails: _operatorDetails, ...reportWithoutOperatorDetails } = report;
+    const sparseMarkdown = formatWeeklyValueReportMarkdown({
+      ...reportWithoutOperatorDetails,
+      period: { ...report.period, startDay: null, endDay: null },
+      metrics: [{ id: "active_users", label: "Active users", value: 1, detail: "", visibility: "public" }],
+    });
+    expect(sparseMarkdown).toContain("- Window: 1 day(s)");
+    expect(sparseMarkdown).toContain("- Active users: 1\n");
   });
 
   it("normalizes report windows and records public scheduled generations without operator details", async () => {

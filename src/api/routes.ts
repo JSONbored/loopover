@@ -136,7 +136,12 @@ import {
   LATEST_RECOMMENDED_MCP_VERSION,
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
-import { buildWeeklyValueReport, generateWeeklyValueReport, loadWeeklyValueReport } from "../services/weekly-value-report";
+import {
+  buildWeeklyValueReport,
+  formatWeeklyValueReportMarkdown,
+  generateWeeklyValueReport,
+  loadWeeklyValueReport,
+} from "../services/weekly-value-report";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
@@ -970,11 +975,18 @@ export function createApp() {
 
   app.get("/v1/app/analytics/weekly-value-report", async (c) => {
     const variant = c.req.query("variant") === "operator" ? "operator" : "public";
-    const allowedRoles: ControlPanelRoleName[] = variant === "operator" ? ["operator"] : ["miner", "maintainer", "owner", "operator"];
+    const allowedRoles: ControlPanelRoleName[] =
+      variant === "operator" ? ["operator"] : ["miner", "maintainer", "owner", "operator"];
     const forbidden = await requireAppRole(c, allowedRoles);
     if (forbidden) return forbidden;
     const days = Math.max(1, Math.min(31, Number(c.req.query("days") ?? 7) || 7));
-    return c.json(await loadWeeklyValueReport(c.env, { variant, days }));
+    const report = await loadWeeklyValueReport(c.env, { variant, days });
+    if (c.req.query("format") === "markdown") {
+      return c.text(formatWeeklyValueReportMarkdown(report), 200, {
+        "Content-Type": "text/markdown; charset=utf-8",
+      });
+    }
+    return c.json(report);
   });
 
   app.get("/v1/app/commands", async (c) =>

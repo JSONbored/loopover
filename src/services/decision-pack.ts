@@ -10,6 +10,7 @@ import {
   listContributorPullRequests,
   listContributorRepoStats,
   listLatestRepoGithubTotalsSnapshots,
+  listRepoPullRequestFiles,
   listRepositories,
   listRepoSyncSegments,
   listRepoSyncStates,
@@ -40,6 +41,12 @@ import {
 } from "../signals/engine";
 import { buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
+import {
+  buildContributorEvidenceGraph,
+  CONTRIBUTOR_EVIDENCE_GRAPH_SIGNAL,
+  evidenceGraphTouchedRepoFullNames,
+  type ContributorEvidenceGraph,
+} from "./contributor-evidence-graph";
 import { loadIssueQualityReportMap } from "./issue-quality";
 import { loadRepoOutcomePatternsMap } from "./repo-outcome-patterns";
 import { evaluateRecommendationOutcomes } from "./recommendation-outcomes";
@@ -50,6 +57,7 @@ import type {
   ContributorRepoStatRecord,
   IssueRecord,
   JsonValue,
+  PullRequestFileRecord,
   PullRequestRecord,
   RepositoryRecord,
   RepoGithubTotalsSnapshotRecord,
@@ -98,6 +106,7 @@ export type ContributorDecisionPack = {
   maintainerLaneRepos: RepoDecision[];
   scoreBlockers: ScoreBlocker[];
   recommendationOutcomeFeedback: AgentRecommendationOutcomeSummary;
+  evidenceGraph?: ContributorEvidenceGraph | undefined;
   dataQuality: {
     signalFidelity: ReturnType<typeof buildSignalFidelity>;
   };
@@ -346,6 +355,18 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName),
   );
   const profile = buildContributorProfile(login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
+  const pullRequestFiles = (
+    await Promise.all(
+      evidenceGraphTouchedRepoFullNames({
+        login,
+        profile,
+        pullRequests: contributorPullRequests,
+        issues: contributorIssues,
+        repoStats,
+        repositories,
+      }).map((repoFullName) => listRepoPullRequestFiles(env, repoFullName)),
+    )
+  ).flat();
   const outcomeHistory = buildContributorOutcomeHistory({
     login,
     profile,
@@ -370,6 +391,9 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     scoringModelSnapshotId: scoringSnapshot.id,
     contributorPullRequests,
     contributorIssues,
+    repoStats,
+    pullRequestFiles,
+    gittensorSnapshot,
     issueQualityByRepo,
     openPrMonitor,
     focusManifests,
@@ -389,6 +413,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
       issueDiscoveryReports: scoringProfile.evidence.issueDiscoveryReports,
       languageMatches: scoringProfile.evidence.languageMatches,
       credibilityAssumption: scoringProfile.evidence.credibilityAssumption,
+      evidenceGraph: pack.evidenceGraph as unknown as JsonValue,
     },
   });
   await upsertContributorScoringProfile(env, {
@@ -404,6 +429,15 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     payload: pack as unknown as Record<string, JsonValue>,
     generatedAt: pack.generatedAt,
   });
+  if (pack.evidenceGraph) {
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: CONTRIBUTOR_EVIDENCE_GRAPH_SIGNAL,
+      targetKey: login,
+      payload: pack.evidenceGraph as unknown as Record<string, JsonValue>,
+      generatedAt: pack.evidenceGraph.generatedAt,
+    });
+  }
   return pack;
 }
 
@@ -424,6 +458,9 @@ function buildContributorDecisionPack(args: {
   scoringModelSnapshotId: string;
   contributorPullRequests: Parameters<typeof buildRoleContext>[0]["pullRequests"];
   contributorIssues: Parameters<typeof buildRoleContext>[0]["issues"];
+  repoStats?: ContributorRepoStatRecord[] | undefined;
+  pullRequestFiles?: PullRequestFileRecord[] | undefined;
+  gittensorSnapshot?: Awaited<ReturnType<typeof fetchGittensorContributorSnapshot>> | undefined;
   issueQualityByRepo?: Map<string, IssueQualityReport> | undefined;
   openPrMonitor: ContributorOpenPrMonitor;
   focusManifests?: Map<string, FocusManifest> | undefined;
@@ -475,6 +512,19 @@ function buildContributorDecisionPack(args: {
   const dataQuality = {
     signalFidelity: buildSignalFidelity(registeredRepositories.length, args.syncStates, args.syncSegments),
   };
+  const evidenceGraph = buildContributorEvidenceGraph({
+    login: args.login,
+    profile: args.profile,
+    outcomeHistory: args.outcomeHistory,
+    roleContexts,
+    repositories: args.repositories,
+    pullRequests: args.contributorPullRequests,
+    issues: args.contributorIssues,
+    repoStats: args.repoStats,
+    syncStates: args.syncStates,
+    pullRequestFiles: args.pullRequestFiles,
+    gittensorSnapshot: args.gittensorSnapshot,
+  });
   const monitor = args.openPrMonitor;
   const monitorNextSteps = monitor.guidance.slice(0, 6);
   const packNextActions = [...new Set([...monitorNextSteps, ...topActions.flatMap((action) => action.nextActions)])].slice(0, 12);
@@ -507,6 +557,7 @@ function buildContributorDecisionPack(args: {
     maintainerLaneRepos: repoDecisions.filter((decision) => decision.recommendation === "maintainer_lane").slice(0, 8),
     scoreBlockers,
     recommendationOutcomeFeedback,
+    evidenceGraph,
     dataQuality,
     summary: `${args.login} has ${topActions.length} ranked action(s), ${scoreBlockers.length} scoreability blocker(s), and ${repoDecisions.length} registered repo decision(s).${monitorSummary}${recommendationFeedbackSummary(recommendationOutcomeFeedback)}`,
     nextActions: packNextActions,

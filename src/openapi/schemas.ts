@@ -1439,6 +1439,7 @@ export const ContributorDecisionPackSchema = z
     maintainerLaneRepos: z.array(z.record(z.unknown())),
     scoreBlockers: z.array(z.record(z.unknown())),
     recommendationOutcomeFeedback: AgentRecommendationOutcomeSummarySchema,
+    evidenceGraph: z.record(z.unknown()).optional(),
     dataQuality: z.record(z.unknown()),
     summary: z.string(),
     nextActions: z.array(z.string()),

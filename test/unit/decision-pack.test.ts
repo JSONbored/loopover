@@ -809,6 +809,7 @@ describe("decision-pack service", () => {
     expect(pack.roleContexts.map((role) => role.repoFullName)).not.toContain("owner/unconfigured");
     expect(pack.opportunities).toEqual([expect.objectContaining({ repoFullName: "owner/pursue", issueNumber: 7, fit: "good" })]);
     expect(pack.nextActions.length).toBeGreaterThan(0);
+    expect(pack.evidenceGraph).toMatchObject({ login: "jsonbored", totals: expect.objectContaining({ repositories: expect.any(Number) }) });
   });
 
   it("merges open PR monitor guidance into pack summary and next actions", () => {
@@ -1277,6 +1278,7 @@ describe("decision-pack service", () => {
     expect(packA.repoDecisions.map((d) => d.priorityScore)).toEqual(packB.repoDecisions.map((d) => d.priorityScore));
     expect(packA.repoDecisions.map((d) => d.nextActions)).toEqual(packB.repoDecisions.map((d) => d.nextActions));
     expect(packA.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`)).toEqual(packB.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`));
+    expect(packA.evidenceGraph?.repos.map((repo) => repo.repoFullName)).toEqual(packB.evidenceGraph?.repos.map((repo) => repo.repoFullName));
   });
 
   it("threads a maintainer focus manifest into RepoDecision without leaking maintainer-private notes", async () => {

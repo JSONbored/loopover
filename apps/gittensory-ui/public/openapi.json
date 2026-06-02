@@ -2415,6 +2415,12 @@
           "recommendationOutcomeFeedback": {
             "$ref": "#/components/schemas/AgentRecommendationOutcomeSummary"
           },
+          "evidenceGraph": {
+            "type": "object",
+            "additionalProperties": {
+              "nullable": true
+            }
+          },
           "dataQuality": {
             "type": "object",
             "additionalProperties": {

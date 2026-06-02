@@ -211,6 +211,15 @@ describe("weekly value reports", () => {
     expect(markdown).toContain("- No rollup-backed metric is available for this section.");
     expect(markdown).toContain("- No known blocker surfaced by the current report window.");
     expect(markdown).toContain("## Operator detail");
+
+    const { operatorDetails: _operatorDetails, ...reportWithoutOperatorDetails } = report;
+    const sparseMarkdown = formatWeeklyValueReportMarkdown({
+      ...reportWithoutOperatorDetails,
+      period: { ...report.period, startDay: null, endDay: null },
+      metrics: [{ id: "active_users", label: "Active users", value: 1, detail: "", visibility: "public" }],
+    });
+    expect(sparseMarkdown).toContain("- Window: 1 day(s)");
+    expect(sparseMarkdown).toContain("- Active users: 1\n");
   });
 
   it("normalizes report windows and records public scheduled generations without operator details", async () => {

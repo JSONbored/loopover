@@ -81,4 +81,24 @@ describe("maintainer settings preview UI helpers", () => {
       minerStatus: "unavailable",
     });
   });
+
+  it("falls back safely for sparse preview helper inputs", () => {
+    expect(findPreviewScenario("unknown-scenario" as never).id).toBe("confirmed-miner");
+    expect(
+      extractPreviewRepoOptions([
+        { pr: { split: () => [] } as unknown as string },
+        { pr: "JSONbored/gittensory#251" },
+      ]),
+    ).toEqual(["JSONbored/gittensory"]);
+
+    const request = buildSettingsPreviewRequest({
+      repoFullName: "JSONbored/gittensory",
+      scenarioId: "confirmed-miner",
+      title: "Export weekly report",
+      labels: "",
+      linkedIssues: "",
+      body: "   ",
+    });
+    expect(request.sample).not.toHaveProperty("body");
+  });
 });

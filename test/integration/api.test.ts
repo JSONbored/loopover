@@ -36,6 +36,9 @@ import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
 
+const FORBIDDEN_PUBLIC_REPORT_TERMS =
+  /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i;
+
 describe("api routes", () => {
   // Freshness/readiness fixtures are dated relative to late May 2026; pin the clock so freshness SLO
   // windows stay deterministic regardless of when CI runs (fixtures otherwise tip "stale" after 7 days).
@@ -1380,6 +1383,14 @@ describe("api routes", () => {
     const ownerWeeklyReportBody = await ownerWeeklyReport.json();
     expect(ownerWeeklyReportBody).toMatchObject({ variant: "public", publicSafe: true });
     expect(ownerWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    const ownerWeeklyReportMarkdown = await app.request("/v1/app/analytics/weekly-value-report?format=markdown", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerWeeklyReportMarkdown.status).toBe(200);
+    expect(ownerWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
+    const ownerWeeklyReportMarkdownText = await ownerWeeklyReportMarkdown.text();
+    expect(ownerWeeklyReportMarkdownText).toContain("# Weekly Gittensory value report");
+    expect(ownerWeeklyReportMarkdownText).toContain("## Maintainer trust");
+    expect(ownerWeeklyReportMarkdownText).not.toContain("## Operator detail");
+    expect(ownerWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
     expect((await app.request("/v1/app/analytics/weekly-value-report?variant=operator", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
     expect(ownerExtensionSession.status).toBe(201);
@@ -2575,6 +2586,14 @@ describe("api routes", () => {
       period: expect.objectContaining({ days: 7 }),
       operatorDetails: expect.any(Object),
     });
+    const operatorWeeklyReportMarkdown = await app.request("/v1/app/analytics/weekly-value-report?variant=operator&format=markdown", { headers: apiHeaders(env) }, env);
+    expect(operatorWeeklyReportMarkdown.status).toBe(200);
+    expect(operatorWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
+    const operatorWeeklyReportMarkdownText = await operatorWeeklyReportMarkdown.text();
+    expect(operatorWeeklyReportMarkdownText).toContain("## Adoption metrics");
+    expect(operatorWeeklyReportMarkdownText).toContain("## Operator detail");
+    expect(operatorWeeklyReportMarkdownText).toContain("- Product events:");
+    expect(operatorWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {

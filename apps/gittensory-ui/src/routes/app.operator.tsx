@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { Check, Copy, FileJson } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   BoundaryBadge,
@@ -8,6 +11,8 @@ import {
 } from "@/components/site/control-primitives";
 import { NotificationReadinessCard } from "@/components/site/notification-readiness-card";
 import { StateBoundary } from "@/components/site/state-views";
+import { getApiOrigin } from "@/lib/api/origin";
+import { apiFetch } from "@/lib/api/request";
 import { useApiResource } from "@/lib/api/use-api-resource";
 
 export const Route = createFileRoute("/app/operator")({
@@ -26,12 +31,40 @@ type OperatorDashboardResponse = {
   upstreamDrift?: { status?: string } | null;
 };
 
+type ReportExportFormat = "markdown" | "json";
+
 function OperatorDashboard() {
   const dashboard = useApiResource<OperatorDashboardResponse>(
     "/v1/app/operator-dashboard",
     "Operator dashboard",
   );
+  const [copiedExport, setCopiedExport] = useState<ReportExportFormat | null>(null);
   const data = dashboard.status === "ready" ? dashboard.data : null;
+  const copyWeeklyReport = async (format: ReportExportFormat) => {
+    if (!data?.weeklyValueReport) return;
+    try {
+      const text =
+        format === "json"
+          ? JSON.stringify(data.weeklyValueReport, null, 2)
+          : await loadWeeklyReportMarkdown();
+      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(text);
+      setCopiedExport(format);
+      toast.success("Weekly report copied", {
+        description: `${format === "json" ? "JSON" : "Markdown"} export copied.`,
+      });
+      window.setTimeout(() => setCopiedExport(null), 1400);
+    } catch (error) {
+      toast.error("Copy failed", {
+        description:
+          error instanceof Error && error.message
+            ? `${error.message}. Select the report text and copy manually.`
+            : "Select the report text and copy manually.",
+      });
+    }
+  };
 
   return (
     <StateBoundary
@@ -92,10 +125,46 @@ function OperatorDashboard() {
             </div>
 
             <div className="rounded-token border border-border bg-transparent p-5">
-              <h2 className="font-display text-token-lg font-semibold">Weekly value report</h2>
-              <p className="mt-1 text-token-xs text-muted-foreground">
-                Rollup-backed summary across usage, maintenance, and drift signals.
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-token-lg font-semibold">Weekly value report</h2>
+                  <p className="mt-1 text-token-xs text-muted-foreground">
+                    Rollup-backed summary across usage, maintenance, and drift signals.
+                  </p>
+                </div>
+                {data.weeklyValueReport ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void copyWeeklyReport("markdown")}
+                      aria-label="Copy weekly report Markdown"
+                      title="Copy weekly report Markdown"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-token border border-border bg-transparent px-2.5 text-token-xs text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground focus-ring motion-reduce:transition-none"
+                    >
+                      {copiedExport === "markdown" ? (
+                        <Check className="size-3.5 text-mint" />
+                      ) : (
+                        <Copy className="size-3.5" />
+                      )}
+                      Markdown
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyWeeklyReport("json")}
+                      aria-label="Copy weekly report JSON"
+                      title="Copy weekly report JSON"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-token border border-border bg-transparent px-2.5 text-token-xs text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground focus-ring motion-reduce:transition-none"
+                    >
+                      {copiedExport === "json" ? (
+                        <Check className="size-3.5 text-mint" />
+                      ) : (
+                        <FileJson className="size-3.5" />
+                      )}
+                      JSON
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               {data.weeklyValueReport ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <StatusPill
@@ -129,4 +198,18 @@ function OperatorDashboard() {
       ) : null}
     </StateBoundary>
   );
+}
+
+async function loadWeeklyReportMarkdown(): Promise<string> {
+  const result = await apiFetch<string>(
+    `${getApiOrigin().replace(/\/$/, "")}/v1/app/analytics/weekly-value-report?variant=operator&format=markdown`,
+    {
+      label: "Weekly report export",
+      credentials: "include",
+      headers: { Accept: "text/markdown" },
+      parse: (res) => res.text(),
+    },
+  );
+  if (!result.ok) throw new Error(result.message);
+  return result.data;
 }

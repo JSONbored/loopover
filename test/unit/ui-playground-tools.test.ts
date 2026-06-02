@@ -5,6 +5,7 @@ import {
   playgroundToolUsesPullNumber,
   playgroundToolUsesScenario,
   sampleBranchAnalysisBody,
+  type PlaygroundToolId,
 } from "../../src/ui/playground-tools";
 
 describe("playground tool requests", () => {
@@ -74,5 +75,17 @@ describe("playground tool requests", () => {
     expect(buildPlaygroundRequest({ ...base, tool: "preflight-branch" }).path).toBe(
       "/v1/agent/preflight-branch",
     );
+    expect(buildPlaygroundRequest({ ...base, tool: "plan-next-work" }).path).toBe(
+      "/v1/agent/plan-next-work",
+    );
+  });
+
+  it("rejects unknown tool ids at runtime", () => {
+    expect(() =>
+      buildPlaygroundRequest({
+        ...base,
+        tool: "not-a-real-tool" as PlaygroundToolId,
+      }),
+    ).toThrow(/Unknown playground tool/i);
   });
 });

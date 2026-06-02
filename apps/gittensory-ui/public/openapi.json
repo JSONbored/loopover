@@ -9231,6 +9231,33 @@
               ]
             }
           },
+          "source": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string",
+                "nullable": true
+              },
+              "ref": {
+                "type": "string",
+                "nullable": true
+              },
+              "commitSha": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "repo",
+              "ref"
+            ]
+          },
+          "recommendedFollowUp": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "previousRulesetId": {
             "type": "string",
             "nullable": true

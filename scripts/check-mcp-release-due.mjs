@@ -116,11 +116,22 @@ async function findExistingIssue({ owner, repo, token }) {
       path: `/repos/${owner}/${repo}/issues?state=open&per_page=100&page=${page}`,
     });
     if (!Array.isArray(issues) || issues.length === 0) return null;
-    const match = issues.find((issue) => !issue.pull_request && typeof issue.body === "string" && issue.body.includes(MCP_RELEASE_DUE_MARKER));
+    const match = issues.find(isReleaseWatchIssue);
     if (match) return match;
     page += 1;
   }
   return null;
+}
+
+export function isReleaseWatchIssue(issue) {
+  return (
+    !issue.pull_request &&
+    issue.user?.login === "github-actions[bot]" &&
+    typeof issue.title === "string" &&
+    issue.title.startsWith("MCP release due: ") &&
+    typeof issue.body === "string" &&
+    issue.body.includes(MCP_RELEASE_DUE_MARKER)
+  );
 }
 
 async function githubRequest({ token, method, path, body }) {

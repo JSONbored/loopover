@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isReleaseWatchIssue } from "../../scripts/check-mcp-release-due.mjs";
 import { buildMcpReleaseIssue, buildMcpReleaseReport, renderMcpChangelog, selectMcpReleaseCommits } from "../../scripts/mcp-release-core.mjs";
 
 type TestCommit = {
@@ -80,5 +81,23 @@ describe("MCP release changelog detection", () => {
     expect(issue.body).toContain("<!-- gittensory:mcp-release-due -->");
     expect(issue.body).toContain("- [ ] Run `npm run test:release:mcp`");
     expect(issue.body).toContain("- [ ] Tag `mcp-v0.4.0`");
+  });
+
+  it("only updates the bot-owned release reminder issue", () => {
+    expect(
+      isReleaseWatchIssue({
+        title: "MCP release due: 0.4.0",
+        body: "<!-- gittensory:mcp-release-due -->",
+        user: { login: "github-actions[bot]" },
+      }),
+    ).toBe(true);
+
+    expect(
+      isReleaseWatchIssue({
+        title: "MCP release due: 0.4.0",
+        body: "<!-- gittensory:mcp-release-due -->",
+        user: { login: "public-contributor" },
+      }),
+    ).toBe(false);
   });
 });

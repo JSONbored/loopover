@@ -687,6 +687,7 @@ export type AgentContextSnapshotRecord = {
 export type AgentRecommendationOutcomeState = "accepted" | "rejected" | "ignored" | "stale" | "merged" | "closed" | "improved";
 export type AgentRecommendationOutcomeTargetType = "pull_request" | "issue" | "repository" | "none";
 export type AgentRecommendationOutcomeConfidence = "high" | "medium" | "low";
+export type AgentRecommendationOutcomeSource = "explicit" | "inferred";
 
 export type AgentRecommendationOutcomeRecord = {
   id?: string | undefined;
@@ -704,6 +705,7 @@ export type AgentRecommendationOutcomeRecord = {
   outcomeRepoFullName?: string | null | undefined;
   outcomePullNumber?: number | null | undefined;
   outcomeIssueNumber?: number | null | undefined;
+  source: AgentRecommendationOutcomeSource;
   maintainerLane: boolean;
   confidence: AgentRecommendationOutcomeConfidence;
   reason: string;

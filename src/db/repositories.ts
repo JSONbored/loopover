@@ -60,6 +60,7 @@ import type {
   AgentContextSnapshotRecord,
   AgentRecommendationOutcomeConfidence,
   AgentRecommendationOutcomeRecord,
+  AgentRecommendationOutcomeSource,
   AgentRecommendationOutcomeState,
   AgentRecommendationOutcomeSummary,
   AgentRecommendationOutcomeTargetType,
@@ -1185,6 +1186,29 @@ export async function recordAgentCommandFeedback(env: Env, feedback: AgentComman
         metadataJson: values.metadataJson,
       },
     });
+}
+
+export async function getAgentCommandFeedbackVoteSummary(env: Env, answerId: string): Promise<{
+  feedbackCount: number;
+  usefulCount: number;
+  notUsefulCount: number;
+  latestFeedbackAt: string | null;
+}> {
+  const [row] = await getDb(env.DB)
+    .select({
+      feedbackCount: sql<number>`count(*)`,
+      usefulCount: sql<number>`coalesce(sum(case when ${githubAgentCommandFeedback.vote} = 'useful' then 1 else 0 end), 0)`,
+      notUsefulCount: sql<number>`coalesce(sum(case when ${githubAgentCommandFeedback.vote} = 'not_useful' then 1 else 0 end), 0)`,
+      latestFeedbackAt: sql<string | null>`max(${githubAgentCommandFeedback.updatedAt})`,
+    })
+    .from(githubAgentCommandFeedback)
+    .where(eq(githubAgentCommandFeedback.answerId, answerId));
+  return {
+    feedbackCount: Number(row?.feedbackCount ?? 0),
+    usefulCount: Number(row?.usefulCount ?? 0),
+    notUsefulCount: Number(row?.notUsefulCount ?? 0),
+    latestFeedbackAt: row?.latestFeedbackAt ?? null,
+  };
 }
 
 export async function getCommandUsefulnessSummary(env: Env, options: { windowDays?: number; now?: string } = {}): Promise<CommandUsefulnessSummary> {
@@ -2434,6 +2458,8 @@ export async function listAgentContextSnapshots(env: Env, runId: string): Promis
 }
 
 export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentRecommendationOutcomeRecord): Promise<AgentRecommendationOutcomeRecord> {
+  const existing = await getAgentRecommendationOutcome(env, outcome.actionId);
+  if (existing?.source === "explicit" && outcome.source === "inferred") return existing;
   const now = outcome.updatedAt ?? nowIso();
   const values = {
     id: outcome.id ?? `outcome:${outcome.actionId}`,
@@ -2451,6 +2477,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
     outcomeRepoFullName: outcome.outcomeRepoFullName ? boundedString(outcome.outcomeRepoFullName, 200) : null,
     outcomePullNumber: outcome.outcomePullNumber ?? null,
     outcomeIssueNumber: outcome.outcomeIssueNumber ?? null,
+    source: outcome.source,
     maintainerLane: outcome.maintainerLane,
     confidence: outcome.confidence,
     reason: boundedString(outcome.reason, 500),
@@ -2478,6 +2505,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
         outcomeRepoFullName: values.outcomeRepoFullName,
         outcomePullNumber: values.outcomePullNumber,
         outcomeIssueNumber: values.outcomeIssueNumber,
+        source: values.source,
         maintainerLane: values.maintainerLane,
         confidence: values.confidence,
         reason: values.reason,
@@ -3230,6 +3258,7 @@ function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutco
     outcomeRepoFullName: row.outcomeRepoFullName,
     outcomePullNumber: row.outcomePullNumber,
     outcomeIssueNumber: row.outcomeIssueNumber,
+    source: parseAgentRecommendationOutcomeSource(row.source),
     maintainerLane: row.maintainerLane,
     confidence: parseAgentRecommendationOutcomeConfidence(row.confidence),
     reason: row.reason,
@@ -4050,6 +4079,11 @@ function parseAgentSafetyClass(value: string): AgentSafetyClass {
 function parseAgentRecommendationOutcomeState(value: string): AgentRecommendationOutcomeState {
   if (value === "accepted" || value === "rejected" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
   return "ignored";
+}
+
+function parseAgentRecommendationOutcomeSource(value: string): AgentRecommendationOutcomeSource {
+  if (value === "explicit") return "explicit";
+  return "inferred";
 }
 
 function parseAgentRecommendationOutcomeTargetType(value: string): AgentRecommendationOutcomeTargetType {

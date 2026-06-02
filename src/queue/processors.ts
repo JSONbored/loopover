@@ -84,6 +84,7 @@ import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
+import { recordExplicitRecommendationFeedbackOutcome } from "../services/recommendation-outcomes";
 import {
   buildUpstreamRulesetSnapshot,
   detectAndPersistUpstreamDrift,
@@ -1019,6 +1020,9 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     metadata: {
       publicSurface: "github_comment",
       responseCommentStored: Boolean(responseComment?.id),
+      runId: bundle?.run.id ?? null,
+      actionId: bundle?.actions[0]?.id ?? null,
+      actionCount: bundle?.actions.length ?? 0,
     },
   });
   await recordAuditEvent(env, {
@@ -1327,6 +1331,12 @@ async function maybeProcessAgentCommandFeedbackReaction(env: Env, deliveryId: st
       deliveryId,
       reactionId: payload.reaction?.id ?? null,
     },
+  });
+  await recordExplicitRecommendationFeedbackOutcome(env, {
+    answer,
+    vote,
+    feedbackSource: "github_reaction",
+    actorKind: authorization.actorKind,
   });
   await recordAuditEvent(env, {
     eventType: "github_app.agent_command_feedback_recorded",

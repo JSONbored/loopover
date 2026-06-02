@@ -147,6 +147,7 @@ import {
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { recordExplicitRecommendationFeedbackOutcome } from "../services/recommendation-outcomes";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -989,6 +990,12 @@ export function createApp() {
       source: "app",
       actorKind: "maintainer",
       metadata: { surface: "app", identityKind: identity.kind },
+    });
+    await recordExplicitRecommendationFeedbackOutcome(c.env, {
+      answer,
+      vote: parsed.data.vote,
+      feedbackSource: "app",
+      actorKind: "maintainer",
     });
     await recordAuditEvent(c.env, {
       eventType: "github_app.agent_command_feedback_recorded",

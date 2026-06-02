@@ -198,7 +198,7 @@ describe("decision-pack service", () => {
         ignored: 2,
         stale: 2,
         merged: 0,
-        closed: 2,
+        closed: 1,
         improved: 0,
         positive: 0,
         negative: 6,

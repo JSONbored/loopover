@@ -1,4 +1,6 @@
 import {
+  getAgentCommandFeedbackVoteSummary,
+  getAgentRun,
   listAgentActions,
   listAgentContextSnapshots,
   listAgentRunsForActor,
@@ -8,10 +10,13 @@ import {
 } from "../db/repositories";
 import type {
   AgentActionRecord,
+  AgentCommandAnswerRecord,
   AgentRecommendationOutcomeRecord,
   AgentRecommendationOutcomeState,
   AgentRecommendationOutcomeTargetType,
   AgentRunRecord,
+  CommandFeedbackSource,
+  CommandFeedbackVote,
   IssueRecord,
   PullRequestRecord,
 } from "../types";
@@ -59,6 +64,69 @@ export async function evaluateRecommendationOutcomes(
     outcomes,
     skippedFreshActions: classifications.length - classified.length,
   };
+}
+
+export async function recordExplicitRecommendationFeedbackOutcome(
+  env: Env,
+  args: {
+    answer: AgentCommandAnswerRecord;
+    vote: CommandFeedbackVote;
+    feedbackSource: CommandFeedbackSource;
+    actorKind: "maintainer" | "author";
+    now?: string;
+  },
+): Promise<AgentRecommendationOutcomeRecord | null> {
+  const runId = metadataString(args.answer.metadata, "runId");
+  if (!runId) return null;
+  const run = await getAgentRun(env, runId);
+  if (!run) return null;
+  const actions = await listAgentActions(env, run.id);
+  const metadataActionId = metadataString(args.answer.metadata, "actionId");
+  const action = actions.find((candidate) => candidate.id === metadataActionId) ?? actions[0];
+  if (!action) return null;
+
+  const outcomeRepoFullName = action.targetRepoFullName ?? args.answer.repoFullName;
+  const outcomePullNumber = action.targetPullNumber ?? null;
+  const outcomeIssueNumber = action.targetIssueNumber ?? (outcomePullNumber ? null : args.answer.issueNumber);
+  const outcomeTargetType: AgentRecommendationOutcomeTargetType = outcomePullNumber
+    ? "pull_request"
+    : outcomeIssueNumber
+      ? "issue"
+      : outcomeRepoFullName
+        ? "repository"
+        : "none";
+  const feedbackSummary = await getAgentCommandFeedbackVoteSummary(env, args.answer.id);
+  const usefulCount = feedbackSummary.feedbackCount > 0 ? feedbackSummary.usefulCount : args.vote === "useful" ? 1 : 0;
+  const notUsefulCount = feedbackSummary.feedbackCount > 0 ? feedbackSummary.notUsefulCount : args.vote === "not_useful" ? 1 : 0;
+  const outcomeState: AgentRecommendationOutcomeState = notUsefulCount >= usefulCount ? "rejected" : "accepted";
+  const detectedAt = args.now ?? nowIso();
+  const outcome = baseOutcome(run, action, {
+    outcomeState,
+    outcomeTargetType,
+    outcomeRepoFullName,
+    outcomePullNumber,
+    outcomeIssueNumber,
+    source: "explicit",
+    maintainerLane: isMaintainerLane(run.actorLogin, outcomeRepoFullName),
+    confidence: "high",
+    reason: outcomeState === "rejected"
+      ? `Explicit feedback aggregate marked this recommendation as not useful.`
+      : `Explicit feedback aggregate marked this recommendation as useful.`,
+    sourceUpdatedAt: feedbackSummary.latestFeedbackAt ?? detectedAt,
+    detectedAt,
+    metadata: {
+      matchedBy: "command_feedback",
+      answerId: args.answer.id,
+      command: args.answer.command,
+      feedbackVote: args.vote,
+      feedbackSource: args.feedbackSource,
+      feedbackActorKind: args.actorKind,
+      feedbackCount: feedbackSummary.feedbackCount,
+      usefulCount,
+      notUsefulCount,
+    },
+  });
+  return upsertAgentRecommendationOutcome(env, outcome);
 }
 
 export function classifyRecommendationOutcome(args: {
@@ -146,6 +214,7 @@ export function classifyRecommendationOutcome(args: {
     outcomeState: "ignored",
     outcomeTargetType: targetRepoFullName ? "repository" : "none",
     outcomeRepoFullName: targetRepoFullName ?? null,
+    source: "inferred",
     maintainerLane: targetRepoFullName ? isMaintainerLane(args.run.actorLogin, targetRepoFullName) : false,
     confidence: targetRepoFullName ? "medium" : "low",
     reason: targetRepoFullName
@@ -175,6 +244,7 @@ function outcomeFromPullRequest(args: {
     outcomeTargetType: "pull_request",
     outcomeRepoFullName: args.pr.repoFullName,
     outcomePullNumber: args.pr.number,
+    source: "inferred",
     maintainerLane,
     confidence: state === "ignored" ? "medium" : "high",
     reason: pullRequestOutcomeReason(state, args.pr),
@@ -208,6 +278,7 @@ function outcomeFromIssue(args: {
     outcomeTargetType: "issue",
     outcomeRepoFullName: args.issue.repoFullName,
     outcomeIssueNumber: args.issue.number,
+    source: "inferred",
     maintainerLane,
     confidence: state === "ignored" ? "medium" : "high",
     reason: issueOutcomeReason(state, args.issue),
@@ -230,6 +301,7 @@ function baseOutcome(
     outcomeRepoFullName?: string | null | undefined;
     outcomePullNumber?: number | null | undefined;
     outcomeIssueNumber?: number | null | undefined;
+    source: AgentRecommendationOutcomeRecord["source"];
     maintainerLane: boolean;
     confidence: AgentRecommendationOutcomeRecord["confidence"];
     reason: string;
@@ -253,6 +325,7 @@ function baseOutcome(
     outcomeRepoFullName: outcome.outcomeRepoFullName,
     outcomePullNumber: outcome.outcomePullNumber,
     outcomeIssueNumber: outcome.outcomeIssueNumber,
+    source: outcome.source,
     maintainerLane: outcome.maintainerLane,
     confidence: outcome.confidence,
     reason: outcome.reason,
@@ -344,7 +417,7 @@ function repoFromPayload(action: AgentActionRecord): string | null {
 }
 
 function isMaintainerLane(login: string, repoFullName: string, association?: string | null | undefined): boolean {
-  const owner = repoFullName.split("/")[0] ?? "";
+  const owner = repoFullName.split("/")[0];
   return sameLogin(owner, login) || association === "OWNER" || association === "MEMBER" || association === "COLLABORATOR";
 }
 
@@ -359,6 +432,11 @@ function sameRepo(left: string | null | undefined, right: string | null | undefi
 function timestamp(value: string | null | undefined): number {
   const parsed = Date.parse(value ?? "");
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function daysToMs(days: number): number {

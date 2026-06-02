@@ -491,6 +491,7 @@ export const agentRecommendationOutcomes = sqliteTable(
     outcomeRepoFullName: text("outcome_repo_full_name"),
     outcomePullNumber: integer("outcome_pull_number"),
     outcomeIssueNumber: integer("outcome_issue_number"),
+    source: text("source").notNull().default("inferred"),
     maintainerLane: integer("maintainer_lane", { mode: "boolean" }).notNull().default(false),
     confidence: text("confidence").notNull(),
     reason: text("reason").notNull(),

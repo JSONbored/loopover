@@ -4,12 +4,14 @@ import {
   getAgentRecommendationOutcomeSummary,
   listAgentRecommendationOutcomes,
   persistAgentContextSnapshot,
+  recordAgentCommandFeedback,
   replaceAgentActions,
+  upsertAgentCommandAnswer,
   upsertAgentRecommendationOutcome,
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
 } from "../../src/db/repositories";
-import { classifyRecommendationOutcome, evaluateRecommendationOutcomes } from "../../src/services/recommendation-outcomes";
+import { classifyRecommendationOutcome, evaluateRecommendationOutcomes, recordExplicitRecommendationFeedbackOutcome } from "../../src/services/recommendation-outcomes";
 import type { AgentActionRecord, AgentContextSnapshotRecord, AgentRunRecord, GitHubIssuePayload, GitHubPullRequestPayload, IssueRecord, PullRequestRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -75,6 +77,130 @@ describe("recommendation outcome feedback", () => {
     expect(merged.outcomes.find((outcome) => outcome.targetRepoFullName === "owner/later")).toMatchObject({ outcomeState: "merged", outcomePullNumber: 31 });
     const rows = await listAgentRecommendationOutcomes(env, { actorLogin: "dev" });
     expect(rows.filter((row) => row.targetRepoFullName === "owner/later")).toHaveLength(1);
+  });
+
+  it("records explicit accepted and rejected feedback separately from inferred lifecycle outcomes", async () => {
+    const env = createTestEnv();
+    const run = runRecord("run-explicit-feedback", "dev", "2026-05-01T00:00:00.000Z");
+    const usefulAction = action(run, 0, { targetRepoFullName: "owner/useful", targetIssueNumber: 10 });
+    const rejectedAction = action(run, 1, { targetRepoFullName: "owner/rejected", targetPullNumber: 20 });
+    await createAgentRun(env, run);
+    await replaceAgentActions(env, run.id, [usefulAction, rejectedAction]);
+    await upsertAgentCommandAnswer(env, answer("answer-useful", "preflight", "owner/useful", 10, { runId: run.id, actionId: usefulAction.id }));
+    await upsertAgentCommandAnswer(env, answer("answer-rejected", "preflight", "owner/rejected", 20, { runId: run.id, actionId: rejectedAction.id }));
+
+    await expect(
+      recordExplicitRecommendationFeedbackOutcome(env, {
+        answer: (await upsertAgentCommandAnswer(env, answer("answer-useful", "preflight", "owner/useful", 10, { runId: run.id, actionId: usefulAction.id }))),
+        vote: "useful",
+        feedbackSource: "app",
+        actorKind: "maintainer",
+        now: "2026-05-02T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({ outcomeState: "accepted", source: "explicit", metadata: { feedbackVote: "useful" } });
+
+    const rejected = await recordExplicitRecommendationFeedbackOutcome(env, {
+      answer: (await upsertAgentCommandAnswer(env, answer("answer-rejected", "preflight", "owner/rejected", 20, { runId: run.id, actionId: rejectedAction.id }))),
+      vote: "not_useful",
+      feedbackSource: "github_reaction",
+      actorKind: "author",
+      now: "2026-05-02T00:00:00.000Z",
+    });
+    expect(rejected).toMatchObject({ outcomeState: "rejected", source: "explicit", outcomeTargetType: "pull_request", outcomePullNumber: 20 });
+
+    await upsertPullRequestFromGitHub(env, "owner/rejected", pr(20, { state: "closed", merged_at: "2026-05-03T00:00:00.000Z", created_at: "2026-05-02T00:00:00.000Z", updated_at: "2026-05-03T00:00:00.000Z" }));
+    await evaluateRecommendationOutcomes(env, "dev", { now: "2026-05-04T00:00:00.000Z" });
+
+    const rows = await listAgentRecommendationOutcomes(env, { actorLogin: "dev" });
+    expect(rows.find((row) => row.actionId === rejectedAction.id)).toMatchObject({ outcomeState: "rejected", source: "explicit" });
+    const summary = await getAgentRecommendationOutcomeSummary(env, "dev", { now: "2026-05-04T00:00:00.000Z" });
+    expect(summary.totals).toMatchObject({ total: 2, accepted: 1, positive: 1, negative: 1 });
+  });
+
+  it("keeps explicit feedback classification deterministic across fallback and aggregate branches", async () => {
+    const env = createTestEnv();
+    const run = runRecord("run-explicit-branches", "dev", "2026-05-01T00:00:00.000Z");
+    const repoAction = action(run, 0, { targetRepoFullName: "owner/repo-only", targetPullNumber: null, targetIssueNumber: null });
+    const noneAction = action(run, 1, { targetRepoFullName: "", targetPullNumber: null, targetIssueNumber: null });
+    await createAgentRun(env, run);
+    await replaceAgentActions(env, run.id, [repoAction, noneAction]);
+
+    await expect(
+      recordExplicitRecommendationFeedbackOutcome(env, {
+        answer: answer("answer-missing-run", "preflight", "owner/missing", 1),
+        vote: "useful",
+        feedbackSource: "app",
+        actorKind: "maintainer",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      recordExplicitRecommendationFeedbackOutcome(env, {
+        answer: answer("answer-unknown-run", "preflight", "owner/missing", 1, { runId: "missing-run" }),
+        vote: "useful",
+        feedbackSource: "app",
+        actorKind: "maintainer",
+      }),
+    ).resolves.toBeNull();
+
+    const emptyRun = runRecord("run-no-actions", "dev", "2026-05-01T00:00:00.000Z");
+    await createAgentRun(env, emptyRun);
+    await expect(
+      recordExplicitRecommendationFeedbackOutcome(env, {
+        answer: answer("answer-no-action", "preflight", "owner/missing", 1, { runId: emptyRun.id }),
+        vote: "useful",
+        feedbackSource: "app",
+        actorKind: "maintainer",
+      }),
+    ).resolves.toBeNull();
+
+    const repoAnswer = await upsertAgentCommandAnswer(env, answer("answer-repo-target", "preflight", "owner/repo-only", 0, { runId: run.id, actionId: repoAction.id }));
+    await recordAgentCommandFeedback(env, {
+      answerId: repoAnswer.id,
+      repoFullName: repoAnswer.repoFullName,
+      issueNumber: repoAnswer.issueNumber,
+      command: repoAnswer.command,
+      actorLogin: "reviewer-one",
+      vote: "not_useful",
+      source: "app",
+      actorKind: "maintainer",
+      updatedAt: "2026-05-02T00:00:00.000Z",
+      metadata: {},
+    });
+    await recordAgentCommandFeedback(env, {
+      answerId: repoAnswer.id,
+      repoFullName: repoAnswer.repoFullName,
+      issueNumber: repoAnswer.issueNumber,
+      command: repoAnswer.command,
+      actorLogin: "reviewer-two",
+      vote: "useful",
+      source: "app",
+      actorKind: "maintainer",
+      updatedAt: "2026-05-03T00:00:00.000Z",
+      metadata: {},
+    });
+    await expect(
+      recordExplicitRecommendationFeedbackOutcome(env, {
+        answer: repoAnswer,
+        vote: "useful",
+        feedbackSource: "app",
+        actorKind: "maintainer",
+        now: "2026-05-04T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      outcomeState: "rejected",
+      outcomeTargetType: "repository",
+      sourceUpdatedAt: "2026-05-03T00:00:00.000Z",
+      metadata: { feedbackCount: 2, usefulCount: 1, notUsefulCount: 1 },
+    });
+
+    await expect(
+      recordExplicitRecommendationFeedbackOutcome(env, {
+        answer: await upsertAgentCommandAnswer(env, answer("answer-none-target", "preflight", "", 0, { runId: run.id, actionId: noneAction.id })),
+        vote: "useful",
+        feedbackSource: "app",
+        actorKind: "maintainer",
+      }),
+    ).resolves.toMatchObject({ outcomeState: "accepted", outcomeTargetType: "none" });
   });
 
   it("classifies linked PRs, later issues, payload targets, no-target, and defensive timestamp branches", () => {
@@ -487,6 +613,7 @@ describe("recommendation outcome feedback", () => {
       outcomeRepoFullName: "owner/legacy",
       outcomePullNumber: null,
       outcomeIssueNumber: null,
+      source: "inferred",
       maintainerLane: false,
       confidence: "high",
       reason: "legacy row fixture",
@@ -494,9 +621,9 @@ describe("recommendation outcome feedback", () => {
       metadata: {},
     });
     await env.DB.prepare(
-      "update agent_recommendation_outcomes set action_type = ?, outcome_state = ?, outcome_target_type = ?, confidence = ? where action_id = ?",
+      "update agent_recommendation_outcomes set action_type = ?, outcome_state = ?, outcome_target_type = ?, source = ?, confidence = ? where action_id = ?",
     )
-      .bind("legacy_action", "legacy_state", "legacy_target", "legacy_confidence", legacyAction.id)
+      .bind("legacy_action", "legacy_state", "legacy_target", "legacy_source", "legacy_confidence", legacyAction.id)
       .run();
 
     const [row] = await listAgentRecommendationOutcomes(env, { actorLogin: "dev" });
@@ -504,6 +631,7 @@ describe("recommendation outcome feedback", () => {
       actionType: "choose_next_work",
       outcomeState: "ignored",
       outcomeTargetType: "none",
+      source: "inferred",
       confidence: "medium",
     });
   });
@@ -540,6 +668,28 @@ function action(run: AgentRunRecord, index: number, overrides: Partial<AgentActi
     payload: {},
     createdAt: "2026-05-01T00:00:00.000Z",
     ...overrides,
+  };
+}
+
+function answer(
+  id: string,
+  command: string,
+  repoFullName: string,
+  issueNumber: number,
+  metadata: Record<string, string | number | boolean | null> = {},
+): Parameters<typeof upsertAgentCommandAnswer>[1] {
+  return {
+    id,
+    repoFullName,
+    issueNumber,
+    command,
+    requestCommentId: 1,
+    responseCommentId: 2,
+    responseUrl: null,
+    actorKind: "maintainer",
+    createdAt: "2026-05-01T00:00:00.000Z",
+    updatedAt: "2026-05-01T00:00:00.000Z",
+    metadata,
   };
 }
 

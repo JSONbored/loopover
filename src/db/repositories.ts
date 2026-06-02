@@ -96,11 +96,18 @@ import type {
   ProductUsageDailyRollupRecord,
   ProductUsageDailyRollupStatus,
   ProductUsageEventRecord,
+  ProductUsageRetentionRollup,
   ProductUsageRollupRunResult,
   ProductUsageRollupStatus,
   ProductUsageOutcome,
+  ProductUsageRole,
+  ProductUsageRoleActivationFunnel,
+  ProductUsageRoleDimensionCount,
+  ProductUsageRoleRetention,
   ProductUsageSummary,
   ProductUsageSurface,
+  ProductUsageSurfaceActivationFunnel,
+  ProductUsageSurfaceRetention,
   PullRequestFileRecord,
   PullRequestDetailSyncStateRecord,
   PullRequestRecord,
@@ -3301,6 +3308,10 @@ function toProductUsageDailyRollupRecord(row: typeof productUsageDailyRollups.$i
     byTool: parseJson<Array<{ key: string; count: number }>>(row.toolsJson, []),
     byRouteClass: parseJson<Array<{ key: string; count: number }>>(row.routeClassesJson, []),
     activation: parseJson<ProductUsageActivationFunnel>(row.activationJson, emptyProductUsageActivationFunnel()),
+    byRole: parseJson<ProductUsageRoleDimensionCount[]>(row.rolesJson, []),
+    activationByRole: parseJson<ProductUsageRoleActivationFunnel[]>(row.activationByRoleJson, []),
+    activationBySurface: parseJson<ProductUsageSurfaceActivationFunnel[]>(row.activationBySurfaceJson, []),
+    retention: parseJson<ProductUsageRetentionRollup[]>(row.retentionJson, []),
     generatedAt: row.generatedAt,
     updatedAt: row.updatedAt,
   };
@@ -3393,12 +3404,25 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
     .limit(PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT + 1);
   const capped = rows.length > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT || sourceEventCount > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT;
   const events = rows.slice(0, PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
+  const retentionStartIso = `${addProductUsageUtcDays(day, -PRODUCT_USAGE_RETENTION_MAX_WINDOW_DAYS)}T00:00:00.000Z`;
+  const retentionWhere = and(gte(productUsageEvents.occurredAt, retentionStartIso), sql`${productUsageEvents.occurredAt} < ${startIso}`, sql`${productUsageEvents.actorHash} is not null`);
+  const [retentionSourceRow] = await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents).where(retentionWhere);
+  const retentionRows = await db
+    .select()
+    .from(productUsageEvents)
+    .where(retentionWhere)
+    .orderBy(desc(productUsageEvents.occurredAt))
+    .limit(PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT + 1);
+  const retentionCapped = retentionRows.length > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT || Number(retentionSourceRow?.count ?? 0) > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT;
+  const retentionEvents = retentionRows.slice(0, PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
   const record = buildProductUsageDailyRollupRecord({
     day,
     generatedAt,
     sourceEventCount,
     capped,
     events,
+    retentionEvents,
+    retentionCapped,
   });
   await db
     .insert(productUsageDailyRollups)
@@ -3421,6 +3445,10 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
       toolsJson: jsonString(record.byTool),
       routeClassesJson: jsonString(record.byRouteClass),
       activationJson: jsonString(record.activation),
+      rolesJson: jsonString(record.byRole),
+      activationByRoleJson: jsonString(record.activationByRole),
+      activationBySurfaceJson: jsonString(record.activationBySurface),
+      retentionJson: jsonString(record.retention),
       generatedAt: record.generatedAt,
       updatedAt: record.updatedAt,
     })
@@ -3444,6 +3472,10 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
         toolsJson: jsonString(record.byTool),
         routeClassesJson: jsonString(record.byRouteClass),
         activationJson: jsonString(record.activation),
+        rolesJson: jsonString(record.byRole),
+        activationByRoleJson: jsonString(record.activationByRole),
+        activationBySurfaceJson: jsonString(record.activationBySurface),
+        retentionJson: jsonString(record.retention),
         generatedAt: record.generatedAt,
         updatedAt: record.updatedAt,
       },
@@ -3457,27 +3489,16 @@ function buildProductUsageDailyRollupRecord(args: {
   sourceEventCount: number;
   capped: boolean;
   events: ProductUsageEventRecord[];
+  retentionEvents: ProductUsageEventRecord[];
+  retentionCapped: boolean;
 }): ProductUsageDailyRollupRecord {
   const today = productUsageDayFromIso(args.generatedAt);
   const actorHashes = new Set(args.events.map((event) => event.actorHash).filter(isNonEmptyString));
   const sessionHashes = new Set(args.events.map((event) => event.sessionHash).filter(isNonEmptyString));
   const repoNames = new Set(args.events.map((event) => event.repoFullName).filter(isNonEmptyString));
-  const loginActors = productUsageActorSet(args.events, (event) => event.eventName === "auth_session_created");
-  const doctorPassActors = productUsageActorSet(args.events, isProductUsageDoctorPassEvent);
-  const firstUsefulActionActors = productUsageActorSet(args.events, isProductUsageUsefulActionEvent);
-  const githubInstalledRepos = productUsageRepoSet(args.events, (event) => event.eventName === "github_installation_created");
-  const githubFirstCommandRepos = productUsageRepoSet(args.events, isProductUsageGitHubCommandEvent);
-  const githubUsefulMaintainerRepos = productUsageRepoSet(args.events, isProductUsageUsefulMaintainerEvent);
-  const activation: ProductUsageActivationFunnel = {
-    loginActors: loginActors.size,
-    doctorPassActors: doctorPassActors.size,
-    firstUsefulActionActors: firstUsefulActionActors.size,
-    fullyActivatedActors: intersectionCount(loginActors, doctorPassActors, firstUsefulActionActors),
-    githubInstalledRepos: githubInstalledRepos.size,
-    githubFirstCommandRepos: githubFirstCommandRepos.size,
-    githubUsefulMaintainerRepos: githubUsefulMaintainerRepos.size,
-    githubActivatedRepos: intersectionCount(githubInstalledRepos, githubFirstCommandRepos, githubUsefulMaintainerRepos),
-  };
+  const roleBuckets = productUsageRoleBuckets(args.events);
+  const surfaceBuckets = productUsageSurfaceBuckets(args.events);
+  const activation = buildProductUsageActivationFunnel(args.events);
   return {
     day: args.day,
     status: args.capped ? "incomplete" : args.day === today ? "partial" : "complete",
@@ -3497,9 +3518,218 @@ function buildProductUsageDailyRollupRecord(args: {
     byTool: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "toolName"))),
     byRouteClass: countProductUsageDimensions(args.events.map((event) => productUsageRouteClass(event.route))),
     activation,
+    byRole: roleBuckets.map(({ role, events }) => ({
+      role,
+      count: events.length,
+      activeActors: new Set(events.map((event) => event.actorHash).filter(isNonEmptyString)).size,
+      activeRepos: new Set(events.map((event) => event.repoFullName).filter(isNonEmptyString)).size,
+    })),
+    activationByRole: roleBuckets.map(({ role, events }) => ({ role, ...buildProductUsageActivationFunnel(events) })),
+    activationBySurface: surfaceBuckets.map(({ surface, events }) => ({ surface, ...buildProductUsageActivationFunnel(events) })),
+    retention: buildProductUsageRetentionRollups(args.day, args.events, args.retentionEvents, args.retentionCapped),
     generatedAt: args.generatedAt,
     updatedAt: args.generatedAt,
   };
+}
+
+function buildProductUsageActivationFunnel(events: ProductUsageEventRecord[]): ProductUsageActivationFunnel {
+  const loginActors = productUsageActorSet(events, (event) => event.eventName === "auth_session_created");
+  const doctorPassActors = productUsageActorSet(events, isProductUsageDoctorPassEvent);
+  const firstUsefulActionActors = productUsageActorSet(events, isProductUsageUsefulActionEvent);
+  const githubInstalledRepos = productUsageRepoSet(events, (event) => event.eventName === "github_installation_created");
+  const githubFirstCommandRepos = productUsageRepoSet(events, isProductUsageGitHubCommandEvent);
+  const githubUsefulMaintainerRepos = productUsageRepoSet(events, isProductUsageUsefulMaintainerEvent);
+  return {
+    loginActors: loginActors.size,
+    doctorPassActors: doctorPassActors.size,
+    firstUsefulActionActors: firstUsefulActionActors.size,
+    fullyActivatedActors: intersectionCount(loginActors, doctorPassActors, firstUsefulActionActors),
+    githubInstalledRepos: githubInstalledRepos.size,
+    githubFirstCommandRepos: githubFirstCommandRepos.size,
+    githubUsefulMaintainerRepos: githubUsefulMaintainerRepos.size,
+    githubActivatedRepos: intersectionCount(githubInstalledRepos, githubFirstCommandRepos, githubUsefulMaintainerRepos),
+  };
+}
+
+function productUsageRoleBuckets(events: ProductUsageEventRecord[]): Array<{ role: ProductUsageRole; events: ProductUsageEventRecord[] }> {
+  const buckets = new Map<ProductUsageRole, ProductUsageEventRecord[]>();
+  const actorRoles = productUsageRolesByActor(events);
+  for (const event of events) {
+    for (const role of productUsageRolesForEvent(event, actorRoles)) {
+      const bucket = buckets.get(role);
+      if (bucket) bucket.push(event);
+      else buckets.set(role, [event]);
+    }
+  }
+  return [...buckets.entries()]
+    .map(([role, bucketEvents]) => ({ role, events: bucketEvents }))
+    .sort((a, b) => b.events.length - a.events.length || productUsageRoleSortValue(a.role) - productUsageRoleSortValue(b.role));
+}
+
+function productUsageSurfaceBuckets(events: ProductUsageEventRecord[]): Array<{ surface: ProductUsageSurface; events: ProductUsageEventRecord[] }> {
+  const buckets = new Map<ProductUsageSurface, ProductUsageEventRecord[]>();
+  for (const event of events) {
+    const surface = normalizeProductUsageSurface(event.surface);
+    const bucket = buckets.get(surface);
+    if (bucket) bucket.push(event);
+    else buckets.set(surface, [event]);
+  }
+  return [...buckets.entries()]
+    .map(([surface, bucketEvents]) => ({ surface, events: bucketEvents }))
+    .sort((a, b) => b.events.length - a.events.length || a.surface.localeCompare(b.surface));
+}
+
+function buildProductUsageRetentionRollups(day: string, currentEvents: ProductUsageEventRecord[], previousEvents: ProductUsageEventRecord[], capped: boolean): ProductUsageRetentionRollup[] {
+  return PRODUCT_USAGE_RETENTION_WINDOWS.map(({ window, days }) => {
+    const previousStartIso = `${addProductUsageUtcDays(day, -days)}T00:00:00.000Z`;
+    const windowPreviousEvents = previousEvents.filter((event) => event.occurredAt >= previousStartIso);
+    const currentActors = productUsageActorHashes(currentEvents);
+    const previousActors = productUsageActorHashes(windowPreviousEvents);
+    const retainedActors = intersectionCount(currentActors, previousActors);
+    return {
+      window,
+      capped,
+      activeActors: currentActors.size,
+      retainedActors,
+      retentionRate: productUsageRetentionRate(retainedActors, currentActors.size),
+      byRole: productUsageRetentionByRole(currentEvents, windowPreviousEvents),
+      bySurface: productUsageRetentionBySurface(currentEvents, windowPreviousEvents),
+    };
+  });
+}
+
+function productUsageRetentionByRole(currentEvents: ProductUsageEventRecord[], previousEvents: ProductUsageEventRecord[]): ProductUsageRoleRetention[] {
+  const previousActorRoles = productUsageRolesByActor(previousEvents);
+  return productUsageRoleBuckets(currentEvents).map(({ role, events }) => {
+    const currentActors = productUsageActorHashes(events);
+    const previousActors = productUsageActorHashes(previousEvents.filter((event) => productUsageRolesForEvent(event, previousActorRoles).includes(role)));
+    const retainedActors = intersectionCount(currentActors, previousActors);
+    return {
+      role,
+      activeActors: currentActors.size,
+      retainedActors,
+      retentionRate: productUsageRetentionRate(retainedActors, currentActors.size),
+    };
+  });
+}
+
+function productUsageRetentionBySurface(currentEvents: ProductUsageEventRecord[], previousEvents: ProductUsageEventRecord[]): ProductUsageSurfaceRetention[] {
+  return productUsageSurfaceBuckets(currentEvents).map(({ surface, events }) => {
+    const currentActors = productUsageActorHashes(events);
+    const previousActors = productUsageActorHashes(previousEvents.filter((event) => normalizeProductUsageSurface(event.surface) === surface));
+    const retainedActors = intersectionCount(currentActors, previousActors);
+    return {
+      surface,
+      activeActors: currentActors.size,
+      retainedActors,
+      retentionRate: productUsageRetentionRate(retainedActors, currentActors.size),
+    };
+  });
+}
+
+function productUsageActorHashes(events: ProductUsageEventRecord[]): Set<string> {
+  return new Set(events.map((event) => event.actorHash).filter(isNonEmptyString));
+}
+
+function productUsageRetentionRate(retainedActors: number, activeActors: number): number {
+  return activeActors > 0 ? Number((retainedActors / activeActors).toFixed(4)) : 0;
+}
+
+function productUsageRolesByActor(events: ProductUsageEventRecord[]): Map<string, ProductUsageRole[]> {
+  const rolesByActor = new Map<string, Set<ProductUsageRole>>();
+  for (const event of events) {
+    if (!event.actorHash) continue;
+    const roles = productUsageBaseRolesForEvent(event).filter((role) => role !== "unknown");
+    if (roles.length === 0) continue;
+    const bucket = rolesByActor.get(event.actorHash) ?? new Set<ProductUsageRole>();
+    for (const role of roles) bucket.add(role);
+    rolesByActor.set(event.actorHash, bucket);
+  }
+  return new Map(
+    [...rolesByActor.entries()].map(([actorHash, roles]) => [
+      actorHash,
+      [...roles].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b)),
+    ]),
+  );
+}
+
+function productUsageRolesForEvent(event: ProductUsageEventRecord, actorRoles: Map<string, ProductUsageRole[]> = new Map()): ProductUsageRole[] {
+  const baseRoles = productUsageBaseRolesForEvent(event);
+  if (baseRoles.length === 1 && baseRoles[0] === "unknown" && event.actorHash) return actorRoles.get(event.actorHash) ?? baseRoles;
+  return baseRoles;
+}
+
+function productUsageBaseRolesForEvent(event: ProductUsageEventRecord): ProductUsageRole[] {
+  const roles = new Set<ProductUsageRole>();
+  addProductUsageRolesFromValue(roles, event.metadata.role);
+  addProductUsageRolesFromValue(roles, event.metadata.roles);
+  addProductUsageRolesFromValue(roles, event.metadata.audience);
+  addProductUsageRolesFromValue(roles, event.metadata.actorRole);
+  addProductUsageRolesFromValue(roles, event.metadata.actorKind);
+  if (roles.size > 0) return [...roles].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b));
+
+  if (event.eventName === "github_installation_created") return ["owner"];
+  if (event.eventName === "extension_session_created" || event.eventName === "pull_context_viewed") return ["maintainer"];
+  if (event.surface === "mcp") return ["miner"];
+  if (
+    event.eventName === "local_branch_analysis_completed" ||
+    event.eventName === "agent_run_started" ||
+    event.eventName === "agent_plan_next_work_completed" ||
+    event.eventName === "agent_preflight_branch_completed" ||
+    event.eventName === "agent_pr_packet_completed" ||
+    event.eventName === "agent_blockers_completed"
+  ) {
+    return ["miner"];
+  }
+  if (event.eventName === "pr_public_surface_published") return ["contributor"];
+  return ["unknown"];
+}
+
+function addProductUsageRolesFromValue(roles: Set<ProductUsageRole>, value: JsonValue | undefined): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) addProductUsageRolesFromValue(roles, entry);
+    return;
+  }
+  if (typeof value !== "string") return;
+  const role = normalizeProductUsageRole(value);
+  if (role) roles.add(role);
+}
+
+function normalizeProductUsageRole(value: string): ProductUsageRole | null {
+  switch (value.trim().toLowerCase().replace(/[\s-]+/g, "_")) {
+    case "miner":
+    case "miners":
+      return "miner";
+    case "maintainer":
+    case "maintainers":
+    case "reviewer":
+      return "maintainer";
+    case "owner":
+    case "owners":
+    case "repo_owner":
+    case "repo_owners":
+    case "repository_owner":
+    case "repository_owners":
+      return "owner";
+    case "operator":
+    case "operators":
+      return "operator";
+    case "author":
+    case "contributor":
+    case "contributors":
+    case "outside_contributor":
+    case "outside_contributors":
+      return "contributor";
+    case "none":
+    case "unknown":
+      return "unknown";
+    default:
+      return null;
+  }
+}
+
+function productUsageRoleSortValue(role: ProductUsageRole): number {
+  return PRODUCT_USAGE_ROLE_ORDER.indexOf(role);
 }
 
 function productUsageActorSet(events: ProductUsageEventRecord[], predicate: (event: ProductUsageEventRecord) => boolean): Set<string> {
@@ -3620,8 +3850,15 @@ const PRODUCT_USAGE_METADATA_MAX_ARRAY_ITEMS = 20;
 const PRODUCT_USAGE_METADATA_MAX_KEY_CHARS = 64;
 const PRODUCT_USAGE_METADATA_MAX_STRING_CHARS = 200;
 const PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT = 5000;
+const PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT = 5000;
+const PRODUCT_USAGE_RETENTION_MAX_WINDOW_DAYS = 30;
+const PRODUCT_USAGE_RETENTION_WINDOWS: Array<{ window: ProductUsageRetentionRollup["window"]; days: number }> = [
+  { window: "previous_7_days", days: 7 },
+  { window: "previous_30_days", days: 30 },
+];
 const MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT = 5000;
 const PRODUCT_USAGE_ACTOR_REDACTION_MAX_CHARS = 256;
+const PRODUCT_USAGE_ROLE_ORDER: ProductUsageRole[] = ["miner", "maintainer", "owner", "operator", "contributor", "unknown"];
 const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
   "command_previewed",
   "pull_context_viewed",

@@ -1044,6 +1044,8 @@ export type ProductUsageSurface = "api" | "mcp" | "github_app" | "control_panel"
 
 export type ProductUsageOutcome = "success" | "denied" | "error" | "queued" | "completed" | "skipped";
 
+export type ProductUsageRole = "miner" | "maintainer" | "owner" | "operator" | "contributor" | "unknown";
+
 export type ProductUsageEventRecord = {
   id: string;
   surface: ProductUsageSurface;
@@ -1094,6 +1096,13 @@ export type ProductUsageDimensionCount = {
   count: number;
 };
 
+export type ProductUsageRoleDimensionCount = {
+  role: ProductUsageRole;
+  count: number;
+  activeActors: number;
+  activeRepos: number;
+};
+
 export type ProductUsageActivationFunnel = {
   loginActors: number;
   doctorPassActors: number;
@@ -1103,6 +1112,37 @@ export type ProductUsageActivationFunnel = {
   githubFirstCommandRepos: number;
   githubUsefulMaintainerRepos: number;
   githubActivatedRepos: number;
+};
+
+export type ProductUsageRoleActivationFunnel = ProductUsageActivationFunnel & {
+  role: ProductUsageRole;
+};
+
+export type ProductUsageSurfaceActivationFunnel = ProductUsageActivationFunnel & {
+  surface: ProductUsageSurface;
+};
+
+export type ProductUsageRetentionWindow = "previous_7_days" | "previous_30_days";
+
+export type ProductUsageRetentionDimension = {
+  activeActors: number;
+  retainedActors: number;
+  retentionRate: number;
+};
+
+export type ProductUsageRoleRetention = ProductUsageRetentionDimension & {
+  role: ProductUsageRole;
+};
+
+export type ProductUsageSurfaceRetention = ProductUsageRetentionDimension & {
+  surface: ProductUsageSurface;
+};
+
+export type ProductUsageRetentionRollup = ProductUsageRetentionDimension & {
+  window: ProductUsageRetentionWindow;
+  capped: boolean;
+  byRole: ProductUsageRoleRetention[];
+  bySurface: ProductUsageSurfaceRetention[];
 };
 
 export type ProductUsageDailyRollupRecord = {
@@ -1124,6 +1164,10 @@ export type ProductUsageDailyRollupRecord = {
   byTool: ProductUsageDimensionCount[];
   byRouteClass: ProductUsageDimensionCount[];
   activation: ProductUsageActivationFunnel;
+  byRole: ProductUsageRoleDimensionCount[];
+  activationByRole: ProductUsageRoleActivationFunnel[];
+  activationBySurface: ProductUsageSurfaceActivationFunnel[];
+  retention: ProductUsageRetentionRollup[];
   generatedAt: string;
   updatedAt: string;
 };

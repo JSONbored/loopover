@@ -93,6 +93,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();
     expect(spec.components?.schemas?.LocalBranchAnalysis).toBeDefined();
     expect(spec.components?.schemas?.RepoSettingsPreview).toBeDefined();
+    expect(spec.components?.schemas?.CommandPreviewResponse).toBeDefined();
     expect(spec.components?.schemas?.AgentRunBundle).toBeDefined();
     expect(spec.components?.schemas?.AgentAction).toBeDefined();
     expect(spec.components?.schemas?.UpstreamStatus).toBeDefined();
@@ -100,6 +101,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.UpstreamDriftReport).toBeDefined();
     expect(JSON.stringify(spec.components?.schemas?.ScorePreviewResult)).toContain("scenarioPreviews");
     expect(JSON.stringify(spec.components?.schemas?.RepoIntelligence)).toContain("burdenForecastFreshness");
+    expect(JSON.stringify(spec.components?.schemas?.CommandPreviewResponse)).toContain("missing_permission");
     expect(JSON.stringify(spec.components?.schemas?.ContributorOutcomeHistory)).toContain("reconciliation");
     expect(JSON.stringify(spec.components?.schemas?.ContributorDecisionPack)).toContain("recommendationOutcomeFeedback");
     expect(JSON.stringify(spec.components?.schemas?.LocalBranchAnalysis)).toContain("baseFreshness");

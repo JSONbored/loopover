@@ -806,6 +806,19 @@ describe("decision-pack service", () => {
     expect(pack.pursueRepos.map((decision) => decision.repoFullName)).toContain("owner/pursue");
     expect(pack.avoidRepos.map((decision) => decision.repoFullName)).toEqual(expect.arrayContaining(["owner/inactive", "owner/unconfigured"]));
     expect(pack.topActions.map((action) => action.actionKind)).toEqual(expect.arrayContaining(["maintainer_lane_improve_repo", "cleanup_existing_prs", "open_new_direct_pr", "file_issue_discovery"]));
+    expect(pack.actionPortfolio.bucketOrder).toEqual(["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"]);
+    const portfolioBuckets = new Map(pack.actionPortfolio.buckets.map((bucket) => [bucket.bucket, bucket.actions]));
+    expect(portfolioBuckets.get("cleanup")).toEqual([expect.objectContaining({ repoFullName: "owner/cleanup", actionKind: "cleanup_existing_prs" })]);
+    expect(portfolioBuckets.get("wait")).toEqual([expect.objectContaining({ repoFullName: "owner/cleanup", actionKind: "land_existing_prs", status: "watch" })]);
+    expect(portfolioBuckets.get("direct_pr")).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "owner/pursue", actionKind: "open_new_direct_pr" })]));
+    expect(portfolioBuckets.get("issue_discovery")).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "owner/issues", actionKind: "file_issue_discovery" })]));
+    expect(portfolioBuckets.get("avoid")).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "owner/inactive", recommendation: "avoid_for_now" })]));
+    expect(portfolioBuckets.get("maintainer_lane")).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "jsonbored/owned", actionKind: "maintainer_lane_improve_repo" })]));
+    expect(pack.actionPortfolio.topActions[0]).toMatchObject({ bucket: "cleanup", repoFullName: "owner/cleanup" });
+    expect(portfolioBuckets.get("issue_discovery")?.[0]?.scoreabilityImpact).toMatch(/Direct PR scoreability is not the target/);
+    expect(JSON.stringify(pack.actionPortfolio.buckets.map((bucket) => bucket.actions.map((entry) => entry.publicSafeSummary)))).not.toMatch(
+      /wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|scoreability/i,
+    );
     expect(pack.roleContexts.map((role) => role.repoFullName)).not.toContain("owner/unconfigured");
     expect(pack.opportunities).toEqual([expect.objectContaining({ repoFullName: "owner/pursue", issueNumber: 7, fit: "good" })]);
     expect(pack.nextActions.length).toBeGreaterThan(0);
@@ -821,7 +834,20 @@ describe("decision-pack service", () => {
       cleanupFirst: true,
       summary: "One open PR needs attention on owner/cleanup.",
       guidance: ["Close or land owner/cleanup#42 before opening new direct PR work."],
-      pendingScenarios: [],
+      pendingScenarios: [
+        {
+          repoFullName: "owner/cleanup",
+          detection: {
+            source: "github_observed" as const,
+            pendingMergedPrCount: 1,
+            pendingClosedPrCount: 0,
+            approvedPrCount: 1,
+            expectedOpenPrCountAfterMerge: 5,
+            scenarioNotes: ["1 open PR looks merge-ready after review.", "Expected open PR pressure drops after merge."],
+            classified: [],
+          },
+        },
+      ],
       pullRequests: [
         {
           repoFullName: "owner/cleanup",
@@ -871,6 +897,12 @@ describe("decision-pack service", () => {
     expect(pack.summary).toContain("One open PR needs attention");
     expect(pack.nextActions[0]).toMatch(/owner\/cleanup#42/);
     expect(pack.openPrMonitor).toEqual(monitor);
+    const cleanupPortfolioItem = pack.actionPortfolio.buckets.find((bucket) => bucket.bucket === "cleanup")?.actions[0];
+    expect(cleanupPortfolioItem).toMatchObject({
+      repoFullName: "owner/cleanup",
+      scenarioProjection: { source: "github_observed", pendingMergedPrCount: 1, expectedOpenPrCountAfterMerge: 5 },
+    });
+    expect(cleanupPortfolioItem?.whyNow.join(" ")).toMatch(/Scenario projection/);
   });
 
   it("issues repo-specific direct-PR reasoning that names language and label fit", () => {
@@ -1245,10 +1277,127 @@ describe("decision-pack service", () => {
       signalType: "contributor-decision-pack",
       targetKey: "user",
       generatedAt: null,
-      payload: { status: "ready", source: "computed", login: "user", repoDecisions: [], topActions: [] } as any,
+      payload: { status: "ready", source: "computed", login: "user", repoDecisions: undefined, topActions: undefined } as any,
     });
     expect(typeof wrapped.generatedAt).toBe("string");
     expect(wrapped.generatedAt.length).toBeGreaterThan(0);
+    expect(wrapped.actionPortfolio.topActions).toEqual([]);
+  });
+
+  it("builds action portfolios from sparse legacy actions with stable tie-breaks", () => {
+    const directDecision = (repoFullName: string): RepoDecision =>
+      ({
+        repoFullName,
+        recommendation: "pursue",
+        priorityScore: 30,
+        lane: { lane: "direct_pr" },
+        whyThisHelps: [],
+        riskReasons: [],
+        nextActions: ["Open a narrow PR."],
+        publicNextActions: ["Run public preflight before posting."],
+        scoreBlockers: [],
+        rewardUpside: { directPrShare: 0.03, issueDiscoveryShare: 0, emissionShare: 0.02 },
+      }) as any;
+    const maintainerDecision = {
+      ...directDecision("owner/maintainer"),
+      recommendation: "maintainer_lane",
+      priorityScore: 20,
+      scoreBlockers: [{ code: "maintainer_lane", severity: "info" }],
+    } as RepoDecision;
+    const portfolio = __decisionPackInternals.buildActionPortfolio({
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      repoDecisions: [
+        directDecision("owner/beta"),
+        directDecision("owner/alpha"),
+        maintainerDecision,
+        { recommendation: "pursue", priorityScore: 5 } as RepoDecision,
+      ],
+      topActions: [
+        { actionKind: "open_new_direct_pr", repoFullName: "owner/beta", priorityScore: 30, recommendation: "pursue", whyThisHelps: [], nextActions: [], publicNextActions: [] },
+        { actionKind: "open_new_direct_pr", repoFullName: "owner/alpha", priorityScore: 30, recommendation: "pursue", whyThisHelps: [], nextActions: [], publicNextActions: [] },
+        { actionKind: "maintainer_lane_improve_repo", repoFullName: "owner/maintainer", priorityScore: 20, recommendation: "maintainer_lane", whyThisHelps: [], nextActions: [], publicNextActions: ["Avoid reward payout language."] },
+        { actionKind: "maintainer_cut_readiness", repoFullName: "owner/maintainer", priorityScore: 20, recommendation: "maintainer_lane", whyThisHelps: [], nextActions: [], publicNextActions: ["Prepare public intake notes."] },
+        { actionKind: "maintainer_cut_readiness", repoFullName: "owner/maintainer", priorityScore: 20, recommendation: "maintainer_lane", whyThisHelps: [], nextActions: [], publicNextActions: ["Prepare public intake notes."] },
+        { actionKind: "open_new_direct_pr", repoFullName: 42, priorityScore: 99, recommendation: "pursue", whyThisHelps: [], nextActions: [], publicNextActions: [] },
+      ] as any,
+      openPrMonitor: {
+        pendingScenarios: [
+          {
+            repoFullName: "owner/maintainer",
+            detection: {
+              source: "user_supplied",
+              pendingMergedPrCount: 0,
+              pendingClosedPrCount: 1,
+              approvedPrCount: 0,
+              scenarioNotes: ["Manual projection expects one PR to close."],
+              classified: [],
+            },
+          },
+        ],
+      } as any,
+    });
+    const buckets = new Map(portfolio.buckets.map((bucket) => [bucket.bucket, bucket.actions]));
+    expect(buckets.get("direct_pr")?.map((action) => action.repoFullName)).toEqual(["owner/alpha", "owner/beta"]);
+    expect(buckets.get("maintainer_lane")?.map((action) => action.actionKind)).toEqual(["maintainer_cut_readiness", "maintainer_lane_improve_repo"]);
+    expect(buckets.get("maintainer_lane")).toHaveLength(2);
+    expect(buckets.get("maintainer_lane")?.[0]?.scenarioProjection).toMatchObject({ source: "user_supplied", pendingClosedPrCount: 1 });
+    expect(buckets.get("maintainer_lane")?.[1]?.maintainerImpact).toMatch(/Repo-owner work/);
+    expect(JSON.stringify(buckets.get("maintainer_lane"))).not.toMatch(/reward payout/i);
+  });
+
+  it("builds safe portfolio fallbacks for empty and sparse action inputs", () => {
+    const emptyPortfolio = __decisionPackInternals.buildActionPortfolio({
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      repoDecisions: [{ priorityScore: 99 } as RepoDecision],
+      topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "owner/missing", priorityScore: 99, recommendation: "pursue" } as any],
+    });
+    expect(emptyPortfolio.summary).toBe("No portfolio actions are currently available from the decision pack.");
+    expect(emptyPortfolio.topActions).toEqual([]);
+    expect(emptyPortfolio.buckets.every((bucket) => bucket.actions.length === 0)).toBe(true);
+    expect(emptyPortfolio.buckets.find((bucket) => bucket.bucket === "direct_pr")?.summary).toBe("No direct pr opportunities actions are currently recommended.");
+
+    const sparseDecision = {
+      repoFullName: "owner/sparse",
+      recommendation: "pursue",
+      priorityScore: 17,
+      lane: { lane: "direct_pr" },
+      whyThisHelps: ["Decision-level reason."],
+      riskReasons: ["Queue is busy."],
+      nextActions: ["Use decision next action."],
+      publicNextActions: ["Use public preflight."],
+      scoreBlockers: [{ code: "open_pr_pressure", severity: "warning" }],
+      rewardUpside: { directPrShare: 0.02, issueDiscoveryShare: 0, emissionShare: 0.02 },
+    } as RepoDecision;
+
+    const portfolio = __decisionPackInternals.buildActionPortfolio({
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      repoDecisions: [sparseDecision],
+      topActions: [
+        {
+          actionKind: "open_new_direct_pr",
+          repoFullName: "owner/sparse",
+          priorityScore: Number.NaN,
+          recommendation: "pursue",
+          whyThisHelps: undefined,
+          nextActions: undefined,
+          publicNextActions: undefined,
+        } as any,
+      ],
+    });
+
+    const action = portfolio.buckets.find((bucket) => bucket.bucket === "direct_pr")?.actions[0];
+    expect(action).toMatchObject({
+      repoFullName: "owner/sparse",
+      priorityScore: 17,
+      whyNow: ["Queue is busy."],
+      riskImpact: "Queue is busy.",
+      blockedBy: ["open_pr_pressure"],
+      rerunWhen: "Rerun after the listed scoreability blockers change.",
+      nextActions: ["Use decision next action."],
+      publicNextActions: ["Use public preflight."],
+    });
+    expect(action?.scoreabilityImpact).toMatch(/Blocked by open_pr_pressure/);
+    expect(action?.publicSafeSummary).toBe("Use public preflight.");
   });
 
   it("produces fully deterministic repoDecisions, priorityScores, and nextActions across builds", () => {
@@ -1278,6 +1427,9 @@ describe("decision-pack service", () => {
     expect(packA.repoDecisions.map((d) => d.priorityScore)).toEqual(packB.repoDecisions.map((d) => d.priorityScore));
     expect(packA.repoDecisions.map((d) => d.nextActions)).toEqual(packB.repoDecisions.map((d) => d.nextActions));
     expect(packA.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`)).toEqual(packB.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`));
+    expect(packA.actionPortfolio.buckets.map((bucket) => `${bucket.bucket}:${bucket.actions.map((action) => `${action.actionKind ?? action.recommendation}:${action.repoFullName}`).join(",")}`)).toEqual(
+      packB.actionPortfolio.buckets.map((bucket) => `${bucket.bucket}:${bucket.actions.map((action) => `${action.actionKind ?? action.recommendation}:${action.repoFullName}`).join(",")}`),
+    );
     expect(packA.evidenceGraph?.repos.map((repo) => repo.repoFullName)).toEqual(packB.evidenceGraph?.repos.map((repo) => repo.repoFullName));
   });
 

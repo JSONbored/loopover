@@ -367,6 +367,10 @@ function rollup(
       githubUsefulMaintainerRepos: 1,
       githubActivatedRepos: 1,
     },
+    byRole: [],
+    activationByRole: [],
+    activationBySurface: [],
+    retention: [],
     generatedAt: `${day}T23:59:00.000Z`,
     updatedAt: `${day}T23:59:00.000Z`,
   };

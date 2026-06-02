@@ -598,6 +598,69 @@ export const RepoSettingsPreviewSchema = z
   })
   .openapi("RepoSettingsPreview");
 
+export const CommandPreviewResponseSchema = z
+  .object({
+    generatedAt: z.string(),
+    command: z.object({
+      id: z.string(),
+      command: z.string(),
+      audience: z.string(),
+      boundary: z.string(),
+      description: z.string(),
+      endpoint: z.string(),
+    }),
+    request: z.record(z.string(), z.unknown()),
+    preview: z.object({
+      boundary: z.enum(["public", "public-safe", "private-api", "private-mcp"]),
+      endpoint: z.string(),
+      target: z.string(),
+      body: z.string(),
+      missingPermissions: z.array(z.string()),
+      permissionDiagnostics: z.array(
+        z.object({
+          permission: z.string(),
+          requiredAccess: z.string(),
+          currentAccess: z.string(),
+          ok: z.boolean(),
+          action: z.string(),
+        }),
+      ),
+      warnings: z.array(z.string()),
+      decision: z.object({
+        status: z.enum(["ready", "skipped", "missing_permission", "private_api"]),
+        willComment: z.boolean(),
+        willLabel: z.boolean(),
+        willCheckRun: z.boolean(),
+        skipped: z.boolean(),
+        skipReason: z.string().nullable(),
+        actions: z.array(z.enum(["comment", "label", "check_run", "skip", "none"])),
+        summary: z.string(),
+      }),
+      sample: z
+        .object({
+          pullNumber: z.number(),
+          authorLogin: z.string(),
+          authorType: z.string(),
+          authorAssociation: z.string(),
+          commenterLogin: z.string(),
+          commenterAssociation: z.string(),
+          minerStatus: z.enum(["confirmed", "not_found", "unavailable"]),
+          title: z.string(),
+          body: z.string().nullable(),
+          labels: z.array(z.string()),
+          linkedIssues: z.array(z.number()),
+        })
+        .optional(),
+      sanitizer: z
+        .object({
+          passed: z.boolean(),
+          forbiddenTerms: z.array(z.string()),
+        })
+        .optional(),
+    }),
+  })
+  .openapi("CommandPreviewResponse");
+
 export const RepoSyncStateSchema = z
   .object({
     repoFullName: z.string(),
@@ -1416,6 +1479,63 @@ export const AgentRecommendationOutcomeSummarySchema = z
   })
   .openapi("AgentRecommendationOutcomeSummary");
 
+export const DecisionRecommendationSchema = z.enum(["pursue", "cleanup_first", "maintainer_lane", "avoid_for_now", "watch"]).openapi("DecisionRecommendation");
+
+export const DecisionActionKindSchema = z
+  .enum(["cleanup_existing_prs", "land_existing_prs", "open_new_direct_pr", "file_issue_discovery", "maintainer_lane_improve_repo", "maintainer_cut_readiness"])
+  .openapi("DecisionActionKind");
+
+export const ActionPortfolioBucketNameSchema = z.enum(["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"]).openapi("ActionPortfolioBucketName");
+
+export const ActionPortfolioItemSchema = z
+  .object({
+    bucket: ActionPortfolioBucketNameSchema,
+    repoFullName: z.string(),
+    actionKind: DecisionActionKindSchema.optional(),
+    priorityScore: z.number(),
+    recommendation: DecisionRecommendationSchema,
+    status: z.enum(["recommended", "blocked", "watch"]),
+    whyNow: z.array(z.string()),
+    scoreabilityImpact: z.string(),
+    riskImpact: z.string(),
+    maintainerImpact: z.string(),
+    blockedBy: z.array(z.string()),
+    rerunWhen: z.string(),
+    publicSafeSummary: z.string(),
+    nextActions: z.array(z.string()),
+    publicNextActions: z.array(z.string()),
+    source: z.enum(["decision_pack"]),
+    scenarioProjection: z
+      .object({
+        source: z.enum(["github_observed", "user_supplied"]),
+        pendingMergedPrCount: z.number(),
+        pendingClosedPrCount: z.number(),
+        approvedPrCount: z.number(),
+        expectedOpenPrCountAfterMerge: z.number().optional(),
+        notes: z.array(z.string()),
+      })
+      .optional(),
+  })
+  .openapi("ActionPortfolioItem");
+
+export const ActionPortfolioSchema = z
+  .object({
+    generatedAt: z.string(),
+    bucketOrder: z.array(ActionPortfolioBucketNameSchema),
+    buckets: z.array(
+      z.object({
+        bucket: ActionPortfolioBucketNameSchema,
+        label: z.string(),
+        summary: z.string(),
+        actions: z.array(ActionPortfolioItemSchema),
+      }),
+    ),
+    topActions: z.array(ActionPortfolioItemSchema),
+    counts: z.record(z.string(), z.number()),
+    summary: z.string(),
+  })
+  .openapi("ActionPortfolio");
+
 export const ContributorDecisionPackSchema = z
   .object({
     status: z.enum(["ready"]),
@@ -1433,6 +1553,7 @@ export const ContributorDecisionPackSchema = z
     opportunities: z.array(ContributorOpportunitySchema),
     repoDecisions: z.array(z.record(z.string(), z.unknown())),
     topActions: z.array(z.record(z.string(), z.unknown())),
+    actionPortfolio: ActionPortfolioSchema,
     cleanupFirst: z.array(z.record(z.string(), z.unknown())),
     pursueRepos: z.array(z.record(z.string(), z.unknown())),
     avoidRepos: z.array(z.record(z.string(), z.unknown())),

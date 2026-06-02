@@ -3052,7 +3052,6 @@ async function requireCommandPreviewRepoAccess(
   const requestedRepo = repoFullName.toLowerCase();
   const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
   if (scopedRepoNames.has(requestedRepo)) return null;
-  if (repo?.installationId !== undefined && repo.installationId !== null && scope.installationIds.includes(repo.installationId)) return null;
   if (repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase())) return null;
   return c.json({ error: "forbidden_repo" }, 403);
 }

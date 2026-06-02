@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error Plain MV3 JavaScript module.
-import {
+import * as overlaySafety from "../../apps/gittensory-extension/overlay-safety.js";
+
+const {
   EXTENSION_SOURCE_UPLOAD_ENABLED,
   OVERLAY_FORBIDDEN_TERMS,
   escapeOverlayHtml,
   isOverlayDisplaySafe,
   redactForOverlayDisplay,
   renderOverlayPanels,
-} from "../../apps/gittensory-extension/overlay-safety.js";
+} = overlaySafety;
 
 describe("extension overlay safety", () => {
   it("keeps source upload disabled by default", () => {

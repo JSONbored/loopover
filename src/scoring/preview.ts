@@ -348,7 +348,15 @@ function buildScenarioPreviews(
   contributorEvidence: ContributorEvidenceRecord | null | undefined,
   current: ScoreCore,
 ): ScoreScenarioPreview[] {
-  const userPendingCount = nonNegative(input.pendingMergedPrCount) + nonNegative(input.pendingClosedPrCount) + nonNegative(input.approvedPrCount);
+  // Count each pending open PR at most once. `approvedPrCount` and
+  // `pendingMergedPrCount` are the same merge-ready set — detectPendingPrScenario
+  // sets both to `mergeReady.length` — so they must be folded with `max`, not
+  // added, or the merge-ready PRs get double-subtracted from the open-PR
+  // projection. Closed/likely-close PRs are a disjoint set and add on top. This
+  // mirrors the canonical reduction in pending-pr-scenarios.ts
+  // (currentOpen - pendingMergedPrCount - pendingClosedPrCount).
+  const mergeReadyPending = Math.max(nonNegative(input.pendingMergedPrCount), nonNegative(input.approvedPrCount));
+  const userPendingCount = mergeReadyPending + nonNegative(input.pendingClosedPrCount);
   const observedApprovedCount = nonNegative(input.observedApprovedPrCount);
   const observedStaleCloseCount = nonNegative(input.observedStalePrCount);
   const observedClosedCount = nonNegative(input.observedClosedPrCount);
@@ -407,12 +415,12 @@ function buildScenarioPreviews(
       computeScoreCore(afterPendingInput, repo, snapshot, contributorEvidence),
       [
         userPendingCount > 0
-          ? `${userPendingCount} user-supplied pending approved/merged/closed PR(s) are treated as no longer open for this scenario.`
+          ? `${userPendingCount} pending merged/closed PR(s) are treated as no longer open for this scenario${input.pendingScenarioObserved ? "" : " (caller-supplied)"}.`
           : "No pending merge/close count was supplied; this scenario preserves current open PR pressure.",
         ...(input.projectedCredibility !== undefined
           ? [`Projected credibility is user-supplied as ${roundScore(projectedCredibility)}.`]
           : userPendingCount > 0
-            ? [`Projected credibility is raised to the current floor ${current.gates.credibilityFloor} because pending merges were supplied by the caller.`]
+            ? [`Projected credibility is raised to the current floor ${current.gates.credibilityFloor} because pending merges are expected to land.`]
             : []),
         ...(input.scenarioNotes ?? []),
       ],

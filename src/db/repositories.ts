@@ -131,6 +131,7 @@ const MAX_SIGNAL_FRESHNESS_TARGETS = 200;
 const MAX_SIGNAL_FRESHNESS_TARGET_KEY_CHARS = 256;
 const FRESHNESS_SIGNAL_TYPES = [
   "contributor-decision-pack",
+  "contributor-evidence-graph",
   "contributor-intake-health",
   "contributor-outcome-history",
   "contributor-strategy",

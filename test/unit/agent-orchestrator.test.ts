@@ -120,7 +120,20 @@ describe("agent orchestrator", () => {
       approvalRequired: true,
       safetyClass: "private",
     });
+    expect(bundle.actions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      sourceSummary: "Ranked next-action recommendation from the contributor decision pack.",
+      freshness: "stale",
+      userSuppliedScenarios: false,
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "contributor_decision_pack", freshness: "fresh" }),
+        expect.objectContaining({ name: "repo_decision", freshness: "stale" }),
+        expect.objectContaining({ name: "official_contributor_stats", freshness: "fresh" }),
+      ]),
+      warnings: expect.arrayContaining(["we-promise/sure: partial signal coverage.", "we-promise/sure: stale signal coverage.", "No repo-specific official outcome row was available; confidence is reduced."]),
+    });
     expect(bundle.actions[0]?.publicSafeSummary).not.toMatch(/reward|wallet|hotkey|raw trust score|estimated score/i);
+    expect(JSON.stringify(bundle.actions[0]?.payload.recommendationEvidence)).not.toMatch(/wallet|hotkey|raw trust score/i);
     expect(bundle.contextSnapshots[0]).toMatchObject({
       scoringModelId: "scoring-1",
       freshnessWarnings: expect.arrayContaining(["we-promise/sure: partial signal coverage", "we-promise/sure: stale signal coverage"]),
@@ -146,6 +159,27 @@ describe("agent orchestrator", () => {
             publicNextActions: [],
           },
         ],
+        openPrMonitor: {
+          login: "oktofeesh1",
+          generatedAt: nowIso(),
+          openPrCount: 1,
+          registeredRepoCount: 1,
+          cleanupFirst: true,
+          summary: "One open PR needs cleanup.",
+          guidance: ["Clean up private queue pressure first."],
+          pendingScenarios: [],
+          pullRequests: [
+            {
+              repoFullName: "private-org/secret-alpha",
+              number: 77,
+              title: "secret-alpha patch",
+              classification: "stale",
+              summary: "secret-alpha patch is stale.",
+              reasons: ["No updates in 30 days."],
+              nextSteps: ["Privately prioritize the secret-alpha patch before opening more public work."],
+            },
+          ],
+        },
       }),
     );
 
@@ -217,6 +251,11 @@ describe("agent orchestrator", () => {
       payload: expect.objectContaining({ freshness: "rebuilding", rebuildEnqueued: true, refreshReason: "stale_decision_pack" }),
     });
     expect(bundle.actions.length).toBeGreaterThan(0);
+    expect(bundle.actions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      freshness: "rebuilding",
+      warnings: expect.arrayContaining(["Decision pack is stale; a background rebuild was enqueued."]),
+    });
     expect(bundle.contextSnapshots[0]?.freshnessWarnings ?? []).toEqual(
       expect.arrayContaining([expect.stringMatching(/^decision pack is stale.*background rebuild enqueued$/)]),
     );
@@ -323,7 +362,47 @@ describe("agent orchestrator", () => {
     const readyAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/ready", "pursue", 80), readyDecision, 2);
     const emptyNextAction = __agentOrchestratorInternals.actionFromDecisionAction(run, { ...action("open_new_direct_pr", "owner/ready", "pursue", 80), nextActions: [] }, readyDecision, 4);
     const repoFit = __agentOrchestratorInternals.actionFromRepoDecision(run, { ...readyDecision, nextActions: [] }, 3);
+    const outcomeRepoFit = __agentOrchestratorInternals.actionFromRepoDecision(run, { ...readyDecision, outcome: { repoFullName: "owner/ready" } as any }, 5);
+    const defaultEvidenceAction = __agentOrchestratorInternals.actionRecord({
+      run,
+      actionType: "choose_next_work",
+      index: 6,
+      targetRepoFullName: "owner/default",
+      status: "recommended",
+      recommendation: "Use the default evidence fallback.",
+      why: [],
+      blockedBy: [],
+      publicSafeSummary: "owner/default: fallback.",
+      payload: {},
+    });
     const noDecisionActions = __agentOrchestratorInternals.buildDecisionActions(run, decisionPackFixture({ generatedAt, topActions: [], repoDecisions: [readyDecision] }), [readyDecision]);
+    const staleEvidenceActions = __agentOrchestratorInternals.buildDecisionActions(
+      run,
+      decisionPackFixture({ generatedAt, freshness: "stale", rebuildEnqueued: false, topActions: [action("open_new_direct_pr", "owner/ready", "pursue", 80)], repoDecisions: [readyDecision] }),
+      [readyDecision],
+    );
+    const blockedFidelityActions = __agentOrchestratorInternals.buildDecisionActions(
+      run,
+      decisionPackFixture({
+        generatedAt,
+        topActions: [action("open_new_direct_pr", "owner/ready", "pursue", 80)],
+        repoDecisions: [readyDecision],
+        dataQuality: {
+          signalFidelity: {
+            status: "blocked",
+            repoCount: 1,
+            completeRepos: 0,
+            degradedRepos: 0,
+            blockedRepos: 1,
+            partialRepos: [],
+            cappedRepos: [],
+            staleRepos: [],
+            rateLimitedRepos: [],
+          },
+        },
+      }),
+      [readyDecision],
+    );
     const blockerFallback = __agentOrchestratorInternals.buildBlockerActions(
       run,
       decisionPackFixture({ generatedAt, repoDecisions: [criticalDecision], topActions: [] }),
@@ -335,7 +414,201 @@ describe("agent orchestrator", () => {
     expect(repoFit.recommendation).toMatch(/repo fit/);
     expect(noDecisionActions[0]).toMatchObject({ actionType: "explain_repo_fit", status: "recommended" });
     expect(blockerFallback[0]).toMatchObject({ actionType: "explain_score_blockers", status: "blocked" });
+    expect(watchAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "medium",
+      sourceSummary: "Repo decision recommendation without serving-pack freshness metadata.",
+      freshness: "unknown",
+    });
+    expect(outcomeRepoFit.payload.recommendationEvidence).toMatchObject({
+      confidence: "high",
+      sources: expect.arrayContaining([expect.objectContaining({ name: "repo_outcome_history", freshness: "fresh" })]),
+    });
+    expect(defaultEvidenceAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "medium",
+      sourceSummary: "Generated from Gittensory agent metadata.",
+      warnings: expect.arrayContaining(["Source-specific evidence was not attached; treat this recommendation as medium confidence."]),
+    });
+    expect(staleEvidenceActions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      freshness: "stale",
+      warnings: expect.arrayContaining(["Decision pack is stale and no rebuild was enqueued."]),
+    });
+    expect(blockedFidelityActions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      warnings: expect.arrayContaining(["Signal fidelity is blocked for this decision pack."]),
+    });
     expect(__agentOrchestratorInternals.summarizeRun({ ...run, status: "failed", errorSummary: undefined }, [])).toContain("unknown");
+
+    const monitorRun = __agentOrchestratorInternals.buildRunRecord({
+      objective: "open pr monitor actions",
+      actorLogin: "oktofeesh1",
+      surface: "mcp",
+      status: "running",
+      payload: {},
+    });
+    const monitorPack = decisionPackFixture({
+      generatedAt,
+      openPrMonitor: {
+        login: "oktofeesh1",
+        generatedAt,
+        openPrCount: 2,
+        registeredRepoCount: 1,
+        cleanupFirst: true,
+        summary: "Two open PRs need cleanup.",
+        guidance: ["Land or close stale PRs before opening new work."],
+        pendingScenarios: [],
+        pullRequests: [
+          {
+            repoFullName: "owner/ready",
+            number: 9,
+            title: "Stale fix",
+            classification: "stale",
+            summary: "PR is stale.",
+            reasons: ["No updates in 30 days."],
+            nextSteps: ["Rebase or close the PR."],
+          },
+          {
+            repoFullName: "owner/critical",
+            number: 4,
+            title: "Overlapping change",
+            classification: "duplicate_prone",
+            summary: "Overlaps with another open PR.",
+            reasons: ["Similar files touched."],
+            nextSteps: ["Consolidate into one PR."],
+          },
+        ],
+      },
+    });
+    const monitorActions = __agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, monitorPack, [readyDecision, criticalDecision]);
+    expect(monitorActions).toHaveLength(2);
+    expect(monitorActions[0]).toMatchObject({
+      actionType: "cleanup_existing_prs",
+      targetRepoFullName: "owner/ready",
+      targetPullNumber: 9,
+      status: "blocked",
+    });
+    expect(monitorActions[0]?.scoreabilityImpact).toMatch(/queue pressure/);
+    expect(monitorActions[1]?.riskImpact).toMatch(/Duplicate/);
+    expect(monitorActions[1]?.payload).toMatchObject({ decision: expect.objectContaining({ repoFullName: "owner/critical" }) });
+    expect(__agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, monitorPack, [readyDecision])).toHaveLength(1);
+    expect(__agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, { ...monitorPack, openPrMonitor: undefined }, [readyDecision])).toEqual([]);
+    expect(
+      __agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, { ...monitorPack, openPrMonitor: { ...monitorPack.openPrMonitor!, pullRequests: [] } }, []),
+    ).toEqual([]);
+    const mergedActions = __agentOrchestratorInternals.buildDecisionActions(monitorRun, monitorPack, [readyDecision]);
+    expect(mergedActions.slice(0, 2).map((entry) => entry.actionType)).toEqual(["cleanup_existing_prs", "explain_repo_fit"]);
+    expect(mergedActions.some((entry) => entry.actionType === "explain_repo_fit")).toBe(true);
+
+    const approvedPack = decisionPackFixture({
+      generatedAt,
+      openPrMonitor: {
+        login: "oktofeesh1",
+        generatedAt,
+        openPrCount: 1,
+        registeredRepoCount: 1,
+        cleanupFirst: false,
+        summary: "One merge-ready PR.",
+        guidance: [],
+        pendingScenarios: [],
+        pullRequests: [
+          {
+            repoFullName: "we-promise/sure",
+            number: 12,
+            title: "Ready patch",
+            classification: "approved",
+            summary: "Approved and passing.",
+            reasons: ["Checks green."],
+            nextSteps: ["Merge when ready."],
+          },
+        ],
+      },
+    });
+    const approvedActions = __agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, approvedPack, [readyDecision]);
+    expect(approvedActions).toHaveLength(0);
+
+    const reviewablePack = decisionPackFixture({
+      generatedAt,
+      openPrMonitor: {
+        ...approvedPack.openPrMonitor!,
+        pullRequests: [
+          {
+            repoFullName: "we-promise/sure",
+            number: 13,
+            title: "Reviewable patch",
+            classification: "reviewable",
+            summary: "Ready for review.",
+            reasons: ["Checks passed."],
+            nextSteps: ["Request review."],
+          },
+        ],
+      },
+    });
+    expect(__agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, reviewablePack, [])).toEqual([]);
+
+    const nonUrgentPack = decisionPackFixture({
+      generatedAt,
+      openPrMonitor: {
+        ...approvedPack.openPrMonitor!,
+        cleanupFirst: false,
+        pullRequests: [
+          {
+            repoFullName: "we-promise/sure",
+            number: 14,
+            title: "Draft work",
+            classification: "draft",
+            summary: "Still a draft.",
+            reasons: ["Not ready."],
+            nextSteps: ["Finish the change."],
+          },
+        ],
+      },
+    });
+    expect(__agentOrchestratorInternals.buildOpenPrMonitorActions(monitorRun, nonUrgentPack, [])).toEqual([]);
+
+    const snapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-1", decisionPackFixture({
+      generatedAt,
+      freshness: "rebuilding",
+      snapshotAgeSeconds: 90,
+      dataQuality: {
+        signalFidelity: {
+          status: "degraded",
+          repoCount: 2,
+          completeRepos: 1,
+          degradedRepos: 1,
+          blockedRepos: 0,
+          partialRepos: ["owner/partial"],
+          cappedRepos: ["owner/capped"],
+          staleRepos: ["owner/stale"],
+          rateLimitedRepos: ["owner/rate"],
+        },
+      },
+      evidenceGraph: {
+        version: 1,
+        generatedAt,
+        totals: { repositories: 1 },
+        sources: [],
+        repos: [{ repoFullName: readyDecision.repoFullName, source: "github_cache", freshness: "fresh" }],
+      } as any,
+    }), [readyDecision]);
+    expect(snapshot.freshnessWarnings).toEqual(
+      expect.arrayContaining([
+        "decision pack is stale (age 90s); background rebuild enqueued",
+        "owner/partial: partial signal coverage",
+        "owner/capped: capped signal coverage",
+        "owner/stale: stale signal coverage",
+        "owner/rate: rate limited signal coverage",
+      ]),
+    );
+    expect(snapshot.payload.evidenceGraph).toMatchObject({ selectedRepos: [expect.objectContaining({ repoFullName: readyDecision.repoFullName })] });
+    expect(snapshot.payload.openPrMonitor).toBeNull();
+
+    const staleSnapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-2", decisionPackFixture({
+      generatedAt,
+      freshness: "stale",
+      openPrMonitor: approvedPack.openPrMonitor,
+    }), []);
+    expect(staleSnapshot.freshnessWarnings[0]).toBe("decision pack is stale; rebuild not enqueued");
+    expect(staleSnapshot.payload.openPrMonitor).toEqual(approvedPack.openPrMonitor);
   });
 
   it("covers local action ready and blocker-free branches from prepared metadata", () => {
@@ -358,8 +631,16 @@ describe("agent orchestrator", () => {
         scoreabilityStatus: "scoreable",
         underlyingPotentialScore: 20,
         scoringModelSnapshotId: "scoring-ready",
+        generatedAt: nowIso(),
+        activeModel: "pending_saturation_model",
+        warnings: [],
+        assumptions: [],
+        scenarioPreviews: [{ name: "current", source: "current_data" }],
+        linkedIssueMultiplier: { status: "not_required", source: "none", reason: "No linked issue multiplier applies." },
       },
       scenarioScorePreview: { blockedBy: [] },
+      branchEligibility: { required: false, status: "not_required", evidence: "provided", source: "missing", stale: false, warnings: [] },
+      githubBranchStatus: { source: "cached_github_data", status: "no_pr", notes: [] },
       rewardRisk: { summary: "Risk is acceptable." },
       maintainerFit: { risks: [] },
       recommendedRerunCondition: "Rerun before opening a PR.",
@@ -379,12 +660,43 @@ describe("agent orchestrator", () => {
       scorePreview: { ...analysis.scorePreview, scoreabilityStatus: "blocked" },
       scenarioScorePreview: { blockedBy: [{ detail: "openPrMultiplier is 0." }] },
     });
+    const assumptionHeavyActions = __agentOrchestratorInternals.buildLocalBranchActions(run, {
+      ...analysis,
+      baseFreshness: { ...analysis.baseFreshness, status: "possibly_stale", warnings: ["Base branch may be stale."] },
+      dataQuality: { status: "degraded", warnings: ["Official mirror data is unavailable."] },
+      githubBranchStatus: { source: "cached_github_data", status: "unknown", notes: ["GitHub branch status is incomplete."] },
+      branchEligibility: { required: true, status: "unknown", evidence: "missing", source: "user_supplied", stale: true, warnings: ["Branch eligibility is stale."] },
+      scorePreview: {
+        ...analysis.scorePreview,
+        warnings: ["Linked issue data is missing."],
+        assumptions: ["User scenario note: approved PRs may land.", "Private API/MCP output only; public comments intentionally omit these details."],
+        scenarioPreviews: [{ name: "afterPendingMerges", source: "user_supplied" }],
+        linkedIssueMultiplier: { status: "unavailable", source: "user_supplied", reason: "Linked issue mirror is unavailable." },
+      },
+    });
 
     expect(actions.map((entry) => entry.actionType)).toEqual(["preflight_branch", "prepare_pr_packet"]);
     expect(actions[0]).toMatchObject({ status: "ready", scoreabilityImpact: "Current scoreability is not hard-blocked by branch metadata." });
+    expect(actions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "high",
+      sourceSummary: "Local branch preflight recommendation from structured metadata.",
+      freshness: "fresh",
+      sources: expect.arrayContaining([expect.objectContaining({ name: "local_branch_metadata", source: "metadata_only" })]),
+    });
     expect(blockers[0]).toMatchObject({ status: "ready", recommendation: "No hard scoreability blocker is visible from local metadata." });
     expect(blockedActions.map((entry) => entry.actionType)).toEqual(["preflight_branch", "prepare_pr_packet", "explain_score_blockers"]);
     expect(blockedActions[0]?.scoreabilityImpact).toContain("scenario projections");
+    expect(assumptionHeavyActions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "medium",
+      freshness: "possibly_stale",
+      userSuppliedScenarios: true,
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "github_branch_status", freshness: "unknown" }),
+        expect.objectContaining({ name: "linked_issue_multiplier", freshness: "missing" }),
+      ]),
+      warnings: expect.arrayContaining(["Base branch may be stale.", "GitHub branch status is incomplete.", "Branch eligibility is stale."]),
+      assumptions: expect.arrayContaining(["One or more scenario, linked-issue, or branch-eligibility inputs were supplied by the caller."]),
+    });
   });
 
   it("covers watch, pursue, and no-blocker decision branches", async () => {
@@ -462,6 +774,55 @@ describe("agent orchestrator", () => {
     });
     expect(noRepoBlockers.run.objective).toBe("Explain scoreability and review blockers.");
     expect(missingRepoPlan.actions.length).toBeGreaterThan(0);
+  });
+
+  it("marks user-supplied pending scenarios and missing official data in action evidence", async () => {
+    const env = createTestEnv();
+    const userScenarioPack = decisionPackFixture({
+      profile: {
+        ...decisionPackFixture().profile,
+        source: "github_cache",
+        officialStats: null,
+      },
+      openPrMonitor: {
+        login: "oktofeesh1",
+        generatedAt: nowIso(),
+        openPrCount: 0,
+        registeredRepoCount: 1,
+        cleanupFirst: false,
+        summary: "User supplied a pending-PR scenario.",
+        guidance: [],
+        pendingScenarios: [
+          {
+            repoFullName: "we-promise/sure",
+            detection: {
+              source: "user_supplied",
+              pendingMergedPrCount: 1,
+              pendingClosedPrCount: 0,
+              approvedPrCount: 0,
+              expectedOpenPrCountAfterMerge: 1,
+              scenarioNotes: ["manual assumption"],
+              classified: [],
+            },
+          },
+        ],
+        pullRequests: [],
+      },
+    });
+    await persistDecisionPack(env, userScenarioPack);
+
+    const bundle = await planNextWork(env, { login: "oktofeesh1", repoFullName: "we-promise/sure" });
+
+    expect(bundle.actions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      userSuppliedScenarios: true,
+      userSuppliedScenarioCount: 1,
+      assumptions: expect.arrayContaining([
+        "Contributor-level official stats are missing, so cached GitHub and registry data carry more weight.",
+        "Pending-PR scenario projections include user-supplied assumptions.",
+      ]),
+      warnings: expect.arrayContaining(["Official Gittensor contributor stats were unavailable; confidence is reduced."]),
+    });
   });
 
   it("marks failed runs without throwing when local branch input is malformed", async () => {

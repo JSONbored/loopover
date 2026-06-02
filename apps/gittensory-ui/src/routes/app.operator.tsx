@@ -6,6 +6,7 @@ import {
   Stat,
   StatusPill,
 } from "@/components/site/control-primitives";
+import { NotificationReadinessCard } from "@/components/site/notification-readiness-card";
 import { StateBoundary } from "@/components/site/state-views";
 import { useApiResource } from "@/lib/api/use-api-resource";
 
@@ -17,6 +18,11 @@ type OperatorDashboardResponse = {
   metrics: Array<{ label: string; value: string; delta: string }>;
   noiseReduction: Array<{ label: string; value: number; spark: number[] }>;
   weeklyReport: string[];
+  weeklyValueReport?: {
+    freshness: { status: string; latestRollupDay?: string | null };
+    warnings: string[];
+    metrics: Array<{ id: string; label: string; value: number; detail: string }>;
+  };
   upstreamDrift?: { status?: string } | null;
 };
 
@@ -88,20 +94,37 @@ function OperatorDashboard() {
             <div className="rounded-token border border-border bg-transparent p-5">
               <h2 className="font-display text-token-lg font-semibold">Weekly value report</h2>
               <p className="mt-1 text-token-xs text-muted-foreground">
-                Server-generated summary across installations and registry state.
+                Rollup-backed summary across usage, maintenance, and drift signals.
               </p>
+              {data.weeklyValueReport ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <StatusPill
+                    status={data.weeklyValueReport.warnings.length > 0 ? "degraded" : "ready"}
+                  >
+                    Rollups{" "}
+                    {data.weeklyValueReport.freshness.latestRollupDay ??
+                      data.weeklyValueReport.freshness.status}
+                  </StatusPill>
+                  <StatusPill status={data.upstreamDrift?.status === "current" ? "ready" : "warn"}>
+                    Drift · {data.upstreamDrift?.status ?? "unknown"}
+                  </StatusPill>
+                </div>
+              ) : null}
               <ul className="mt-4 space-y-2 text-token-sm text-foreground/90">
                 {data.weeklyReport.map((line) => (
                   <li key={line}>· {line}</li>
                 ))}
               </ul>
-              <div className="mt-4">
-                <StatusPill status={data.upstreamDrift?.status === "current" ? "ready" : "warn"}>
-                  Drift · {data.upstreamDrift?.status ?? "unknown"}
-                </StatusPill>
-              </div>
+              {data.weeklyValueReport?.warnings.length ? (
+                <ul className="mt-4 space-y-1 text-token-xs text-muted-foreground">
+                  {data.weeklyValueReport.warnings.slice(0, 3).map((warning) => (
+                    <li key={warning}>· {warning}</li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </section>
+          <NotificationReadinessCard />
         </div>
       ) : null}
     </StateBoundary>

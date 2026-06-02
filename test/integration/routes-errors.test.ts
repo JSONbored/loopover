@@ -82,7 +82,8 @@ describe("api route guards and error branches", () => {
     await expect(session.json()).resolves.toMatchObject({
       status: "authenticated",
       login: "jsonbored",
-      roles: ["miner", "maintainer", "owner", "operator"],
+      roles: ["operator"],
+      roleSummary: { onboarding: { status: "ready", primaryRole: "operator" } },
     });
 
     const reposWithCookie = await app.request("/v1/repos", { headers: { cookie: sessionCookie } }, env);
@@ -160,6 +161,18 @@ describe("api route guards and error branches", () => {
     const victimDecisionPack = await app.request("/v1/contributors/victim/decision-pack", { headers: sessionHeaders }, env);
     expect(victimDecisionPack.status).toBe(403);
     await expect(victimDecisionPack.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const ownOpenPrMonitor = await app.request("/v1/contributors/attacker/open-pr-monitor", { headers: sessionHeaders }, env);
+    expect(ownOpenPrMonitor.status).toBe(200);
+    await expect(ownOpenPrMonitor.json()).resolves.toMatchObject({ login: "attacker", pullRequests: expect.any(Array) });
+
+    const victimOpenPrMonitor = await app.request("/v1/contributors/victim/open-pr-monitor", { headers: sessionHeaders }, env);
+    expect(victimOpenPrMonitor.status).toBe(403);
+    await expect(victimOpenPrMonitor.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
+    const staticTokenOpenPrMonitor = await app.request("/v1/contributors/victim/open-pr-monitor", { headers: apiHeaders(env) }, env);
+    expect(staticTokenOpenPrMonitor.status).toBe(200);
+    await expect(staticTokenOpenPrMonitor.json()).resolves.toMatchObject({ login: "victim" });
 
     const victimRepoDecision = await app.request("/v1/contributors/victim/repos/owner/private-repo/decision", { headers: sessionHeaders }, env);
     expect(victimRepoDecision.status).toBe(403);
@@ -487,6 +500,10 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/internal/jobs/build-burden-forecasts", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/repair-data-fidelity", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/jobs/generate-signal-snapshots/run", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/rollup-product-usage", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/rollup-product-usage/run", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/generate-weekly-value-report", { method: "POST" }, env)).status).toBe(401);
+    expect((await app.request("/v1/internal/jobs/generate-weekly-value-report/run", { method: "POST" }, env)).status).toBe(401);
     expect((await app.request("/v1/internal/bounties/import", { method: "POST" }, env)).status).toBe(401);
     expect(
       (
@@ -500,6 +517,45 @@ describe("api route guards and error branches", () => {
 
     expect((await app.request("/v1/internal/jobs/repair-data-fidelity", { method: "POST", headers: internalHeaders(env) }, env)).status).toBe(202);
     expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "repair-data-fidelity" })]));
+
+    const queuedRollup = await app.request(
+      "/v1/internal/jobs/rollup-product-usage",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ day: "2026-05-28", days: 500 }) },
+      env,
+    );
+    expect(queuedRollup.status).toBe(202);
+    expect(await queuedRollup.json()).toMatchObject({ status: "queued", day: "2026-05-28", days: 31 });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "rollup-product-usage", day: "2026-05-28", days: 31 })]));
+
+    const queuedDefaultRollup = await app.request("/v1/internal/jobs/rollup-product-usage", { method: "POST", headers: internalHeaders(env), body: "{}" }, env);
+    expect(queuedDefaultRollup.status).toBe(202);
+    await expect(queuedDefaultRollup.json()).resolves.toMatchObject({ status: "queued" });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "rollup-product-usage" })]));
+
+    const immediateRollup = await app.request("/v1/internal/jobs/rollup-product-usage/run", { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ days: -5 }) }, env);
+    expect(immediateRollup.status).toBe(200);
+    await expect(immediateRollup.json()).resolves.toMatchObject({ requestedDays: expect.any(Array), rollups: expect.any(Array) });
+
+    const queuedWeeklyReport = await app.request(
+      "/v1/internal/jobs/generate-weekly-value-report",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ variant: "public", days: 500 }) },
+      env,
+    );
+    expect(queuedWeeklyReport.status).toBe(202);
+    await expect(queuedWeeklyReport.json()).resolves.toMatchObject({ status: "queued", variant: "public", days: 31 });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "generate-weekly-value-report", variant: "public", days: 31 })]));
+    const queuedDefaultWeeklyReport = await app.request("/v1/internal/jobs/generate-weekly-value-report", { method: "POST", headers: internalHeaders(env), body: "{}" }, env);
+    expect(queuedDefaultWeeklyReport.status).toBe(202);
+    await expect(queuedDefaultWeeklyReport.json()).resolves.toMatchObject({ status: "queued", variant: "operator" });
+    expect(queued).toEqual(expect.arrayContaining([expect.objectContaining({ type: "generate-weekly-value-report", variant: "operator" })]));
+
+    const immediateWeeklyReport = await app.request(
+      "/v1/internal/jobs/generate-weekly-value-report/run",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({ variant: "operator", days: -5 }) },
+      env,
+    );
+    expect(immediateWeeklyReport.status).toBe(200);
+    await expect(immediateWeeklyReport.json()).resolves.toMatchObject({ variant: "operator", period: expect.objectContaining({ days: 1 }) });
 
     expect(
       (
@@ -767,6 +823,52 @@ describe("api route guards and error branches", () => {
 
     expect((await app.request("/mcp", { method: "OPTIONS" }, env)).status).toBe(204);
     expect(await handleMcpRequest({ req: { method: "OPTIONS" } } as never)).toMatchObject({ status: 204 });
+    const defensiveEnv = withProductUsageInsertFailure(createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1" }));
+    const { token: defensiveSessionToken } = await createSessionForGitHubUser(defensiveEnv, { login: "oktofeesh1", id: 12345 });
+    const rawRequest = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${defensiveSessionToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "raw-failure", method: "tools/call", params: { name: "gittensory_get_repo_context", arguments: { owner: "JSONbored", repo: "gittensory" } } }),
+    });
+    let rawReads = 0;
+    await expect(
+      handleMcpRequest({
+        env: defensiveEnv,
+        req: {
+          method: "POST",
+          header(name: string) {
+            return name.toLowerCase() === "authorization" ? `Bearer ${defensiveSessionToken}` : undefined;
+          },
+          get raw() {
+            rawReads += 1;
+            if (rawReads === 1) return rawRequest;
+            throw new Error("raw request unavailable");
+          },
+        },
+      } as never),
+    ).rejects.toThrow("raw request unavailable");
+    const staticRawRequest = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${defensiveEnv.GITTENSORY_MCP_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "static-raw-failure", method: "tools/list" }),
+    });
+    let staticRawReads = 0;
+    await expect(
+      handleMcpRequest({
+        env: createTestEnv(),
+        req: {
+          method: "POST",
+          header(name: string) {
+            return name.toLowerCase() === "authorization" ? `Bearer ${defensiveEnv.GITTENSORY_MCP_TOKEN}` : undefined;
+          },
+          get raw() {
+            staticRawReads += 1;
+            if (staticRawReads === 1) return staticRawRequest;
+            throw new Error("static raw request unavailable");
+          },
+        },
+      } as never),
+    ).rejects.toThrow("static raw request unavailable");
     expect(
       (
         await app.request(
@@ -815,6 +917,22 @@ function internalHeaders(env: Env): Record<string, string> {
   return {
     authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`,
     "content-type": "application/json",
+  };
+}
+
+function withProductUsageInsertFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
   };
 }
 

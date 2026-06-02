@@ -50,9 +50,24 @@ const GROUPS: NavGroup[] = [
     label: "Workspace",
     items: [
       { to: "/app", label: "Overview", icon: LayoutGrid },
-      { to: "/app/workbench", label: "Workbench", icon: Workflow },
-      { to: "/app/repos", label: "Repositories", icon: FolderGit2 },
-      { to: "/app/runs", label: "Agent runs", icon: Activity },
+      {
+        to: "/app/workbench",
+        label: "Workbench",
+        icon: Workflow,
+        roles: ["miner", "maintainer", "owner", "operator"],
+      },
+      {
+        to: "/app/repos",
+        label: "Repositories",
+        icon: FolderGit2,
+        roles: ["maintainer", "owner", "operator"],
+      },
+      {
+        to: "/app/runs",
+        label: "Agent runs",
+        icon: Activity,
+        roles: ["miner", "maintainer", "owner", "operator"],
+      },
     ],
   },
   {
@@ -216,7 +231,12 @@ export function AppShell() {
             </div>
             <div className="truncate font-display text-token-sm font-semibold">{session.login}</div>
             <div className="flex flex-wrap gap-1">
-              {session.confirmed_miner && <StatusPill status="ready">Confirmed</StatusPill>}
+              {session.roles.slice(0, 3).map((role) => (
+                <StatusPill key={role} status="ready">
+                  {role}
+                </StatusPill>
+              ))}
+              {session.roles.length === 0 && <StatusPill status="warn">setup</StatusPill>}
               <ApiStatusButton />
             </div>
             <button

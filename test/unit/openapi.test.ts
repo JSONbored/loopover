@@ -12,12 +12,14 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/sync/status"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/intelligence"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/issue-quality"]).toBeDefined();
+    expect(spec.paths["/v1/repos/{owner}/{repo}/outcome-patterns"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/registration-readiness"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/gittensor-config-recommendation"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet"]).toBeDefined();
     expect(spec.paths["/v1/repos/{owner}/{repo}/pulls/{number}/reviewability"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/profile"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/decision-pack"]).toBeDefined();
+    expect(spec.paths["/v1/contributors/{login}/open-pr-monitor"]).toBeDefined();
     expect(spec.paths["/v1/contributors/{login}/repos/{owner}/{repo}/decision"]).toBeDefined();
     expect(spec.paths["/v1/preflight/pr"]).toBeDefined();
     expect(spec.paths["/v1/preflight/local-diff"]).toBeDefined();
@@ -41,8 +43,11 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/app/operator-dashboard"]).toBeDefined();
     expect(spec.paths["/v1/app/commands"]).toBeDefined();
     expect(spec.paths["/v1/app/commands/preview"]).toBeDefined();
+    expect(spec.paths["/v1/app/commands/usefulness"]).toBeDefined();
+    expect(spec.paths["/v1/app/commands/feedback"]).toBeDefined();
     expect(spec.paths["/v1/app/digest"]).toBeDefined();
     expect(spec.paths["/v1/app/digest/subscriptions"]).toBeDefined();
+    expect(spec.paths["/v1/app/analytics/daily-rollups"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/start"]).toBeDefined();
     expect(spec.paths["/v1/auth/github/callback"]).toBeDefined();
     expect(spec.paths["/v1/auth/extension/session"]).toBeDefined();
@@ -81,6 +86,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.DecisionPackRefreshNeeded).toBeDefined();
     expect(spec.components?.schemas?.RepoDecisionResponse).toBeDefined();
     expect(spec.components?.schemas?.RepoIntelligence).toBeDefined();
+    expect(spec.components?.schemas?.RepoOutcomePatterns).toBeDefined();
     expect(spec.components?.schemas?.RegistrationReadiness).toBeDefined();
     expect(spec.components?.schemas?.GittensorConfigRecommendation).toBeDefined();
     expect(spec.components?.schemas?.PullRequestMaintainerPacket).toBeDefined();

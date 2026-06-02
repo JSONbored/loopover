@@ -44,6 +44,8 @@ export function collectLocalBranchMetadata(input) {
   const mergeBaseSha = gitLines(cwd, ["merge-base", baseRef, "HEAD"])[0];
   const remoteTrackingSha = collectRemoteTrackingSha(cwd, baseRef);
   const changedFiles = collectChangedFiles(cwd, baseRef);
+  const pendingCommitCount = input.pendingCommitCount ?? collectPendingCommitCount(cwd, baseRef);
+  const ciStatusHints = input.ciStatusHints ?? collectCiStatusHints(cwd, baseRef, changedFiles);
   const commitMessages = input.commitMessages ?? collectCommitMessages(cwd, baseRef);
   const title = input.title ?? titleFromBranch(branchName) ?? firstCommitTitle(commitMessages);
   const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssues([branchName, title, input.body, ...commitMessages].filter(Boolean).join("\n"))])].sort(
@@ -72,8 +74,33 @@ export function collectLocalBranchMetadata(input) {
     expectedOpenPrCountAfterMerge: input.expectedOpenPrCountAfterMerge,
     projectedCredibility: input.projectedCredibility,
     scenarioNotes: input.scenarioNotes,
+    pendingCommitCount,
+    ciStatusHints,
+    branchEligibility: input.branchEligibility,
   };
   return stripUndefined(payload);
+}
+
+export function collectPendingCommitCount(cwd, baseRef) {
+  const count = gitLines(cwd, ["rev-list", "--count", `${baseRef}..HEAD`])[0];
+  const parsed = Number(count);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 0;
+}
+
+export function collectCiStatusHints(cwd, baseRef, changedFiles = []) {
+  const hints = [];
+  const paths = changedFiles.map((file) => file.path).filter(Boolean);
+  if (paths.some((path) => /^\.github\/workflows\//i.test(path))) {
+    hints.push("Workflow files changed; CI required-check behavior may change after merge.");
+  }
+  if (paths.some((path) => /(^|\/)(Makefile|Dockerfile|package\.json|pyproject\.toml|go\.mod|Cargo\.toml)$/i.test(path))) {
+    hints.push("Build or dependency manifests changed; rerun the repo's standard validation commands.");
+  }
+  const pendingCommits = collectPendingCommitCount(cwd, baseRef);
+  if (pendingCommits > 0) {
+    hints.push(`${pendingCommits} local commit(s) ahead of ${baseRef}; push or rebase before reviewers rely on the latest diff.`);
+  }
+  return hints;
 }
 
 export function buildBranchAnalysisPayload(input) {

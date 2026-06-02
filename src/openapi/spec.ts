@@ -19,6 +19,7 @@ import {
   ContributorOpportunitySchema,
   ContributorPatternReportSchema,
   ContributorDecisionPackSchema,
+  ContributorOpenPrMonitorSchema,
   ContributorRewardRiskStrategySchema,
   ContributorProfileSchema,
   ContributorScoringProfileSchema,
@@ -46,6 +47,8 @@ import {
   DecisionPackRefreshNeededSchema,
   RepoFitRecommendationSchema,
   RepoDecisionResponseSchema,
+  RepoOutcomePatternsSchema,
+  RepoOutcomePatternsResponseSchema,
   GittensorConfigRecommendationSchema,
   RegistrationReadinessSchema,
   RepoIntelligenceSchema,
@@ -92,6 +95,8 @@ export function buildOpenApiSpec() {
   registry.register("DecisionPackRefreshNeeded", DecisionPackRefreshNeededSchema);
   registry.register("RepoDecisionResponse", RepoDecisionResponseSchema);
   registry.register("RepoIntelligence", RepoIntelligenceSchema);
+  registry.register("RepoOutcomePatterns", RepoOutcomePatternsSchema);
+  registry.register("RepoOutcomePatternsResponse", RepoOutcomePatternsResponseSchema);
   registry.register("RegistrationReadiness", RegistrationReadinessSchema);
   registry.register("GittensorConfigRecommendation", GittensorConfigRecommendationSchema);
   registry.register("RepoFitRecommendation", RepoFitRecommendationSchema);
@@ -255,6 +260,45 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/app/notification-model",
+    responses: {
+      200: {
+        description: "Opt-in notification model and PWA-readiness metadata for control-panel routes",
+        content: {
+          "application/json": {
+            schema: z.object({
+              generatedAt: z.string(),
+              notificationModel: z.object({
+                mode: z.literal("opt_in"),
+                defaultState: z.literal("disabled"),
+                channels: z.array(
+                  z.object({
+                    id: z.string(),
+                    transport: z.enum(["in_app", "web_push"]),
+                    defaultEnabled: z.boolean(),
+                    requiresPermission: z.boolean().optional(),
+                    purpose: z.string(),
+                  }),
+                ),
+                privacyGuards: z.array(z.string()),
+                fallbackWhenUnavailable: z.literal("in_app_digest_only"),
+              }),
+              pwa: z.object({
+                nativeDependency: z.boolean(),
+                manifestPath: z.string(),
+                serviceWorkerPath: z.string(),
+              }),
+              mobileReadyRoutes: z.array(z.string()),
+              nativeMobileFuture: z.array(z.string()),
+            }),
+          },
+        },
+      },
+      403: { description: "Role does not allow control-panel notification model access" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/repos",
     responses: {
       200: { description: "Known repositories", content: { "application/json": { schema: RepositorySchema.array() } } },
@@ -281,6 +325,14 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityResponseSchema } } },
       404: { description: "Repo is unknown or has no issue-quality coverage yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/outcome-patterns",
+    responses: {
+      200: { description: "Cached or freshly-computed per-repo accepted/rejected PR outcome patterns with freshness envelope and explicit evidence-completeness", content: { "application/json": { schema: RepoOutcomePatternsResponseSchema } } },
+      404: { description: "Repo is unknown or has no outcome-pattern coverage yet" },
     },
   });
   registry.registerPath({
@@ -342,6 +394,16 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: ContributorDecisionPackSchema } },
       },
       202: { description: "Decision pack snapshot is missing; a background rebuild has been requested", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/open-pr-monitor",
+    responses: {
+      200: {
+        description: "Contributor open-PR monitor with classifications and public-safe next-step packets from cached metadata.",
+        content: { "application/json": { schema: ContributorOpenPrMonitorSchema } },
+      },
     },
   });
   registry.registerPath({
@@ -511,7 +573,18 @@ export function buildOpenApiSpec() {
       401: { description: "Unauthorized" },
     },
   });
-  for (const path of ["/v1/app/miner-dashboard", "/v1/app/maintainer-dashboard", "/v1/app/operator-dashboard", "/v1/app/commands", "/v1/app/digest"]) {
+  for (const path of [
+    "/v1/app/roles",
+    "/v1/app/miner-dashboard",
+    "/v1/app/maintainer-dashboard",
+    "/v1/app/operator-dashboard",
+    "/v1/app/commands",
+    "/v1/app/commands/usefulness",
+    "/v1/app/digest",
+    "/v1/app/analytics/daily-rollups",
+    "/v1/app/analytics/mcp-compatibility",
+    "/v1/app/analytics/weekly-value-report",
+  ]) {
     registry.registerPath({
       method: "get",
       path,
@@ -521,7 +594,7 @@ export function buildOpenApiSpec() {
       },
     });
   }
-  for (const path of ["/v1/app/commands/preview", "/v1/app/digest/subscriptions"]) {
+  for (const path of ["/v1/app/commands/preview", "/v1/app/commands/feedback", "/v1/app/digest/subscriptions"]) {
     registry.registerPath({
       method: "post",
       path,
@@ -547,6 +620,7 @@ export function buildOpenApiSpec() {
       200: { description: "Browser extension PR context overlay payload", content: { "application/json": { schema: z.record(z.unknown()) } } },
       400: { description: "Invalid pull context query" },
       401: { description: "Unauthorized" },
+      403: { description: "Extension-scoped session required" },
     },
   });
   registry.registerPath({
@@ -591,6 +665,7 @@ export function buildOpenApiSpec() {
     "/v1/internal/jobs/build-contributor-decision-packs",
     "/v1/internal/jobs/build-burden-forecasts",
     "/v1/internal/jobs/generate-signal-snapshots",
+    "/v1/internal/jobs/generate-weekly-value-report",
     "/v1/internal/jobs/repair-data-fidelity",
   ]) {
     registry.registerPath({
@@ -636,7 +711,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
       GittensoryBearer: {
         type: "http",
         scheme: "bearer",
-        description: "Static API/MCP token or GitHub device-flow Gittensory session token.",
+        description: "Static API/MCP token, GitHub device-flow Gittensory session token, or extension-scoped Gittensory session token where supported. GitHub personal access tokens are not accepted.",
       },
       GittensorySessionCookie: {
         type: "apiKey",

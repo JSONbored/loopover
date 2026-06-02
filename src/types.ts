@@ -94,6 +94,18 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      type: "rollup-product-usage";
+      requestedBy: "schedule" | "api" | "test";
+      day?: string;
+      days?: number;
+    }
+  | {
+      type: "generate-weekly-value-report";
+      requestedBy: "schedule" | "api" | "test";
+      variant?: WeeklyValueReportVariant;
+      days?: number;
+    }
+  | {
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
@@ -119,9 +131,17 @@ export type GitHubWebhookPayload = {
   pull_request?: GitHubPullRequestPayload;
   issue?: GitHubIssuePayload;
   comment?: GitHubIssueCommentPayload;
+  reaction?: GitHubReactionPayload;
+  sender?: GitHubWebhookUserPayload;
   label?: {
     name?: string;
   };
+};
+
+export type GitHubWebhookUserPayload = {
+  login?: string;
+  type?: string;
+  id?: number;
 };
 
 export type GitHubRepositoryPayload = {
@@ -180,6 +200,13 @@ export type GitHubIssuePayload = {
   labels?: Array<{ name?: string }>;
   body?: string | null;
   pull_request?: unknown;
+};
+
+export type GitHubReactionPayload = {
+  id?: number;
+  content?: string;
+  user?: GitHubWebhookUserPayload;
+  created_at?: string | null;
 };
 
 export type GitHubIssueCommentPayload = {
@@ -700,6 +727,34 @@ export type UpstreamSourceSnapshotRecord = {
 export type UpstreamDriftSeverity = "low" | "medium" | "high" | "blocking";
 export type UpstreamDriftStatus = "open" | "acknowledged" | "resolved" | "ignored";
 export type UpstreamDriftArea = "registry" | "scoring_model" | "issue_discovery" | "mirror_linkage" | "language_weights" | "source";
+export type RegistryHyperparameterDriftField =
+  | "repo"
+  | "emissionShare"
+  | "issueDiscoveryShare"
+  | "maintainerCut"
+  | "labelMultipliers"
+  | "trustedLabelPipeline"
+  | "defaultLabelMultiplier"
+  | "fixedBaseScore"
+  | "eligibilityMode";
+export type RegistryDriftSurface = "allocation" | "lane_fit" | "scoreability_assumptions" | "maintainer_economics" | "issue_discovery_behavior" | "label_policy";
+export type RegistryHyperparameterDriftEvent = {
+  repoFullName: string;
+  field: RegistryHyperparameterDriftField;
+  previous: JsonValue;
+  current: JsonValue;
+  severity: UpstreamDriftSeverity;
+  affectedSurfaces: RegistryDriftSurface[];
+  summary: string;
+};
+export type RegistryHyperparameterDriftSummary = {
+  totalEvents: number;
+  omittedEvents: number;
+  highImpactCount: number;
+  affectedRepoCount: number;
+  affectedFields: RegistryHyperparameterDriftField[];
+  affectedSurfaces: RegistryDriftSurface[];
+};
 
 export type UpstreamRulesetSnapshotRecord = {
   id: string;
@@ -805,6 +860,41 @@ export type AuthSessionRecord = {
   metadata: Record<string, JsonValue>;
 };
 
+export type ControlPanelRoleName = "miner" | "maintainer" | "owner" | "operator";
+
+export type ControlPanelRoleStatus = "active" | "available" | "needs_setup";
+
+export type ControlPanelRoleCard = {
+  role: ControlPanelRoleName;
+  status: ControlPanelRoleStatus;
+  title: string;
+  detail: string;
+  href: string;
+  evidenceCount: number;
+  sampleRepos: string[];
+  nextActions: string[];
+};
+
+export type ControlPanelRoleSummary = {
+  login: string;
+  generatedAt: string;
+  roles: ControlPanelRoleName[];
+  confirmedMiner: boolean;
+  roleCards: ControlPanelRoleCard[];
+  onboarding: {
+    status: "ready" | "needs_setup";
+    primaryRole?: ControlPanelRoleName | undefined;
+    nextActions: string[];
+  };
+  evidence: {
+    ownedInstalledRepos: number;
+    maintainerRepos: number;
+    accountInstallations: number;
+    operator: boolean;
+  };
+  publicSafe: true;
+};
+
 export type DigestSubscriptionRecord = {
   id: string;
   login: string;
@@ -813,6 +903,55 @@ export type DigestSubscriptionRecord = {
   source: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CommandFeedbackVote = "useful" | "not_useful";
+export type CommandFeedbackSource = "github_reaction" | "app";
+
+export type AgentCommandAnswerRecord = {
+  id: string;
+  repoFullName: string;
+  issueNumber: number;
+  command: string;
+  requestCommentId?: number | null | undefined;
+  responseCommentId?: number | null | undefined;
+  responseUrl?: string | null | undefined;
+  actorKind: "maintainer" | "author";
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+  metadata: Record<string, JsonValue>;
+};
+
+export type AgentCommandFeedbackRecord = {
+  id?: string | undefined;
+  answerId: string;
+  repoFullName: string;
+  issueNumber: number;
+  command: string;
+  actorLogin: string;
+  vote: CommandFeedbackVote;
+  source: CommandFeedbackSource;
+  actorKind: "maintainer" | "author";
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+  metadata?: Record<string, JsonValue> | undefined;
+};
+
+export type CommandUsefulnessBucket = {
+  command: string;
+  feedbackCount: number;
+  usefulCount: number;
+  notUsefulCount: number;
+  answerCount: number;
+  usefulnessRate: number | null;
+  latestFeedbackAt?: string | null | undefined;
+};
+
+export type CommandUsefulnessSummary = {
+  windowDays: number;
+  generatedAt: string;
+  totals: Omit<CommandUsefulnessBucket, "command">;
+  commands: CommandUsefulnessBucket[];
 };
 
 export type AuditEventRecord = {
@@ -825,4 +964,161 @@ export type AuditEventRecord = {
   detail?: string | null | undefined;
   metadata?: Record<string, JsonValue> | undefined;
   createdAt?: string | null | undefined;
+};
+
+export type ProductUsageSurface = "api" | "mcp" | "github_app" | "control_panel" | "browser_extension" | "internal";
+
+export type ProductUsageOutcome = "success" | "denied" | "error" | "queued" | "completed" | "skipped";
+
+export type ProductUsageEventRecord = {
+  id: string;
+  surface: ProductUsageSurface;
+  eventName: string;
+  route?: string | null | undefined;
+  actorHash?: string | null | undefined;
+  sessionHash?: string | null | undefined;
+  repoFullName?: string | null | undefined;
+  targetKey?: string | null | undefined;
+  outcome: ProductUsageOutcome;
+  latencyMs?: number | null | undefined;
+  clientName?: string | null | undefined;
+  clientVersion?: string | null | undefined;
+  metadata: Record<string, JsonValue>;
+  occurredAt: string;
+};
+
+export type ProductUsageSummary = {
+  since?: string | null | undefined;
+  totalEvents: number;
+  activeActors: number;
+  bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
+  byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
+  byEvent: Array<{ eventName: string; count: number }>;
+};
+
+export type McpCompatibilityAdoptionSummary = {
+  since?: string | null | undefined;
+  totalEvents: number;
+  activeActors: number;
+  activeSessions: number;
+  scannedEvents: number;
+  scanLimit: number;
+  truncated: boolean;
+  minimumSupportedVersion: string;
+  latestRecommendedVersion: string;
+  staleEvents: number;
+  incompatibleEvents: number;
+  byClientVersion: ProductUsageDimensionCount[];
+  byProtocolVersion: ProductUsageDimensionCount[];
+  byCompatibilityStatus: Array<{ status: "current" | "stale" | "incompatible" | "unknown"; count: number }>;
+};
+
+export type ProductUsageDailyRollupStatus = "complete" | "partial" | "incomplete";
+
+export type ProductUsageDimensionCount = {
+  key: string;
+  count: number;
+};
+
+export type ProductUsageActivationFunnel = {
+  loginActors: number;
+  doctorPassActors: number;
+  firstUsefulActionActors: number;
+  fullyActivatedActors: number;
+  githubInstalledRepos: number;
+  githubFirstCommandRepos: number;
+  githubUsefulMaintainerRepos: number;
+  githubActivatedRepos: number;
+};
+
+export type ProductUsageDailyRollupRecord = {
+  day: string;
+  status: ProductUsageDailyRollupStatus;
+  totalEvents: number;
+  activeActors: number;
+  activeSessions: number;
+  activeRepos: number;
+  sourceEventCount: number;
+  maxEventCapacity: number;
+  firstEventAt?: string | null | undefined;
+  lastEventAt?: string | null | undefined;
+  bySurface: Array<{ surface: ProductUsageSurface; count: number }>;
+  byOutcome: Array<{ outcome: ProductUsageOutcome; count: number }>;
+  byEvent: Array<{ eventName: string; count: number }>;
+  byRepo: ProductUsageDimensionCount[];
+  byCommand: ProductUsageDimensionCount[];
+  byTool: ProductUsageDimensionCount[];
+  byRouteClass: ProductUsageDimensionCount[];
+  activation: ProductUsageActivationFunnel;
+  generatedAt: string;
+  updatedAt: string;
+};
+
+export type ProductUsageRollupRunResult = {
+  generatedAt: string;
+  requestedDays: string[];
+  rollups: ProductUsageDailyRollupRecord[];
+  status: ProductUsageRollupStatus;
+};
+
+export type ProductUsageRollupStatus = {
+  status: "empty" | "ready" | "partial" | "stale" | "incomplete";
+  generatedAt: string;
+  latestEventAt?: string | null | undefined;
+  latestRollupDay?: string | null | undefined;
+  latestRollupGeneratedAt?: string | null | undefined;
+  missingDays: string[];
+  staleDays: string[];
+  incompleteDays: string[];
+  warnings: string[];
+};
+
+export type WeeklyValueReportVariant = "public" | "operator";
+
+export type WeeklyValueReportMetric = {
+  id: string;
+  label: string;
+  value: number;
+  detail: string;
+  visibility: "public" | "operator";
+};
+
+export type WeeklyValueReport = {
+  generatedAt: string;
+  variant: WeeklyValueReportVariant;
+  publicSafe: boolean;
+  period: {
+    days: number;
+    startDay?: string | null | undefined;
+    endDay?: string | null | undefined;
+    rollupDays: string[];
+  };
+  summary: string[];
+  metrics: WeeklyValueReportMetric[];
+  warnings: string[];
+  freshness: {
+    status: ProductUsageRollupStatus["status"];
+    latestEventAt?: string | null | undefined;
+    latestRollupDay?: string | null | undefined;
+    latestRollupGeneratedAt?: string | null | undefined;
+    warnings: string[];
+  };
+  dataQuality: {
+    status: "ready" | "warn";
+    warnings: string[];
+  };
+  operatorDetails?: {
+    topRepos: ProductUsageDimensionCount[];
+    topCommands: ProductUsageDimensionCount[];
+    topTools: ProductUsageDimensionCount[];
+    topRouteClasses: ProductUsageDimensionCount[];
+    daily: Array<{
+      day: string;
+      status: ProductUsageDailyRollupStatus;
+      totalEvents: number;
+      activeActors: number;
+      activeRepos: number;
+    }>;
+    activation: ProductUsageActivationFunnel;
+  };
 };

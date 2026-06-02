@@ -11,6 +11,7 @@ import {
   buildUpstreamDriftReport,
   fileUpstreamDriftIssues,
   loadUpstreamStatus,
+  registryHyperparameterDriftWarningsForRepo,
   refreshUpstreamDrift,
   refreshUpstreamSourceSnapshots,
 } from "../../src/upstream/ruleset";
@@ -206,6 +207,68 @@ describe("upstream ruleset drift tracking", () => {
     expect(emptySnapshot.payload).toMatchObject({ languageWeights: { count: 0 } });
   });
 
+  it("normalizes stored ruleset registry repositories defensively", async () => {
+    const snapshot = await buildUpstreamRulesetSnapshot(createTestEnv(), [
+      sourceSnapshot("registry", {
+        registry: {
+          repoCount: 4,
+          totalEmissionShare: 0.2,
+          repositories: [
+            null,
+            {},
+            {
+              repo: "owner/defaults",
+              emissionShare: "bad",
+              issueDiscoveryShare: "bad",
+              maintainerCut: "bad",
+              labelMultipliers: { feature: "bad" },
+              trustedLabelPipeline: "bad",
+              defaultLabelMultiplier: "bad",
+              fixedBaseScore: "bad",
+              eligibilityMode: 7,
+            },
+            {
+              repo: "owner/policy",
+              emissionShare: 0.2,
+              issueDiscoveryShare: 0.4,
+              maintainerCut: 0.1,
+              labelMultipliers: { feature: 1.1 },
+              trustedLabelPipeline: false,
+              defaultLabelMultiplier: 1.2,
+              fixedBaseScore: 12,
+              eligibilityMode: "linked_issue_required",
+            },
+          ],
+        },
+      }),
+    ]);
+
+    expect(rulesetRegistry(snapshot).repositories).toEqual([
+      {
+        repo: "owner/defaults",
+        emissionShare: 0,
+        issueDiscoveryShare: 0,
+        maintainerCut: 0,
+        labelMultipliers: {},
+        trustedLabelPipeline: null,
+        defaultLabelMultiplier: null,
+        fixedBaseScore: null,
+        eligibilityMode: null,
+      },
+      {
+        repo: "owner/policy",
+        emissionShare: 0.2,
+        issueDiscoveryShare: 0.4,
+        maintainerCut: 0.1,
+        labelMultipliers: { feature: 1.1 },
+        trustedLabelPipeline: false,
+        defaultLabelMultiplier: 1.2,
+        fixedBaseScore: 12,
+        eligibilityMode: "linked_issue_required",
+      },
+    ]);
+  });
+
   it("can build a ruleset from stored latest snapshots", async () => {
     const env = createTestEnv();
     vi.stubGlobal("fetch", upstreamNoCommitShaFetch(fixturesWithoutOptionalRegistryFields("58", 0.01)));
@@ -218,6 +281,7 @@ describe("upstream ruleset drift tracking", () => {
     expect(rulesetRegistry(snapshot).repositories[0]).toMatchObject({
       trustedLabelPipeline: null,
       defaultLabelMultiplier: null,
+      fixedBaseScore: null,
       eligibilityMode: null,
     });
   });
@@ -274,7 +338,7 @@ describe("upstream ruleset drift tracking", () => {
         }),
         base,
       ),
-    ).resolves.toMatchObject({ severity: "medium", affectedAreas: ["registry"] });
+    ).resolves.toMatchObject({ severity: "high", affectedAreas: ["registry"] });
 
     await expect(
       buildUpstreamDriftReport(
@@ -295,10 +359,16 @@ describe("upstream ruleset drift tracking", () => {
         base,
       ),
     ).resolves.toMatchObject({
-      severity: "medium",
+      severity: "high",
       affectedAreas: ["registry"],
-      summary: "1 repo hyperparameter change(s)",
+      summary: "4 registry hyperparameter drift event(s)",
       payload: {
+        registryHyperparameterDrift: {
+          totalEvents: 4,
+          highImpactCount: 2,
+          affectedFields: ["issueDiscoveryShare", "eligibilityMode", "defaultLabelMultiplier", "labelMultipliers"],
+          affectedSurfaces: ["lane_fit", "scoreability_assumptions", "issue_discovery_behavior", "label_policy"],
+        },
         repoChanges: [
           expect.stringContaining("issueDiscoveryShare 0 -> 0.25"),
         ],
@@ -321,7 +391,7 @@ describe("upstream ruleset drift tracking", () => {
         }),
         policyBase,
       ),
-    ).resolves.toMatchObject({ severity: "medium", affectedAreas: ["registry"] });
+    ).resolves.toMatchObject({ severity: "high", affectedAreas: ["registry"] });
 
     await expect(
       buildUpstreamDriftReport(
@@ -334,12 +404,210 @@ describe("upstream ruleset drift tracking", () => {
         }),
         base,
       ),
-    ).resolves.toMatchObject({ severity: "medium", affectedAreas: ["registry"] });
+    ).resolves.toMatchObject({ severity: "high", affectedAreas: ["registry"] });
 
     await expect(buildUpstreamDriftReport({ ...base, id: "source-only", semanticHash: "source-only-hash" }, { ...base, id: "previous-source", semanticHash: "previous-source-hash" })).resolves.toMatchObject({
       severity: "low",
       affectedAreas: ["source"],
       summary: expect.stringContaining("without parsed semantic drift"),
+    });
+  });
+
+  it("classifies registry hyperparameter drift by field, surface, and severity", async () => {
+    const base = ruleset("base", "base-hash", "pending_saturation_model", 1, 0.01, "2026-05-30T00:00:00.000Z");
+    const baseRegistry = rulesetRegistry(base);
+    const [baseRepo] = baseRegistry.repositories;
+
+    const labelOnly = await buildUpstreamDriftReport(
+      withPayload(base, "label-only", {
+        registry: {
+          ...baseRegistry,
+          repositories: [{ ...baseRepo!, labelMultipliers: { feature: 1.5, bugfix: 1.1 } }],
+        },
+      }),
+      base,
+    );
+    const labelDrift = registryDriftPayload(labelOnly!);
+    expect(labelOnly).toMatchObject({ severity: "medium", affectedAreas: ["registry"] });
+    expect(labelDrift).toMatchObject({
+      totalEvents: 1,
+      highImpactCount: 0,
+      affectedFields: ["labelMultipliers"],
+      affectedSurfaces: ["scoreability_assumptions", "label_policy"],
+    });
+    expect(labelDrift.events).toEqual([
+      expect.objectContaining({ field: "labelMultipliers", severity: "medium", affectedSurfaces: ["label_policy", "scoreability_assumptions"] }),
+    ]);
+
+    const allFields = await buildUpstreamDriftReport(
+      withPayload(base, "all-registry-fields", {
+        registry: {
+          ...baseRegistry,
+          repositories: [
+            {
+              ...baseRepo!,
+              emissionShare: 0.02,
+              issueDiscoveryShare: 0.25,
+              maintainerCut: 0.4,
+              labelMultipliers: { feature: 1.5, bugfix: 1.1 },
+              trustedLabelPipeline: false,
+              defaultLabelMultiplier: 1.2,
+              fixedBaseScore: 12,
+              eligibilityMode: "linked_issue_required",
+            },
+          ],
+        },
+      }),
+      base,
+    );
+    const allFieldsDrift = registryDriftPayload(allFields!);
+    expect(allFields).toMatchObject({ severity: "high", summary: "8 registry hyperparameter drift event(s)" });
+    expect(allFieldsDrift).toMatchObject({
+      totalEvents: 8,
+      omittedEvents: 0,
+      highImpactCount: 5,
+      affectedRepoCount: 1,
+      affectedFields: [
+        "emissionShare",
+        "issueDiscoveryShare",
+        "maintainerCut",
+        "fixedBaseScore",
+        "eligibilityMode",
+        "trustedLabelPipeline",
+        "defaultLabelMultiplier",
+        "labelMultipliers",
+      ],
+      affectedSurfaces: ["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"],
+    });
+    expect(allFieldsDrift.events.map((event) => event.field)).toEqual([
+      "emissionShare",
+      "issueDiscoveryShare",
+      "maintainerCut",
+      "fixedBaseScore",
+      "eligibilityMode",
+      "trustedLabelPipeline",
+      "defaultLabelMultiplier",
+      "labelMultipliers",
+    ]);
+    expect(allFieldsDrift.events.find((event) => event.field === "maintainerCut")).toMatchObject({ severity: "high", affectedSurfaces: ["maintainer_economics"] });
+    expect(registryHyperparameterDriftWarningsForRepo([allFields!], "JSONbored/gittensory")).toEqual([
+      "Upstream registry drift is open for JSONbored/gittensory: allocation changed; affected surface(s): allocation, lane_fit.",
+      "Upstream registry drift is open for JSONbored/gittensory: issue-discovery share changed; affected surface(s): issue_discovery_behavior, lane_fit.",
+      "Upstream registry drift is open for JSONbored/gittensory: maintainer cut changed; affected surface(s): maintainer_economics.",
+      "2 additional high-impact upstream registry drift event(s) are open for JSONbored/gittensory.",
+    ]);
+    expect(registryHyperparameterDriftWarningsForRepo([allFields!], "JSONbored/gittensory").join(" ")).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
+  });
+
+  it("keeps large registry drift payloads bounded and deterministically sorted", async () => {
+    const previousRepos = Array.from({ length: 150 }, (_, index) => registryRepo(`owner/repo-${String(index).padStart(3, "0")}`, { labelMultipliers: { feature: 1 } }));
+    const currentRepos = previousRepos.map((repo) => ({ ...repo, labelMultipliers: { feature: 1.1 } }));
+    const previous = rulesetWithRegistry("large-previous", previousRepos);
+    const current = rulesetWithRegistry("large-current", currentRepos);
+
+    const report = await buildUpstreamDriftReport(current, previous);
+    const drift = registryDriftPayload(report!);
+
+    expect(report).toMatchObject({ severity: "medium", affectedAreas: ["registry"] });
+    expect(drift).toMatchObject({ totalEvents: 150, omittedEvents: 50, highImpactCount: 0, affectedRepoCount: 150 });
+    expect(drift.events).toHaveLength(100);
+    expect(drift.events.map((event) => event.repoFullName).slice(0, 3)).toEqual(["owner/repo-000", "owner/repo-001", "owner/repo-002"]);
+    expect(drift.events.map((event) => event.repoFullName).at(-1)).toBe("owner/repo-099");
+    expect((report!.payload.repoChanges as string[])).toHaveLength(100);
+  });
+
+  it("does not treat legacy missing optional registry fields as drift", async () => {
+    const base = ruleset("legacy-registry-base", "legacy-registry-base-hash", "pending_saturation_model", 1, 0.01, "2026-05-30T00:00:00.000Z");
+    const baseRegistry = rulesetRegistry(base);
+    const [baseRepo] = baseRegistry.repositories;
+    const { defaultLabelMultiplier: _defaultLabelMultiplier, fixedBaseScore: _fixedBaseScore, eligibilityMode: _eligibilityMode, ...legacyRepo } = baseRepo!;
+
+    const previous = withPayload(base, "legacy-registry-previous", {
+      registry: {
+        ...baseRegistry,
+        repositories: [legacyRepo],
+      },
+    });
+    const current = withPayload(base, "legacy-registry-current", { registry: baseRegistry });
+
+    const report = await buildUpstreamDriftReport(current, previous);
+
+    expect(report).toMatchObject({
+      severity: "low",
+      affectedAreas: ["source"],
+      payload: {
+        repoChanges: [],
+        registryHyperparameterDrift: { totalEvents: 0, highImpactCount: 0, affectedFields: [], events: [] },
+      },
+    });
+  });
+
+  it("tracks registry membership drift and tolerates malformed stored registry drift payloads", async () => {
+    const previous = rulesetWithRegistry("membership-previous", [registryRepo("owner/removed")]);
+    const current = rulesetWithRegistry("membership-current", [registryRepo("owner/added")]);
+    const membership = await buildUpstreamDriftReport(current, previous);
+
+    expect(registryDriftPayload(membership!)).toMatchObject({
+      totalEvents: 2,
+      highImpactCount: 2,
+      affectedFields: ["repo"],
+      affectedSurfaces: ["allocation", "lane_fit"],
+      events: [
+        expect.objectContaining({ repoFullName: "owner/added", field: "repo", summary: "added" }),
+        expect.objectContaining({ repoFullName: "owner/removed", field: "repo", summary: "removed" }),
+      ],
+    });
+    expect(membership!.payload.repoChanges).toEqual(["owner/added: added", "owner/removed: removed"]);
+
+    const env = createTestEnv();
+    await persistUpstreamRulesetSnapshot(env, ruleset("current", "current-hash", "pending_saturation_model", 1, 0.01, new Date().toISOString()));
+    await upsertUpstreamDriftReport(env, driftReport("bad-registry-payload", { affectedAreas: ["registry"], payload: { registryHyperparameterDrift: "bad" } }));
+    await upsertUpstreamDriftReport(
+      env,
+      driftReport("summary-only-registry-payload", {
+        affectedAreas: ["registry"],
+        payload: {
+          registryHyperparameterDrift: {
+            totalEvents: 2,
+            omittedEvents: 1,
+            highImpactCount: 1,
+            affectedRepoCount: 1,
+            affectedFields: ["maintainerCut", "not-a-field"],
+            affectedSurfaces: ["maintainer_economics", "not-a-surface"],
+            events: "bad",
+          },
+        },
+      }),
+    );
+    await upsertUpstreamDriftReport(
+      env,
+      driftReport("event-fallback-registry-payload", {
+        affectedAreas: ["registry"],
+        payload: {
+          registryHyperparameterDrift: {
+            events: [
+              null,
+              { repoFullName: "owner/repo", field: "not-a-field", severity: "high" },
+              { field: "maintainerCut", severity: "high" },
+              { repoFullName: "owner/repo", field: "maintainerCut", severity: "bad" },
+              { repoFullName: "owner/repo", field: "repo", previous: {}, current: {}, severity: "high", affectedSurfaces: "bad" },
+              { repoFullName: "owner/missing-values", field: "maintainerCut", severity: "high", affectedSurfaces: ["maintainer_economics"] },
+            ],
+          },
+        },
+      }),
+    );
+
+    await expect(loadUpstreamStatus(env)).resolves.toMatchObject({
+      status: "drift_detected",
+      registryHyperparameterDrift: {
+        totalEvents: 4,
+        omittedEvents: 1,
+        highImpactCount: 3,
+        affectedRepoCount: 3,
+        affectedFields: ["repo", "maintainerCut"],
+        affectedSurfaces: ["maintainer_economics"],
+      },
     });
   });
 
@@ -472,18 +740,94 @@ describe("upstream ruleset drift tracking", () => {
     const linkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(linkedEnv, driftReport("linked-fingerprint", { issueNumber: 93, issueUrl: "https://github.com/JSONbored/gittensory/issues/93" }));
     const linkedCalls: GitHubIssueFetchCall[] = [];
-    vi.stubGlobal("fetch", githubIssueFetch({ update: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93" }, calls: linkedCalls }));
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93", fingerprint: "linked-fingerprint" },
+        update: { number: 93, url: "https://github.com/JSONbored/gittensory/issues/93" },
+        calls: linkedCalls,
+      }),
+    );
     await expect(fileUpstreamDriftIssues(linkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
-    expect(linkedCalls).toEqual([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" })]);
+    expect(linkedCalls).toEqual([
+      expect.objectContaining({ method: "GET", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" }),
+      expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" }),
+    ]);
+
+    const objectLabelLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(objectLabelLinkedEnv, driftReport("object-label-linked", { issueNumber: 129, issueUrl: "https://github.com/JSONbored/gittensory/issues/129" }));
+    vi.stubGlobal(
+      "fetch",
+      githubIssueFetch({
+        issue: { number: 129, url: "https://github.com/JSONbored/gittensory/issues/129", fingerprint: "object-label-linked", labels: [{ name: "signals" }] },
+        update: { number: 129, url: "https://github.com/JSONbored/gittensory/issues/129" },
+      }),
+    );
+    await expect(fileUpstreamDriftIssues(objectLabelLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+
+    const staleLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "victim/current-repo" });
+    await upsertUpstreamDriftReport(staleLinkedEnv, driftReport("stale-linked", { issueNumber: 123, issueUrl: "https://github.com/other-owner/old-repo/issues/123" }));
+    const staleLinkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 124, url: "https://github.com/victim/current-repo/issues/124" }, calls: staleLinkedCalls }));
+    await expect(fileUpstreamDriftIssues(staleLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    expect(staleLinkedCalls).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/victim/current-repo/issues/123" })]),
+    );
+
+    const invalidLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(invalidLinkedEnv, driftReport("invalid-linked", { issueNumber: 125, issueUrl: "not a github issue url" }));
+    const invalidLinkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 126, url: "https://github.com/JSONbored/gittensory/issues/126" }, calls: invalidLinkedCalls }));
+    await expect(fileUpstreamDriftIssues(invalidLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    expect(invalidLinkedCalls).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/125" })]),
+    );
+
+    const throwingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(throwingLinkedEnv, driftReport("throwing-linked", { issueNumber: 127, issueUrl: "https://github.com/JSONbored/gittensory/issues/127" }));
+    const throwingLinkedCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ throwOnIssueGet: true, create: { number: 128, url: "https://github.com/JSONbored/gittensory/issues/128" }, calls: throwingLinkedCalls }));
+    await expect(fileUpstreamDriftIssues(throwingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    expect(throwingLinkedCalls).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/127" })]),
+    );
+
+    for (const scenario of [
+      { fingerprint: "wrong-host-linked", issueNumber: 130, issueUrl: "https://example.com/JSONbored/gittensory/issues/130" },
+      { fingerprint: "wrong-path-linked", issueNumber: 131, issueUrl: "https://github.com/JSONbored/gittensory/pull/131" },
+      { fingerprint: "lookup-status-linked", issueNumber: 132, issueUrl: "https://github.com/JSONbored/gittensory/issues/132", issueStatus: 500 },
+      { fingerprint: "wrong-number-linked", issueNumber: 133, issueUrl: "https://github.com/JSONbored/gittensory/issues/133", issue: { number: 134, url: "https://github.com/JSONbored/gittensory/issues/133", fingerprint: "wrong-number-linked" } },
+      { fingerprint: "closed-linked", issueNumber: 135, issueUrl: "https://github.com/JSONbored/gittensory/issues/135", issue: { number: 135, url: "https://github.com/JSONbored/gittensory/issues/135", fingerprint: "closed-linked", state: "closed" } },
+      { fingerprint: "missing-body-linked", issueNumber: 136, issueUrl: "https://github.com/JSONbored/gittensory/issues/136", issue: { number: 136, url: "https://github.com/JSONbored/gittensory/issues/136", fingerprint: "missing-body-linked", body: null } },
+      { fingerprint: "missing-label-linked", issueNumber: 137, issueUrl: "https://github.com/JSONbored/gittensory/issues/137", issue: { number: 137, url: "https://github.com/JSONbored/gittensory/issues/137", fingerprint: "missing-label-linked", labels: [{ name: "triage" }] } },
+      { fingerprint: "returned-url-linked", issueNumber: 138, issueUrl: "https://github.com/JSONbored/gittensory/issues/138", issue: { number: 138, url: "https://github.com/other/repo/issues/138", fingerprint: "returned-url-linked" } },
+    ]) {
+      const rejectedLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+      await upsertUpstreamDriftReport(rejectedLinkedEnv, driftReport(scenario.fingerprint, { issueNumber: scenario.issueNumber, issueUrl: scenario.issueUrl }));
+      const rejectedLinkedCalls: GitHubIssueFetchCall[] = [];
+      vi.stubGlobal(
+        "fetch",
+        githubIssueFetch({
+          issue: scenario.issue ?? { number: scenario.issueNumber, url: scenario.issueUrl, fingerprint: scenario.fingerprint },
+          issueStatus: scenario.issueStatus,
+          create: { number: scenario.issueNumber + 100, url: `https://github.com/JSONbored/gittensory/issues/${scenario.issueNumber + 100}` },
+          calls: rejectedLinkedCalls,
+        }),
+      );
+      await expect(fileUpstreamDriftIssues(rejectedLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+      expect(rejectedLinkedCalls).toEqual(
+        expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: `https://api.github.com/repos/JSONbored/gittensory/issues/${scenario.issueNumber}` })]),
+      );
+    }
 
     const failingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(failingLinkedEnv, driftReport("failing-linked", { issueNumber: 94, issueUrl: "https://github.com/JSONbored/gittensory/issues/94" }));
-    vi.stubGlobal("fetch", githubIssueFetch({ updateStatus: 500 }));
+    vi.stubGlobal("fetch", githubIssueFetch({ issue: { number: 94, url: "https://github.com/JSONbored/gittensory/issues/94", fingerprint: "failing-linked" }, updateStatus: 500 }));
     await expect(fileUpstreamDriftIssues(failingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const missingUpdatePayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(missingUpdatePayloadEnv, driftReport("missing-update-payload", { issueNumber: 96, issueUrl: "https://github.com/JSONbored/gittensory/issues/96" }));
-    vi.stubGlobal("fetch", githubIssueFetch({ updatePayload: {} }));
+    vi.stubGlobal("fetch", githubIssueFetch({ issue: { number: 96, url: "https://github.com/JSONbored/gittensory/issues/96", fingerprint: "missing-update-payload" }, updatePayload: {} }));
     await expect(fileUpstreamDriftIssues(missingUpdatePayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const disabledEnv = createTestEnv();
@@ -625,11 +969,14 @@ function githubIssueFetch(options: {
   create?: { number: number; url: string };
   createPayload?: Record<string, unknown>;
   update?: { number: number; url: string };
+  issue?: { number: number; url: string; fingerprint: string; state?: string; labels?: Array<string | { name?: string }>; body?: string | null };
   updatePayload?: Record<string, unknown>;
+  issueStatus?: number | undefined;
   listStatus?: number;
   createStatus?: number;
   updateStatus?: number;
   throwOnList?: boolean;
+  throwOnIssueGet?: boolean;
   calls?: GitHubIssueFetchCall[];
 }) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -650,6 +997,18 @@ function githubIssueFetch(options: {
       );
     }
     const issueMatch = url.match(/\/issues\/(\d+)$/);
+    if (issueMatch && method === "GET") {
+      if (options.throwOnIssueGet) throw new Error("issue lookup failed");
+      if (options.issueStatus) return new Response("issue lookup failed", { status: options.issueStatus });
+      if (!options.issue || options.issue.number !== Number(issueMatch[1])) return new Response("not found", { status: 404 });
+      return Response.json({
+        number: options.issue.number,
+        html_url: options.issue.url,
+        state: options.issue.state ?? "open",
+        body: options.issue.body === undefined ? `<!-- gittensory-upstream-drift:${options.issue.fingerprint} -->` : options.issue.body,
+        labels: options.issue.labels ?? ["signals"],
+      });
+    }
     if (issueMatch && method === "PATCH") {
       if (options.updateStatus) return new Response("update failed", { status: options.updateStatus });
       if (options.updatePayload) return Response.json(options.updatePayload);
@@ -700,6 +1059,7 @@ function ruleset(
             labelMultipliers: { feature: 1.5 },
             trustedLabelPipeline: true,
             defaultLabelMultiplier: null,
+            fixedBaseScore: null,
             eligibilityMode: null,
           },
         ],
@@ -748,10 +1108,54 @@ function rulesetRegistry(snapshot: UpstreamRulesetSnapshotRecord): {
     labelMultipliers: Record<string, number>;
     trustedLabelPipeline: boolean | null;
     defaultLabelMultiplier: number | null;
+    fixedBaseScore: number | null;
     eligibilityMode: string | null;
   }>;
 } {
   return rulesetPayload(snapshot).registry as ReturnType<typeof rulesetRegistry>;
+}
+
+type TestRulesetRegistryRepo = ReturnType<typeof rulesetRegistry>["repositories"][number];
+
+function registryRepo(repo: string, overrides: Partial<TestRulesetRegistryRepo> = {}): TestRulesetRegistryRepo {
+  return {
+    repo,
+    emissionShare: 0.01,
+    issueDiscoveryShare: 0,
+    maintainerCut: 0.3,
+    labelMultipliers: { feature: 1.5 },
+    trustedLabelPipeline: true,
+    defaultLabelMultiplier: null,
+    fixedBaseScore: null,
+    eligibilityMode: null,
+    ...overrides,
+  };
+}
+
+function rulesetWithRegistry(id: string, repositories: TestRulesetRegistryRepo[]): UpstreamRulesetSnapshotRecord {
+  const totalEmissionShare = repositories.reduce((sum, repo) => sum + repo.emissionShare, 0);
+  const base = ruleset(id, `${id}-hash`, "pending_saturation_model", repositories.length, totalEmissionShare, "2026-05-30T00:00:00.000Z");
+  return withPayload(base, id, {
+    registry: {
+      repoCount: repositories.length,
+      totalEmissionShare,
+      repositories,
+    },
+  });
+}
+
+type RegistryDriftPayload = {
+  totalEvents: number;
+  omittedEvents: number;
+  highImpactCount: number;
+  affectedRepoCount: number;
+  affectedFields: string[];
+  affectedSurfaces: string[];
+  events: Array<{ repoFullName: string; field: string; severity: string; affectedSurfaces: string[]; summary: string }>;
+};
+
+function registryDriftPayload(report: UpstreamDriftReportRecord): RegistryDriftPayload {
+  return report.payload.registryHyperparameterDrift as unknown as RegistryDriftPayload;
 }
 
 function withPayload(
@@ -772,7 +1176,7 @@ function withPayload(
 
 function driftReport(
   fingerprint: string,
-  overrides: Partial<Pick<UpstreamDriftReportRecord, "severity" | "affectedAreas" | "summary" | "previousRulesetId" | "currentRulesetId" | "issueNumber" | "issueUrl">> = {},
+  overrides: Partial<Pick<UpstreamDriftReportRecord, "severity" | "affectedAreas" | "summary" | "previousRulesetId" | "currentRulesetId" | "issueNumber" | "issueUrl" | "payload">> = {},
 ): UpstreamDriftReportRecord {
   return {
     id: `report-${fingerprint}`,
@@ -785,7 +1189,7 @@ function driftReport(
     currentRulesetId: overrides.currentRulesetId === undefined ? "current" : overrides.currentRulesetId,
     issueNumber: overrides.issueNumber,
     issueUrl: overrides.issueUrl,
-    payload: { changes: ["scoring constants changed"] },
+    payload: overrides.payload ?? { changes: ["scoring constants changed"] },
     generatedAt: "2026-05-30T00:00:00.000Z",
     updatedAt: "2026-05-30T00:00:00.000Z",
   };

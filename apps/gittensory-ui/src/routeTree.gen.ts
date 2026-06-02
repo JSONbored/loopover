@@ -32,6 +32,7 @@ import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
+import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
 import { Route as DocsAiSummariesRouteImport } from './routes/docs.ai-summaries'
 import { Route as AppWorkbenchRouteImport } from './routes/app.workbench'
 import { Route as AppRunsRouteImport } from './routes/app.runs'
@@ -161,6 +162,11 @@ const DocsBranchAnalysisRoute = DocsBranchAnalysisRouteImport.update({
   path: '/branch-analysis',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsBetaOnboardingRoute = DocsBetaOnboardingRouteImport.update({
+  id: '/beta-onboarding',
+  path: '/beta-onboarding',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsAiSummariesRoute = DocsAiSummariesRouteImport.update({
   id: '/ai-summaries',
   path: '/ai-summaries',
@@ -251,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/app/runs': typeof AppRunsRoute
   '/app/workbench': typeof AppWorkbenchRoute
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
+  '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
@@ -286,6 +293,7 @@ export interface FileRoutesByTo {
   '/app/runs': typeof AppRunsRoute
   '/app/workbench': typeof AppWorkbenchRoute
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
+  '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
@@ -325,6 +333,7 @@ export interface FileRoutesById {
   '/app/runs': typeof AppRunsRoute
   '/app/workbench': typeof AppWorkbenchRoute
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
+  '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
@@ -365,6 +374,7 @@ export interface FileRouteTypes {
     | '/app/runs'
     | '/app/workbench'
     | '/docs/ai-summaries'
+    | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
     | '/docs/maintainer-workflow'
@@ -400,6 +410,7 @@ export interface FileRouteTypes {
     | '/app/runs'
     | '/app/workbench'
     | '/docs/ai-summaries'
+    | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
     | '/docs/maintainer-workflow'
@@ -438,6 +449,7 @@ export interface FileRouteTypes {
     | '/app/runs'
     | '/app/workbench'
     | '/docs/ai-summaries'
+    | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
     | '/docs/maintainer-workflow'
@@ -629,6 +641,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsBranchAnalysisRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/beta-onboarding': {
+      id: '/docs/beta-onboarding'
+      path: '/beta-onboarding'
+      fullPath: '/docs/beta-onboarding'
+      preLoaderRoute: typeof DocsBetaOnboardingRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/ai-summaries': {
       id: '/docs/ai-summaries'
       path: '/ai-summaries'
@@ -769,6 +788,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface DocsRouteChildren {
   DocsAiSummariesRoute: typeof DocsAiSummariesRoute
+  DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
@@ -784,6 +804,7 @@ interface DocsRouteChildren {
 
 const DocsRouteChildren: DocsRouteChildren = {
   DocsAiSummariesRoute: DocsAiSummariesRoute,
+  DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,

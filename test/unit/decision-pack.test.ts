@@ -108,6 +108,40 @@ describe("decision-pack service", () => {
     expect(__decisionPackInternals.round(1.23456)).toBe(1.2346);
   });
 
+  it("feeds repo outcome patterns into repo decisions without inflating maintainer-lane evidence", () => {
+    const outsideRole = { maintainerLane: false } as any;
+    const maintainerRole = { maintainerLane: true } as any;
+    const patterns = {
+      summary: "owner/direct: 5 merged, 3 closed-unmerged, 0 open (0 stale) PR(s); outside-contributor merge rate 62% across 8 decided PR(s).",
+      outsideContributorMergeRate: 0.62,
+      sampleSize: 8,
+      successPatterns: [{ repoFullName: "owner/direct", title: "Merge-friendly pattern", detail: "PRs touching src/ merge well here (5/5 merged).", confidence: "high" }],
+      riskPatterns: [{ repoFullName: "owner/direct", title: "High closure-risk pattern", detail: "PRs with no linked issue have high closure risk here (0/3 merged).", confidence: "medium" }],
+    } as any;
+
+    const pursue = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: outsideRole,
+      outcome: undefined,
+      repoOutcomePatterns: patterns,
+    });
+    expect(pursue.recommendation).toBe("pursue");
+    expect(pursue.repoOutcomePatterns?.sampleSize).toBe(8);
+    expect(pursue.whyThisHelps.some((line) => line.includes("PRs touching src/ merge well here"))).toBe(true);
+    expect(pursue.riskReasons.some((line) => line.includes("high closure risk"))).toBe(true);
+
+    // Maintainer-lane repos surface the patterns for context but never fold the risk into the contributor's own risk reasons.
+    const maintainer = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/direct", 0.03, 0),
+      roleContext: maintainerRole,
+      outcome: undefined,
+      repoOutcomePatterns: patterns,
+    });
+    expect(maintainer.recommendation).toBe("maintainer_lane");
+    expect(maintainer.repoOutcomePatterns?.sampleSize).toBe(8);
+    expect(maintainer.riskReasons.some((line) => line.includes("high closure risk"))).toBe(false);
+  });
+
   it("redacts official hotkeys, loads stale snapshots, and resolves repo decisions case-insensitively", async () => {
     const env = createTestEnv();
     const pack = {
@@ -573,6 +607,7 @@ describe("decision-pack service", () => {
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [{ repoFullName: "owner/cleanup", authorLogin: "jsonbored", authorAssociation: "CONTRIBUTOR" }] as any,
       contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
     });
 
     expect(pack.repoDecisions).toHaveLength(6);
@@ -584,6 +619,68 @@ describe("decision-pack service", () => {
     expect(pack.roleContexts.map((role) => role.repoFullName)).not.toContain("owner/unconfigured");
     expect(pack.opportunities).toEqual([expect.objectContaining({ repoFullName: "owner/pursue", issueNumber: 7, fit: "good" })]);
     expect(pack.nextActions.length).toBeGreaterThan(0);
+    expect(pack.evidenceGraph).toMatchObject({ login: "jsonbored", totals: expect.objectContaining({ repositories: expect.any(Number) }) });
+  });
+
+  it("merges open PR monitor guidance into pack summary and next actions", () => {
+    const monitor = {
+      login: "jsonbored",
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      openPrCount: 1,
+      registeredRepoCount: 1,
+      cleanupFirst: true,
+      summary: "One open PR needs attention on owner/cleanup.",
+      guidance: ["Close or land owner/cleanup#42 before opening new direct PR work."],
+      pendingScenarios: [],
+      pullRequests: [
+        {
+          repoFullName: "owner/cleanup",
+          number: 42,
+          title: "WIP cleanup",
+          classification: "needs_author" as const,
+          summary: "Changes requested.",
+          reasons: ["Reviewer asked for tests."],
+          nextSteps: ["Add tests and push updates."],
+        },
+      ],
+    };
+    const pack = __decisionPackInternals.buildContributorDecisionPack({
+      login: "jsonbored",
+      profile: {
+        login: "jsonbored",
+        generatedAt: "2026-05-25T00:00:00.000Z",
+        github: {},
+        source: {},
+        gittensor: null,
+        registeredRepoActivity: { reposTouched: ["owner/cleanup"] },
+        trustSignals: {},
+      } as any,
+      outcomeHistory: {
+        login: "jsonbored",
+        generatedAt: "2026-05-25T00:00:00.000Z",
+        source: {},
+        totals: {},
+        repoOutcomes: [
+          { repoFullName: "owner/cleanup", role: "outside_contributor", lane: "direct_pr", maintainerLane: false, openPullRequests: 6, closedPullRequestRate: 0.4, credibility: 0.5, mergedPullRequests: 1, closedPullRequests: 2, validSolvedIssues: 0 },
+        ],
+        successPatterns: [],
+        failurePatterns: [],
+        summary: "fixture",
+      } as any,
+      repositories: [repo("owner/cleanup", 0.03, 0)],
+      syncStates: [
+        { repoFullName: "owner/cleanup", status: "complete", openPullRequestsCount: 30, openIssuesCount: 150, recentMergedPullRequestsCount: 5, warnings: [], lastCompletedAt: "2026-05-25T00:00:00.000Z" },
+      ] as any,
+      syncSegments: [],
+      totals: [],
+      scoringModelSnapshotId: "scoring-1",
+      contributorPullRequests: [{ repoFullName: "owner/cleanup", authorLogin: "jsonbored", authorAssociation: "CONTRIBUTOR" }] as any,
+      contributorIssues: [],
+      openPrMonitor: monitor,
+    });
+    expect(pack.summary).toContain("One open PR needs attention");
+    expect(pack.nextActions[0]).toMatch(/owner\/cleanup#42/);
+    expect(pack.openPrMonitor).toEqual(monitor);
   });
 
   it("issues repo-specific direct-PR reasoning that names language and label fit", () => {
@@ -820,6 +917,7 @@ describe("decision-pack service", () => {
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [],
       contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
     });
     const tsDecision = pack.repoDecisions.find((d) => d.repoFullName === "owner/ts")!;
     expect(tsDecision.languageMatch).toEqual({ language: "TypeScript", match: true });
@@ -982,6 +1080,7 @@ describe("decision-pack service", () => {
       scoringModelSnapshotId: "scoring-1",
       contributorPullRequests: [],
       contributorIssues: [],
+      openPrMonitor: emptyOpenPrMonitor("jsonbored"),
     });
     const packA = __decisionPackInternals.buildContributorDecisionPack(fixedArgs());
     const packB = __decisionPackInternals.buildContributorDecisionPack(fixedArgs());
@@ -989,8 +1088,158 @@ describe("decision-pack service", () => {
     expect(packA.repoDecisions.map((d) => d.priorityScore)).toEqual(packB.repoDecisions.map((d) => d.priorityScore));
     expect(packA.repoDecisions.map((d) => d.nextActions)).toEqual(packB.repoDecisions.map((d) => d.nextActions));
     expect(packA.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`)).toEqual(packB.topActions.map((a) => `${a.actionKind}:${a.repoFullName}`));
+    expect(packA.evidenceGraph?.repos.map((repo) => repo.repoFullName)).toEqual(packB.evidenceGraph?.repos.map((repo) => repo.repoFullName));
+  });
+
+  it("threads a maintainer focus manifest into RepoDecision without leaking maintainer-private notes", async () => {
+    const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
+    const manifest = parseFocusManifest({
+      source: "repo_file",
+      wantedPaths: ["src/"],
+      blockedPaths: ["migrations/"],
+      preferredLabels: ["bug"],
+      linkedIssuePolicy: "required",
+      issueDiscoveryPolicy: "discouraged",
+      maintainerNotes: ["Internal: ping @owner before touching the queue processor."],
+      publicNotes: ["Prefer small, focused PRs."],
+    });
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/manifested", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+      focusManifest: manifest,
+    });
+    expect(decision.manifestSummary).toMatchObject({
+      present: true,
+      source: "repo_file",
+      linkedIssuePolicy: "required",
+      issueDiscoveryPolicy: "discouraged",
+      wantedPathCount: 1,
+      blockedPathCount: 1,
+      preferredLabels: ["bug"],
+      publicNotes: ["Prefer small, focused PRs."],
+    });
+    expect(decision.riskReasons.join(" ")).toMatch(/maintainer focus manifest blocks/i);
+    expect(decision.whyThisHelps.join(" ")).toMatch(/wanted path/i);
+    expect(decision.publicNextActions.join(" ")).toMatch(/maintainer requires linked issues/i);
+    expect(decision.publicNextActions.join(" ")).toMatch(/Prefer small, focused PRs/);
+    // Privacy boundary: maintainer-private notes must not appear anywhere on RepoDecision.
+    const decisionJson = JSON.stringify(decision);
+    expect(decisionJson).not.toMatch(/ping @owner/);
+    expect(decisionJson).not.toMatch(/Internal:/);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+  });
+
+  it("covers the preferred linked-issue and encouraged issue-discovery manifest arms", async () => {
+    const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
+    const manifest = parseFocusManifest({
+      source: "api_record",
+      wantedPaths: ["src/"],
+      preferredLabels: ["bug"],
+      linkedIssuePolicy: "preferred",
+      issueDiscoveryPolicy: "encouraged",
+    });
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/preferred", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+      focusManifest: manifest,
+    });
+    expect(decision.manifestSummary?.linkedIssuePolicy).toBe("preferred");
+    expect(decision.publicNextActions.join(" ")).toMatch(/prefers linked issues/i);
+    expect(decision.publicNextActions.join(" ")).toMatch(/issue-discovery reports are welcomed/i);
+    expect(decision.publicNextActions.join(" ")).toMatch(/maintainer-preferred label/i);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+  });
+
+  it("covers the optional linked-issue, neutral issue-discovery, and unlabeled manifest arms", async () => {
+    const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
+    const manifest = parseFocusManifest({
+      source: "api_record",
+      blockedPaths: ["migrations/"],
+      linkedIssuePolicy: "optional",
+      issueDiscoveryPolicy: "neutral",
+    });
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/neutral", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+      focusManifest: manifest,
+    });
+    expect(decision.manifestSummary?.linkedIssuePolicy).toBe("optional");
+    expect(decision.manifestSummary?.issueDiscoveryPolicy).toBe("neutral");
+    // Optional/neutral policies and absent preferred labels emit no policy-specific public actions.
+    expect(decision.publicNextActions.join(" ")).not.toMatch(/requires linked issues|prefers linked issues/i);
+    expect(decision.publicNextActions.join(" ")).not.toMatch(/issue-discovery reports are welcomed|Prefer direct fixes over new issue-discovery/i);
+    expect(decision.publicNextActions.join(" ")).not.toMatch(/maintainer-preferred label/i);
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+  });
+
+  it("drops a non-public-safe manifest note before it reaches public next actions", () => {
+    // Defense-in-depth: even if a present manifest carries an unsafe public note, the
+    // per-note redaction guard keeps it out of the contributor-facing actions.
+    const manifest = {
+      present: true,
+      source: "repo_file",
+      wantedPaths: ["src/"],
+      blockedPaths: [],
+      preferredLabels: [],
+      linkedIssuePolicy: "optional",
+      testExpectations: [],
+      issueDiscoveryPolicy: "neutral",
+      maintainerNotes: [],
+      publicNotes: ["Maximize your reward payout", "Keep PRs small"],
+      warnings: [],
+    } as const;
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/unsafe-note", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+      focusManifest: manifest as any,
+    });
+    expect(decision.publicNextActions.join(" ")).not.toMatch(/reward payout/i);
+    expect(decision.publicNextActions).toContain("Keep PRs small");
+    expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
+  });
+
+  it("omits manifestSummary when no manifest is configured", () => {
+    const decision = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/no-manifest", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { mergedPullRequests: 1, openPullRequests: 0, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(decision.manifestSummary).toBeUndefined();
   });
 });
+
+function emptyOpenPrMonitor(login: string) {
+  return {
+    login,
+    generatedAt: "2026-05-25T00:00:00.000Z",
+    openPrCount: 0,
+    registeredRepoCount: 0,
+    cleanupFirst: false,
+    summary: "No open PRs on registered repos.",
+    guidance: [],
+    pendingScenarios: [],
+    pullRequests: [],
+  };
+}
 
 function noStructuralCountLeak(lines: string[]): boolean {
   const joined = lines.join(" | ");

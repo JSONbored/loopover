@@ -26,7 +26,9 @@ import { loadContributorDecisionPackForServing, repoDecisionFromPack, type Contr
 import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
+import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import type {
   AgentActionRecord,
   AgentActionStatus,
@@ -63,6 +65,32 @@ export type AgentRunBundle = {
   actions: AgentActionRecord[];
   contextSnapshots: AgentContextSnapshotRecord[];
   summary: string;
+};
+
+type RecommendationConfidence = "high" | "medium" | "low";
+type RecommendationFreshness = "fresh" | "stale" | "rebuilding" | "missing" | "degraded" | "possibly_stale" | "unknown";
+
+type RecommendationEvidenceSource = {
+  name: string;
+  source: string | null;
+  generatedAt: string | null;
+  freshness: RecommendationFreshness;
+  summary: string;
+};
+
+type RecommendationEvidence = {
+  confidence: RecommendationConfidence;
+  sourceSummary: string;
+  freshness: RecommendationFreshness;
+  sources: RecommendationEvidenceSource[];
+  assumptions: string[];
+  warnings: string[];
+  userSuppliedScenarios: boolean;
+  userSuppliedScenarioCount: number;
+};
+
+type LocalBranchActionAnalysis = LocalBranchAnalysis & {
+  dataQuality?: { status: "complete" | "degraded" | "blocked" | "unknown"; warnings: string[] } | undefined;
 };
 
 export async function startAgentRun(env: Env, input: AgentRunCreateRequest): Promise<AgentRunBundle> {
@@ -221,7 +249,10 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
     });
     return (await getAgentRunBundle(env, run.id))!;
   }
-  const pack = serving.pack;
+  const pack = {
+    ...serving.pack,
+    openPrMonitor: serving.pack.openPrMonitor ?? (await buildContributorOpenPrMonitor(env, login)),
+  };
   const isStale = pack.freshness !== "fresh";
   const decisions = repoFullName ? pack.repoDecisions.filter((decision) => sameRepo(decision.repoFullName, repoFullName)) : pack.repoDecisions;
   const allowCrossRepoFallback = !repoFullName || run.surface !== "github_comment";
@@ -271,6 +302,7 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
     payload: {
       repoFullName: analysis.repoFullName,
       baseFreshness: analysis.baseFreshness as unknown as JsonValue,
+      branchEligibility: analysis.branchEligibility as unknown as JsonValue,
       scoreabilityStatus: analysis.scorePreview.scoreabilityStatus,
       dataQuality: (analysis.dataQuality ?? null) as unknown as JsonValue,
     },
@@ -286,7 +318,7 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
 }
 
 async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Promise<LocalBranchAnalysis & { dataQuality?: { status: "complete" | "degraded" | "blocked" | "unknown"; warnings: string[] } }> {
-  const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, bounties, scoringSnapshot, issueQuality] =
+  const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, bounties, scoringSnapshot, issueQuality, repoManifest] =
     await Promise.all([
       fetchPublicContributorProfile(input.login),
       listContributorPullRequests(env, input.login),
@@ -302,6 +334,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
       listBountiesByRepo(env, input.repoFullName),
       getOrCreateScoringModelSnapshot(env),
       loadOrComputeIssueQualityResponse(env, input.repoFullName),
+      loadRepoFocusManifest(env, input.repoFullName),
     ]);
   const repoStats = contributorRepoStatsFromGittensor(gittensorSnapshot).length > 0 ? contributorRepoStatsFromGittensor(gittensorSnapshot) : cachedRepoStats;
   const profile = buildContributorProfile(input.login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
@@ -309,8 +342,12 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
   const fit = buildContributorFit(profile, repositories, [], [], syncStates, repoStats);
   const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot });
   const checkSummaries = await loadCheckSummariesForPullRequests(env, input.repoFullName, input, pullRequests);
+  // Caller-supplied focusManifest wins; otherwise fall back to the repo-owned manifest when present.
+  const analysisInput = input.focusManifest !== undefined || !repoManifest.present
+    ? input
+    : { ...input, focusManifest: repoManifest as unknown };
   return buildLocalBranchAnalysis({
-    input,
+    input: analysisInput,
     repo,
     issues,
     pullRequests,
@@ -324,6 +361,7 @@ async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Pr
     scoringSnapshot,
     scoringProfile,
     issueQuality: issueQuality?.report,
+    gittensorSnapshot,
   });
 }
 
@@ -334,12 +372,59 @@ async function loadCheckSummariesForPullRequests(env: Env, repoFullName: string,
 
 function buildDecisionActions(run: AgentRunRecord, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentActionRecord[] {
   const decisionByRepo = new Map(decisions.map((decision) => [decision.repoFullName, decision]));
+  const monitorActions = buildOpenPrMonitorActions(run, pack, decisions);
   const candidateActions = pack.topActions
     .filter((action) => decisionByRepo.has(action.repoFullName))
     .slice(0, 8)
-    .map((action, index) => actionFromDecisionAction(run, action, decisionByRepo.get(action.repoFullName)!, index));
-  if (candidateActions.length > 0) return candidateActions;
-  return decisions.slice(0, 5).map((decision, index) => actionFromRepoDecision(run, decision, index));
+    .map((action, index) => actionFromDecisionAction(run, action, decisionByRepo.get(action.repoFullName)!, monitorActions.length + index, pack));
+  if (candidateActions.length > 0) return [...monitorActions, ...candidateActions].slice(0, 8);
+  const fallback = decisions.slice(0, 5).map((decision, index) => actionFromRepoDecision(run, decision, monitorActions.length + index, pack));
+  return [...monitorActions, ...fallback].slice(0, 8);
+}
+
+function buildOpenPrMonitorActions(run: AgentRunRecord, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentActionRecord[] {
+  const monitor = pack.openPrMonitor;
+  if (!monitor || monitor.pullRequests.length === 0) return [];
+  const decisionByRepo = new Map(decisions.map((decision) => [decision.repoFullName.toLowerCase(), decision]));
+  const urgentClassifications = new Set<ContributorOpenPrMonitor["pullRequests"][number]["classification"]>([
+    "needs_author",
+    "failing_checks",
+    "duplicate_prone",
+    "stale",
+    "should_close_or_withdraw",
+    "blocked",
+  ]);
+  return monitor.pullRequests
+    .filter((packet) => urgentClassifications.has(packet.classification) && decisionByRepo.has(packet.repoFullName.toLowerCase()))
+    .slice(0, 4)
+    .map((packet, index) => {
+      const decision = decisionByRepo.get(packet.repoFullName.toLowerCase())!;
+      return actionRecord({
+        run,
+        actionType: "cleanup_existing_prs",
+        index,
+        targetRepoFullName: packet.repoFullName,
+        targetPullNumber: packet.number,
+        status: packet.classification === "approved" ? "recommended" : "blocked",
+        recommendation: packet.nextSteps[0] ?? packet.summary,
+        why: packet.reasons.slice(0, 4),
+        scoreabilityImpact: monitor.cleanupFirst
+          ? "Resolving open PR queue pressure can unblock scoreability before opening new work."
+          : "Open PR hygiene affects maintainer review load and lane fit.",
+        riskImpact: packet.classification === "duplicate_prone" ? "Duplicate or overlapping PRs increase collision risk." : "Stale or failing PRs consume review bandwidth.",
+        maintainerImpact: "Focused cleanup reduces maintainer queue noise before new submissions.",
+        blockedBy: [packet.classification],
+        rerunWhen: "Rerun after this PR merges, closes, or passes checks and review.",
+        publicSafeSummary: sanitizePublicSummary(`${packet.repoFullName}#${packet.number}: ${packet.summary}`),
+        payload: {
+          openPrPacket: packet as unknown as JsonValue,
+          decision: decision as unknown as JsonValue,
+        },
+        evidence: decisionPackEvidence(pack, decision, "Open PR monitor recommendation from cached GitHub queue state."),
+        safetyClass: "public_safe",
+        approvalRequired: false,
+      });
+    });
 }
 
 function buildBlockerActions(
@@ -365,11 +450,12 @@ function buildBlockerActions(
       rerunWhen: "Rerun after open PRs merge/close, credibility updates, linked issue context changes, or validation changes.",
       publicSafeSummary: `${decision.repoFullName}: blocker context is available privately; public output should stay focused on review hygiene.`,
       payload: { decision: decision as unknown as JsonValue },
+      evidence: decisionPackEvidence(pack, decision, "Scoreability blocker explanation from the contributor decision pack."),
     }),
   );
 }
 
-function buildLocalBranchActions(run: AgentRunRecord, analysis: LocalBranchAnalysis): AgentActionRecord[] {
+function buildLocalBranchActions(run: AgentRunRecord, analysis: LocalBranchActionAnalysis): AgentActionRecord[] {
   const actions: AgentActionRecord[] = [
     actionRecord({
       run,
@@ -390,6 +476,7 @@ function buildLocalBranchActions(run: AgentRunRecord, analysis: LocalBranchAnaly
       rerunWhen: analysis.recommendedRerunCondition,
       publicSafeSummary: sanitizePublicSummary(`${analysis.repoFullName}: preflight found ${analysis.preflight.findings.length} finding(s); use the public-safe PR packet before posting.`),
       payload: { analysis: analysis as unknown as JsonValue },
+      evidence: localBranchEvidence(analysis, "Local branch preflight recommendation from structured metadata."),
     }),
     localPrPacketAction(run, analysis, 1),
   ];
@@ -397,7 +484,7 @@ function buildLocalBranchActions(run: AgentRunRecord, analysis: LocalBranchAnaly
   return actions.slice(0, 8);
 }
 
-function buildLocalBlockerActions(run: AgentRunRecord, analysis: LocalBranchAnalysis, startIndex = 0): AgentActionRecord[] {
+function buildLocalBlockerActions(run: AgentRunRecord, analysis: LocalBranchActionAnalysis, startIndex = 0): AgentActionRecord[] {
   return [
     actionRecord({
       run,
@@ -417,11 +504,12 @@ function buildLocalBlockerActions(run: AgentRunRecord, analysis: LocalBranchAnal
         scenarioScorePreview: analysis.scenarioScorePreview as unknown as JsonValue,
         baseFreshness: analysis.baseFreshness as unknown as JsonValue,
       },
+      evidence: localBranchEvidence(analysis, "Private scoreability blocker explanation from local metadata."),
     }),
   ];
 }
 
-function localPrPacketAction(run: AgentRunRecord, analysis: LocalBranchAnalysis, index = 0): AgentActionRecord {
+function localPrPacketAction(run: AgentRunRecord, analysis: LocalBranchActionAnalysis, index = 0): AgentActionRecord {
   return actionRecord({
     run,
     actionType: "prepare_pr_packet",
@@ -435,12 +523,13 @@ function localPrPacketAction(run: AgentRunRecord, analysis: LocalBranchAnalysis,
     rerunWhen: analysis.recommendedRerunCondition,
     publicSafeSummary: sanitizePublicSummary(`${analysis.repoFullName}: public-safe PR packet prepared from metadata only.`),
     payload: { prPacket: analysis.prPacket as unknown as JsonValue },
+    evidence: localBranchEvidence(analysis, "Public-safe PR packet recommendation from local metadata."),
     safetyClass: "public_safe",
     approvalRequired: false,
   });
 }
 
-function actionFromDecisionAction(run: AgentRunRecord, action: DecisionAction, decision: RepoDecision, index: number): AgentActionRecord {
+function actionFromDecisionAction(run: AgentRunRecord, action: DecisionAction, decision: RepoDecision, index: number, pack?: ContributorDecisionPack | undefined): AgentActionRecord {
   return actionRecord({
     run,
     actionType: mapDecisionAction(action.actionKind),
@@ -459,10 +548,11 @@ function actionFromDecisionAction(run: AgentRunRecord, action: DecisionAction, d
       action: action as unknown as JsonValue,
       decision: decision as unknown as JsonValue,
     },
+    evidence: pack ? decisionPackEvidence(pack, decision, "Ranked next-action recommendation from the contributor decision pack.") : repoDecisionEvidence(decision),
   });
 }
 
-function actionFromRepoDecision(run: AgentRunRecord, decision: RepoDecision, index: number): AgentActionRecord {
+function actionFromRepoDecision(run: AgentRunRecord, decision: RepoDecision, index: number, pack?: ContributorDecisionPack | undefined): AgentActionRecord {
   return actionRecord({
     run,
     actionType: "explain_repo_fit",
@@ -478,6 +568,7 @@ function actionFromRepoDecision(run: AgentRunRecord, decision: RepoDecision, ind
     rerunWhen: rerunWhenForDecision(decision),
     publicSafeSummary: sanitizePublicSummary(decision.publicNextActions?.[0] ?? `${decision.repoFullName}: Use local branch preflight before posting.`),
     payload: { decision: decision as unknown as JsonValue },
+    evidence: pack ? decisionPackEvidence(pack, decision, "Repo-fit fallback recommendation from the contributor decision pack.") : repoDecisionEvidence(decision),
   });
 }
 
@@ -500,7 +591,9 @@ function actionRecord(args: {
   approvalRequired?: boolean | undefined;
   safetyClass?: AgentSafetyClass | undefined;
   payload: Record<string, JsonValue>;
+  evidence?: RecommendationEvidence | undefined;
 }): AgentActionRecord {
+  const evidence = args.evidence ?? defaultRecommendationEvidence(args.actionType);
   return {
     id: `${args.run.id}:${String(args.index).padStart(2, "0")}:${args.actionType}`,
     runId: args.run.id,
@@ -519,9 +612,211 @@ function actionRecord(args: {
     publicSafeSummary: sanitizePublicSummary(args.publicSafeSummary),
     approvalRequired: args.approvalRequired ?? true,
     safetyClass: args.safetyClass ?? "private",
-    payload: args.payload,
+    payload: {
+      ...args.payload,
+      recommendationEvidence: evidence as unknown as JsonValue,
+    },
     createdAt: nowIso(),
   };
+}
+
+function decisionPackEvidence(pack: ContributorDecisionPack, decision: RepoDecision, sourceSummary: string): RecommendationEvidence {
+  const repoQuality = repoSignalQuality(pack, decision.repoFullName);
+  const userSuppliedScenarioCount = userSuppliedScenarioCountForRepo(pack, decision.repoFullName);
+  const missingOfficialStats = !pack.profile.officialStats || pack.profile.source !== "gittensor_api";
+  const missingRepoOutcome = !decision.outcome && !decision.roleContext.maintainerLane;
+  const freshness = pack.freshness !== "fresh" ? pack.freshness : repoQuality.freshness;
+  const warnings = uniqueStrings([
+    ...(pack.freshness === "rebuilding" ? ["Decision pack is stale; a background rebuild was enqueued."] : []),
+    ...(pack.freshness === "stale" ? ["Decision pack is stale and no rebuild was enqueued."] : []),
+    ...(pack.dataQuality.signalFidelity.status === "blocked" ? ["Signal fidelity is blocked for this decision pack."] : []),
+    ...repoQuality.warnings,
+    ...(missingOfficialStats ? ["Official Gittensor contributor stats were unavailable; confidence is reduced."] : []),
+    ...(missingRepoOutcome ? ["No repo-specific official outcome row was available; confidence is reduced."] : []),
+  ]);
+  const assumptions = uniqueStrings([
+    ...(missingOfficialStats ? ["Contributor-level official stats are missing, so cached GitHub and registry data carry more weight."] : []),
+    ...(missingRepoOutcome ? ["Repo-specific prior outcomes are missing, so queue, lane, and role heuristics carry more weight."] : []),
+    ...(userSuppliedScenarioCount > 0 ? ["Pending-PR scenario projections include user-supplied assumptions."] : []),
+  ]);
+  return {
+    confidence: confidenceForDecisionPack(pack, decision, repoQuality, userSuppliedScenarioCount),
+    sourceSummary,
+    freshness,
+    sources: [
+      evidenceSource("contributor_decision_pack", pack.source, pack.generatedAt, pack.freshness, `${pack.login} decision pack with ${pack.dataQuality.signalFidelity.status} signal fidelity.`),
+      evidenceSource("repo_decision", decision.roleContext.source, pack.generatedAt, repoQuality.freshness, `${decision.repoFullName} ranked ${decision.recommendation} at priority ${decision.priorityScore}.`),
+      evidenceSource(
+        "official_contributor_stats",
+        pack.profile.source,
+        pack.generatedAt,
+        missingOfficialStats ? "missing" : "fresh",
+        missingOfficialStats ? "Official contributor stats missing for this snapshot." : "Official contributor stats present in this snapshot.",
+      ),
+      evidenceSource(
+        "repo_outcome_history",
+        decision.outcome ? pack.outcomeHistory.source : null,
+        pack.generatedAt,
+        decision.outcome ? "fresh" : "missing",
+        decision.outcome ? "Repo-specific contributor outcomes present." : "Repo-specific contributor outcomes missing.",
+      ),
+      ...(pack.openPrMonitor
+        ? [evidenceSource("open_pr_monitor", "cached_github_data", pack.openPrMonitor.generatedAt, pack.freshness === "fresh" ? "fresh" : pack.freshness, pack.openPrMonitor.summary)]
+        : []),
+    ],
+    assumptions,
+    warnings,
+    userSuppliedScenarios: userSuppliedScenarioCount > 0,
+    userSuppliedScenarioCount,
+  };
+}
+
+function repoDecisionEvidence(decision: RepoDecision): RecommendationEvidence {
+  const missingRepoOutcome = !decision.outcome && !decision.roleContext.maintainerLane;
+  return {
+    confidence: missingRepoOutcome ? "medium" : "high",
+    sourceSummary: "Repo decision recommendation without serving-pack freshness metadata.",
+    freshness: "unknown",
+    sources: [
+      evidenceSource("repo_decision", decision.roleContext.source, null, "unknown", `${decision.repoFullName} ranked ${decision.recommendation} at priority ${decision.priorityScore}.`),
+      evidenceSource("repo_outcome_history", decision.outcome ? "gittensor_api" : null, null, decision.outcome ? "fresh" : "missing", decision.outcome ? "Repo-specific contributor outcomes present." : "Repo-specific contributor outcomes missing."),
+    ],
+    assumptions: missingRepoOutcome ? ["Repo-specific prior outcomes are missing, so queue, lane, and role heuristics carry more weight."] : [],
+    warnings: missingRepoOutcome ? ["No repo-specific official outcome row was available; confidence is reduced."] : [],
+    userSuppliedScenarios: false,
+    userSuppliedScenarioCount: 0,
+  };
+}
+
+function localBranchEvidence(analysis: LocalBranchActionAnalysis, sourceSummary: string): RecommendationEvidence {
+  const freshness = localEvidenceFreshness(analysis);
+  const userSuppliedScenarioCount = analysis.scorePreview.scenarioPreviews.filter((scenario) => scenario.source === "user_supplied").length;
+  const userSuppliedLinkedIssue = analysis.scorePreview.linkedIssueMultiplier.source === "user_supplied";
+  const userSuppliedBranchEligibility = analysis.branchEligibility.source === "user_supplied";
+  const userSuppliedScenarios = userSuppliedScenarioCount > 0 || userSuppliedLinkedIssue || userSuppliedBranchEligibility;
+  const warnings = uniqueStrings([
+    ...analysis.baseFreshness.warnings,
+    ...(analysis.dataQuality?.warnings ?? []),
+    ...analysis.scorePreview.warnings,
+    ...analysis.branchEligibility.warnings,
+    ...(analysis.githubBranchStatus.status === "unknown" ? analysis.githubBranchStatus.notes : []),
+  ]);
+  const assumptions = uniqueStrings([
+    "Local agent analysis used structured git and GitHub metadata only; source contents were not uploaded.",
+    ...analysis.scorePreview.assumptions.filter((assumption) => /scenario|linked issue|advisory|metadata|branch/i.test(assumption)).slice(0, 8),
+    ...(userSuppliedScenarios ? ["One or more scenario, linked-issue, or branch-eligibility inputs were supplied by the caller."] : []),
+  ]);
+  return {
+    confidence: confidenceForLocalBranch(analysis, userSuppliedScenarios),
+    sourceSummary,
+    freshness,
+    sources: [
+      evidenceSource("local_branch_metadata", "metadata_only", analysis.generatedAt, freshness, "Structured local branch metadata; source upload disabled."),
+      evidenceSource("base_branch_freshness", "local_git_metadata", analysis.generatedAt, localFreshnessStatus(analysis.baseFreshness.status), `${analysis.baseFreshness.status} base/head metadata.`),
+      evidenceSource("score_preview", analysis.scorePreview.activeModel, analysis.scorePreview.generatedAt, "fresh", `${analysis.scorePreview.scoreabilityStatus} private score preview.`),
+      evidenceSource("github_branch_status", analysis.githubBranchStatus.source, analysis.generatedAt, analysis.githubBranchStatus.status === "unknown" ? "unknown" : "fresh", `${analysis.githubBranchStatus.status} cached GitHub branch status.`),
+      evidenceSource("linked_issue_multiplier", analysis.scorePreview.linkedIssueMultiplier.source, analysis.scorePreview.generatedAt, analysis.scorePreview.linkedIssueMultiplier.status === "unavailable" ? "missing" : "fresh", analysis.scorePreview.linkedIssueMultiplier.reason),
+    ],
+    assumptions,
+    warnings,
+    userSuppliedScenarios,
+    userSuppliedScenarioCount,
+  };
+}
+
+function defaultRecommendationEvidence(actionType: AgentActionType): RecommendationEvidence {
+  return {
+    confidence: "medium",
+    sourceSummary: "Generated from Gittensory agent metadata.",
+    freshness: "unknown",
+    sources: [evidenceSource("agent_action", null, null, "unknown", `${actionType} action generated without source-specific evidence.`)],
+    assumptions: [],
+    warnings: ["Source-specific evidence was not attached; treat this recommendation as medium confidence."],
+    userSuppliedScenarios: false,
+    userSuppliedScenarioCount: 0,
+  };
+}
+
+function confidenceForDecisionPack(
+  pack: ContributorDecisionPack,
+  decision: RepoDecision,
+  repoQuality: { freshness: RecommendationFreshness; warnings: string[] },
+  userSuppliedScenarioCount: number,
+): RecommendationConfidence {
+  let confidence: RecommendationConfidence = "high";
+  const fidelity = pack.dataQuality.signalFidelity;
+  if (pack.freshness !== "fresh" || fidelity.status === "blocked" || repoQuality.freshness === "stale" || repoQuality.warnings.some((warning) => /rate limited/i.test(warning))) {
+    confidence = lowerConfidence(confidence, "low");
+  } else if (fidelity.status !== "complete" || repoQuality.freshness === "degraded") {
+    confidence = lowerConfidence(confidence, "medium");
+  }
+  if (!pack.profile.officialStats || pack.profile.source !== "gittensor_api") confidence = lowerConfidence(confidence, "medium");
+  if (!decision.outcome && !decision.roleContext.maintainerLane) confidence = lowerConfidence(confidence, "medium");
+  if (userSuppliedScenarioCount > 0) confidence = lowerConfidence(confidence, "medium");
+  return confidence;
+}
+
+function confidenceForLocalBranch(analysis: LocalBranchActionAnalysis, userSuppliedScenarios: boolean): RecommendationConfidence {
+  let confidence: RecommendationConfidence = "high";
+  if (analysis.baseFreshness.status === "stale" || analysis.dataQuality?.status === "blocked") confidence = lowerConfidence(confidence, "low");
+  if (analysis.baseFreshness.status === "possibly_stale" || analysis.baseFreshness.status === "unknown") confidence = lowerConfidence(confidence, "medium");
+  if (analysis.dataQuality && analysis.dataQuality.status !== "complete") confidence = lowerConfidence(confidence, "medium");
+  if (analysis.githubBranchStatus.status === "unknown") confidence = lowerConfidence(confidence, "medium");
+  if (analysis.branchEligibility.stale || analysis.branchEligibility.evidence === "missing") confidence = lowerConfidence(confidence, "medium");
+  if (userSuppliedScenarios) confidence = lowerConfidence(confidence, "medium");
+  if (analysis.scorePreview.warnings.some((warning) => /unavailable|missing|stale/i.test(warning))) confidence = lowerConfidence(confidence, "medium");
+  return confidence;
+}
+
+function repoSignalQuality(pack: ContributorDecisionPack, repoFullName: string): { freshness: RecommendationFreshness; warnings: string[] } {
+  const fidelity = pack.dataQuality.signalFidelity;
+  const repo = repoFullName.toLowerCase();
+  const has = (repos: string[]) => repos.some((entry) => entry.toLowerCase() === repo);
+  const warnings = [
+    ...(has(fidelity.partialRepos) ? [`${repoFullName}: partial signal coverage.`] : []),
+    ...(has(fidelity.cappedRepos) ? [`${repoFullName}: capped signal coverage.`] : []),
+    ...(has(fidelity.staleRepos) ? [`${repoFullName}: stale signal coverage.`] : []),
+    ...(has(fidelity.rateLimitedRepos) ? [`${repoFullName}: rate limited signal coverage.`] : []),
+  ];
+  if (has(fidelity.staleRepos)) return { freshness: "stale", warnings };
+  if (warnings.length > 0 || fidelity.status !== "complete") return { freshness: "degraded", warnings };
+  return { freshness: "fresh", warnings };
+}
+
+function localEvidenceFreshness(analysis: LocalBranchActionAnalysis): RecommendationFreshness {
+  if (analysis.baseFreshness.status === "stale") return "stale";
+  if (analysis.baseFreshness.status === "possibly_stale") return "possibly_stale";
+  if (analysis.baseFreshness.status === "unknown") return "unknown";
+  if (analysis.dataQuality && analysis.dataQuality.status !== "complete") return "degraded";
+  return "fresh";
+}
+
+function localFreshnessStatus(status: LocalBranchAnalysis["baseFreshness"]["status"]): RecommendationFreshness {
+  if (status === "possibly_stale") return "possibly_stale";
+  return status;
+}
+
+function userSuppliedScenarioCountForRepo(pack: ContributorDecisionPack, repoFullName: string): number {
+  return (pack.openPrMonitor?.pendingScenarios ?? []).filter((scenario) => sameRepo(scenario.repoFullName, repoFullName) && scenario.detection.source === "user_supplied").length;
+}
+
+function lowerConfidence(current: RecommendationConfidence, target: RecommendationConfidence): RecommendationConfidence {
+  const rank: Record<RecommendationConfidence, number> = { low: 0, medium: 1, high: 2 };
+  return rank[target] < rank[current] ? target : current;
+}
+
+function evidenceSource(name: string, source: string | null | undefined, generatedAt: string | null | undefined, freshness: RecommendationFreshness, summary: string): RecommendationEvidenceSource {
+  return {
+    name,
+    source: source ?? null,
+    generatedAt: generatedAt ?? null,
+    freshness,
+    summary,
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentContextSnapshotRecord {
@@ -552,7 +847,17 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       login: pack.login,
       source: pack.source,
       selectedRepos: decisions.map((decision) => decision.repoFullName),
+      evidenceGraph: (pack.evidenceGraph
+        ? {
+            version: pack.evidenceGraph.version,
+            generatedAt: pack.evidenceGraph.generatedAt,
+            totals: pack.evidenceGraph.totals,
+            sources: pack.evidenceGraph.sources,
+            selectedRepos: pack.evidenceGraph.repos.filter((repo) => decisions.some((decision) => decision.repoFullName.toLowerCase() === repo.repoFullName.toLowerCase())),
+          }
+        : null) as unknown as JsonValue,
       dataQuality: pack.dataQuality as unknown as JsonValue,
+      openPrMonitor: (pack.openPrMonitor ?? null) as unknown as JsonValue,
     },
   };
 }
@@ -631,6 +936,7 @@ function sameRepo(left: string, right: string): boolean {
 
 export const __agentOrchestratorInternals = {
   buildDecisionActions,
+  buildOpenPrMonitorActions,
   buildBlockerActions,
   buildLocalBranchActions,
   buildLocalBlockerActions,

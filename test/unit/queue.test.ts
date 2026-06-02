@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   listCollisionEdges,
   createAgentRun,
+  getCommandUsefulnessSummary,
   getBurdenForecast,
   getContributorEvidence,
   getAgentRun,
@@ -9,12 +10,18 @@ import {
   getLatestUpstreamRulesetSnapshot,
   listUpstreamDriftReports,
   listInstallationHealth,
+  listProductUsageDailyRollups,
+  listProductUsageEvents,
   listPullRequests,
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
+  recordProductUsageEvent,
+  upsertAgentCommandAnswer,
+  upsertIssueFromGitHub,
   upsertRepoSyncSegment,
   upsertInstallation,
+  upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
@@ -104,6 +111,25 @@ describe("queue processors", () => {
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }],
       },
     });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "installation-added-single-repo",
+      eventName: "installation",
+      payload: {
+        action: "added",
+        installation: { account: { login: "JSONbored", id: 1, type: "User" } } as never,
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "installation-added-empty",
+      eventName: "installation",
+      payload: {
+        action: "added",
+        installation: { id: 789, account: { login: "JSONbored", id: 1, type: "User" } },
+      },
+    });
 
     expect(await listRepoSyncStates(env)).toMatchObject([{ repoFullName: "JSONbored/gittensory", status: "success" }]);
     expect(await listCollisionEdges(env, "JSONbored/gittensory")).not.toHaveLength(0);
@@ -111,12 +137,27 @@ describe("queue processors", () => {
     const issueQualitySnapshots = await listSignalSnapshots(env, "issue-quality", "JSONbored/gittensory");
     expect(issueQualitySnapshots).toHaveLength(1);
     expect(issueQualitySnapshots[0]?.payload).toMatchObject({ repoFullName: "JSONbored/gittensory", issues: expect.any(Array), summary: expect.any(String) });
+    const outcomePatternSnapshots = await listSignalSnapshots(env, "repo-outcome-patterns", "JSONbored/gittensory");
+    expect(outcomePatternSnapshots).toHaveLength(1);
+    expect(outcomePatternSnapshots[0]?.payload).toMatchObject({
+      repoFullName: "JSONbored/gittensory",
+      totals: expect.any(Object),
+      evidenceCompleteness: expect.objectContaining({ status: expect.any(String) }),
+    });
     expect(await listSignalSnapshots(env, "contributor-decision-pack", "oktofeesh1")).not.toHaveLength(0);
-    expect(await getContributorEvidence(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
+    const contributorEvidence = await getContributorEvidence(env, "oktofeesh1");
+    expect(contributorEvidence).toMatchObject({ login: "oktofeesh1", payload: { evidenceGraph: expect.objectContaining({ login: "oktofeesh1" }) } });
+    expect(await listSignalSnapshots(env, "contributor-evidence-graph", "oktofeesh1")).not.toHaveLength(0);
     expect(await getContributorScoringProfile(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
     const persistedBurden = await getBurdenForecast(env, "JSONbored/gittensory");
     expect(persistedBurden).toMatchObject({ repoFullName: "JSONbored/gittensory" });
     expect(persistedBurden?.payload).toMatchObject({ level: expect.any(String), summary: expect.any(String) });
+    expect(await listProductUsageEvents(env, { limit: 10 })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventName: "github_installation_created", repoFullName: "<redacted-actor>/gittensory", metadata: expect.objectContaining({ action: "created" }) }),
+        expect.objectContaining({ eventName: "github_installation_created", repoFullName: "<redacted-actor>/gittensory", metadata: expect.objectContaining({ action: "added" }) }),
+      ]),
+    );
   });
 
   it("runs queued agent jobs through the queue processor", async () => {
@@ -145,6 +186,46 @@ describe("queue processors", () => {
 
     await expect(getAgentRun(env, "agent-run-queue")).resolves.toMatchObject({ status: "needs_snapshot_refresh" });
     expect(queued).toContainEqual({ type: "build-contributor-decision-packs", requestedBy: "api", login: "oktofeesh1" });
+  });
+
+  it("runs product usage rollups through the queue processor", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "agent_plan_next_work_completed",
+      actor: "oktofeesh1",
+      repoFullName: "JSONbored/gittensory",
+      outcome: "success",
+      occurredAt: "2026-05-27T12:00:00.000Z",
+    });
+
+    await processJob(env, { type: "rollup-product-usage", requestedBy: "test", day: "2026-05-27" });
+    await processJob(env, { type: "rollup-product-usage", requestedBy: "test", days: 1 });
+
+    await expect(listProductUsageDailyRollups(env)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        day: "2026-05-27",
+        totalEvents: 1,
+        activeActors: 1,
+        activation: expect.objectContaining({ firstUsefulActionActors: 1 }),
+      }),
+    ]));
+  });
+
+  it("runs weekly value report generation through the queue processor", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    await processJob(env, { type: "generate-weekly-value-report", requestedBy: "test", variant: "operator", days: 7 });
+    await processJob(env, { type: "generate-weekly-value-report", requestedBy: "test" });
+
+    const row = await env.DB.prepare("select event_type, target_key, outcome from audit_events where event_type = ? order by created_at limit 1").bind("weekly_value_report_generated").first();
+    expect(row).toMatchObject({
+      event_type: "weekly_value_report_generated",
+      target_key: "weekly-value-report:operator:7",
+      outcome: "success",
+    });
+    const auditCount = await env.DB.prepare("select count(*) as count from audit_events where event_type = ?").bind("weekly_value_report_generated").first<{ count: number }>();
+    expect(auditCount?.count).toBe(2);
   });
 
   it("routes upstream drift jobs through queue processors", async () => {
@@ -1282,17 +1363,19 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners/123") return Response.json({ repositories: [] });
       if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
       if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 3, followers: 1 });
+      if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
       if (url.includes("/access_tokens")) {
         calls.token += 1;
         return Response.json({ token: "installation-token" });
       }
-      if (url.includes("/issues/77/comments") && method === "GET") return Response.json([]);
-      if (url.includes("/issues/77/comments") && method === "POST") {
+      if (url.includes("/issues/") && url.includes("/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/") && url.includes("/comments") && method === "POST") {
         calls.commentsCreated += 1;
         const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
         expect(body.body).toContain("<!-- gittensory-agent-command -->");
         expect(body.body).toContain("@gittensory");
-        expect(body.body).not.toMatch(/wallet|hotkey|estimated score|reward estimate|payout|farming|raw trust score/i);
+        expect(body.body).not.toMatch(/wallet|hotkey|estimated score|reward estimate|payout|farming|raw trust score|private reviewability|reviewability internals|scoreability|public score estimate/i);
         return Response.json({ id: 1001 }, { status: 201 });
       }
       return new Response("not found", { status: 404 });
@@ -1366,8 +1449,78 @@ describe("queue processors", () => {
         },
       },
     });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-reviewability",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 5,
+          body: "@gittensory reviewability",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-repo-fit",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 6,
+          body: "@gittensory repo-fit",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-packet",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 7,
+          body: "@gittensory packet",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-packet-no-cache",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 78, title: "Uncached PR command", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: {
+          id: 8,
+          body: "@gittensory packet",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
 
-    expect(calls).toEqual({ commentsCreated: 4, token: 4, minerList: 1 });
+    expect(calls.commentsCreated).toBe(8);
+    expect(calls.token).toBe(8);
+    expect(calls.minerList).toBeGreaterThanOrEqual(1);
     const audit = await env.DB.prepare("select event_type, detail from audit_events where target_key = ? order by created_at")
       .bind("JSONbored/gittensory#77")
       .all<{ event_type: string; detail: string | null }>();
@@ -1378,6 +1531,396 @@ describe("queue processors", () => {
         expect.objectContaining({ event_type: "github_app.miner_detection_cache_hit", detail: "confirmed" }),
       ]),
     );
+    const usage = await env.DB.prepare("select payload_json from signal_snapshots where signal_type = ? and target_key = ? order by generated_at")
+      .bind("github-agent-command-usage", "JSONbored/gittensory#77")
+      .all<{ payload_json: string }>();
+    const usagePayloads = usage.results.map((entry) => JSON.parse(entry.payload_json) as { command: string; outcome: string; actorKind: string; actorHash?: string });
+    expect(usagePayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "reviewability", outcome: "replied", actorKind: "maintainer" }),
+        expect.objectContaining({ command: "repo-fit", outcome: "replied", actorKind: "maintainer" }),
+        expect.objectContaining({ command: "packet", outcome: "replied", actorKind: "maintainer" }),
+      ]),
+    );
+    expect(usagePayloads.every((payload) => typeof payload.actorHash === "string" && /^[a-f0-9]{64}$/.test(payload.actorHash))).toBe(true);
+    expect(JSON.stringify(usagePayloads)).not.toContain('"actor":');
+    expect(JSON.stringify(usagePayloads)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|@gittensory|oktofeesh1/i);
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "github_app", eventName: "agent_command_replied", outcome: "completed", repoFullName: "JSONbored/gittensory" }),
+      ]),
+    );
+    expect(JSON.stringify(usageEvents)).not.toMatch(/wallet|hotkey|raw trust|deliveryId|installation-token/i);
+  });
+
+  it("posts maintainer-only queue digest commands from cached public-safe metadata", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    for (const issue of [
+      { number: 1, title: "Ready linked fix" },
+      { number: 2, title: "Overlap issue" },
+    ]) {
+      await upsertIssueFromGitHub(env, "JSONbored/gittensory", {
+        number: issue.number,
+        title: issue.title,
+        state: "open",
+        user: { login: "reporter" },
+        labels: [],
+        body: "",
+      });
+    }
+    for (const pull of [
+      { number: 90, title: "Ready linked fix", user: { login: "alice" }, body: "Fixes #1" },
+      { number: 91, title: "Needs author context", user: { login: "bob" }, body: "" },
+      { number: 92, title: "Overlap route first", user: { login: "carol" }, body: "Fixes #2" },
+      { number: 93, title: "Overlap route second", user: { login: "dana" }, body: "Fixes #2" },
+    ]) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        ...pull,
+        state: "open",
+        author_association: "NONE",
+        labels: [],
+      });
+    }
+    await upsertOfficialMinerDetection(env, "alice", { status: "confirmed", snapshot: queueMinerSnapshot("alice") }, 60_000);
+
+    const calls = { commentsCreated: 0, token: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) {
+        calls.token += 1;
+        return Response.json({ token: "installation-token" });
+      }
+      if (url.includes("/issues/90/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/90/comments") && method === "POST") {
+        calls.commentsCreated += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
+        expect(body.body).toContain("### Gittensory maintainer queue summary");
+        expect(body.body).toContain("Open PRs: 4");
+        expect(body.body).toContain("confirmed-miner PRs: 1");
+        expect(body.body).toContain("Authenticated control panel: https://gittensory.aethereal.dev/app?view=maintainer&repo=JSONbored%2Fgittensory");
+        expect(body.body).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
+        return Response.json({ id: 1001 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "maintainer-queue-summary",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Ready linked fix", state: "open", pull_request: {}, user: { login: "alice" }, author_association: "NONE" },
+        comment: {
+          id: 9001,
+          body: "@gittensory queue-summary",
+          user: { login: "maintainer", type: "User" },
+          author_association: "OWNER",
+        },
+      },
+    });
+
+    expect(calls).toEqual({ commentsCreated: 1, token: 1 });
+    const audit = await env.DB.prepare("select event_type, detail, metadata_json from audit_events where target_key = ? order by created_at")
+      .bind("JSONbored/gittensory#90")
+      .all<{ event_type: string; detail: string | null; metadata_json: string }>();
+    expect(audit.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event_type: "github_app.agent_command_replied" }),
+        expect.objectContaining({ event_type: "github_app.agent_command_feedback_prompted", detail: "queue-summary" }),
+      ]),
+    );
+    expect(audit.results.find((entry) => entry.event_type === "github_app.agent_command_feedback_prompted")?.metadata_json).toContain("maintainer_digest");
+    const usage = await env.DB.prepare("select payload_json from signal_snapshots where signal_type = ? and target_key = ?")
+      .bind("github-agent-command-usage", "JSONbored/gittensory#90")
+      .all<{ payload_json: string }>();
+    const usagePayload = JSON.parse(usage.results[0]?.payload_json ?? "{}") as { command?: string; outcome?: string; family?: string; actorHash?: string };
+    expect(usagePayload).toEqual(expect.objectContaining({ command: "queue-summary", outcome: "replied", family: "maintainer_digest" }));
+    expect(usagePayload.actorHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(usagePayload)).not.toContain('"actor":');
+    const usageEvents = await listProductUsageEvents(env, { limit: 5 });
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "github_app", eventName: "agent_command_replied", outcome: "completed", metadata: expect.objectContaining({ family: "queue_digest" }) }),
+      ]),
+    );
+  });
+
+  it("records deduped @gittensory answer usefulness from authorized reactions only", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "maintainer" });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 77,
+      title: "Miner command context",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      author_association: "NONE",
+    });
+    await upsertOfficialMinerDetection(env, "oktofeesh1", { status: "confirmed", snapshot: queueMinerSnapshot("oktofeesh1") }, 60 * 60 * 1000);
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-maintainer", "preflight", { responseCommentId: 9001 }));
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-author", "next-action", { responseCommentId: 9002 }));
+    await upsertAgentCommandAnswer(env, { ...commandAnswer("answer-no-author", "preflight", { responseCommentId: 9003 }), issueNumber: 78 });
+    const basePayload = {
+      action: "created",
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+      repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+      issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+    };
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-1",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        comment: { id: 9001, body: commandAnswerBody("answer-maintainer", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 1, content: "+1", user: { login: "maintainer", type: "User" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-2",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        comment: { id: 9001, body: commandAnswerBody("answer-maintainer", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 2, content: "-1", user: { login: "maintainer", type: "User" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-3",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        comment: { id: 9002, body: commandAnswerBody("answer-author", "next-action"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 3, content: "+1", user: { login: "oktofeesh1", type: "User" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-4",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        comment: { id: 9002, body: commandAnswerBody("answer-author", "next-action"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 4, content: "+1", user: { login: "random", type: "User" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-5",
+      eventName: "reaction",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 78, title: "No author", state: "open", pull_request: {}, author_association: "NONE" },
+        comment: { id: 9003, body: commandAnswerBody("answer-no-author", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 5, content: "+1", user: { login: "random", type: "User" } },
+      },
+    });
+
+    const summary = await getCommandUsefulnessSummary(env, { now: "2026-05-29T00:00:00.000Z", windowDays: 30 });
+    expect(summary.totals).toMatchObject({ feedbackCount: 2, usefulCount: 1, notUsefulCount: 1, answerCount: 2, usefulnessRate: 0.5 });
+    expect(summary.commands).toEqual([
+      expect.objectContaining({ command: "next-action", feedbackCount: 1, usefulCount: 1 }),
+      expect.objectContaining({ command: "preflight", feedbackCount: 1, notUsefulCount: 1 }),
+    ]);
+    const audit = await env.DB.prepare("select event_type, detail from audit_events where event_type like ? order by created_at")
+      .bind("github_app.agent_command_feedback_%")
+      .all<{ event_type: string; detail: string | null }>();
+    expect(audit.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event_type: "github_app.agent_command_feedback_recorded" }),
+        expect.objectContaining({ event_type: "github_app.agent_command_feedback_denied", detail: "not_maintainer_or_pr_author" }),
+      ]),
+    );
+    const stored = await env.DB.prepare("select actor_hash, metadata_json from github_agent_command_feedback").all<{ actor_hash: string; metadata_json: string }>();
+    expect(stored.results.map((row) => row.actor_hash).join("\n")).not.toMatch(/maintainer|oktofeesh1|random/);
+    expect(stored.results.every((row) => row.actor_hash.startsWith("sha256:"))).toBe(true);
+  });
+
+  it("skips unsupported @gittensory feedback reactions without storing votes", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "maintainer" });
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-skip", "preflight", { responseCommentId: 9001 }));
+    const basePayload = {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+      repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+      issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+    };
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-skip-1",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        action: "deleted",
+        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 1, content: "+1", user: { login: "maintainer", type: "User" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-skip-1b",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 11, content: "+1", user: { login: "maintainer", type: "User" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-skip-2",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        action: "created",
+        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 2, content: "+1", user: { login: "helper[bot]", type: "Bot" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-skip-3",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        action: "created",
+        comment: { id: 9001, body: commandAnswerBody("answer-missing", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        reaction: { id: 3, content: "-1", user: { login: "maintainer", type: "User" } },
+      },
+    });
+
+    await expect(getCommandUsefulnessSummary(env, { now: "2026-05-29T00:00:00.000Z", windowDays: 30 })).resolves.toMatchObject({
+      totals: { feedbackCount: 0 },
+      commands: [],
+    });
+    const skips = await env.DB.prepare("select detail from audit_events where event_type = ? order by detail")
+      .bind("github_app.agent_command_feedback_skipped")
+      .all<{ detail: string }>();
+    expect(skips.results.map((row) => row.detail)).toEqual(["bot_reaction", "unknown_answer", "unsupported_reaction_action", "unsupported_reaction_action"]);
+  });
+
+  it("accepts repo-owner feedback through sender fallback and ignores non-vote reactions", async () => {
+    const env = createTestEnv();
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-owner", "blockers"));
+    const basePayload = {
+      action: "created",
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+      repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+      issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+      comment: { id: 9001, body: commandAnswerBody("answer-owner", "blockers"), user: { login: "gittensory[bot]", type: "Bot" } },
+    };
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-owner-1",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        reaction: { content: "+1" },
+        sender: { login: "JSONbored", type: "User" },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-owner-2",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        reaction: { id: 2, content: "heart" },
+        sender: { login: "JSONbored", type: "User" },
+      },
+    });
+
+    const summary = await getCommandUsefulnessSummary(env, { now: "2026-05-29T00:00:00.000Z", windowDays: 30 });
+    expect(summary.totals).toMatchObject({ feedbackCount: 1, usefulCount: 1, answerCount: 1 });
+    expect(summary.commands).toEqual([expect.objectContaining({ command: "blockers", usefulnessRate: 1 })]);
+  });
+
+  it("rejects copied feedback markers that do not match the stored answer context", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "maintainer" });
+    await upsertAgentCommandAnswer(env, commandAnswer("answer-bound", "preflight", { responseCommentId: 9001 }));
+    const basePayload = {
+      action: "created",
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+      repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+      issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+      reaction: { id: 1, content: "+1", user: { login: "maintainer", type: "User" } },
+    };
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-bound-1",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        comment: { id: 9002, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-bound-2",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        repository: { name: "other", full_name: "JSONbored/other", private: false, owner: { login: "JSONbored" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+      },
+    });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "feedback-bound-3",
+      eventName: "reaction",
+      payload: {
+        ...basePayload,
+        issue: { ...basePayload.issue, number: 78 },
+        comment: { id: 9001, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+      },
+    });
+
+    await expect(getCommandUsefulnessSummary(env, { now: "2026-05-29T00:00:00.000Z", windowDays: 30 })).resolves.toMatchObject({
+      totals: { feedbackCount: 0 },
+      commands: [],
+    });
+    const skips = await env.DB.prepare("select detail from audit_events where event_type = ? order by detail")
+      .bind("github_app.agent_command_feedback_skipped")
+      .all<{ detail: string }>();
+    expect(skips.results.map((row) => row.detail)).toEqual(["answer_comment_mismatch", "answer_context_mismatch", "answer_context_mismatch"]);
+  });
+
+  it("records webhook errors when command replies fail before mutation", async () => {
+    const env = createTestEnv();
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "agent-command-error",
+        eventName: "issue_comment",
+        payload: {
+          action: "created",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "broken", full_name: "broken", private: false, owner: { login: "JSONbored" } },
+          issue: { number: 77, title: "Broken command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+          comment: {
+            id: 9,
+            body: "@gittensory help",
+            user: { login: "maintainer", type: "User" },
+            author_association: "OWNER",
+          },
+        },
+      }),
+    ).rejects.toThrow("Invalid repository full name");
+
+    const event = await env.DB.prepare("select status, error_summary from webhook_events where delivery_id = ?")
+      .bind("agent-command-error")
+      .first<{ status: string; error_summary: string }>();
+    expect(event).toMatchObject({ status: "error", error_summary: expect.stringContaining("Invalid repository full name") });
   });
 
   it("skips unauthorized, bot, and non-PR @gittensory mention commands without public output", async () => {
@@ -1457,12 +2000,103 @@ describe("queue processors", () => {
         comment: { id: 4, body: "@gittensory preflight", user: { login: "commenter", type: "User" } },
       },
     });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-maintainer-only-denied",
+      eventName: "issue_comment",
+      payload: {
+        ...basePayload,
+        issue: { number: 84, title: "Maintainer digest PR", state: "open", pull_request: {}, user: { login: "not-a-miner" }, author_association: "NONE" },
+        comment: { id: 5, body: "@gittensory queue-summary", user: { login: "not-a-miner", type: "User" }, author_association: "NONE" },
+      },
+    });
 
     expect(commentCalls).toBe(0);
     const skips = await env.DB.prepare("select detail from audit_events where event_type = ? order by detail")
       .bind("github_app.agent_command_skipped")
       .all<{ detail: string }>();
-    expect(skips.results.map((entry) => entry.detail)).toEqual(expect.arrayContaining(["bot_author", "not_a_pull_request_thread", "pr_author_not_confirmed_miner"]));
+    expect(skips.results.map((entry) => entry.detail)).toEqual(expect.arrayContaining(["bot_author", "maintainer_command_requires_maintainer", "not_a_pull_request_thread", "pr_author_not_confirmed_miner"]));
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "github_app", eventName: "agent_command_skipped", outcome: "skipped" }),
+      ]),
+    );
+    expect(JSON.stringify(usageEvents)).not.toMatch(/deliveryId|wallet|hotkey|raw trust/i);
+  });
+
+  it("records command usage as an error when miner authorization cannot be checked", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return new Response("api down", { status: 503 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-miner-unavailable",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 84, title: "Miner unavailable PR", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: { id: 5, body: "@gittensory preflight", user: { login: "oktofeesh1", type: "User" }, author_association: "NONE" },
+      },
+    });
+
+    const usageEvents = await listProductUsageEvents(env, { limit: 5 });
+    expect(usageEvents).toEqual([
+      expect.objectContaining({ surface: "github_app", eventName: "agent_command_skipped", outcome: "error", metadata: expect.objectContaining({ reason: "miner_detection_unavailable" }) }),
+    ]);
+  });
+
+  it("does not let product usage write failures block GitHub command audits", async () => {
+    const env = withProductUsageInsertFailure(createTestEnv());
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-product-usage-down",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Plain issue", state: "open", user: { login: "reporter" } },
+        comment: { id: 1, body: "@gittensory preflight", user: { login: "reporter", type: "User" }, author_association: "NONE" },
+      },
+    });
+
+    const audit = await env.DB.prepare("select event_type, detail from audit_events where target_key = ?")
+      .bind("JSONbored/gittensory#90")
+      .all<{ event_type: string; detail: string }>();
+    expect(audit.results).toEqual([expect.objectContaining({ event_type: "github_app.agent_command_skipped", detail: "not_a_pull_request_thread" })]);
+  });
+
+  it("audits command authorization errors when miner detection is unavailable", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.gittensor.io/miners") return new Response("unavailable", { status: 503 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "agent-command-miner-unavailable",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 84, title: "Unavailable miner check", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
+        comment: { id: 5, body: "@gittensory preflight", user: { login: "oktofeesh1", type: "User" }, author_association: "NONE" },
+      },
+    });
+
+    const event = await env.DB.prepare("select outcome, detail from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.agent_command_skipped", "JSONbored/gittensory#84")
+      .first<{ outcome: string; detail: string }>();
+    expect(event).toMatchObject({ outcome: "error", detail: "miner_detection_unavailable" });
   });
 });
 
@@ -1481,8 +2115,84 @@ function completeSegment(repoFullName: string, segment: "labels" | "open_issues"
   };
 }
 
+type CommandAnswerFixture = Parameters<typeof upsertAgentCommandAnswer>[1];
+
+function commandAnswer(id: string, command: string, overrides: Partial<CommandAnswerFixture> = {}): CommandAnswerFixture {
+  return {
+    id,
+    repoFullName: "JSONbored/gittensory",
+    issueNumber: 77,
+    command,
+    requestCommentId: 7,
+    responseCommentId: 9001,
+    responseUrl: "https://github.com/JSONbored/gittensory/pull/77#issuecomment-9001",
+    actorKind: "maintainer" as const,
+    createdAt: "2026-05-28T00:00:00.000Z",
+    updatedAt: "2026-05-28T00:00:00.000Z",
+    metadata: {},
+    ...overrides,
+  };
+}
+
+function commandAnswerBody(answerId: string, command: string): string {
+  return [
+    "<!-- gittensory-agent-command -->",
+    `<!-- gittensory-agent-command-answer:${answerId} -->`,
+    `Command: \`@gittensory ${command}\``,
+    "Feedback is aggregate-only.",
+  ].join("\n");
+}
+
+function queueMinerSnapshot(login: string) {
+  return {
+    source: "gittensor_api" as const,
+    githubId: "123",
+    githubUsername: login,
+    isEligible: true,
+    credibility: 1,
+    eligibleRepoCount: 1,
+    issueDiscoveryScore: 0,
+    issueTokenScore: 0,
+    issueCredibility: 1,
+    isIssueEligible: false,
+    issueEligibleRepoCount: 0,
+    alphaPerDay: 0,
+    taoPerDay: 0,
+    usdPerDay: 0,
+    totals: {
+      pullRequests: 3,
+      mergedPullRequests: 2,
+      openPullRequests: 1,
+      closedPullRequests: 0,
+      openIssues: 0,
+      closedIssues: 0,
+      solvedIssues: 0,
+      validSolvedIssues: 0,
+    },
+    repositories: [],
+    pullRequests: [],
+    issueLabels: [],
+  };
+}
+
 function b64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
+}
+
+function withProductUsageInsertFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("product_usage_events")) throw new Error("product usage insert failed");
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
+  };
 }
 
 async function generatePrivateKeyPem(): Promise<string> {

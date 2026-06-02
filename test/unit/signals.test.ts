@@ -20,6 +20,7 @@ import {
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
   buildPreflightResult,
+  buildPublicCommentSignalBundle,
   buildPullRequestMaintainerPacket,
   buildPullRequestReviewIntelligence,
   buildPublicPrIntelligenceComment,
@@ -348,6 +349,68 @@ describe("world-class backend signals", () => {
     expect(shouldPublishPrIntelligenceComment(settings, detection)).toBe(true);
     expect(comment).toContain("<!-- gittensory-pr-intelligence -->");
     expect(comment).not.toMatch(/wallet|raw trust score|ranking|farming|reward/i);
+  });
+
+  it("builds a compact, source-free public AI signal bundle", () => {
+    const sourceMarker = "SECRET_SOURCE_LINE_should_never_reach_ai_provider";
+    const currentPr: PullRequestRecord = {
+      ...pullRequests[0]!,
+      title: `Implement ${sourceMarker}`,
+      body: `Diff context: ${sourceMarker}\nfunction stealMe() { return "wallet hotkey payout"; }`,
+    };
+    const detection = { ...detectGittensorContributor("oktofeesh1", currentPr, [currentPr], []), source: "official_gittensor_api" as const };
+    const settings: RepositorySettings = {
+      repoFullName: repo.fullName,
+      commentMode: "detected_contributors_only",
+      publicSignalLevel: "standard",
+      checkRunMode: "off",
+      checkRunDetailLevel: "minimal",
+      autoLabelEnabled: true,
+      gittensorLabel: "gittensor",
+      createMissingLabel: true,
+      publicSurface: "comment_and_label",
+      includeMaintainerAuthors: false,
+      requireLinkedIssue: false,
+      backfillEnabled: true,
+      privateTrustEnabled: true,
+    };
+    const collisions = buildCollisionReport(repo.fullName, issues, pullRequests);
+    const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
+    const preflight = buildPreflightResult(
+      { repoFullName: repo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: [] },
+      repo,
+      issues,
+      pullRequests,
+    );
+    const profile = buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
+
+    const bundle = buildPublicCommentSignalBundle({ repo, pr: currentPr, profile, detection, queueHealth, collisions, preflight, settings });
+    const serialized = JSON.stringify(bundle);
+
+    // Carries only deterministic structured signals.
+    expect(bundle.confirmedMiner).toBe(true);
+    expect(bundle).toMatchObject({ queueLevel: expect.any(String), reviewBurden: expect.any(String) });
+    expect(typeof bundle.collisionClusters).toBe("number");
+    // Invariant: never ships PR source contents (title/body/diff) or forbidden public language.
+    expect(serialized).not.toContain(sourceMarker);
+    expect(serialized).not.toMatch(/wallet|hotkey|payout|raw trust score|farming/i);
+
+    // Alternate branches: missing PR author falls back to the profile login, requireLinkedIssue
+    // short-circuits the linked-issue finding filter, and "minimal" caps the finding titles at 2.
+    const anonymousPr: PullRequestRecord = { ...currentPr, authorLogin: null };
+    const minimalBundle = buildPublicCommentSignalBundle({
+      repo,
+      pr: anonymousPr,
+      profile,
+      detection,
+      queueHealth,
+      collisions,
+      preflight,
+      settings: { ...settings, requireLinkedIssue: true, publicSignalLevel: "minimal" },
+    });
+    expect(minimalBundle.requireLinkedIssue).toBe(true);
+    expect((minimalBundle.publicFindingTitles as string[]).length).toBeLessThanOrEqual(2);
+    expect(typeof minimalBundle.role).toBe("string");
   });
 
   it("classifies every participation lane boundary", () => {

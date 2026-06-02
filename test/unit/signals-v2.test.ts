@@ -935,6 +935,16 @@ describe("v2 signal builders", () => {
       source: "unknown",
       normalContributorEvidenceAllowed: true,
     });
+    // Maintainer association must survive a repoFullName casing mismatch between the
+    // canonical name (e.g. the official source's "Org/Project") and the cached PR's
+    // "org/project". Case-sensitive matching here would drop the association and
+    // wrongly mark the maintainer's repo as outside-contributor evidence.
+    expect(buildRoleContext({ login: "dev", repo: null, repoFullName: "Org/Project", pullRequests: [memberPr], issues: [] })).toMatchObject({
+      role: "org_member",
+      maintainerLane: true,
+      source: "github_association",
+      association: "MEMBER",
+    });
   });
 
   it("branches repo fit recommendations across pursue, avoid, cleanup, unknown, and maintainer lanes", () => {

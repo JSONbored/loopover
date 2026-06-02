@@ -277,6 +277,65 @@ export const ContributorProfileSchema = z
   })
   .openapi("ContributorProfile");
 
+export const ContributorOpenPrNextStepPacketSchema = z
+  .object({
+    repoFullName: z.string(),
+    number: z.number(),
+    title: z.string(),
+    classification: z.enum([
+      "approved",
+      "blocked",
+      "stale",
+      "needs_author",
+      "failing_checks",
+      "missing_tests",
+      "duplicate_prone",
+      "reviewable",
+      "should_close_or_withdraw",
+      "maintainer_lane",
+      "draft",
+    ]),
+    summary: z.string(),
+    reasons: z.array(z.string()),
+    nextSteps: z.array(z.string()),
+  })
+  .openapi("ContributorOpenPrNextStepPacket");
+
+export const ContributorOpenPrMonitorSchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    openPrCount: z.number(),
+    registeredRepoCount: z.number(),
+    cleanupFirst: z.boolean(),
+    summary: z.string(),
+    guidance: z.array(z.string()),
+    pendingScenarios: z.array(
+      z.object({
+        repoFullName: z.string(),
+        detection: z.object({
+          source: z.enum(["github_observed", "user_supplied"]),
+          pendingMergedPrCount: z.number(),
+          pendingClosedPrCount: z.number(),
+          approvedPrCount: z.number(),
+          expectedOpenPrCountAfterMerge: z.number().optional(),
+          scenarioNotes: z.array(z.string()),
+          classified: z.array(
+            z.object({
+              repoFullName: z.string(),
+              number: z.number(),
+              title: z.string(),
+              classification: z.string(),
+              reasons: z.array(z.string()),
+            }),
+          ),
+        }),
+      }),
+    ),
+    pullRequests: z.array(ContributorOpenPrNextStepPacketSchema),
+  })
+  .openapi("ContributorOpenPrMonitor");
+
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),
@@ -704,6 +763,31 @@ export const UpstreamDriftReportSchema = z
   })
   .openapi("UpstreamDriftReport");
 
+const RegistryHyperparameterDriftFieldSchema = z.enum([
+  "repo",
+  "emissionShare",
+  "issueDiscoveryShare",
+  "maintainerCut",
+  "labelMultipliers",
+  "trustedLabelPipeline",
+  "defaultLabelMultiplier",
+  "fixedBaseScore",
+  "eligibilityMode",
+]);
+
+const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);
+
+export const RegistryHyperparameterDriftSummarySchema = z
+  .object({
+    totalEvents: z.number(),
+    omittedEvents: z.number(),
+    highImpactCount: z.number(),
+    affectedRepoCount: z.number(),
+    affectedFields: z.array(RegistryHyperparameterDriftFieldSchema),
+    affectedSurfaces: z.array(RegistryDriftSurfaceSchema),
+  })
+  .openapi("RegistryHyperparameterDriftSummary");
+
 export const UpstreamRulesetSnapshotSchema = z
   .object({
     id: z.string(),
@@ -731,6 +815,7 @@ export const UpstreamStatusSchema = z
     activeModel: z.enum(["current_density_model", "pending_saturation_model", "exponential_saturation_model", "unknown"]).nullable().optional(),
     highestSeverity: z.enum(["low", "medium", "high", "blocking"]).nullable().optional(),
     affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    registryHyperparameterDrift: RegistryHyperparameterDriftSummarySchema,
     openReportCount: z.number(),
     reports: z.array(UpstreamDriftReportSchema),
   })
@@ -892,8 +977,31 @@ const ScoreGatesSchema = z.object({
   credibilityObserved: z.number(),
 });
 
+const BranchEligibilitySchema = z.object({
+  required: z.boolean(),
+  status: z.enum(["eligible", "ineligible", "unknown", "not_required"]),
+  evidence: z.enum(["provided", "missing"]),
+  source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied", "missing"]),
+  reason: z.string().optional(),
+  checkedAt: z.string().optional(),
+  stale: z.boolean(),
+  warnings: z.array(z.string()),
+});
+
 const ScoreGateBlockerSchema = z.object({
-  code: z.enum(["repo_not_registered", "inactive_allocation", "base_token_gate", "open_pr_threshold", "credibility_floor", "review_penalty", "metadata_only"]),
+  code: z.enum([
+    "repo_not_registered",
+    "inactive_allocation",
+    "base_token_gate",
+    "open_pr_threshold",
+    "credibility_floor",
+    "review_penalty",
+    "metadata_only",
+    "linked_issue_invalid",
+    "linked_issue_unvalidated",
+    "branch_ineligible",
+    "branch_eligibility_missing",
+  ]),
   severity: z.enum(["blocker", "reducer", "context"]),
   detail: z.string(),
 });
@@ -905,6 +1013,19 @@ const ScoreGateDeltaSchema = z.object({
   explanation: z.string(),
 });
 
+const LinkedIssueMultiplierDecisionSchema = z.object({
+  mode: z.enum(["none", "standard", "maintainer"]),
+  status: z.enum(["not_required", "raw", "plausible", "validated", "invalid", "unavailable"]),
+  source: z.enum(["none", "user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]),
+  eligible: z.boolean(),
+  issueNumbers: z.array(z.number()),
+  solvedByPullRequests: z.array(z.number()),
+  baseMultiplier: z.number(),
+  appliedMultiplier: z.number(),
+  reason: z.string(),
+  warnings: z.array(z.string()),
+});
+
 const ScoreScenarioPreviewSchema = z.object({
   name: z.enum(["current", "cleanGates", "afterPendingMerges", "afterApprovedPrsMerge", "afterStalePrsClose", "linkedIssueFixed", "bestReasonableCase"]),
   source: z.enum(["current_data", "user_supplied", "github_observed", "gittensory_projection"]),
@@ -914,6 +1035,7 @@ const ScoreScenarioPreviewSchema = z.object({
   effectiveEstimatedScore: z.number(),
   underlyingPotentialScore: z.number(),
   blockedBy: z.array(ScoreGateBlockerSchema),
+  linkedIssueMultiplier: LinkedIssueMultiplierDecisionSchema,
   deltaExplanation: z.string(),
 });
 
@@ -926,7 +1048,9 @@ export const ScorePreviewResultSchema = z
     privateOnly: z.literal(true),
     laneMath: z.record(z.number()),
     scoreEstimate: ScoreEstimateSchema,
+    linkedIssueMultiplier: LinkedIssueMultiplierDecisionSchema,
     gates: ScoreGatesSchema,
+    branchEligibility: BranchEligibilitySchema,
     effectiveEstimatedScore: z.number(),
     underlyingPotentialScore: z.number(),
     blockedBy: z.array(ScoreGateBlockerSchema),
@@ -966,6 +1090,15 @@ export const IssueQualityReportSchema = z
         number: z.number(),
         title: z.string(),
         lifecycle: z.enum(["open", "closed_not_solved", "solved", "valid_solved", "stale", "duplicate", "invalid"]).optional(),
+        linkage: z
+          .object({
+            status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]),
+            source: z.enum(["official_mirror", "github_cache", "missing"]),
+            solvedByPullRequests: z.array(z.number()),
+            reason: z.string(),
+            warnings: z.array(z.string()),
+          })
+          .optional(),
         status: z.enum(["ready", "needs_proof", "hold", "do_not_use"]),
         score: z.number(),
         reasons: z.array(z.string()),
@@ -1093,6 +1226,52 @@ export const ContributorPatternReportSchema = z
   })
   .openapi("ContributorPatternReport");
 
+export const RepoOutcomeEvidenceCompletenessSchema = z
+  .object({
+    pullRequestsAnalyzed: z.number(),
+    withFileDetail: z.number(),
+    withReviewDetail: z.number(),
+    withCheckDetail: z.number(),
+    filesCompletenessRatio: z.number(),
+    reviewsCompletenessRatio: z.number(),
+    checksCompletenessRatio: z.number(),
+    fullyDecidedWithDetail: z.number(),
+    status: z.enum(["complete", "partial", "missing"]),
+  })
+  .openapi("RepoOutcomeEvidenceCompleteness");
+
+export const RepoOutcomePatternsSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    lane: z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"]),
+    primaryLanguage: z.string().nullable(),
+    sampleSize: z.number(),
+    totals: z.record(z.number()),
+    outsideContributorMergeRate: z.number(),
+    maintainerLaneMergeRate: z.number(),
+    dimensions: z.array(z.record(z.unknown())),
+    successPatterns: z.array(z.record(z.unknown())),
+    riskPatterns: z.array(z.record(z.unknown())),
+    evidenceCompleteness: RepoOutcomeEvidenceCompletenessSchema,
+    findings: z.array(FindingSchema),
+    summary: z.string(),
+  })
+  .openapi("RepoOutcomePatterns");
+
+export const RepoOutcomePatternsResponseSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    source: z.enum(["snapshot", "computed"]),
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    ageSeconds: z.number(),
+    freshness: z.enum(["fresh", "stale"]),
+    patterns: RepoOutcomePatternsSchema,
+    dataQuality: z.record(z.unknown()).optional(),
+  })
+  .openapi("RepoOutcomePatternsResponse");
+
 export const RepoFitRecommendationSchema = z
   .object({
     login: z.string(),
@@ -1205,9 +1384,11 @@ export const ContributorDecisionPackSchema = z
     avoidRepos: z.array(z.record(z.unknown())),
     maintainerLaneRepos: z.array(z.record(z.unknown())),
     scoreBlockers: z.array(z.record(z.unknown())),
+    evidenceGraph: z.record(z.unknown()).optional(),
     dataQuality: z.record(z.unknown()),
     summary: z.string(),
     nextActions: z.array(z.string()),
+    openPrMonitor: ContributorOpenPrMonitorSchema.optional(),
   })
   .openapi("ContributorDecisionPack");
 
@@ -1272,10 +1453,30 @@ export const RegistrationReadinessSchema = z
     ready: z.boolean(),
     recommendedRegistrationMode: z.enum(["direct_pr", "issue_discovery", "split"]),
     issuePolicy: z.enum(["issue_discovery_enabled", "split_pr_and_issue_discovery_enabled", "direct_pr_requires_linked_issue", "direct_pr_no_issue_required"]),
+    directPrReadiness: z.object({ ready: z.boolean(), reasons: z.array(z.string()) }),
+    issueDiscoveryReadiness: z.object({ ready: z.boolean(), recommendation: z.enum(["enabled", "recommended", "not_recommended"]), reasons: z.array(z.string()) }),
     labelPolicy: z.record(z.unknown()),
     maintainerCutReadiness: z.record(z.unknown()),
+    testCoverageHealth: z.object({
+      status: z.enum(["gate_ready", "gate_unknown"]),
+      trustedLabelPipelineReady: z.boolean(),
+      checkRunMode: z.enum(["off", "enabled"]),
+      requiredGate: z.array(z.string()),
+      note: z.string(),
+      warnings: z.array(z.string()),
+    }),
+    queueHealth: z.object({ level: z.enum(["low", "medium", "high", "critical"]), burdenScore: z.number(), reviewablePullRequests: z.number(), summary: z.string() }),
     contributorIntakeHealth: z.record(z.unknown()),
     docsCompleteness: z.record(z.unknown()),
+    githubApp: z.object({
+      installed: z.boolean(),
+      publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
+      commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+      checkRunMode: z.enum(["off", "enabled"]),
+      quietByDefault: z.boolean(),
+      behavior: z.string(),
+      warnings: z.array(z.string()),
+    }),
     blockers: z.array(z.string()),
     warnings: z.array(z.string()),
     dataQuality: z.record(z.unknown()),
@@ -1289,6 +1490,7 @@ export const GittensorConfigRecommendationSchema = z
     privateOnly: z.boolean(),
     current: z.record(z.unknown()).nullable(),
     recommended: z.record(z.unknown()),
+    tradeoffs: z.array(z.string()),
     reasons: z.array(z.string()),
     warnings: z.array(z.string()),
     dataQuality: z.record(z.unknown()),
@@ -1359,6 +1561,71 @@ export const RepoRewardRiskSchema = z
   })
   .openapi("RepoRewardRisk");
 
+export const LocalWorkspaceIntelligenceSchema = z
+  .object({
+    version: z.literal(2),
+    sourceUpload: z.object({
+      enabled: z.literal(false),
+      detail: z.string(),
+    }),
+    branch: z.object({
+      name: z.string().optional(),
+      baseRef: z.string().optional(),
+      headSha: z.string().optional(),
+      pendingCommitCount: z.number(),
+    }),
+    changedFiles: z.object({
+      total: z.number(),
+      added: z.number(),
+      modified: z.number(),
+      deleted: z.number(),
+      renamed: z.number(),
+      binary: z.number(),
+      paths: z.array(z.string()),
+    }),
+    testEvidence: z.object({
+      level: z.enum(["test_files", "validation_commands", "both", "none"]),
+      testFileCount: z.number(),
+      passedValidationCount: z.number(),
+      commands: z.array(
+        z.object({
+          command: z.string(),
+          status: z.enum(["passed", "failed", "not_run"]),
+          summary: z.string().optional(),
+        }),
+      ),
+    }),
+    linkedIssues: z.array(z.number()),
+    baseFreshness: z.object({
+      status: z.enum(["fresh", "stale", "possibly_stale", "unknown"]),
+      baseRef: z.string().optional(),
+      baseSha: z.string().optional(),
+      headSha: z.string().optional(),
+      mergeBaseSha: z.string().optional(),
+      remoteTrackingSha: z.string().optional(),
+      changedFileCount: z.number(),
+      testFileCount: z.number(),
+      passedValidationCount: z.number(),
+      warnings: z.array(z.string()),
+      recommendation: z.string().optional(),
+    }),
+    ciStatusHints: z.array(z.string()),
+    localScorerDiagnostics: z
+      .object({
+        mode: z.string(),
+        activeModel: z.string().optional(),
+        warnings: z.array(z.string()),
+        metadataOnly: z.boolean(),
+      })
+      .optional(),
+    blockers: z.object({
+      branchQuality: z.array(z.string()),
+      accountState: z.array(z.string()),
+    }),
+    rerunWhen: z.string(),
+  })
+  .openapi("LocalWorkspaceIntelligence");
+
 export const LocalBranchAnalysisSchema = z
   .object({
     login: z.string(),
@@ -1411,6 +1678,7 @@ export const LocalBranchAnalysisSchema = z
       mergeableState: z.string().nullable().optional(),
       notes: z.array(z.string()),
     }),
+    branchEligibility: BranchEligibilitySchema,
     rewardRisk: RepoRewardRiskSchema,
     scoreBlockers: z.array(z.string()),
     branchQualityBlockers: z.array(z.string()),
@@ -1424,6 +1692,19 @@ export const LocalBranchAnalysisSchema = z
       maintainerLane: z.boolean(),
       reasons: z.array(z.string()),
       risks: z.array(z.string()),
+    }),
+    manifestGuidance: z.object({
+      present: z.boolean(),
+      source: z.enum(["repo_file", "api_record", "none"]),
+      linkedIssuePolicy: z.enum(["required", "preferred", "optional"]),
+      issueDiscoveryPolicy: z.enum(["encouraged", "neutral", "discouraged"]),
+      matchedWantedPaths: z.array(z.string()),
+      matchedBlockedPaths: z.array(z.string()),
+      preferredLabelHits: z.array(z.string()),
+      findings: z.array(z.object({ code: z.string(), severity: z.enum(["info", "warning", "critical"]), title: z.string(), detail: z.string(), action: z.string().optional() })),
+      publicNextSteps: z.array(z.string()),
+      warnings: z.array(z.string()),
+      summary: z.string(),
     }),
     prPacket: z.object({
       titleSuggestion: z.string(),
@@ -1447,6 +1728,7 @@ export const LocalBranchAnalysisSchema = z
       publicSafeWarnings: z.array(z.string()),
     }),
     nextActions: z.array(RewardRiskActionSchema),
+    workspaceIntelligence: LocalWorkspaceIntelligenceSchema,
     summary: z.string(),
   })
   .openapi("LocalBranchAnalysis");

@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
+import { loadControlPanelRoleSummary } from "../services/control-panel-roles";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -24,6 +25,7 @@ import {
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
+  recordProductUsageEvent,
 } from "../db/repositories";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -40,6 +42,8 @@ import {
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { buildMcpClientTelemetry } from "../services/client-telemetry";
+import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -55,7 +59,9 @@ import {
   buildRegistryChangeReport,
   buildRoleContext,
 } from "../signals/engine";
+import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 
@@ -109,6 +115,14 @@ const localDiffPreflightShape = {
   commitMessage: z.string().optional(),
 };
 
+const branchEligibilityShape = {
+  status: z.enum(["eligible", "ineligible", "unknown"]),
+  source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
+  reason: z.string().optional(),
+  checkedAt: z.string().optional(),
+  stale: z.boolean().optional(),
+};
+
 const localBranchAnalysisShape = {
   login: z.string().min(1),
   repoFullName: z.string().min(3),
@@ -159,6 +173,8 @@ const localBranchAnalysisShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
+  focusManifest: z.record(z.unknown()).optional(),
+  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
   localScorer: z
     .object({
       mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
@@ -196,6 +212,15 @@ const agentPlanShape = {
   repoFullName: z.string().min(3).optional(),
 };
 
+const linkedIssueContextShape = {
+  status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
+  source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
+  issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
+  solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
+  reason: z.string().optional(),
+  warnings: z.array(z.string()).max(20).optional(),
+};
+
 const scorePreviewShape = {
   repoFullName: z.string().min(3),
   targetType: z.enum(["planned_pr", "pull_request", "local_diff", "variant"]).default("local_diff"),
@@ -203,6 +228,7 @@ const scorePreviewShape = {
   contributorLogin: z.string().min(1).optional(),
   labels: z.array(z.string()).optional(),
   linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
+  linkedIssueContext: z.object(linkedIssueContextShape).strict().optional(),
   sourceTokenScore: z.number().min(0).optional(),
   totalTokenScore: z.number().min(0).optional(),
   sourceLines: z.number().min(0).optional(),
@@ -219,6 +245,7 @@ const scorePreviewShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
+  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
 };
 
 const variantsShape = {
@@ -230,8 +257,54 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   const identity = await authenticateMcpRequest(c);
   if (!identity) return c.json({ error: "unauthorized" }, 401);
 
+  const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { defaultClientName: "mcp" })!;
+  const usageMetadata = await describeMcpUsageRequest(c.req.raw, telemetry.metadata);
+  const startedAt = Date.now();
   const server = new GittensoryMcp(c.env, identity).createServer();
-  return createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
+  try {
+    const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
+    await recordProductUsageEvent(c.env, {
+      surface: "mcp",
+      eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
+      route: "/mcp",
+      actor: identity.actor,
+      sessionId: identity.kind === "session" ? identity.session.id : undefined,
+      outcome: response.status >= 400 ? "error" : "success",
+      latencyMs: Date.now() - startedAt,
+      clientName: telemetry.clientName,
+      clientVersion: telemetry.clientVersion,
+      metadata: usageMetadata,
+    }).catch(() => undefined);
+    return response;
+  } catch (error) {
+    await recordProductUsageEvent(c.env, {
+      surface: "mcp",
+      eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
+      route: "/mcp",
+      actor: identity.actor,
+      sessionId: identity.kind === "session" ? identity.session.id : undefined,
+      outcome: "error",
+      latencyMs: Date.now() - startedAt,
+      clientName: telemetry.clientName,
+      clientVersion: telemetry.clientVersion,
+      metadata: usageMetadata,
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function describeMcpUsageRequest(request: Request, telemetryMetadata: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
+  const body = await request.clone().json().catch(() => null);
+  if (!body || typeof body !== "object") return { transport: "http", method: request.method, ...telemetryMetadata };
+  const envelope = body as { method?: unknown; params?: { name?: unknown } };
+  const rpcMethod = typeof envelope.method === "string" ? envelope.method : undefined;
+  const toolName = envelope.params && typeof envelope.params.name === "string" ? envelope.params.name : undefined;
+  return {
+    transport: "http",
+    rpcMethod,
+    toolName,
+    ...telemetryMetadata,
+  };
 }
 
 export class GittensoryMcp {
@@ -265,6 +338,15 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_get_repo_outcome_patterns",
+      {
+        description: "Return cached or freshly-computed per-repo accepted/rejected PR outcome patterns: what maintainers actually merge or close, separated from maintainer-lane activity, with a freshness marker and explicit evidence-completeness.",
+        inputSchema: ownerRepoShape,
+      },
+      async (input) => this.toolResult(await this.getRepoOutcomePatterns(input)),
+    );
+
+    server.registerTool(
       "gittensory_get_contributor_profile",
       {
         description: "Return an evidence-backed Gittensory contributor profile for a GitHub login.",
@@ -280,6 +362,16 @@ export class GittensoryMcp {
         inputSchema: loginShape,
       },
       async (input) => this.toolResult(await this.getDecisionPack(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_monitor_open_prs",
+      {
+        description:
+          "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
+        inputSchema: loginShape,
+      },
+      async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
     );
 
     server.registerTool(
@@ -568,6 +660,24 @@ export class GittensoryMcp {
     };
   }
 
+  private async getRepoOutcomePatterns(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    const response = await loadOrComputeRepoOutcomePatternsResponse(this.env, fullName);
+    if (!response) {
+      return {
+        summary: `Gittensory has no cached repo outcome patterns for ${fullName}.`,
+        data: { status: "not_found", repoFullName: fullName },
+      };
+    }
+    return {
+      summary:
+        response.source === "snapshot"
+          ? `Gittensory repo outcome patterns for ${fullName} (cached, ${response.freshness}).`
+          : `Gittensory repo outcome patterns for ${fullName} (computed from cached metadata).`,
+      data: response as unknown as Record<string, unknown>,
+    };
+  }
+
   private async loadOpenQueueCounts(fullName: string): Promise<{ openIssues: number; openPullRequests: number }> {
     const [totals, openIssues, openPullRequests] = await Promise.all([
       getLatestRepoGithubTotalsSnapshot(this.env, fullName),
@@ -607,6 +717,15 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory decision pack for ${login} needs a snapshot refresh.`,
       data: serving.refresh as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async monitorOpenPullRequests(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const monitor = await buildContributorOpenPrMonitor(this.env, login);
+    return {
+      summary: monitor.summary,
+      data: monitor as unknown as Record<string, unknown>,
     };
   }
 
@@ -852,7 +971,7 @@ export class GittensoryMcp {
 
   private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
     this.requireContributorAccess(input.login);
-    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality] = await Promise.all([
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([
       this.loadContributorFastContext(input.login),
       getRepository(this.env, input.repoFullName),
       listIssues(this.env, input.repoFullName),
@@ -861,13 +980,18 @@ export class GittensoryMcp {
       listBountiesByRepo(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       loadOrComputeIssueQualityResponse(this.env, input.repoFullName),
+      loadRepoFocusManifest(this.env, input.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: input.login, fit, scoringSnapshot: snapshot });
     const checkSummaries = await this.loadCheckSummariesForPullRequests(input.repoFullName, input, pullRequests);
+    // Caller-supplied focusManifest wins; otherwise fall back to the repo-owned manifest when present.
+    const analysisInput = input.focusManifest !== undefined || !repoManifest.present
+      ? input
+      : { ...input, focusManifest: repoManifest as unknown };
     return {
       ...buildLocalBranchAnalysis({
-        input,
+        input: analysisInput,
         repo,
         issues,
         pullRequests,
@@ -881,6 +1005,7 @@ export class GittensoryMcp {
         scoringSnapshot: snapshot,
         scoringProfile,
         issueQuality: issueQuality?.report,
+        gittensorSnapshot: context.gittensorSnapshot,
       }),
       dataQuality: await this.loadRepoDataQuality(input.repoFullName),
     };
@@ -932,6 +1057,7 @@ export class GittensoryMcp {
       repositories,
       syncStates,
       repoStats,
+      gittensorSnapshot,
       outcomeHistory,
     };
   }
@@ -978,7 +1104,10 @@ function authoritativeContributorRepoStats(
 }
 
 async function authenticateMcpRequest(c: AppContext): Promise<AuthIdentity | null> {
-  return authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+  const identity = await authenticatePrivateToken(c.env, extractBearerToken(c.req.header("authorization")));
+  if (!identity || identity.kind !== "session") return identity;
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  return summary.roles.length > 0 ? identity : null;
 }
 
 function getExecutionContext(c: AppContext): ExecutionContext<unknown> {

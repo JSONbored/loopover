@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../../src/signals/local-branch";
+import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../../src/signals/local-scorer-diagnostics";
 import type { ContributorOutcomeHistory, ContributorProfile, ContributorScoringProfile, IssueQualityReport } from "../../src/signals/engine";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
@@ -44,15 +45,47 @@ describe("local branch analysis", () => {
     expect(analysis.preflight.status).toBe("ready");
     expect(analysis.preflight.localDiff).toMatchObject({ changedFileCount: 2, codeFileCount: 1, testFileCount: 1, inferredLinkedIssues: [7] });
     expect(analysis.scorePreview.privateOnly).toBe(true);
+    expect(analysis.scorePreview.linkedIssueMultiplier).toMatchObject({ status: "unavailable", source: "missing", issueNumbers: [7], appliedMultiplier: 1 });
+    expect(analysis.scorePreview.warnings.join(" ")).toMatch(/mirror.*unavailable/i);
     expect(analysis.rewardRisk.rewardUpside.relevantLane).toBe("direct_pr");
     expect(analysis.nextActions.map((action) => action.actionKind)).toContain("open_new_direct_pr");
     expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "source_upload_disabled" })]));
+    expect(analysis.workspaceIntelligence.version).toBe(2);
+    expect(analysis.workspaceIntelligence.sourceUpload.enabled).toBe(false);
+    expect(analysis.workspaceIntelligence.testEvidence.level).toBe("both");
+    expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual(analysis.branchQualityBlockers);
+    expect(analysis.workspaceIntelligence.blockers.accountState).toEqual(analysis.accountStateBlockers);
     expect(analysis.prPacket.markdown).toContain("## Branch Freshness");
     expect(analysis.prPacket.markdown).toContain("## Overlap/WIP Check");
     expect(analysis.prPacket.markdown).toContain("- Closes #7");
     expect(analysis.prPacket.markdown).toContain("- passed: npm test -- cache");
     expect(analysis.prPacket.markdown).toContain("metadata only");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("bounds local scorer warnings before adding local findings", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/scorer.ts", additions: 10, deletions: 0, status: "modified" }],
+        localScorer: {
+          mode: "metadata_only",
+          warnings: Array.from({ length: MAX_LOCAL_SCORER_WARNING_COUNT + 5 }, (_, index) => `${index}: ${"w".repeat(MAX_LOCAL_SCORER_WARNING_CHARS + 25)}`),
+        },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const finding = analysis.localFindings.find((entry) => entry.code === "local_scorer_warning");
+    expect(finding?.detail.length).toBeLessThanOrEqual(MAX_LOCAL_SCORER_WARNING_COUNT * MAX_LOCAL_SCORER_WARNING_CHARS + (MAX_LOCAL_SCORER_WARNING_COUNT - 1));
+    expect(analysis.workspaceIntelligence.localScorerDiagnostics?.warnings).toHaveLength(MAX_LOCAL_SCORER_WARNING_COUNT);
   });
 
   it("projects a blocked local branch into a useful after-pending-merge scenario", () => {
@@ -155,9 +188,186 @@ describe("local branch analysis", () => {
 
     expect(analysis.preflight.status).toBe("needs_work");
     expect(analysis.preflight.findings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "issue_quality_do_not_use" })]));
+    expect(analysis.scorePreview.linkedIssueMultiplier).toMatchObject({ status: "invalid", source: "github_cache", eligible: false, appliedMultiplier: 1 });
     expect(analysis.branchQualityBlockers).toEqual(expect.arrayContaining(["Linked issue is already covered or duplicate-prone"]));
     expect(analysis.prPacket.markdown).toContain("Confirm the linked issue is still actionable");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("prefers official mirror solved_by_pr linkage for private score previews without leaking multiplier language publicly", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" }],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 70, sourceLines: 42 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+      issueQuality: {
+        repoFullName: repo.fullName,
+        generatedAt: new Date().toISOString(),
+        lane: { repoFullName: repo.fullName, lane: "direct_pr", issueDiscoveryShare: 0, directPrShare: 0.04, summary: "Direct PR lane", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 7, title: "Cache refresh fails", linkage: { status: "raw", source: "github_cache", solvedByPullRequests: [], reason: "raw", warnings: [] }, status: "ready", score: 80, reasons: [], warnings: [] }],
+        summary: "1 issue evaluated.",
+      },
+      gittensorSnapshot: {
+        issueMirrorAvailable: true,
+        issues: [{ repoFullName: repo.fullName, number: 7, state: "closed", solvedByPullRequest: 144, labels: ["bug"] }],
+      } as never,
+    });
+
+    expect(analysis.scorePreview.linkedIssueMultiplier).toMatchObject({ status: "validated", source: "official_mirror", solvedByPullRequests: [144], appliedMultiplier: 1.33 });
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/multiplier|reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("separates branch eligibility from account blockers in local branch analysis", () => {
+    const commonInput = {
+      login: "oktofeesh1",
+      repoFullName: repo.fullName,
+      body: "Fixes #7",
+      changedFiles: [
+        { path: "src/cache.ts", additions: 24, deletions: 2, status: "modified" as const },
+        { path: "src/cache.test.ts", additions: 18, deletions: 0, status: "added" as const },
+      ],
+      validation: [{ command: "npm test -- cache", status: "passed" as const }],
+      localScorer: { mode: "external_command" as const, sourceTokenScore: 40, totalTokenScore: 70, sourceLines: 38, testTokenScore: 18 },
+    };
+    const commonArgs = {
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open" as const, labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+      gittensorSnapshot: {
+        issueMirrorAvailable: true,
+        issues: [{ repoFullName: repo.fullName, number: 7, state: "closed", solvedByPullRequest: 144, labels: ["bug"] }],
+      } as never,
+    };
+    const eligible = buildLocalBranchAnalysis({
+      input: {
+        ...commonInput,
+        branchEligibility: { status: "eligible", source: "github_metadata", checkedAt: "2026-05-30T00:00:00.000Z" },
+      },
+      ...commonArgs,
+    });
+    const ineligible = buildLocalBranchAnalysis({
+      input: {
+        ...commonInput,
+        branchEligibility: { status: "ineligible", source: "github_metadata", reason: "base branch is not eligible" },
+      },
+      ...commonArgs,
+    });
+    const missing = buildLocalBranchAnalysis({
+      input: commonInput,
+      ...commonArgs,
+    });
+    const stale = buildLocalBranchAnalysis({
+      input: {
+        ...commonInput,
+        branchEligibility: { status: "eligible", source: "local_metadata", stale: true, checkedAt: "2026-05-01T00:00:00.000Z" },
+      },
+      ...commonArgs,
+    });
+
+    expect(eligible.branchEligibility).toMatchObject({ status: "eligible", evidence: "provided" });
+    expect(eligible.scorePreview.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(eligible.branchQualityBlockers.join(" ")).not.toMatch(/eligibility/i);
+    expect(eligible.prPacket.markdown).toContain("Linked issue context was checked");
+    expect(ineligible.scorePreview.scoreEstimate.issueMultiplier).toBe(1);
+    expect(ineligible.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "branch_eligibility_ineligible" })]));
+    expect(ineligible.branchQualityBlockers).toEqual(expect.arrayContaining(["Branch eligibility blocks linked-issue assumptions"]));
+    expect(ineligible.accountStateBlockers.join(" ")).not.toMatch(/eligibility/i);
+    expect(ineligible.recommendedRerunCondition).toMatch(/eligibility/i);
+    expect(ineligible.prPacket.markdown).toContain("Linked issue context needs cleanup");
+    expect(missing.branchEligibility).toMatchObject({ status: "unknown", evidence: "missing" });
+    expect(missing.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "branch_eligibility_missing", severity: "info" })]));
+    expect(missing.branchQualityBlockers.join(" ")).not.toMatch(/Branch eligibility evidence missing/i);
+    expect(stale.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "branch_eligibility_stale", severity: "warning" })]));
+    expect(stale.recommendedRerunCondition).toMatch(/branch\/base eligibility metadata/i);
+    expect(stale.prPacket.markdown).toContain("Reconfirm linked issue and base branch metadata");
+    expect(stale.prPacket.markdown).not.toMatch(/eligibility|issue multiplier|scoreability/i);
+    expect(JSON.stringify({ eligible: eligible.prPacket, ineligible: ineligible.prPacket, missing: missing.prPacket, stale: stale.prPacket })).not.toMatch(
+      /eligibility|issue multiplier|scoreability|reward|score|wallet|hotkey|farming|payout|ranking|trust score/i,
+    );
+  });
+
+  it("surfaces mirror raw, invalid, and unavailable linkage fallbacks privately", () => {
+    const baseInput = {
+      login: "oktofeesh1",
+      repoFullName: repo.fullName,
+      linkedIssues: [7, 8],
+      changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" as const }],
+      validation: [{ command: "npm test -- cache", status: "passed" as const }],
+      localScorer: { mode: "external_command" as const, sourceTokenScore: 42, totalTokenScore: 70, sourceLines: 42 },
+    };
+    const baseArgs = {
+      repo,
+      issues: [
+        { repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] },
+        { repoFullName: repo.fullName, number: 8, title: "Cache refresh also fails", state: "open", labels: ["bug"], linkedPrs: [] },
+      ],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    };
+
+    const mirrorRaw = buildLocalBranchAnalysis({
+      input: baseInput,
+      ...baseArgs,
+      gittensorSnapshot: {
+        issueMirrorAvailable: true,
+        issues: [{ repoFullName: repo.fullName, number: 7, state: "open", solvedByPullRequest: null, labels: ["bug"] }],
+      } as never,
+    });
+    const mirrorInvalid = buildLocalBranchAnalysis({
+      input: { ...baseInput, linkedIssues: [7] },
+      ...baseArgs,
+      gittensorSnapshot: {
+        issueMirrorAvailable: true,
+        issues: [{ repoFullName: repo.fullName, number: 7, state: "closed", solvedByPullRequest: null, labels: ["bug"] }],
+      } as never,
+    });
+    const mirrorUnavailableWithPlausibleCache = buildLocalBranchAnalysis({
+      input: { ...baseInput, linkedIssues: [7, 8] },
+      ...baseArgs,
+      issueQuality: {
+        repoFullName: repo.fullName,
+        generatedAt: new Date().toISOString(),
+        lane: { repoFullName: repo.fullName, lane: "direct_pr", issueDiscoveryShare: 0, directPrShare: 0.04, summary: "Direct PR lane", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [
+          {
+            number: 7,
+            title: "Cache refresh fails",
+            linkage: { status: "plausible", source: "github_cache", solvedByPullRequests: [], reason: "active PR context", warnings: ["not solved yet"] },
+            status: "ready",
+            score: 80,
+            reasons: [],
+            warnings: [],
+          },
+        ],
+        summary: "1 issue evaluated.",
+      },
+      gittensorSnapshot: { issueMirrorAvailable: false, issues: [] } as never,
+    });
+
+    expect(mirrorRaw.scorePreview.linkedIssueMultiplier).toMatchObject({ status: "raw", source: "official_mirror", issueNumbers: [7, 8], appliedMultiplier: 1 });
+    expect(mirrorRaw.scorePreview.linkedIssueMultiplier.warnings.join(" ")).toMatch(/did not include linked issue.*#8/i);
+    expect(mirrorInvalid.scorePreview.linkedIssueMultiplier).toMatchObject({ status: "invalid", source: "official_mirror", appliedMultiplier: 1 });
+    expect(mirrorInvalid.scorePreview.linkedIssueMultiplier.reason).toMatch(/closed linked issue/i);
+    expect(mirrorUnavailableWithPlausibleCache.scorePreview.linkedIssueMultiplier).toMatchObject({ status: "plausible", source: "github_cache", appliedMultiplier: 1 });
+    expect(mirrorUnavailableWithPlausibleCache.scorePreview.linkedIssueMultiplier.warnings.join(" ")).toMatch(/mirror issue data is unavailable.*did not include linked issue.*#8/i);
   });
 
   it("derives observed pending PR scenarios from cached GitHub PR state", () => {
@@ -200,6 +410,9 @@ describe("local branch analysis", () => {
         { ...basePr, repoFullName: otherRepo.fullName, number: 8, title: "Already merged branch", state: "closed", mergedAt: "2026-05-20T00:00:00.000Z" },
         { ...basePr, repoFullName: repo.fullName, number: 6, title: "Maintainer lane", state: "open", authorAssociation: "OWNER" },
         { ...basePr, repoFullName: repo.fullName, number: 7, title: "Someone else's approved PR", state: "open", authorLogin: "someone-else", reviewDecision: "APPROVED" },
+        // Both changes-requested AND stale: an actionable block takes precedence over age, so this
+        // must count as blocked (open-PR pressure stays), not stale (subtracted from projections).
+        { ...basePr, repoFullName: otherRepo.fullName, number: 9, title: "Blocked and stale", state: "open", reviewDecision: "CHANGES_REQUESTED", updatedAt: "2020-01-01T00:00:00.000Z" },
       ],
       profile,
       outcomeHistory: pressuredHistory,
@@ -207,7 +420,7 @@ describe("local branch analysis", () => {
       scoringProfile,
     });
 
-    expect(analysis.observedPullRequestScenarios).toMatchObject({ approvedOrMergeable: 1, stale: 1, closed: 1, draft: 1, blocked: 1, maintainerLane: 1 });
+    expect(analysis.observedPullRequestScenarios).toMatchObject({ approvedOrMergeable: 1, stale: 1, closed: 1, draft: 1, blocked: 2, maintainerLane: 1 });
     expect(analysis.scenarioScorePreview.afterApprovedPrsMerge).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.8 } });
     expect(analysis.scenarioScorePreview.afterStalePrsClose).toMatchObject({ source: "github_observed", gates: { openPrCount: 5, credibilityObserved: 0.2 } });
     expect(analysis.scenarioScorePreview.afterStalePrsClose?.assumptions.join(" ")).toMatch(/already-closed PR.*excluded/);
@@ -773,6 +986,8 @@ describe("local branch analysis", () => {
     expect(analysis.prPacket.markdown).toMatch(/Base freshness: stale|git fetch origin/i);
     expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("missing_test_evidence");
     expect(analysis.preflight.findings.map((finding) => finding.code)).not.toContain("local_diff_missing_tests");
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "validation_as_test_evidence" })]));
+    expect(analysis.workspaceIntelligence.testEvidence.level).toBe("validation_commands");
     expect(analysis.recommendedRerunCondition).toMatch(/git fetch origin/i);
   });
 
@@ -985,6 +1200,8 @@ describe("local branch analysis", () => {
 
     expect(analysis.branchQualityBlockers).toEqual([]);
     expect(analysis.accountStateBlockers.join(" ")).toMatch(/Open PR count|Credibility/i);
+    expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual([]);
+    expect(analysis.workspaceIntelligence.blockers.accountState.length).toBeGreaterThan(0);
     expect(analysis.recommendedRerunCondition).toBe("Rerun after account/queue maturity blockers clear.");
     expect(analysis.nextActions[0]?.actionKind).not.toBe("land_existing_prs");
   });
@@ -1014,6 +1231,7 @@ describe("local branch analysis", () => {
         expect.objectContaining({ code: "binary_diff_present" }),
       ]),
     );
+    expect(analysis.workspaceIntelligence.changedFiles.binary).toBe(1);
     expect(analysis.prPacket.bodySections).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ heading: "Linked Context", lines: ["- No linked issue detected; explain why this is a no-issue PR."] }),
@@ -1049,6 +1267,98 @@ describe("local branch analysis", () => {
     expect(analysis.summary).toContain("is the top private next action");
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
+
+  it("applies a maintainer focus manifest: preferred path, label, and a public-safe focus section", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "fix-cache",
+        body: "Fixes #7",
+        labels: ["bug"],
+        changedFiles: [
+          { path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" },
+          { path: "test/cache.test.ts", additions: 8, deletions: 0, status: "added" },
+        ],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        focusManifest: {
+          source: "repo_file",
+          wantedPaths: ["src/"],
+          preferredLabels: ["bug"],
+          linkedIssuePolicy: "required",
+          maintainerNotes: ["Internal: ping @owner before touching the cache layer."],
+          publicNotes: ["Prefer small, focused PRs."],
+        },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.manifestGuidance.present).toBe(true);
+    expect(analysis.manifestGuidance.matchedWantedPaths).toContain("src/");
+    expect(analysis.manifestGuidance.preferredLabelHits).toContain("bug");
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "manifest_preferred_path" })]));
+    expect(analysis.prPacket.markdown).toContain("## Maintainer Focus");
+    expect(analysis.prPacket.markdown).toContain("Prefer small, focused PRs.");
+    expect(analysis.prPacket.markdown).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.manifestGuidance)).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis)).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/ping @owner/);
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("treats a maintainer-blocked path as a branch-quality blocker", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "touch-migrations",
+        body: "Fixes #7",
+        changedFiles: [{ path: "migrations/0099_change.sql", additions: 20, deletions: 0, status: "added" }],
+        focusManifest: { blockedPaths: ["migrations/"] },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.manifestGuidance.matchedBlockedPaths).toEqual(["migrations/"]);
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "manifest_blocked_path", severity: "critical" })]));
+    expect(analysis.branchQualityBlockers).toEqual(expect.arrayContaining([expect.stringContaining("maintainer-blocked area")]));
+    expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
+  });
+
+  it("ignores a malformed focus manifest without breaking analysis", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "fix-cache",
+        changedFiles: [{ path: "src/cache.ts", additions: 4, deletions: 0, status: "modified" }],
+        focusManifest: { wantedPaths: "src/", linkedIssuePolicy: "sometimes" },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.manifestGuidance.present).toBe(false);
+    expect(analysis.manifestGuidance.warnings.length).toBeGreaterThan(0);
+    expect(analysis.prPacket.bodySections.some((section) => section.heading === "Maintainer Focus")).toBe(false);
+  });
 });
 
 describe("local MCP git metadata collection", () => {
@@ -1058,6 +1368,42 @@ describe("local MCP git metadata collection", () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = null;
     delete process.env.GITTENSORY_UPLOAD_SOURCE;
+  });
+
+  it("counts pending commits, emits CI hints, and tracks deleted or renamed paths", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { collectCiStatusHints, collectLocalBranchMetadata, collectPendingCommitCount } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    writeFileSync(join(tempDir, "keep.ts"), "keep\n");
+    git(tempDir, "add", "keep.ts");
+    git(tempDir, "commit", "-m", "add keep file");
+    git(tempDir, "checkout", "-b", "rename-delete");
+    writeFileSync(join(tempDir, "old.ts"), "old\n");
+    git(tempDir, "add", "old.ts");
+    git(tempDir, "commit", "-m", "add old file");
+    git(tempDir, "mv", "old.ts", "new.ts");
+    git(tempDir, "add", "new.ts");
+    git(tempDir, "commit", "-m", "rename old to new");
+    const renameMetadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(renameMetadata.changedFiles).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "new.ts", previousPath: "old.ts", status: "renamed" })]),
+    );
+    git(tempDir, "rm", "keep.ts");
+    git(tempDir, "commit", "-m", "delete keep file");
+
+    expect(collectPendingCommitCount(tempDir, "HEAD~2")).toBe(2);
+    const deleteMetadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(deleteMetadata.changedFiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "keep.ts", status: "deleted" })]));
+    expect(collectCiStatusHints(tempDir, "HEAD~2", deleteMetadata.changedFiles).join(" ")).toMatch(/local commit/i);
+    expect(JSON.stringify(renameMetadata)).not.toMatch(/export const old/);
   });
 
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {

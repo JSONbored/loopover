@@ -117,7 +117,6 @@ export async function authenticateSessionToken(env: Env, token: string | undefin
   const session = await getAuthSessionByTokenHash(env, await hashToken(token));
   if (!session) return null;
   if (session.revokedAt || Date.parse(session.expiresAt) <= Date.now()) return null;
-  if (!isAuthorizedGitHubSessionLogin(env, session.login)) return null;
   await touchAuthSession(env, session.id);
   return { kind: "session", actor: session.login, session };
 }
@@ -156,6 +155,10 @@ function serializeCookie(name: string, value: string, options: CookieOptions): s
   if (options.secure) parts.push("Secure");
   return parts.join("; ");
 }
+
+export const __securityInternals = {
+  serializeCookie,
+};
 
 function shouldUseSecureCookie(requestUrl: string): boolean {
   try {

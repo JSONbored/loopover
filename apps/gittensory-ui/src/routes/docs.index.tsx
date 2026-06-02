@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, Bot, Building2, Compass, Shield } from "lucide-react";
+import { ArrowRight, Bot, Building2, Compass, Gauge, Shield } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { DocsPage } from "@/components/site/docs-page";
@@ -31,7 +31,7 @@ function DocsIndex() {
     <DocsPage
       eyebrow="Documentation"
       title="Pick your path."
-      description="Docs are grouped by who you are. Start in the lane that fits, then dip into core concepts when you need depth."
+      description="Docs are grouped by who you are. Start with beta onboarding for a role-first path, then dip into core concepts when you need depth."
     >
       <div className="not-prose grid gap-4 sm:grid-cols-2">
         {AUDIENCES.map((a) => (
@@ -55,8 +55,9 @@ const AUDIENCES: Audience[] = [
     icon: <Compass className="size-4" />,
     title: "Miners",
     description: "Plan better work, preflight branches, prepare PR packets.",
-    primary: { to: "/docs/quickstart", label: "Quickstart" },
+    primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
+      { to: "/docs/quickstart", label: "Quickstart" },
       { to: "/docs/miner-workflow", label: "Miner workflow" },
       { to: "/docs/branch-analysis", label: "Branch analysis" },
       { to: "/docs/scoreability", label: "Scoreability" },
@@ -66,8 +67,9 @@ const AUDIENCES: Audience[] = [
     icon: <Shield className="size-4" />,
     title: "Maintainers",
     description: "Confirmed-miner context, sanitized comments, no noisy checks.",
-    primary: { to: "/docs/github-app", label: "Install the GitHub App" },
+    primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
+      { to: "/docs/github-app", label: "Install the GitHub App" },
       { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/ai-summaries", label: "AI summaries policy" },
@@ -77,9 +79,21 @@ const AUDIENCES: Audience[] = [
     icon: <Building2 className="size-4" />,
     title: "Repo owners",
     description: "Registration readiness, label policy, repo settings preview.",
-    primary: { to: "/docs/github-app", label: "App install + scopes" },
+    primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
+      { to: "/app/owner", label: "Owner console" },
       { to: "/docs/privacy-security", label: "Privacy & security" },
+      { to: "/docs/troubleshooting", label: "Troubleshooting" },
+    ],
+  },
+  {
+    icon: <Gauge className="size-4" />,
+    title: "Operators",
+    description: "Usage rollups, weekly value report, upstream drift across deployments.",
+    primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
+    links: [
+      { to: "/app/operator", label: "Operator dashboard" },
+      { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/troubleshooting", label: "Troubleshooting" },
     ],
   },

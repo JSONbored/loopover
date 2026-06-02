@@ -95,6 +95,7 @@ export async function enforceRateLimit(c: Context<{ Bindings: Env }>, routeClass
 }
 
 export function routeClassForPath(path: string): RateLimitClass {
+  if (path === "/v1/github/webhook") return "strict";
   if (path === "/v1/auth/session" || path === "/v1/auth/logout") return "normal";
   if (path.startsWith("/v1/auth/")) return "strict";
   if (
@@ -102,6 +103,7 @@ export function routeClassForPath(path: string): RateLimitClass {
     path.includes("/v1/agent/") ||
     path.includes("/scoring/preview") ||
     path.includes("/decision-pack") ||
+    path.includes("/open-pr-monitor") ||
     path.includes("/upstream/") ||
     path.includes("/internal/jobs/generate-signal-snapshots") ||
     path.includes("/internal/jobs/build-contributor-decision-packs") ||

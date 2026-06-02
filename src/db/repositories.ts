@@ -184,6 +184,17 @@ export async function markInstallationDeleted(env: Env, installationId: number):
     .where(eq(repositories.installationId, installationId));
 }
 
+export async function markInstallationRepositoryRemoved(env: Env, repoFullName: string, installationId?: number): Promise<void> {
+  const db = getDb(env.DB);
+  // Only unlink the row if it still belongs to this installation (guards against a repo
+  // that was already re-installed under a different installation in a race).
+  const condition =
+    installationId !== undefined
+      ? and(eq(repositories.fullName, repoFullName), eq(repositories.installationId, installationId))
+      : eq(repositories.fullName, repoFullName);
+  await db.update(repositories).set({ isInstalled: false, installationId: null, updatedAt: nowIso() }).where(condition);
+}
+
 export async function listInstallations(env: Env): Promise<InstallationRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(installations).orderBy(desc(installations.updatedAt)).limit(100);

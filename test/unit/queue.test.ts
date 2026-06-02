@@ -6,6 +6,7 @@ import {
   getBurdenForecast,
   getContributorEvidence,
   getAgentRun,
+  getRepository,
   getContributorScoringProfile,
   getLatestUpstreamRulesetSnapshot,
   listUpstreamDriftReports,
@@ -113,18 +114,18 @@ describe("queue processors", () => {
     });
     await processJob(env, {
       type: "github-webhook",
-      deliveryId: "installation-added-single-repo",
-      eventName: "installation",
+      deliveryId: "installation-repositories-added-single-repo",
+      eventName: "installation_repositories",
       payload: {
         action: "added",
-        installation: { account: { login: "JSONbored", id: 1, type: "User" } } as never,
-        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+        installation: { id: 456, account: { login: "JSONbored", id: 1, type: "User" } },
+        repositories_added: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }],
       },
     });
     await processJob(env, {
       type: "github-webhook",
-      deliveryId: "installation-added-empty",
-      eventName: "installation",
+      deliveryId: "installation-repositories-added-empty",
+      eventName: "installation_repositories",
       payload: {
         action: "added",
         installation: { id: 789, account: { login: "JSONbored", id: 1, type: "User" } },
@@ -158,6 +159,48 @@ describe("queue processors", () => {
         expect.objectContaining({ eventName: "github_installation_created", repoFullName: "<redacted-actor>/gittensory", metadata: expect.objectContaining({ action: "added" }) }),
       ]),
     );
+  });
+
+  it("links repos added to and unlinks repos removed from an existing installation", async () => {
+    const env = createTestEnv();
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "ir-install-created",
+      eventName: "installation",
+      payload: {
+        action: "created",
+        installation: { id: 999, account: { login: "acme", id: 7, type: "Organization" } },
+        repositories: [{ name: "a", full_name: "acme/a", private: false, owner: { login: "acme" } }],
+      },
+    });
+    // Repo added to the already-installed app arrives on installation_repositories/added.
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "ir-added",
+      eventName: "installation_repositories",
+      payload: {
+        action: "added",
+        installation: { id: 999, account: { login: "acme", id: 7, type: "Organization" } },
+        repositories_added: [{ name: "b", full_name: "acme/b", private: false, owner: { login: "acme" } }],
+      },
+    });
+    expect(await getRepository(env, "acme/b")).toMatchObject({ fullName: "acme/b", isInstalled: true, installationId: 999 });
+    expect(await listProductUsageEvents(env, { limit: 20 })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ eventName: "github_installation_created", metadata: expect.objectContaining({ action: "added" }) })]),
+    );
+
+    // Repo removed from the installation must have its linkage cleared.
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "ir-removed",
+      eventName: "installation_repositories",
+      payload: {
+        action: "removed",
+        installation: { id: 999, account: { login: "acme", id: 7, type: "Organization" } },
+        repositories_removed: [{ name: "b", full_name: "acme/b", private: false, owner: { login: "acme" } }],
+      },
+    });
+    expect(await getRepository(env, "acme/b")).toMatchObject({ fullName: "acme/b", isInstalled: false, installationId: null });
   });
 
   it("runs queued agent jobs through the queue processor", async () => {

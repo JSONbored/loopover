@@ -128,6 +128,9 @@ export type GitHubWebhookPayload = {
   };
   repository?: GitHubRepositoryPayload;
   repositories?: GitHubRepositoryPayload[];
+  // `installation_repositories` event: repos added/removed from an existing installation.
+  repositories_added?: GitHubRepositoryPayload[];
+  repositories_removed?: GitHubRepositoryPayload[];
   pull_request?: GitHubPullRequestPayload;
   issue?: GitHubIssuePayload;
   comment?: GitHubIssueCommentPayload;

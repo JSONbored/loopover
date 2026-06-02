@@ -28,6 +28,7 @@ import {
   listRepoSyncSegments,
   listRepositories,
   markInstallationDeleted,
+  markInstallationRepositoryRemoved,
   persistAdvisory,
   recordAgentCommandFeedback,
   recordAuditEvent,
@@ -574,7 +575,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
     }
 
     await upsertInstallation(env, payload);
-    if (eventName === "installation" && (payload.action === "created" || payload.action === "added")) {
+    if (eventName === "installation" && payload.action === "created") {
       const installedRepos = payload.repositories?.map((repo) => repo.full_name).filter(Boolean) ?? (payload.repository?.full_name ? [payload.repository.full_name] : [undefined]);
       await Promise.all(
         installedRepos.slice(0, 50).map((repoFullName) =>
@@ -587,6 +588,46 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
           }),
         ),
       );
+    }
+
+    // CR with GitHub webhook contract: repos added to / removed from an *existing*
+    // installation arrive on the `installation_repositories` event (actions
+    // "added"/"removed") in `repositories_added` / `repositories_removed`, not on
+    // the `installation` event's `repositories` array. Without this branch the
+    // added repos are never upserted with their installation linkage.
+    if (eventName === "installation_repositories") {
+      const installationId = payload.installation?.id;
+      const addedRepos = payload.repositories_added ?? [];
+      const removedRepos = payload.repositories_removed ?? [];
+      for (const repo of addedRepos) {
+        if (repo.full_name) await upsertRepositoryFromGitHub(env, repo, installationId ?? undefined);
+      }
+      for (const repo of removedRepos) {
+        if (repo.full_name) await markInstallationRepositoryRemoved(env, repo.full_name, installationId ?? undefined);
+      }
+      if (addedRepos.length > 0) {
+        await Promise.all(
+          addedRepos.slice(0, 50).map((repo) =>
+            recordGithubProductUsage(env, "github_installation_created", {
+              actor: payload.installation?.account?.login,
+              repoFullName: repo.full_name,
+              targetKey: installationId ? `installation:${installationId}` : repo.full_name,
+              outcome: "completed",
+              metadata: { action: payload.action, repoCount: addedRepos.length, truncatedRepos: Math.max(addedRepos.length - 50, 0) },
+            }),
+          ),
+        );
+      }
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
     }
 
     const installationId = getInstallationId(payload);

@@ -596,11 +596,17 @@ describe("api routes", () => {
       profile: { github: { topLanguages: string[] }; officialStats?: Record<string, unknown> | null };
       outcomeHistory: { totals: Record<string, unknown> };
       topActions: unknown[];
+      actionPortfolio: { bucketOrder: string[]; buckets: unknown[]; topActions: unknown[] };
     };
     expect(builtDecisionPayload.profile.github.topLanguages).toEqual(["TypeScript", "Python"]);
     expect(builtDecisionPayload.profile.officialStats).not.toHaveProperty("hotkey");
     expect(builtDecisionPayload.outcomeHistory.totals).toMatchObject({ pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1 });
     expect(builtDecisionPayload.topActions.length).toBeGreaterThan(0);
+    expect(builtDecisionPayload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.any(Array),
+      topActions: expect.any(Array),
+    });
 
     const decisionPack = await app.request("/v1/contributors/oktofeesh1/decision-pack", { headers: apiHeaders(env) }, env);
     expect(decisionPack.status).toBe(200);
@@ -626,10 +632,18 @@ describe("api routes", () => {
     );
     expect(agentPlan.status).toBe(200);
     const agentPlanPayload = (await agentPlan.json()) as {
-      run: { id: string; status: string; mode: string; surface: string };
+      run: { id: string; status: string; mode: string; surface: string; payload: Record<string, unknown> };
       actions: Array<{ actionType: string; publicSafeSummary: string; payload: Record<string, unknown> }>;
+      contextSnapshots: Array<{ payload: Record<string, unknown> }>;
     };
     expect(agentPlanPayload.run).toMatchObject({ status: "completed", mode: "copilot", surface: "api" });
+    expect(agentPlanPayload.run.payload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.any(Array),
+    });
+    expect(agentPlanPayload.contextSnapshots[0]?.payload.actionPortfolio).toMatchObject({
+      buckets: expect.arrayContaining([expect.objectContaining({ bucket: expect.any(String), actions: expect.any(Array) })]),
+    });
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
@@ -1199,6 +1213,7 @@ describe("api routes", () => {
       roleCards: expect.arrayContaining([expect.objectContaining({ role: "operator", status: "active" })]),
       publicSafe: true,
     });
+    expect((await app.request("/v1/app/roles", {}, env)).status).toBe(401);
 
     const emptyEnv = createTestEnv();
     const emptyOverview = await app.request("/v1/app/overview", { headers: apiHeaders(emptyEnv) }, emptyEnv);
@@ -1239,6 +1254,7 @@ describe("api routes", () => {
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
     const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(forbiddenMiner.status).toBe(403);
+    expect((await app.request("/v1/app/maintainer-dashboard", {}, env)).status).toBe(401);
 
     const unknownEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token: unknownToken } = await createSessionForGitHubUser(unknownEnv, { login: "new-user", id: 2468 });
@@ -1257,6 +1273,7 @@ describe("api routes", () => {
     expect(unknownOverview.status).toBe(200);
     await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/maintainer-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/commands/usefulness", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect(
       (
@@ -1362,6 +1379,48 @@ describe("api routes", () => {
       ownerEnv,
     );
     expect(ownerExtensionMissingPull.status).toBe(400);
+    const ownerRepoPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "repo-owner/owned-repo" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerRepoPreview.status).toBe(200);
+    const ownerGenericPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ command: "plan-next-work" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerGenericPreview.status).toBe(200);
+    const forbiddenVictimPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "victim-org/secret-repo" }),
+      },
+      ownerEnv,
+    );
+    expect(forbiddenVictimPreview.status).toBe(403);
+    await expect(forbiddenVictimPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    const { token: operatorToken } = await createSessionForGitHubUser(ownerEnv, { login: "jsonbored", id: 1 });
+    const operatorVictimPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: { cookie: `gittensory_session=${operatorToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "victim-org/secret-repo" }),
+      },
+      ownerEnv,
+    );
+    expect(operatorVictimPreview.status).toBe(200);
 
     const minerNeedsRefresh = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: apiHeaders(env) }, env);
     expect(minerNeedsRefresh.status).toBe(200);
@@ -1644,7 +1703,7 @@ describe("api routes", () => {
     const commands = await app.request("/v1/app/commands", { headers: apiHeaders(env) }, env);
     expect(commands.status).toBe(200);
     await expect(commands.json()).resolves.toMatchObject({
-      commands: expect.arrayContaining([expect.objectContaining({ id: "public-summary" })]),
+      commands: expect.arrayContaining([expect.objectContaining({ id: "help" }), expect.objectContaining({ id: "public-summary" })]),
     });
 
     const publicPreview = await app.request(
@@ -1657,22 +1716,168 @@ describe("api routes", () => {
       env,
     );
     expect(publicPreview.status).toBe(200);
-    await expect(publicPreview.json()).resolves.toMatchObject({
-      preview: { boundary: "public", body: expect.stringContaining("entrius/allways-ui#12") },
+    const publicPreviewBody = await publicPreview.json();
+    expect(publicPreviewBody).toMatchObject({
+      preview: { boundary: "public", body: expect.stringContaining("entrius/allways-ui#12"), decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false } },
     });
 
-    const privatePreview = await app.request(
+    const commandResponsePreview = await app.request(
       "/v1/app/commands/preview",
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", login: "oktofeesh1" }),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, login: "oktofeesh1" }),
       },
       env,
     );
-    expect(privatePreview.status).toBe(200);
-    await expect(privatePreview.json()).resolves.toMatchObject({
-      preview: { boundary: "private-api", endpoint: "/v1/agent/preflight-branch" },
+    expect(commandResponsePreview.status).toBe(200);
+    const commandResponsePreviewBody = (await commandResponsePreview.json()) as { preview: { body: string } };
+    expect(commandResponsePreviewBody).toMatchObject({
+      preview: {
+        boundary: "public",
+        endpoint: "GitHub issue comment",
+        decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false },
+        sanitizer: { passed: true, forbiddenTerms: [] },
+        body: expect.stringContaining("### Gittensory preflight"),
+      },
+    });
+    expect(commandResponsePreviewBody.preview.body).toContain("Scope: entrius/allways-ui#12");
+    expect(commandResponsePreviewBody.preview.body).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|scoreability|public score estimate/i);
+
+    const nonMinerPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "miner-context", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { minerStatus: "not_found" } }),
+      },
+      env,
+    );
+    expect(nonMinerPreview.status).toBe(200);
+    await expect(nonMinerPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", willComment: false, skipReason: "pr_author_not_confirmed_miner" }, body: expect.stringContaining("not a confirmed Gittensor miner") },
+    });
+
+    const missingPermissionPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { missingPermissions: ["issues"] } }),
+      },
+      env,
+    );
+    expect(missingPermissionPreview.status).toBe(200);
+    await expect(missingPermissionPreview.json()).resolves.toMatchObject({
+      preview: {
+        decision: { status: "missing_permission", willComment: false, skipReason: "missing_permission" },
+        missingPermissions: ["issues"],
+        permissionDiagnostics: [expect.objectContaining({ permission: "issues", requiredAccess: "write", ok: false })],
+        warnings: [expect.stringMatching(/Issues: write/i)],
+      },
+    });
+
+    const permissionMapPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { permissions: { metadata: "read", pull_requests: "read" } } }),
+      },
+      env,
+    );
+    expect(permissionMapPreview.status).toBe(200);
+    await expect(permissionMapPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "missing_permission", skipReason: "missing_permission" }, missingPermissions: ["issues"] },
+    });
+
+    const checksWarningPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { missingPermissions: ["checks"] } }),
+      },
+      env,
+    );
+    expect(checksWarningPreview.status).toBe(200);
+    await expect(checksWarningPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true, willCheckRun: false }, missingPermissions: ["checks"], warnings: [expect.stringMatching(/checks: write/i)] },
+    });
+
+    const unavailableMinerPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "miner-context", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { minerStatus: "unavailable" } }),
+      },
+      env,
+    );
+    expect(unavailableMinerPreview.status).toBe(200);
+    await expect(unavailableMinerPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", skipReason: "miner_detection_unavailable" }, body: expect.stringContaining("detection is unavailable") },
+    });
+
+    const wrongActorPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "next-action", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { authorLogin: "sample-author", commenterLogin: "other-user" } }),
+      },
+      env,
+    );
+    expect(wrongActorPreview.status).toBe(200);
+    await expect(wrongActorPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", skipReason: "not_maintainer_or_pr_author" }, body: expect.stringContaining("neither a maintainer nor the pull request author") },
+    });
+
+    const helpPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "help", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { authorLogin: "sample-author", commenterLogin: "sample-author" } }),
+      },
+      env,
+    );
+    expect(helpPreview.status).toBe(200);
+    await expect(helpPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("### Gittensory command help") },
+    });
+
+    const maintainerCommandPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          command: "queue-summary",
+          repoFullName: "entrius/allways-ui",
+          pullNumber: 12,
+          sample: { authorAssociation: "OWNER", minerStatus: "not_found" },
+        }),
+      },
+      env,
+    );
+    expect(maintainerCommandPreview.status).toBe(200);
+    await expect(maintainerCommandPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("### Gittensory maintainer queue summary") },
+    });
+
+    const maintainerMinerContextPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "miner-context", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { commenterAssociation: "OWNER", minerStatus: "not_found" } }),
+      },
+      env,
+    );
+    expect(maintainerMinerContextPreview.status).toBe(200);
+    await expect(maintainerMinerContextPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("Official miner context is unavailable") },
     });
 
     const privatePreviewWithoutTarget = await app.request(
@@ -1680,13 +1885,27 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({ command: "preflight" }),
+        body: JSON.stringify({ command: "plan-next-work" }),
       },
       env,
     );
     expect(privatePreviewWithoutTarget.status).toBe(200);
     await expect(privatePreviewWithoutTarget.json()).resolves.toMatchObject({
-      preview: { body: expect.stringContaining("selected target") },
+      preview: { boundary: "private-api", body: expect.stringContaining("selected target"), decision: { status: "private_api", willComment: false } },
+    });
+
+    const privatePreviewWithLogin = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "entrius/allways-ui", login: "oktofeesh1" }),
+      },
+      env,
+    );
+    expect(privatePreviewWithLogin.status).toBe(200);
+    await expect(privatePreviewWithLogin.json()).resolves.toMatchObject({
+      preview: { target: "entrius/allways-ui", body: expect.stringContaining("as oktofeesh1") },
     });
 
     const previewWithoutRepo = await app.request(
@@ -1699,6 +1918,37 @@ describe("api routes", () => {
       env,
     );
     expect(previewWithoutRepo.status).toBe(200);
+    await expect(previewWithoutRepo.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", willComment: false, skipReason: "missing_target" }, body: expect.stringContaining("require a repository and pull request number") },
+    });
+
+    const publicPreviewWithoutTarget = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "help", sample: { authorLogin: "sample-author", commenterLogin: "sample-author" } }),
+      },
+      env,
+    );
+    expect(publicPreviewWithoutTarget.status).toBe(200);
+    await expect(publicPreviewWithoutTarget.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", willComment: false, skipReason: "missing_target" }, body: expect.stringContaining("require a repository and pull request number") },
+    });
+
+    const publicPreviewWithoutPull = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "help", repoFullName: "entrius/allways-ui", sample: { authorLogin: "sample-author", commenterLogin: "sample-author" } }),
+      },
+      env,
+    );
+    expect(publicPreviewWithoutPull.status).toBe(200);
+    await expect(publicPreviewWithoutPull.json()).resolves.toMatchObject({
+      preview: { target: "entrius/allways-ui", decision: { status: "skipped", willComment: false, skipReason: "missing_target" } },
+    });
 
     const telemetryDownPreviewEnv = withProductUsageInsertFailure(createTestEnv());
     const telemetryDownPreview = await app.request(
@@ -1943,6 +2193,77 @@ describe("api routes", () => {
     const invalidMissingOwnerExtensionContext = await app.request("/v1/extension/pull-context?repo=allways-ui&pullNumber=12", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
     expect(invalidMissingOwnerExtensionContext.status).toBe(400);
 
+    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
+      number: 14,
+      title: "Maintainer queue cleanup",
+      state: "open",
+      html_url: "https://github.com/entrius/allways-ui/pull/14",
+      user: { login: "repo-maintainer" },
+      author_association: "OWNER",
+      head: { sha: "owner123", ref: "maintainer-cleanup" },
+      base: { ref: "test" },
+      labels: [{ name: "feature" }],
+      body: "Fixes #8",
+    });
+    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
+      number: 15,
+      title: "Closed cleanup attempt",
+      state: "closed",
+      html_url: "https://github.com/entrius/allways-ui/pull/15",
+      user: { login: "outside-contributor" },
+      author_association: "NONE",
+      head: { sha: "closed123", ref: "closed-cleanup" },
+      base: { ref: "test" },
+      labels: [{ name: "feature" }],
+      body: "Fixes #8",
+    });
+    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
+      number: 16,
+      title: "Broad unlinked rewrite",
+      state: "open",
+      html_url: "https://github.com/entrius/allways-ui/pull/16",
+      user: { login: "outside-contributor" },
+      author_association: "NONE",
+      head: { sha: "watch123", ref: "broad-rewrite" },
+      base: { ref: "test" },
+      labels: [{ name: "feature" }],
+      body: "Large rewrite without linked issue context.",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "entrius/allways-ui",
+      pullNumber: 16,
+      path: "src/broad-rewrite.ts",
+      additions: 900,
+      deletions: 10,
+      changes: 910,
+      payload: {},
+    });
+    await upsertCheckSummary(env, {
+      id: "entrius/allways-ui#watch123#test",
+      repoFullName: "entrius/allways-ui",
+      pullNumber: 16,
+      headSha: "watch123",
+      name: "test",
+      status: "completed",
+      conclusion: "failure",
+      payload: {},
+    });
+
+    for (const [pullNumber, expectedPacketText] of [
+      [14, "Public status: maintainer follow-up recommended."],
+      [15, "Public status: triage may be needed before review."],
+      [16, "Public status: keep monitoring the public PR context."],
+    ] as const) {
+      const variantContext = await app.request(
+        `/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=${pullNumber}`,
+        { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
+        env,
+      );
+      expect(variantContext.status).toBe(200);
+      const variantPayload = (await variantContext.json()) as { actions: Array<{ id: string; markdown?: string }> };
+      expect(variantPayload.actions.find((action) => action.id === "copy_public_safe_packet")?.markdown).toContain(expectedPacketText);
+    }
+
     const extensionContext = await app.request(
       "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
       { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
@@ -2054,7 +2375,7 @@ describe("api routes", () => {
       occurredAt: "2026-05-28T00:00:00.000Z",
     });
 
-    const productUsageEvents = await listProductUsageEvents(env, { limit: 20 });
+    const productUsageEvents = await listProductUsageEvents(env, { limit: 40 });
     expect(productUsageEvents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ surface: "control_panel", eventName: "command_previewed", outcome: "success" }),
@@ -2078,10 +2399,47 @@ describe("api routes", () => {
 
     const dailyRollups = await app.request("/v1/app/analytics/daily-rollups?limit=3", { headers: apiHeaders(env) }, env);
     expect(dailyRollups.status).toBe(200);
-    await expect(dailyRollups.json()).resolves.toMatchObject({
+    const dailyRollupsBody = (await dailyRollups.json()) as {
+      status: { status: string; latestRollupDay?: string };
+      rollups: Array<{
+        day: string;
+        activation: Record<string, number>;
+        byRole: Array<{ role: string; count: number; activeActors: number; activeRepos: number }>;
+        activationByRole: Array<Record<string, number | string>>;
+        activationBySurface: Array<Record<string, number | string>>;
+        retention: Array<{
+          window: string;
+          activeActors: number;
+          retainedActors: number;
+          retentionRate: number;
+          capped: boolean;
+          byRole: Array<Record<string, number | string>>;
+          bySurface: Array<Record<string, number | string>>;
+        }>;
+      }>;
+    };
+    expect(dailyRollupsBody).toMatchObject({
       status: expect.objectContaining({ status: "partial", latestRollupDay: "2026-05-28" }),
       rollups: [expect.objectContaining({ day: "2026-05-28", activation: expect.any(Object) })],
     });
+    const [dailyRollup] = dailyRollupsBody.rollups;
+    expect(dailyRollup).toBeDefined();
+    if (!dailyRollup) throw new Error("expected daily usage rollup");
+    expect(dailyRollup.byRole).toEqual(expect.arrayContaining([expect.objectContaining({ role: "miner", count: expect.any(Number), activeActors: expect.any(Number), activeRepos: expect.any(Number) })]));
+    expect(dailyRollup.activationByRole).toEqual(expect.arrayContaining([expect.objectContaining({ role: "miner", doctorPassActors: expect.any(Number), firstUsefulActionActors: expect.any(Number) })]));
+    expect(dailyRollup.activationBySurface).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "mcp", doctorPassActors: expect.any(Number) }),
+        expect.objectContaining({ surface: "browser_extension", firstUsefulActionActors: expect.any(Number) }),
+      ]),
+    );
+    expect(dailyRollup.retention).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ window: "previous_7_days", activeActors: expect.any(Number), retainedActors: expect.any(Number), retentionRate: expect.any(Number), capped: false, byRole: expect.any(Array), bySurface: expect.any(Array) }),
+        expect.objectContaining({ window: "previous_30_days", activeActors: expect.any(Number), retainedActors: expect.any(Number), retentionRate: expect.any(Number), capped: false, byRole: expect.any(Array), bySurface: expect.any(Array) }),
+      ]),
+    );
+    expect(JSON.stringify(dailyRollupsBody)).not.toMatch(/oktofeesh1|operator@example.com|mcp-user|old-mcp-user|current-mcp-user|mcp-session|old-mcp-session|current-mcp-session|gittensory_session|\/Users|github_pat|ghp_|private-repo|wallet|hotkey|raw trust/i);
     const fallbackLimitRollups = await app.request("/v1/app/analytics/daily-rollups?limit=invalid", { headers: apiHeaders(env) }, env);
     expect(fallbackLimitRollups.status).toBe(200);
     await expect(fallbackLimitRollups.json()).resolves.toMatchObject({
@@ -2100,7 +2458,7 @@ describe("api routes", () => {
     const usageOperatorBody = (await usageOperator.json()) as {
       metrics: Array<{ label: string; value: string }>;
       usageSummary: { totalEvents: number };
-      usageRollups: Array<{ day: string }>;
+      usageRollups: Array<{ day: string; byRole: unknown[]; activationBySurface: unknown[]; retention: unknown[] }>;
       usageRollupStatus: { status: string };
       mcpCompatibilityAdoption: {
         totalEvents: number;
@@ -2128,7 +2486,7 @@ describe("api routes", () => {
       ]),
     );
     expect(usageOperatorBody.usageSummary.totalEvents).toBe(productUsageEvents.length);
-    expect(usageOperatorBody.usageRollups).toEqual([expect.objectContaining({ day: "2026-05-28" })]);
+    expect(usageOperatorBody.usageRollups).toEqual([expect.objectContaining({ day: "2026-05-28", byRole: expect.any(Array), activationBySurface: expect.any(Array), retention: expect.any(Array) })]);
     expect(usageOperatorBody.usageRollupStatus.status).toBe("partial");
     expect(usageOperatorBody.mcpCompatibilityAdoption).toMatchObject({
       totalEvents: 4,
@@ -2264,6 +2622,12 @@ describe("api routes", () => {
     const invalidCommandPreview = await app.request("/v1/app/commands/preview", { method: "POST", headers: apiHeaders(env), body: "{" }, env);
     expect(invalidCommandPreview.status).toBe(400);
 
+    const invalidQueueJson = await app.request("/v1/internal/queue-intelligence", { method: "POST", headers: internalHeaders, body: "{" }, env);
+    expect(invalidQueueJson.status).toBe(400);
+    const invalidQueueShape = await app.request("/v1/internal/queue-intelligence", { method: "POST", headers: internalHeaders, body: "{}" }, env);
+    expect(invalidQueueShape.status).toBe(400);
+    await expect(invalidQueueShape.json()).resolves.toMatchObject({ error: "invalid_request", detail: "pullRequests array required" });
+
     const invalidDigestJson = await app.request("/v1/app/digest/subscriptions", { method: "POST", headers: { cookie: `gittensory_session=${noIdToken}` }, body: "{" }, env);
     expect(invalidDigestJson.status).toBe(400);
 
@@ -2343,6 +2707,30 @@ describe("api routes", () => {
     );
     expect(response.status).toBe(200);
     // The dry-run preview is fully offline: it must make no GitHub calls at all, and certainly no mutating ones.
+    const githubCalls = calls.filter((call) => /github\.com/.test(call.url));
+    expect(githubCalls).toEqual([]);
+    const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");
+    expect(mutatingCalls).toEqual([]);
+  });
+
+  it("command response preview never mutates GitHub state", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedSignalData(env);
+    const calls: Array<{ method: string; url: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ method: (init?.method ?? "GET").toUpperCase(), url: input.toString() });
+      return new Response("not found", { status: 404 });
+    });
+    const response = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, login: "oktofeesh1" }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false } },
+    });
     const githubCalls = calls.filter((call) => /github\.com/.test(call.url));
     expect(githubCalls).toEqual([]);
     const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");

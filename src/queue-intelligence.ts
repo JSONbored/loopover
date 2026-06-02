@@ -46,9 +46,17 @@ export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "raw trust score",
   "payout",
   "reward estimate",
+  "estimated rewards",
+  "estimated reward",
+  "rewards",
+  "reward",
   "farming",
   "private reviewability",
   "public score estimate",
+  "private rankings",
+  "private ranking",
+  "rankings",
+  "ranking",
 ] as const;
 
 function computeDaysSince(isoDateString: string, now: Date): number {

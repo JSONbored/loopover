@@ -1384,6 +1384,7 @@ export const ContributorDecisionPackSchema = z
     avoidRepos: z.array(z.record(z.unknown())),
     maintainerLaneRepos: z.array(z.record(z.unknown())),
     scoreBlockers: z.array(z.record(z.unknown())),
+    evidenceGraph: z.record(z.unknown()).optional(),
     dataQuality: z.record(z.unknown()),
     summary: z.string(),
     nextActions: z.array(z.string()),

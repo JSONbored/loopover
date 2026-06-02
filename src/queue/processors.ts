@@ -23,6 +23,7 @@ import {
   listPullRequests,
   listRecentMergedPullRequests,
   listRepoLabels,
+  listRepoPullRequestFiles,
   listRepoSyncStates,
   listRepoSyncSegments,
   listRepositories,
@@ -73,6 +74,11 @@ import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory } from "../rules/advisory";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
+import {
+  buildContributorEvidenceGraph,
+  CONTRIBUTOR_EVIDENCE_GRAPH_SIGNAL,
+  evidenceGraphTouchedRepoFullNames,
+} from "../services/contributor-evidence-graph";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
@@ -108,6 +114,7 @@ import {
   buildPublicCommentSignalBundle,
   buildPublicPrIntelligenceComment,
   buildQueueHealth,
+  buildRoleContext,
   detectGittensorContributor,
 } from "../signals/engine";
 import { rewritePublicPrIntelligenceComment } from "../services/ai-summaries";
@@ -348,10 +355,47 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
     ]);
     const repoStats = authoritativeContributorRepoStats(gittensorSnapshot, cachedRepoStats);
     const profile = buildContributorProfile(contributorLogin, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
+    const pullRequestFiles = (
+      await Promise.all(
+        evidenceGraphTouchedRepoFullNames({
+          login: contributorLogin,
+          profile,
+          pullRequests: contributorPullRequests,
+          issues: contributorIssues,
+          repoStats,
+          repositories,
+        }).map((repoFullName) => listRepoPullRequestFiles(env, repoFullName)),
+      )
+    ).flat();
     const fit = buildContributorFit(profile, repositories, allIssues, allPullRequests, syncStates, repoStats, allBounties, issueQualityByRepo);
     const scoringProfile = buildContributorScoringProfile({ login: contributorLogin, fit, scoringSnapshot: snapshot });
     const outcomeHistory = buildContributorOutcomeHistory({ login: contributorLogin, profile, repositories, pullRequests: allPullRequests, issues: allIssues, repoStats, cachedRepoStats });
     const strategy = buildContributorStrategy({ login: contributorLogin, fit, scoringProfile, scoringSnapshot: snapshot, outcomeHistory });
+    const roleContexts = repositories
+      .filter((repo) => repo.isRegistered)
+      .map((repo) =>
+        buildRoleContext({
+          login: contributorLogin,
+          repo,
+          repoFullName: repo.fullName,
+          pullRequests: contributorPullRequests,
+          issues: contributorIssues,
+          profile,
+        }),
+      );
+    const evidenceGraph = buildContributorEvidenceGraph({
+      login: contributorLogin,
+      profile,
+      outcomeHistory,
+      roleContexts,
+      repositories,
+      pullRequests: contributorPullRequests,
+      issues: contributorIssues,
+      repoStats,
+      syncStates,
+      pullRequestFiles,
+      gittensorSnapshot,
+    });
     const evidence: ContributorEvidenceRecord = {
       login: contributorLogin,
       generatedAt: scoringProfile.generatedAt,
@@ -364,6 +408,7 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
         issueDiscoveryReports: scoringProfile.evidence.issueDiscoveryReports,
         languageMatches: scoringProfile.evidence.languageMatches,
         credibilityAssumption: scoringProfile.evidence.credibilityAssumption,
+        evidenceGraph: evidenceGraph as unknown as JsonValue,
       },
     };
     await upsertContributorEvidence(env, evidence);
@@ -386,6 +431,13 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
       targetKey: contributorLogin,
       payload: strategy as unknown as Record<string, JsonValue>,
       generatedAt: strategy.generatedAt,
+    });
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: CONTRIBUTOR_EVIDENCE_GRAPH_SIGNAL,
+      targetKey: contributorLogin,
+      payload: evidenceGraph as unknown as Record<string, JsonValue>,
+      generatedAt: evidenceGraph.generatedAt,
     });
   }
 }

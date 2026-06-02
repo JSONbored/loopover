@@ -1352,16 +1352,16 @@ export function buildRoleContext(args: {
   const normalizedLogin = args.login.toLowerCase();
   const [owner] = args.repoFullName.split("/");
   const authoredAssociations = [
-    ...(args.pullRequests ?? []).filter((pr) => pr.repoFullName === args.repoFullName && sameLogin(pr.authorLogin, args.login)).map((pr) => pr.authorAssociation),
-    ...(args.issues ?? []).filter((issue) => issue.repoFullName === args.repoFullName && sameLogin(issue.authorLogin, args.login)).map((issue) => issue.authorAssociation),
+    ...(args.pullRequests ?? []).filter((pr) => sameRepo(pr.repoFullName, args.repoFullName) && sameLogin(pr.authorLogin, args.login)).map((pr) => pr.authorAssociation),
+    ...(args.issues ?? []).filter((issue) => sameRepo(issue.repoFullName, args.repoFullName) && sameLogin(issue.authorLogin, args.login)).map((issue) => issue.authorAssociation),
   ].filter(Boolean) as string[];
   const officialRepo = args.profile?.gittensor?.repositories.find((repo) => repo.repoFullName.toLowerCase() === args.repoFullName.toLowerCase());
   const touchedByOfficial = Boolean(officialRepo && officialRepo.pullRequests + officialRepo.openIssues + officialRepo.closedIssues > 0);
   const touchedByCache = Boolean(
     args.profile?.registeredRepoActivity.reposTouched.some((repo) => repo.toLowerCase() === args.repoFullName.toLowerCase()) ||
-      (args.pullRequests ?? []).some((pr) => pr.repoFullName === args.repoFullName && sameLogin(pr.authorLogin, args.login)) ||
+      (args.pullRequests ?? []).some((pr) => sameRepo(pr.repoFullName, args.repoFullName) && sameLogin(pr.authorLogin, args.login)) ||
       /* v8 ignore next -- Issue-authored cache fallback is defensive; PR and official contribution paths cover role detection behavior. */
-      (args.issues ?? []).some((issue) => issue.repoFullName === args.repoFullName && sameLogin(issue.authorLogin, args.login)),
+      (args.issues ?? []).some((issue) => sameRepo(issue.repoFullName, args.repoFullName) && sameLogin(issue.authorLogin, args.login)),
   );
 
   let role: ContributorRole = "unknown";

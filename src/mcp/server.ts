@@ -691,6 +691,7 @@ export class GittensoryMcp {
   }
 
   private async getContributorProfile(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
     const [github, pullRequests, issues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
       fetchPublicContributorProfile(login),
       listContributorPullRequests(this.env, login),
@@ -1090,7 +1091,7 @@ function redactSensitiveForMcp(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !/hotkey|coldkey|wallet|private_key|privateKey|mnemonic/i.test(key))
+      .filter(([key]) => !/hotkey|coldkey|wallet|private_key|privateKey|mnemonic|alphaPerDay|taoPerDay|usdPerDay/i.test(key))
       .map(([key, entry]) => [key, redactSensitiveForMcp(entry)]),
   );
 }

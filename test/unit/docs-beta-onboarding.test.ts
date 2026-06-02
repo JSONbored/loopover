@@ -9,6 +9,7 @@ const BETA_ONBOARDING_PATH = resolve(
 
 describe("docs beta onboarding page", () => {
   const source = readFileSync(BETA_ONBOARDING_PATH, "utf8");
+  const normalizedSource = source.replace(/\s+/g, " ");
 
   it("documents miner MCP flow through packet", () => {
     expect(source).toMatch(/gittensory-mcp login/);
@@ -16,6 +17,15 @@ describe("docs beta onboarding page", () => {
     expect(source).toMatch(/agent plan/);
     expect(source).toMatch(/preflight/);
     expect(source).toMatch(/agent packet/);
+  });
+
+  it("states the local MCP privacy boundary for source contents and uploaded branch metadata", () => {
+    expect(source).toMatch(/Source contents stay on your machine/);
+    expect(source).toMatch(/branch metadata/);
+    expect(source).toMatch(/changed file paths/);
+    expect(source).toMatch(/commit messages/);
+    expect(normalizedSource).toMatch(/authenticated Gittensory MCP\/API responses/);
+    expect(source).not.toMatch(/Metadata stays on your machine/);
   });
 
   it("documents maintainer GitHub App setup, preview, and commands", () => {

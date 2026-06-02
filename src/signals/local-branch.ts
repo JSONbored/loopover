@@ -564,12 +564,16 @@ function buildObservedPullRequestScenarios(args: {
       draft += 1;
       continue;
     }
-    if (isStaleOpenPr(pr, args.nowMs)) {
-      stale += 1;
-      continue;
-    }
+    // CR with classifyOpenPullRequest (pending-pr-scenarios.ts): an actionable
+    // block (changes requested / bad mergeable state) takes precedence over age,
+    // so a changes-requested PR is never optimistically modeled as "stale, likely
+    // to close and free up an open-PR slot". Blocked must be checked before stale.
     if (isBlockedOpenPr(pr)) {
       blocked += 1;
+      continue;
+    }
+    if (isStaleOpenPr(pr, args.nowMs)) {
+      stale += 1;
       continue;
     }
     if (isApprovedOrMergeableOpenPr(pr)) approvedOrMergeable += 1;

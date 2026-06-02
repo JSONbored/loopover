@@ -647,6 +647,12 @@ describe("api routes", () => {
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
+    expect(agentPlanPayload.actions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: expect.stringMatching(/^(high|medium|low)$/),
+      sourceSummary: expect.any(String),
+      freshness: expect.any(String),
+      sources: expect.arrayContaining([expect.objectContaining({ name: "contributor_decision_pack" })]),
+    });
 
     const fetchedAgentRun = await app.request(`/v1/agent/runs/${agentPlanPayload.run.id}`, { headers: apiHeaders(env) }, env);
     expect(fetchedAgentRun.status).toBe(200);
@@ -1488,6 +1494,41 @@ describe("api routes", () => {
     expect(minerWithEmptyFit.status).toBe(200);
     await expect(minerWithEmptyFit.json()).resolves.toMatchObject({ status: "ready", repoFit: [] });
 
+    await persistSignalSnapshot(env, {
+      id: "lane-pack",
+      signalType: "contributor-decision-pack",
+      targetKey: "lane-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "lane-user",
+        generatedAt: new Date().toISOString(),
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [],
+        topActions: [],
+        pursueRepos: [{ repoFullName: "owner/pursue", recommendation: "watch" }],
+        cleanupFirst: [{ repoFullName: "owner/cleanup", recommendation: "cleanup_first" }],
+        maintainerLaneRepos: [{ repoFullName: "owner/maintainer", recommendation: "maintainer_lane" }],
+        avoidRepos: [{ repoFullName: "owner/avoid", recommendation: "avoid_for_now" }],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "ok" } },
+      } as never,
+      generatedAt: new Date().toISOString(),
+    });
+    const minerWithLaneBuckets = await app.request("/v1/app/miner-dashboard?login=lane-user", { headers: apiHeaders(env) }, env);
+    expect(minerWithLaneBuckets.status).toBe(200);
+    await expect(minerWithLaneBuckets.json()).resolves.toMatchObject({
+      repoFit: expect.arrayContaining([
+        expect.objectContaining({ repoFullName: "owner/pursue", lane: "pursue" }),
+        expect.objectContaining({ repoFullName: "owner/cleanup", lane: "cleanup-first" }),
+        expect.objectContaining({ repoFullName: "owner/maintainer", lane: "maintainer-lane" }),
+        expect.objectContaining({ repoFullName: "owner/avoid", lane: "avoid" }),
+      ]),
+    });
+
     await recordGitHubRateLimitObservation(env, {
       id: "rate-limit-healthy",
       repoFullName: "entrius/allways-ui",
@@ -1922,12 +1963,29 @@ describe("api routes", () => {
       env,
     );
     expect(extensionContext.status).toBe(200);
-    await expect(extensionContext.json()).resolves.toMatchObject({
+    const extensionPayload = (await extensionContext.json()) as {
+      repoFullName: string;
+      pullNumber: number;
+      reviewability: { repoFullName: string; pullNumber: number };
+      actions: Array<{ id: string; markdown?: string; blockers?: Array<{ detail: string }> }>;
+      panels: Array<{ label: string }>;
+    };
+    expect(extensionPayload).toMatchObject({
       repoFullName: "entrius/allways-ui",
       pullNumber: 12,
       reviewability: { repoFullName: "entrius/allways-ui", pullNumber: 12 },
+      actions: expect.arrayContaining([
+        expect.objectContaining({ id: "copy_public_safe_packet", visibility: "public_safe" }),
+        expect.objectContaining({ id: "view_private_blockers", visibility: "private", requiresAuth: true }),
+      ]),
       panels: expect.arrayContaining([expect.objectContaining({ label: "Reviewability" }), expect.objectContaining({ label: "Boundary" })]),
     });
+    const packet = extensionPayload.actions.find((action) => action.id === "copy_public_safe_packet")?.markdown ?? "";
+    expect(packet).toContain("# Public-safe PR packet");
+    expect(packet).not.toMatch(/wallet|hotkey|coldkey|reward estimate|payout|farming|raw trust score|estimated score|score estimate|private reviewability/i);
+    const blockers = extensionPayload.actions.find((action) => action.id === "view_private_blockers")?.blockers ?? [];
+    expect(blockers.length).toBeGreaterThan(0);
+    expect(JSON.stringify(blockers)).not.toMatch(/wallet|hotkey|coldkey|payout|farming|guaranteed payout/i);
 
     const missingPullContext = await app.request(
       "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=99",
@@ -1938,6 +1996,7 @@ describe("api routes", () => {
     await expect(missingPullContext.json()).resolves.toMatchObject({
       repoFullName: "entrius/allways-ui",
       pullNumber: 99,
+      actions: expect.arrayContaining([expect.objectContaining({ id: "copy_public_safe_packet" }), expect.objectContaining({ id: "view_private_blockers" })]),
       panels: expect.arrayContaining([expect.objectContaining({ label: "Contributor", badge: "unknown" })]),
     });
 
@@ -3229,8 +3288,15 @@ describe("api routes", () => {
         env,
       );
       expect(response.status).toBe(200);
-      const payload = (await mcpJson(response)) as { result?: { content?: Array<{ text: string }> } };
+      const payload = (await mcpJson(response)) as { result?: { content?: Array<{ text: string }>; structuredContent?: { actions?: Array<{ payload?: Record<string, unknown> }> } } };
       const text = payload.result?.content?.[0]?.text ?? "";
+      if (name === "gittensory_agent_plan_next_work") {
+        expect(payload.result?.structuredContent?.actions?.[0]?.payload?.recommendationEvidence).toMatchObject({
+          confidence: expect.stringMatching(/^(high|medium|low)$/),
+          sourceSummary: expect.any(String),
+          sources: expect.arrayContaining([expect.objectContaining({ name: "contributor_decision_pack" })]),
+        });
+      }
       const privateRewardTools = new Set([
         "gittensory_get_decision_pack",
         "gittensory_explain_repo_decision",
@@ -3480,6 +3546,49 @@ describe("api routes", () => {
     );
     expect(JSON.stringify(mcpUsageEvents)).not.toMatch(/oktofeesh1|\/Users|github_pat|ghp_|source code|wallet|hotkey|raw trust/i);
   }, 15_000);
+
+  it("gates the MCP contributor profile and redacts miner financial fields", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other" });
+    stubConfirmedMinerFetch();
+
+    const profileCall = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "profile", method: "tools/call", params: { name: "gittensory_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
+      },
+      env,
+    );
+    expect(profileCall.status).toBe(200);
+    const profilePayload = (await mcpJson(profileCall)) as {
+      result: { structuredContent: { login: string; gittensor?: Record<string, unknown> }; content: Array<{ text: string }> };
+    };
+    expect(profilePayload.result.structuredContent.login).toBe("oktofeesh1");
+    const gittensor = profilePayload.result.structuredContent.gittensor ?? {};
+    expect(gittensor).toHaveProperty("credibility");
+    expect(gittensor).not.toHaveProperty("hotkey");
+    expect(gittensor).not.toHaveProperty("alphaPerDay");
+    expect(gittensor).not.toHaveProperty("taoPerDay");
+    expect(gittensor).not.toHaveProperty("usdPerDay");
+    expect(profilePayload.result.content[0]?.text ?? "").not.toMatch(/alphaPerDay|taoPerDay|usdPerDay|hotkey/i);
+
+    const { token } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
+    const forbiddenProfile = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, accept: "application/json, text/event-stream", "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-profile", method: "tools/call", params: { name: "gittensory_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
+      },
+      env,
+    );
+    expect(forbiddenProfile.status).toBe(200);
+    const forbiddenPayload = await mcpJson(forbiddenProfile);
+    expect(JSON.stringify(forbiddenPayload)).toMatch(/Forbidden|error|isError/i);
+    expect(JSON.stringify(forbiddenPayload)).not.toMatch(/alphaPerDay|taoPerDay|usdPerDay/i);
+  });
 
   it("covers registration-readiness policy variants for repo-owner launch planning", async () => {
     const app = createApp();
@@ -4115,6 +4224,36 @@ function stubOktofeeshFetch(): void {
     if (url.includes("/users/oktofeesh1/repos")) {
       return Response.json([{ language: "TypeScript" }, { language: "Python" }, { language: "TypeScript" }]);
     }
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function stubConfirmedMinerFetch(): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url === "https://api.gittensor.io/miners") {
+      return Response.json([
+        {
+          uid: 7,
+          hotkey: "5FHotkeySecretValue",
+          githubUsername: "oktofeesh1",
+          githubId: "12345",
+          totalPrs: 4,
+          totalMergedPrs: 3,
+          isEligible: true,
+          credibility: 1,
+          eligibleRepoCount: 1,
+          alphaPerDay: 72.5,
+          taoPerDay: 0.3,
+          usdPerDay: 92.4,
+        },
+      ]);
+    }
+    if (url === "https://api.gittensor.io/miners/12345") return Response.json({ repositories: [] });
+    if (url === "https://api.gittensor.io/miners/12345/prs") return Response.json([]);
+    if (url === "https://mirror.gittensor.io/api/v1/miners/12345/issues") return Response.json({ issues: [] });
+    if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 42, followers: 7 });
+    if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
     return new Response("not found", { status: 404 });
   });
 }

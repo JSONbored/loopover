@@ -145,7 +145,9 @@ describe("queue processors", () => {
       evidenceCompleteness: expect.objectContaining({ status: expect.any(String) }),
     });
     expect(await listSignalSnapshots(env, "contributor-decision-pack", "oktofeesh1")).not.toHaveLength(0);
-    expect(await getContributorEvidence(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
+    const contributorEvidence = await getContributorEvidence(env, "oktofeesh1");
+    expect(contributorEvidence).toMatchObject({ login: "oktofeesh1", payload: { evidenceGraph: expect.objectContaining({ login: "oktofeesh1" }) } });
+    expect(await listSignalSnapshots(env, "contributor-evidence-graph", "oktofeesh1")).not.toHaveLength(0);
     expect(await getContributorScoringProfile(env, "oktofeesh1")).toMatchObject({ login: "oktofeesh1" });
     const persistedBurden = await getBurdenForecast(env, "JSONbored/gittensory");
     expect(persistedBurden).toMatchObject({ repoFullName: "JSONbored/gittensory" });

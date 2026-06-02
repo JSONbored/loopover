@@ -156,6 +156,10 @@ function serializeCookie(name: string, value: string, options: CookieOptions): s
   return parts.join("; ");
 }
 
+export const __securityInternals = {
+  serializeCookie,
+};
+
 function shouldUseSecureCookie(requestUrl: string): boolean {
   try {
     const hostname = new URL(requestUrl).hostname;

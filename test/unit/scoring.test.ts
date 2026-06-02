@@ -486,6 +486,60 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(JSON.stringify(preview)).not.toMatch(/guaranteed payout|wallet|hotkey|farming/i);
   });
 
+  it("does not double-count merge-ready PRs supplied as both pendingMerged and approved", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 6,
+        credibility: 1,
+        // The GitHub-observed detector reports the same merge-ready set as both
+        // pendingMergedPrCount and approvedPrCount; they must not be added twice.
+        pendingMergedPrCount: 3,
+        approvedPrCount: 3,
+        pendingClosedPrCount: 0,
+      },
+    });
+    const afterPending = preview.scenarioPreviews.find((scenario) => scenario.name === "afterPendingMerges");
+    // 3 merge-ready PRs leave the queue once: 6 - 3 = 3 open (not the buggy 6 - 6 = 0).
+    expect(afterPending?.gates.openPrCount).toBe(3);
+    // 3 still exceeds openPrThreshold (2 + floor(90/300) = 2) -> gate stays blocked.
+    expect(afterPending?.scoreEstimate.openPrMultiplier).toBe(0);
+    expect(afterPending?.effectiveEstimatedScore).toBe(0);
+    // Scenario note reports the de-duplicated count (3), never the doubled 6.
+    const note = afterPending?.assumptions.join(" ") ?? "";
+    expect(note).toMatch(/3 pending merged\/closed PR/);
+    expect(note).not.toMatch(/6 pending/);
+
+    // GitHub-observed path: same merge-ready set, note must still read 3, not 6.
+    const observed = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 6,
+        credibility: 1,
+        pendingMergedPrCount: 3,
+        approvedPrCount: 3,
+        pendingClosedPrCount: 0,
+        expectedOpenPrCountAfterMerge: 3,
+        pendingScenarioObserved: true,
+      },
+    });
+    const observedAfterPending = observed.scenarioPreviews.find((scenario) => scenario.name === "afterPendingMerges");
+    expect(observedAfterPending?.source).toBe("github_observed");
+    const observedNote = observedAfterPending?.assumptions.join(" ") ?? "";
+    expect(observedNote).toMatch(/3 pending merged\/closed PR/);
+    expect(observedNote).not.toMatch(/6 pending|user-supplied/);
+  });
+
   it("warns on metadata-only weak previews without using public reward or wallet language", () => {
     const preview = buildScorePreview({
       repo: null,

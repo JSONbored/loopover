@@ -1,6 +1,14 @@
-import { useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Eye, EyeOff } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  CircleSlash,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  UserCheck,
+} from "lucide-react";
 
 import {
   DiffBlock,
@@ -10,7 +18,17 @@ import {
 } from "@/components/site/control-primitives";
 import { StatCard } from "@/components/site/primitives";
 import { StateBoundary } from "@/components/site/state-views";
+import { apiFetch } from "@/lib/api/request";
+import { getApiOrigin } from "@/lib/api/origin";
 import { useApiResource } from "@/lib/api/use-api-resource";
+import {
+  PREVIEW_SCENARIOS,
+  buildSettingsPreviewRequest,
+  extractPreviewRepoOptions,
+  splitRepoFullName,
+  type PreviewFormState,
+  type PreviewScenarioId,
+} from "@/lib/maintainer-settings-preview";
 import { cn } from "@/lib/utils";
 
 const BUCKET_TONE: Record<string, Status> = {
@@ -41,6 +59,47 @@ type MaintainerDashboard = {
     reason: string;
   }>;
   settingsPreview: { removed: string[]; added: string[] };
+};
+
+type SettingsPreviewResponse = {
+  repoFullName: string;
+  generatedAt: string;
+  installation: {
+    installationId: number;
+    status: "healthy" | "needs_attention" | "broken";
+    missingPermissions: string[];
+    missingEvents: string[];
+    permissionRemediation: Array<{
+      permission: string;
+      requiredAccess: string;
+      currentAccess: string;
+      ok: boolean;
+      action: string;
+    }>;
+  } | null;
+  sample: {
+    authorLogin: string;
+    authorType: string;
+    authorAssociation: string;
+    minerStatus: string;
+    title: string;
+    labels: string[];
+    linkedIssues: number[];
+  };
+  decision: {
+    willComment: boolean;
+    willLabel: boolean;
+    willCheckRun: boolean;
+    skipped: boolean;
+    skipReason: string | null;
+    actions: Array<"skip" | "comment" | "label" | "check_run" | "none">;
+    summary: string;
+  };
+  previewComment: string | null;
+  appliedLabel: string | null;
+  checkRun: { willCreate: boolean; title: string; detailLevel: string } | null;
+  warnings: string[];
+  summary: string;
 };
 
 export function MaintainerPanel() {
@@ -184,90 +243,357 @@ export function MaintainerPanel() {
             </table>
           </section>
 
-          <SurfacePreview />
+          <SurfacePreview reviewability={data.reviewability} />
         </div>
       ) : null}
     </StateBoundary>
   );
 }
 
-type Side = "public" | "private";
+function SurfacePreview({
+  reviewability,
+}: {
+  reviewability: MaintainerDashboard["reviewability"];
+}) {
+  const repoOptions = useMemo(() => extractPreviewRepoOptions(reviewability), [reviewability]);
+  const [form, setForm] = useState<PreviewFormState>({
+    repoFullName: repoOptions[0] ?? "",
+    scenarioId: "confirmed-miner",
+    title: "Sample pull request",
+    labels: "bug",
+    linkedIssues: "7",
+    body: "",
+  });
+  const [preview, setPreview] = useState<SettingsPreviewResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const repoParts = splitRepoFullName(form.repoFullName);
 
-function SurfacePreview() {
-  const [side, setSide] = useState<Side>("public");
+  useEffect(() => {
+    if (!form.repoFullName && repoOptions[0]) {
+      setForm((current) => ({ ...current, repoFullName: repoOptions[0] }));
+    }
+  }, [form.repoFullName, repoOptions]);
+
+  async function runPreview(nextForm = form) {
+    const target = splitRepoFullName(nextForm.repoFullName);
+    if (!target) {
+      setPreview(null);
+      setError("Enter a repository as owner/repo.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const result = await apiFetch<SettingsPreviewResponse>(
+      `${getApiOrigin().replace(/\/$/, "")}/v1/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/settings-preview`,
+      {
+        method: "POST",
+        label: "Settings preview",
+        credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(buildSettingsPreviewRequest(nextForm)),
+      },
+    );
+    setBusy(false);
+    if (result.ok) {
+      setPreview(result.data);
+      return;
+    }
+    setPreview(null);
+    setError(result.message);
+  }
+
+  function updateScenario(scenarioId: PreviewScenarioId) {
+    const next = {
+      ...form,
+      scenarioId,
+      title:
+        scenarioId === "bot-author"
+          ? "Automated dependency update"
+          : scenarioId === "maintainer-author"
+            ? "Maintainer follow-up"
+            : "Sample pull request",
+    };
+    setForm(next);
+    setPreview(null);
+    setError(null);
+  }
+
   return (
-    <section className="rounded-token border-hairline bg-card p-5">
+    <section
+      className="rounded-token border-hairline bg-card p-5"
+      aria-labelledby="surface-preview-title"
+    >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-token-lg font-semibold">Surface preview</h2>
+          <h2 id="surface-preview-title" className="font-display text-token-lg font-semibold">
+            Public-safe preview simulator
+          </h2>
           <p className="mt-1 text-token-xs text-muted-foreground">
-            Flip between what shows on GitHub publicly and what only you see in private MCP / API
-            context.
+            Dry-run the GitHub App decision for a sample PR against the same policy engine used in
+            production.
           </p>
         </div>
-        <div className="inline-flex rounded-token border-hairline bg-background/40 p-0.5">
-          {[
-            {
-              id: "public" as const,
-              label: "Public on GitHub",
-              icon: <Eye className="size-3.5" />,
-            },
-            {
-              id: "private" as const,
-              label: "Private to you",
-              icon: <EyeOff className="size-3.5" />,
-            },
-          ].map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setSide(option.id)}
-              className={cn(
-                "inline-flex min-w-0 items-center justify-center gap-1.5 rounded-token px-3 py-1 text-token-xs font-medium leading-token-snug transition-all duration-150 focus-ring motion-reduce:transition-none motion-reduce:active:scale-100 active:scale-[0.98]",
-                side === option.id
-                  ? "bg-mint/15 text-mint"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-              aria-pressed={side === option.id}
-            >
-              {option.icon}
-              {option.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <StatusPill status={preview?.decision.skipped ? "warn" : preview ? "ready" : "info"}>
+            {preview ? (preview.decision.skipped ? "skip" : "ready") : "preview"}
+          </StatusPill>
+          <button
+            type="button"
+            disabled={busy || !repoParts}
+            onClick={() => void runPreview()}
+            className="inline-flex items-center gap-2 rounded-token border border-mint/40 bg-mint px-3 py-2 text-token-xs font-medium text-primary-foreground transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? <RefreshCw className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            {busy ? "Running" : "Run preview"}
+          </button>
         </div>
       </div>
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={side}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -4 }}
-          transition={{ duration: 0.18 }}
-          className="mt-4 rounded-token border-hairline bg-background/40 p-4"
-        >
-          {side === "public" ? (
-            <pre className="whitespace-pre-wrap font-mono text-token-xs text-foreground/90">
-              {[
-                "Gittensory checked public metadata for this PR.",
-                "",
-                "- No private scorer weights are posted publicly.",
-                "- Maintainer-only context stays in MCP/API surfaces.",
-              ].join("\n")}
-            </pre>
-          ) : (
-            <pre className="whitespace-pre-wrap font-mono text-token-xs text-foreground/90">
-              {[
-                "Private maintainer context",
-                "",
-                "- Decision-pack blockers",
-                "- Reviewability score",
-                "- Cached contributor outcome history",
-              ].join("\n")}
-            </pre>
-          )}
-        </motion.div>
-      </AnimatePresence>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="space-y-4">
+          <label className="block">
+            <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+              Repository
+            </span>
+            <input
+              value={form.repoFullName}
+              onChange={(event) => {
+                setForm((current) => ({ ...current, repoFullName: event.target.value }));
+                setPreview(null);
+                setError(null);
+              }}
+              list="settings-preview-repos"
+              placeholder="owner/repo"
+              className="mt-1 min-h-10 w-full rounded-token border border-border bg-background/70 px-3 py-2 font-mono text-token-sm text-foreground outline-none transition-colors focus:border-mint"
+            />
+            <datalist id="settings-preview-repos">
+              {repoOptions.map((repo) => (
+                <option key={repo} value={repo} />
+              ))}
+            </datalist>
+          </label>
+
+          <div>
+            <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+              Scenario
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {PREVIEW_SCENARIOS.map((scenario) => (
+                <button
+                  key={scenario.id}
+                  type="button"
+                  onClick={() => updateScenario(scenario.id)}
+                  className={cn(
+                    "flex min-h-10 items-center gap-2 rounded-token border px-3 py-2 text-left text-token-xs transition-colors focus-ring",
+                    form.scenarioId === scenario.id
+                      ? "border-mint/50 bg-mint/10 text-mint"
+                      : "border-border bg-background/40 text-muted-foreground hover:text-foreground",
+                  )}
+                  aria-pressed={form.scenarioId === scenario.id}
+                >
+                  <ScenarioIcon id={scenario.id} />
+                  <span className="min-w-0 truncate">{scenario.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Title
+              </span>
+              <input
+                value={form.title}
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, title: event.target.value }));
+                  setPreview(null);
+                }}
+                className="mt-1 min-h-10 w-full rounded-token border border-border bg-background/70 px-3 py-2 text-token-sm text-foreground outline-none transition-colors focus:border-mint"
+              />
+            </label>
+            <label className="block">
+              <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Labels
+              </span>
+              <input
+                value={form.labels}
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, labels: event.target.value }));
+                  setPreview(null);
+                }}
+                placeholder="bug, docs"
+                className="mt-1 min-h-10 w-full rounded-token border border-border bg-background/70 px-3 py-2 text-token-sm text-foreground outline-none transition-colors focus:border-mint"
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+              Linked issues
+            </span>
+            <input
+              value={form.linkedIssues}
+              onChange={(event) => {
+                setForm((current) => ({ ...current, linkedIssues: event.target.value }));
+                setPreview(null);
+              }}
+              placeholder="#7, #12"
+              className="mt-1 min-h-10 w-full rounded-token border border-border bg-background/70 px-3 py-2 font-mono text-token-sm text-foreground outline-none transition-colors focus:border-mint"
+            />
+          </label>
+
+          <label className="block">
+            <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+              Body excerpt
+            </span>
+            <textarea
+              value={form.body}
+              onChange={(event) => {
+                setForm((current) => ({ ...current, body: event.target.value }));
+                setPreview(null);
+              }}
+              rows={3}
+              className="mt-1 w-full resize-y rounded-token border border-border bg-background/70 px-3 py-2 text-token-sm text-foreground outline-none transition-colors focus:border-mint"
+            />
+          </label>
+        </div>
+
+        <PreviewResult preview={preview} error={error} busy={busy} />
+      </div>
     </section>
   );
+}
+
+function PreviewResult({
+  preview,
+  error,
+  busy,
+}: {
+  preview: SettingsPreviewResponse | null;
+  error: string | null;
+  busy: boolean;
+}) {
+  if (error) {
+    return (
+      <div className="rounded-token border border-danger/30 bg-danger/[0.04] p-4 text-token-sm text-danger">
+        {error}
+      </div>
+    );
+  }
+
+  if (!preview) {
+    return (
+      <div className="flex min-h-[360px] items-center justify-center rounded-token border-hairline bg-background/40 p-6 text-center">
+        <div>
+          <ShieldCheck className="mx-auto size-7 text-mint" />
+          <div className="mt-3 text-token-sm font-medium text-foreground">
+            {busy ? "Building preview" : "No preview run yet"}
+          </div>
+          <p className="mt-1 max-w-sm text-token-xs text-muted-foreground">
+            Choose a repo and scenario, then run the dry-run preview.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 rounded-token border-hairline bg-background/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            Decision
+          </div>
+          <div className="mt-1 text-token-base font-medium text-foreground">{preview.summary}</div>
+          <div className="mt-1 font-mono text-token-2xs text-muted-foreground">
+            {preview.repoFullName} · {preview.sample.authorLogin} · {preview.sample.minerStatus}
+          </div>
+        </div>
+        <StatusPill status={preview.decision.skipped ? "warn" : "ready"}>
+          {preview.decision.skipped ? (preview.decision.skipReason ?? "skip") : "will act"}
+        </StatusPill>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-3">
+        <ActionState active={preview.decision.willComment} label="comment" />
+        <ActionState active={preview.decision.willLabel} label={preview.appliedLabel ?? "label"} />
+        <ActionState active={preview.decision.willCheckRun} label="check run" />
+      </div>
+
+      {preview.warnings.length > 0 && (
+        <div className="rounded-token border border-warning/30 bg-warning/[0.04] p-3">
+          <div className="mb-2 flex items-center gap-2 text-token-xs font-medium text-warning">
+            <AlertTriangle className="size-3.5" />
+            Permissions and remediation
+          </div>
+          <ul className="space-y-1 text-token-xs text-warning/90">
+            {preview.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {preview.installation?.permissionRemediation.length ? (
+        <div className="overflow-hidden rounded-token border-hairline">
+          <table className="w-full text-left text-token-xs">
+            <thead className="border-b-hairline font-mono uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-normal">Permission</th>
+                <th className="px-3 py-2 font-normal">Current</th>
+                <th className="px-3 py-2 font-normal">Required</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.installation.permissionRemediation.map((row) => (
+                <tr key={row.permission} className="border-b-hairline last:border-b-0">
+                  <td className="px-3 py-2 text-foreground">{row.permission}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{row.currentAccess}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{row.requiredAccess}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      <div>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            Public comment preview
+          </div>
+          <StatusPill status="info">sanitized</StatusPill>
+        </div>
+        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-token border border-border bg-[oklch(0.13_0.005_260)] p-3 font-mono text-token-xs leading-token-relaxed text-foreground/90">
+          {preview.previewComment ?? "No public comment would be posted for this scenario."}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function ActionState({ active, label }: { active: boolean; label: string }) {
+  return (
+    <div
+      className={cn(
+        "flex min-h-10 items-center gap-2 rounded-token border px-3 py-2 text-token-xs",
+        active
+          ? "border-success/35 bg-success/10 text-success"
+          : "border-border bg-background/50 text-muted-foreground",
+      )}
+    >
+      {active ? <CheckCircle2 className="size-3.5" /> : <CircleSlash className="size-3.5" />}
+      <span className="min-w-0 truncate">{label}</span>
+    </div>
+  );
+}
+
+function ScenarioIcon({ id }: { id: PreviewScenarioId }) {
+  if (id === "bot-author") return <Bot className="size-3.5 shrink-0" />;
+  if (id === "maintainer-author") return <UserCheck className="size-3.5 shrink-0" />;
+  if (id === "miner-api-unavailable") return <AlertTriangle className="size-3.5 shrink-0" />;
+  if (id === "non-miner") return <CircleSlash className="size-3.5 shrink-0" />;
+  return <ShieldCheck className="size-3.5 shrink-0" />;
 }

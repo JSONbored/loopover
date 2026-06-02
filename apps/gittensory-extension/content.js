@@ -49,6 +49,7 @@ async function load(container, target) {
       `,
     )
     .join("");
+  renderActions(body, response.payload?.actions);
 }
 
 function escapeHtml(value) {
@@ -66,4 +67,55 @@ function escapeHtml(value) {
         return "&#39;";
     }
   });
+}
+
+function renderActions(body, actions) {
+  const list = Array.isArray(actions) ? actions : [];
+  if (list.length === 0) return;
+  const container = document.createElement("section");
+  container.className = "gittensory-overlay__panel";
+  container.innerHTML = `
+    <div class="gittensory-overlay__panel-head">
+      <strong>Actions</strong>
+      <span>extension</span>
+    </div>
+    <div class="gittensory-overlay__actions"></div>
+  `;
+  const actionsNode = container.querySelector(".gittensory-overlay__actions");
+  if (!actionsNode) return;
+  for (const action of list) {
+    if (action?.id === "copy_public_safe_packet" && typeof action?.markdown === "string") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Copy public-safe packet";
+      button.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(action.markdown);
+          button.textContent = "Copied";
+          window.setTimeout(() => {
+            button.textContent = "Copy public-safe packet";
+          }, 1400);
+        } catch {
+          button.textContent = "Copy failed";
+        }
+      });
+      actionsNode.appendChild(button);
+      continue;
+    }
+    if (action?.id === "view_private_blockers" && Array.isArray(action?.blockers)) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Private blockers";
+      details.appendChild(summary);
+      const listNode = document.createElement("ul");
+      for (const blocker of action.blockers.slice(0, 8)) {
+        const item = document.createElement("li");
+        item.textContent = String(blocker?.detail ?? "");
+        listNode.appendChild(item);
+      }
+      details.appendChild(listNode);
+      actionsNode.appendChild(details);
+    }
+  }
+  body.appendChild(container);
 }

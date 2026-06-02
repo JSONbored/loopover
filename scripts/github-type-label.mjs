@@ -86,6 +86,9 @@ export async function applyTypeLabel({ apiUrl = "https://api.github.com", reposi
 
   if (!response.ok) {
     const text = await response.text();
+    if (isLabelWriteForbidden(response.status, text)) {
+      return { applied: false, reason: "label-write-forbidden" };
+    }
     throw new Error(`Failed to apply ${label} to #${number}: ${response.status} ${text}`);
   }
   return { applied: true };
@@ -152,6 +155,10 @@ function nextLink(linkHeader) {
     if (match) return match[1];
   }
   return "";
+}
+
+function isLabelWriteForbidden(status, text) {
+  return status === 403 && /resource not accessible by integration/i.test(text);
 }
 
 const entrypointUrl = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";

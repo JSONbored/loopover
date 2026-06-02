@@ -107,6 +107,54 @@ describe("GitHub type label classifier", () => {
     ]);
   });
 
+  it("does not fail the workflow when GitHub forbids a fork PR label write", async () => {
+    const calls: string[] = [];
+    const result = await applyTypeLabel({
+      repository: "JSONbored/gittensory",
+      token: "token",
+      number: 263,
+      label: "feature",
+      fetchImpl: async (input, init) => {
+        const method = init?.method ?? "GET";
+        calls.push(`${method} ${input.toString()}`);
+        if (method === "GET") return Response.json([{ name: "size:S" }]);
+        if (method === "POST") {
+          return Response.json(
+            {
+              message: "Resource not accessible by integration",
+              documentation_url: "https://docs.github.com/rest/issues/labels#add-labels-to-an-issue",
+              status: "403",
+            },
+            { status: 403 },
+          );
+        }
+        return new Response("unexpected method", { status: 500 });
+      },
+    });
+
+    expect(result).toEqual({ applied: false, reason: "label-write-forbidden" });
+    expect(calls).toEqual([
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/263/labels?per_page=100",
+      "POST https://api.github.com/repos/JSONbored/gittensory/issues/263/labels",
+    ]);
+  });
+
+  it("still fails on unexpected label write errors", async () => {
+    await expect(
+      applyTypeLabel({
+        repository: "JSONbored/gittensory",
+        token: "token",
+        number: 42,
+        label: "feature",
+        fetchImpl: async (_input, init) => {
+          const method = init?.method ?? "GET";
+          if (method === "GET") return Response.json([{ name: "size:S" }]);
+          return new Response("server error", { status: 500 });
+        },
+      }),
+    ).rejects.toThrow("Failed to apply feature to #42: 500 server error");
+  });
+
   it("reads paginated current labels before deciding to post", async () => {
     const calls: string[] = [];
     const labels = await readCurrentLabels({

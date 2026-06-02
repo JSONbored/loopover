@@ -627,11 +627,17 @@ describe("api routes", () => {
     expect(agentPlan.status).toBe(200);
     const agentPlanPayload = (await agentPlan.json()) as {
       run: { id: string; status: string; mode: string; surface: string };
-      actions: Array<{ actionType: string; publicSafeSummary: string; payload: Record<string, unknown> }>;
+      actions: Array<{ actionType: string; publicSafeSummary: string; explanationCard?: { whyNow: string; rerunWhen: string; publicSafe: Record<string, string> }; payload: Record<string, unknown> }>;
     };
     expect(agentPlanPayload.run).toMatchObject({ status: "completed", mode: "copilot", surface: "api" });
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
+    expect(agentPlanPayload.actions[0]?.explanationCard).toMatchObject({
+      whyNow: expect.any(String),
+      rerunWhen: expect.any(String),
+      publicSafe: expect.any(Object),
+    });
+    expect(JSON.stringify(agentPlanPayload.actions[0]?.explanationCard?.publicSafe)).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score|private reviewability|public score estimate|scoreability/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
 
     const fetchedAgentRun = await app.request(`/v1/agent/runs/${agentPlanPayload.run.id}`, { headers: apiHeaders(env) }, env);

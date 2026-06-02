@@ -11,6 +11,7 @@ import {
   startAgentRun,
   type AgentRunBundle,
 } from "../../src/services/agent-orchestrator";
+import { buildAgentActionExplanationCard } from "../../src/services/agent-action-explanation-card";
 import { CONTRIBUTOR_DECISION_PACK_SIGNAL, type ContributorDecisionPack } from "../../src/services/decision-pack";
 import { buildPublicAgentCommandComment, parseGittensoryMentionCommand } from "../../src/github/commands";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -120,6 +121,15 @@ describe("agent orchestrator", () => {
       approvalRequired: true,
       safetyClass: "private",
     });
+    expect(bundle.actions.every((action) => Boolean(action.explanationCard))).toBe(true);
+    expect(bundle.actions[0]?.explanationCard).toMatchObject({
+      summary: expect.stringMatching(/Cleanup first/),
+      scoreabilityBlocker: expect.stringContaining("open_pr_pressure"),
+      expectedImpact: expect.stringMatching(/review pressure/i),
+      rerunWhen: expect.stringContaining("Rerun"),
+      blockerGroups: expect.arrayContaining([expect.objectContaining({ category: "queue", items: expect.arrayContaining(["open_pr_pressure"]) })]),
+    });
+    expect(JSON.stringify(bundle.actions[0]?.explanationCard?.publicSafe)).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score|private reviewability|public score estimate|scoreability/i);
     expect(bundle.actions[0]?.publicSafeSummary).not.toMatch(/reward|wallet|hotkey|raw trust score|estimated score/i);
     expect(bundle.contextSnapshots[0]).toMatchObject({
       scoringModelId: "scoring-1",
@@ -287,6 +297,12 @@ describe("agent orchestrator", () => {
       blockedBy: ["closed_pr_credibility", "low_credibility"],
     });
     expect(bundle.actions[0]?.rerunWhen).toContain("Rerun after");
+    expect(bundle.actions[0]?.explanationCard).toMatchObject({
+      summary: expect.stringMatching(/Resolve blockers/),
+      blockerGroups: expect.arrayContaining([
+        expect.objectContaining({ category: "account", items: expect.arrayContaining(["closed_pr_credibility", "low_credibility"]) }),
+      ]),
+    });
   });
 
   it("covers pure action mapping, summaries, and public sanitization branches", () => {
@@ -344,6 +360,19 @@ describe("agent orchestrator", () => {
     const readyAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/ready", "pursue", 80), readyDecision, 2);
     const emptyNextAction = __agentOrchestratorInternals.actionFromDecisionAction(run, { ...action("open_new_direct_pr", "owner/ready", "pursue", 80), nextActions: [] }, readyDecision, 4);
     const repoFit = __agentOrchestratorInternals.actionFromRepoDecision(run, { ...readyDecision, nextActions: [] }, 3);
+    const groupedBlockerAction = __agentOrchestratorInternals.actionRecord({
+      run,
+      actionType: "preflight_branch",
+      index: 5,
+      targetRepoFullName: "owner/ready",
+      status: "blocked",
+      recommendation: "Fix branch and account blockers before opening a PR.",
+      why: ["branch and account blockers are present"],
+      blockedBy: ["branch_eligibility_missing", "account credibility below floor", "open_pr_pressure"],
+      rerunWhen: "Rerun after branch metadata and account queue state change.",
+      publicSafeSummary: "Run branch preflight after resolving public readiness blockers.",
+      payload: {},
+    });
     const noDecisionActions = __agentOrchestratorInternals.buildDecisionActions(run, decisionPackFixture({ generatedAt, topActions: [], repoDecisions: [readyDecision] }), [readyDecision]);
     const blockerFallback = __agentOrchestratorInternals.buildBlockerActions(
       run,
@@ -352,6 +381,18 @@ describe("agent orchestrator", () => {
     );
 
     expect([watchAction.status, blockedAction.status, readyAction.status]).toEqual(["watch", "blocked", "recommended"]);
+    expect(watchAction.explanationCard?.summary).toMatch(/Avoid for now|Watch/);
+    expect(watchAction.explanationCard?.whyNow).toMatch(/wait/i);
+    expect(blockedAction.explanationCard?.scoreabilityBlocker).toContain("inactive_or_unknown_lane");
+    expect(readyAction.explanationCard?.summary).toMatch(/Pursue now/);
+    expect(JSON.stringify(readyAction.explanationCard?.publicSafe)).not.toMatch(/reward|wallet|hotkey|raw trust|payout|farming|private reviewability|public score estimate|scoreability/i);
+    expect(groupedBlockerAction.explanationCard?.blockerGroups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "branch", items: expect.arrayContaining(["branch_eligibility_missing"]) }),
+        expect.objectContaining({ category: "account", items: expect.arrayContaining(["account credibility below floor"]) }),
+        expect.objectContaining({ category: "queue", items: expect.arrayContaining(["open_pr_pressure"]) }),
+      ]),
+    );
     expect(emptyNextAction.publicSafeSummary).toMatch(/Use Gittensory preflight/);
     expect(repoFit.recommendation).toMatch(/repo fit/);
     expect(noDecisionActions[0]).toMatchObject({ actionType: "explain_repo_fit", status: "recommended" });
@@ -520,6 +561,64 @@ describe("agent orchestrator", () => {
     }), []);
     expect(staleSnapshot.freshnessWarnings[0]).toBe("decision pack is stale; rebuild not enqueued");
     expect(staleSnapshot.payload.openPrMonitor).toEqual(approvedPack.openPrMonitor);
+  });
+
+  it("builds deterministic explanation-card fallbacks and public-safe text", () => {
+    const recommended = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "recommended",
+      why: [],
+      blockedBy: ["reward risk is uncertain", "maintainer policy unclear", "unclassified wait condition"],
+      publicSafeSummary: "Wallet hotkey raw trust score /home/alice/private reward estimate.",
+      safetyClass: "private",
+    });
+    const blocked = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "blocked",
+      why: ["A blocker is still present."],
+      blockedBy: ["unclassified wait condition"],
+      publicSafeSummary: "Use public review hygiene only.",
+      safetyClass: "private",
+    });
+    const privateFallback = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "recommended",
+      why: [],
+      blockedBy: [],
+      publicSafeSummary: "",
+      safetyClass: "private",
+    });
+    const watch = buildAgentActionExplanationCard({
+      actionType: "choose_next_work",
+      status: "watch",
+      why: ["Existing signals say wait."],
+      blockedBy: [],
+      publicSafeSummary: "",
+      safetyClass: "public_safe",
+    });
+
+    expect(recommended.summary).toMatch(/Pursue now/);
+    expect(recommended.whyNow).toMatch(/deterministic planning signals/);
+    expect(recommended.scoreabilityBlocker).toMatch(/No hard scoreability/);
+    expect(recommended.risk).toMatch(/No major action-specific risk/);
+    expect(recommended.maintainerFriction).toMatch(/Narrow, validated work/);
+    expect(recommended.expectedImpact).toMatch(/Advance toward/);
+    expect(recommended.rerunWhen).toMatch(/referenced repo/);
+    expect(recommended.blockerGroups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "risk", items: ["reward risk is uncertain"] }),
+        expect.objectContaining({ category: "maintainer", items: ["maintainer policy unclear"] }),
+        expect.objectContaining({ category: "unknown", items: ["unclassified wait condition"] }),
+      ]),
+    );
+    expect(JSON.stringify(recommended.publicSafe)).not.toMatch(/wallet|hotkey|raw trust|reward estimate|\/home\/alice|scoreability/i);
+    expect(recommended.publicSafe.whyNow).toMatch(/private context/);
+    expect(privateFallback.publicSafe.whyNow).toMatch(/private card/);
+    expect(blocked.scoreabilityBlocker).toMatch(/Blocked action/);
+    expect(watch.risk).toMatch(/review load/);
+    expect(watch.maintainerFriction).toMatch(/Waiting avoids/);
+    expect(watch.expectedImpact).toMatch(/low-confidence/);
+    expect(watch.publicSafe.whyNow).toBe(watch.whyNow);
   });
 
   it("covers local action ready and blocker-free branches from prepared metadata", () => {

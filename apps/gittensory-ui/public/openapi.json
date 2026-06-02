@@ -7396,6 +7396,92 @@
           "payload"
         ]
       },
+      "AgentActionExplanationCard": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "whyNow": {
+            "type": "string"
+          },
+          "scoreabilityBlocker": {
+            "type": "string"
+          },
+          "risk": {
+            "type": "string"
+          },
+          "maintainerFriction": {
+            "type": "string"
+          },
+          "expectedImpact": {
+            "type": "string"
+          },
+          "blockerGroups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "branch",
+                    "account",
+                    "queue",
+                    "scoreability",
+                    "risk",
+                    "maintainer",
+                    "unknown"
+                  ]
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "category",
+                "items"
+              ]
+            }
+          },
+          "rerunWhen": {
+            "type": "string"
+          },
+          "publicSafe": {
+            "type": "object",
+            "properties": {
+              "summary": {
+                "type": "string"
+              },
+              "whyNow": {
+                "type": "string"
+              },
+              "rerunWhen": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "summary",
+              "whyNow",
+              "rerunWhen"
+            ]
+          }
+        },
+        "required": [
+          "summary",
+          "whyNow",
+          "scoreabilityBlocker",
+          "risk",
+          "maintainerFriction",
+          "expectedImpact",
+          "blockerGroups",
+          "rerunWhen",
+          "publicSafe"
+        ]
+      },
       "AgentAction": {
         "type": "object",
         "properties": {
@@ -7474,6 +7560,9 @@
           "publicSafeSummary": {
             "type": "string"
           },
+          "explanationCard": {
+            "$ref": "#/components/schemas/AgentActionExplanationCard"
+          },
           "approvalRequired": {
             "type": "boolean"
           },
@@ -7505,6 +7594,7 @@
           "why",
           "blockedBy",
           "publicSafeSummary",
+          "explanationCard",
           "approvalRequired",
           "safetyClass",
           "payload"

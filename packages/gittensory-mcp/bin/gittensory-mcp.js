@@ -581,7 +581,13 @@ function outputAgentPayload(payload, options, summary) {
     const label = action.actionType ?? action.actionKind ?? action.recommendation ?? "action";
     const detail = action.recommendation ?? action.actionKind ?? action.summary ?? label;
     process.stdout.write(`- ${label}: ${detail}\n`);
-    if (action.rerunWhen) process.stdout.write(`  rerun: ${action.rerunWhen}\n`);
+    if (action.explanationCard) {
+      process.stdout.write(`  why now: ${action.explanationCard.whyNow}\n`);
+      process.stdout.write(`  impact: ${action.explanationCard.expectedImpact}\n`);
+      process.stdout.write(`  rerun: ${action.explanationCard.rerunWhen}\n`);
+    } else if (action.rerunWhen) {
+      process.stdout.write(`  rerun: ${action.rerunWhen}\n`);
+    }
   }
 }
 

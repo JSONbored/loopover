@@ -615,6 +615,26 @@ export type AgentActionType =
   | "explain_repo_fit";
 export type AgentActionStatus = "recommended" | "ready" | "blocked" | "watch" | "needs_input";
 export type AgentSafetyClass = "private" | "public_safe" | "approval_required";
+export type AgentActionBlockerCategory = "branch" | "account" | "queue" | "scoreability" | "risk" | "maintainer" | "unknown";
+
+export type AgentActionExplanationCard = {
+  summary: string;
+  whyNow: string;
+  scoreabilityBlocker: string;
+  risk: string;
+  maintainerFriction: string;
+  expectedImpact: string;
+  blockerGroups: Array<{
+    category: AgentActionBlockerCategory;
+    items: string[];
+  }>;
+  rerunWhen: string;
+  publicSafe: {
+    summary: string;
+    whyNow: string;
+    rerunWhen: string;
+  };
+};
 
 export type AgentRunRecord = {
   id: string;
@@ -646,6 +666,7 @@ export type AgentActionRecord = {
   blockedBy: string[];
   rerunWhen?: string | null | undefined;
   publicSafeSummary: string;
+  explanationCard?: AgentActionExplanationCard | undefined;
   approvalRequired: boolean;
   safetyClass: AgentSafetyClass;
   payload: Record<string, JsonValue>;

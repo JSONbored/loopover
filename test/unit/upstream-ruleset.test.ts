@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as repositories from "../../src/db/repositories";
 import {
   persistUpstreamRulesetSnapshot,
   listLatestUpstreamSourceSnapshotsByKey,
@@ -846,6 +847,66 @@ describe("upstream ruleset drift tracking", () => {
       highestSeverity: "high",
       reports: expect.arrayContaining([expect.objectContaining({ currentRulesetId: null, previousRulesetId: null, issueNumber: null, issueUrl: null })]),
     });
+  });
+
+  it("includes upstream source metadata and recommended follow-up modules in drift reports", async () => {
+    const previous = ruleset("ruleset-old", "old-hash", "current_density_model", 1, 0.01, "2026-05-30T00:00:00.000Z");
+    const current = ruleset("ruleset-new", "new-hash", "pending_saturation_model", 2, 0.02, "2026-05-30T00:05:00.000Z");
+    const report = await buildUpstreamDriftReport(current, previous);
+
+    expect(report).toMatchObject({
+      payload: {
+        source: { repo: "entrius/gittensor", ref: "test", commitSha: "ruleset-new-commit" },
+        recommendedFollowUp: expect.arrayContaining(["src/scoring/model.ts", "src/upstream/ruleset.ts", "src/registry/normalize.ts"]),
+      },
+    });
+
+    const env = createTestEnv();
+    await persistUpstreamRulesetSnapshot(env, previous);
+    await persistUpstreamRulesetSnapshot(env, current);
+    await upsertUpstreamDriftReport(env, report!);
+
+    const status = await loadUpstreamStatus(env);
+    const publicReport = status.reports.find((entry) => entry.fingerprint === report!.fingerprint);
+    expect(publicReport).toMatchObject({
+      source: { repo: "entrius/gittensor", ref: "test", commitSha: "ruleset-new-commit" },
+      recommendedFollowUp: expect.arrayContaining(["src/upstream/ruleset.ts"]),
+    });
+    expect(JSON.stringify(publicReport)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
+  });
+
+  it("computes a deterministic drift fingerprint for a known ruleset pair", async () => {
+    const previous = ruleset("fingerprint-previous", "semantic-previous", "pending_saturation_model", 1, 0.01, "2026-05-30T00:00:00.000Z");
+    const current = withPayload(previous, "fingerprint-current", {
+      scoring: { activeModel: "pending_saturation_model", constants: { SRC_TOK_SATURATION_SCALE: 99 }, semanticFlags: {} },
+    });
+
+    const report = await buildUpstreamDriftReport(current, previous);
+    expect(report?.fingerprint).toBe("362f9fd9666e8e8629b28cf8214b05dafb7bef7d5d72c75b80162e019052a42f");
+  });
+
+  it("records secret-safe upstream drift audit metadata without raw source payloads", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-30T00:00:00.000Z"));
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    const auditEvents: Array<Record<string, unknown>> = [];
+    vi.spyOn(repositories, "recordAuditEvent").mockImplementation(async (_env, event) => {
+      auditEvents.push({ eventType: event.eventType, detail: event.detail, metadata: event.metadata ?? {} });
+    });
+    vi.stubGlobal("fetch", upstreamFetch(fixtures("58", 0.01)));
+    await refreshUpstreamDrift(env);
+
+    vi.setSystemTime(new Date("2026-05-30T00:10:00.000Z"));
+    vi.stubGlobal("fetch", upstreamFetch(fixtures("99", 0.02)));
+    await refreshUpstreamDrift(env);
+
+    const serialized = JSON.stringify(auditEvents);
+    expect(auditEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(["upstream.sources_refreshed", "upstream.ruleset_built", "upstream.drift_detected"]),
+    );
+    expect(auditEvents.filter((event) => event.eventType === "upstream.drift_detected")).toHaveLength(2);
+    expect(serialized).not.toMatch(/SRC_TOK_SATURATION_SCALE|master_repositories\.json|wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
+    expect(serialized).not.toContain("OSS_EMISSION_SHARE");
   });
 });
 

@@ -198,6 +198,12 @@ export async function refreshUpstreamDrift(env: Env): Promise<{ sources: Upstrea
   const ruleset = await buildUpstreamRulesetSnapshot(env, sources);
   const drift = await buildUpstreamDriftReport(ruleset, (await listLatestUpstreamRulesetSnapshots(env, 2))[1] ?? null);
   if (drift) await upsertUpstreamDriftReport(env, drift);
+  await recordAuditEvent(env, {
+    eventType: "upstream.drift_detected",
+    outcome: drift ? "completed" : "success",
+    detail: drift?.severity ?? "none",
+    metadata: { currentRulesetId: ruleset.id, previousRulesetId: drift?.previousRulesetId ?? null, fingerprint: drift?.fingerprint ?? null },
+  });
   return { sources, ruleset, drift };
 }
 
@@ -334,6 +340,12 @@ export async function buildUpstreamDriftReport(current: UpstreamRulesetSnapshotR
   const affectedAreas = [...affected].sort();
   const fingerprint = await sha256Hex(stableStringify({ current: current.semanticHash, previous: previous.semanticHash, affectedAreas }));
   const now = nowIso();
+  const source = {
+    repo: current.sourceRepo,
+    ref: current.sourceRef,
+    commitSha: current.commitSha ?? null,
+  };
+  const recommendedFollowUp = upstreamRecommendedFollowUpForAreas(affectedAreas);
   return {
     id: crypto.randomUUID(),
     fingerprint,
@@ -347,6 +359,8 @@ export async function buildUpstreamDriftReport(current: UpstreamRulesetSnapshotR
       changes,
       repoChanges,
       registryHyperparameterDrift,
+      source,
+      recommendedFollowUp,
       current: publicRuleset(current),
       previous: publicRuleset(previous),
     },
@@ -882,6 +896,8 @@ function publicRuleset(snapshot: UpstreamRulesetSnapshotRecord): Record<string, 
 }
 
 function publicDriftReport(report: UpstreamDriftReportRecord): Record<string, JsonValue> {
+  const source = recordPayload(report.payload.source);
+  const recommendedFollowUp = arrayPayload(report.payload.recommendedFollowUp).filter((entry): entry is string => typeof entry === "string");
   return {
     id: report.id,
     fingerprint: report.fingerprint,
@@ -889,6 +905,12 @@ function publicDriftReport(report: UpstreamDriftReportRecord): Record<string, Js
     status: report.status,
     summary: report.summary,
     affectedAreas: report.affectedAreas,
+    source: {
+      repo: stringPayload(source.repo) ?? null,
+      ref: stringPayload(source.ref) ?? null,
+      commitSha: stringPayload(source.commitSha),
+    },
+    recommendedFollowUp,
     previousRulesetId: report.previousRulesetId ?? null,
     currentRulesetId: report.currentRulesetId ?? null,
     issueNumber: report.issueNumber ?? null,
@@ -1040,6 +1062,31 @@ function upstreamSourcePathsForArea(area: UpstreamDriftArea): string[] {
       return ["gittensor/validator/weights/programming_languages.json"];
     case "source":
       return TRACKED_SOURCES.map((source) => source.path);
+  }
+}
+
+function upstreamRecommendedFollowUpForAreas(areas: UpstreamDriftArea[]): string[] {
+  const modules = new Set<string>();
+  for (const area of areas.length > 0 ? areas : (["source"] as UpstreamDriftArea[])) {
+    for (const module of upstreamModulesForArea(area)) modules.add(module);
+  }
+  return [...modules].sort();
+}
+
+function upstreamModulesForArea(area: UpstreamDriftArea): string[] {
+  switch (area) {
+    case "registry":
+      return ["src/registry/normalize.ts", "src/registry/sync.ts", "test/unit/upstream-ruleset.test.ts"];
+    case "scoring_model":
+      return ["src/scoring/model.ts", "src/upstream/ruleset.ts", "test/unit/upstream-ruleset.test.ts"];
+    case "issue_discovery":
+      return ["src/upstream/ruleset.ts", "src/signals/registration-readiness.ts"];
+    case "mirror_linkage":
+      return ["src/upstream/ruleset.ts", "src/scoring/model.ts"];
+    case "language_weights":
+      return ["src/upstream/ruleset.ts", "src/scoring/model.ts"];
+    case "source":
+      return ["src/upstream/ruleset.ts", "test/contract/upstream-contract.test.ts"];
   }
 }
 

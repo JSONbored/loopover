@@ -816,6 +816,14 @@ export const UpstreamDriftReportSchema = z
     status: z.enum(["open", "acknowledged", "resolved", "ignored"]),
     summary: z.string(),
     affectedAreas: z.array(z.enum(["registry", "scoring_model", "issue_discovery", "mirror_linkage", "language_weights", "source"])),
+    source: z
+      .object({
+        repo: z.string().nullable(),
+        ref: z.string().nullable(),
+        commitSha: z.string().nullable().optional(),
+      })
+      .optional(),
+    recommendedFollowUp: z.array(z.string()).optional(),
     previousRulesetId: z.string().nullable().optional(),
     currentRulesetId: z.string().nullable().optional(),
     issueNumber: z.number().nullable().optional(),

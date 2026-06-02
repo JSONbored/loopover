@@ -1417,6 +1417,26 @@ export function buildRoleContext(args: {
   };
 }
 
+// Derive solved / valid-solved issue-discovery counts from cached issues using the same
+// lifecycle classifier as buildIssueDiscoveryLifecycleReport. Used as the cache fallback for
+// official solvedIssues / validSolvedIssues so a contributor without official Gittensor data
+// still gets credit for issues their own merged PRs solved. (Contributor-wide recent-merged
+// solver PRs are not loaded here, so detection uses the cached pull_requests set.)
+function cachedSolvedIssueCounts(issues: IssueRecord[], pullRequests: PullRequestRecord[], lane: LaneAdvice): { solvedIssues: number; validSolvedIssues: number } {
+  let solvedIssues = 0;
+  let validSolvedIssues = 0;
+  for (const issue of issues) {
+    const state = classifyIssueDiscoveryLifecycle(issue, pullRequests, [], lane).state;
+    if (state === "valid_solved") {
+      validSolvedIssues += 1;
+      solvedIssues += 1;
+    } else if (state === "solved") {
+      solvedIssues += 1;
+    }
+  }
+  return { solvedIssues, validSolvedIssues };
+}
+
 export function buildContributorOutcomeHistory(args: {
   login: string;
   profile: ContributorProfile;
@@ -1457,11 +1477,15 @@ export function buildContributorOutcomeHistory(args: {
       const closedPullRequests = official?.closedPullRequests ?? Math.max(cachedPrs.filter((pr) => pr.state === "closed" && !pr.mergedAt).length, pullRequests - mergedPullRequests - openPullRequests, 0);
       const openIssues = official?.openIssues ?? cachedIssues.filter((issue) => issue.state === "open").length;
       const closedIssues = official?.closedIssues ?? cachedIssues.filter((issue) => issue.state !== "open").length;
-      const solvedIssues = official?.solvedIssues ?? 0;
-      const validSolvedIssues = official?.validSolvedIssues ?? 0;
+      // Like every field above, issue-discovery solved counts fall back to cache (the issue
+      // lifecycle), not a literal 0, when official Gittensor data is absent for this repo.
+      const laneAdvice = buildLaneAdvice(repo, repoFullName);
+      const cachedDiscovery = cachedSolvedIssueCounts(cachedIssues, cachedPrs, laneAdvice);
+      const solvedIssues = official?.solvedIssues ?? cachedDiscovery.solvedIssues;
+      const validSolvedIssues = official?.validSolvedIssues ?? cachedDiscovery.validSolvedIssues;
       const roleContext = buildRoleContext({ login: args.login, repo, repoFullName, pullRequests: args.pullRequests, issues: args.issues, profile: args.profile });
       const closedPullRequestRate = rate(closedPullRequests, pullRequests);
-      const lane = buildLaneAdvice(repo, repoFullName).lane;
+      const lane = laneAdvice.lane;
       const risks = [
         ...(roleContext.maintainerLane ? ["Maintainer-lane repo; do not treat this as normal contributor evidence."] : []),
         ...(closedPullRequestRate >= 0.3 ? [`Closed PR rate is ${percent(closedPullRequestRate)}.`] : []),
@@ -1516,8 +1540,8 @@ export function buildContributorOutcomeHistory(args: {
     issues: args.profile.registeredRepoActivity.issues,
     openIssues: args.profile.gittensor?.totals.openIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.openIssues, 0),
     closedIssues: args.profile.gittensor?.totals.closedIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.closedIssues, 0),
-    solvedIssues: args.profile.gittensor?.totals.solvedIssues ?? 0,
-    validSolvedIssues: args.profile.gittensor?.totals.validSolvedIssues ?? 0,
+    solvedIssues: args.profile.gittensor?.totals.solvedIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.solvedIssues, 0),
+    validSolvedIssues: args.profile.gittensor?.totals.validSolvedIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.validSolvedIssues, 0),
     credibility: args.profile.gittensor?.credibility ?? 0,
     issueCredibility: args.profile.gittensor?.issueCredibility ?? 0,
   };
@@ -1570,7 +1594,7 @@ export function buildContributorReconciliationReport(args: {
   const repos = [...repoNamesByKey.values()].map((entry) => entry.repoFullName).sort((left, right) => left.localeCompare(right)).map((repoFullName) => {
     const key = repoFullName.toLowerCase();
     const official = officialByRepo.get(key);
-    const cached = cachedReconciliationCounts(args.login, repoFullName, args.pullRequests, args.issues, statByRepo.get(key));
+    const cached = cachedReconciliationCounts(args.login, repoFullName, args.pullRequests, args.issues, buildLaneAdvice(repoByName.get(key) ?? null, repoFullName), statByRepo.get(key));
     const officialCounts = official
       ? {
           pullRequests: official.pullRequests,
@@ -1658,6 +1682,7 @@ function cachedReconciliationCounts(
   repoFullName: string,
   pullRequests: PullRequestRecord[],
   issues: IssueRecord[],
+  lane: LaneAdvice,
   stat?: ContributorRepoStatRecord | undefined,
 ): ContributorOutcomeCounts {
   const cachedPrs = pullRequests.filter((pr) => sameRepo(pr.repoFullName, repoFullName) && sameLogin(pr.authorLogin, login));
@@ -1672,6 +1697,7 @@ function cachedReconciliationCounts(
   const issueCount = Math.max(cachedIssues.length, stat?.issues ?? 0);
   const openIssues = openIssueRows;
   const closedIssues = Math.max(closedIssueRows, issueCount - openIssues, 0);
+  const { solvedIssues, validSolvedIssues } = cachedSolvedIssueCounts(cachedIssues, cachedPrs, lane);
   return {
     pullRequests: pullRequestCount,
     mergedPullRequests,
@@ -1680,8 +1706,8 @@ function cachedReconciliationCounts(
     issues: issueCount,
     openIssues,
     closedIssues,
-    solvedIssues: 0,
-    validSolvedIssues: 0,
+    solvedIssues,
+    validSolvedIssues,
   };
 }
 

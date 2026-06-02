@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildRepoSettingsPreview, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
 
+const FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE =
+  /\b(wallet|hotkey|coldkey|raw[-\s]?trust|trust[-\s]?score|reward[-\s]?estimate|payout|farming(?:[-\s]?language)?|private[-\s]?reviewability|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction)|estimated[-\s]?score|score[-\s]?estimate)\b/i;
+
 const repo: RepositoryRecord = {
   fullName: "entrius/allways-ui",
   owner: "entrius",
@@ -101,6 +104,34 @@ describe("buildRepoSettingsPreview", () => {
     expect(preview.appliedLabel).toBe("gittensor");
     expect(preview.previewComment).toContain("Gittensory contribution context");
     expect(preview.warnings).toHaveLength(0);
+    expect(preview.installPreview).toMatchObject({
+      status: "ready",
+      permissions: { status: "ready", required: expect.arrayContaining(["metadata: read", "pull_requests: read", "issues: write"]) },
+      publicOutputs: expect.arrayContaining(["One sanitized sticky PR comment.", 'Configured label "gittensor".']),
+      checklist: expect.arrayContaining([
+        expect.objectContaining({ id: "permissions", status: "ready" }),
+        expect.objectContaining({ id: "public-outputs", status: "ready" }),
+        expect.objectContaining({ id: "private-context", status: "ready" }),
+        expect.objectContaining({ id: "command-authorization", status: "ready" }),
+        expect.objectContaining({ id: "audit-behavior", status: "ready" }),
+        expect.objectContaining({ id: "sanitizer-boundaries", status: "ready" }),
+        expect.objectContaining({ id: "manual-controls", status: "ready" }),
+      ]),
+    });
+    expect(preview.installPreview.readScope.join(" ")).toMatch(/repository metadata/i);
+    expect(preview.installPreview.computedContext.join(" ")).toMatch(/Public surface decision/i);
+    expect(preview.installPreview.privateOnlyContext.join(" ")).toMatch(/authenticated-only/i);
+    expect(preview.installPreview.commandAuthorization.join(" ")).toMatch(/Maintainer-only commands/i);
+    expect(preview.installPreview.auditBehavior.join(" ")).toMatch(/read-only/i);
+    expect(preview.installPreview.manualControls.join(" ")).toMatch(/repo settings/i);
+    expect(
+      JSON.stringify([
+        preview.installPreview.publicOutputs,
+        preview.installPreview.sanitizerBoundaries,
+        preview.installPreview.manualControls,
+        preview.installPreview.checklist.map((item) => [item.summary, item.action]),
+      ]),
+    ).not.toMatch(FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE);
   });
 
   it("uses safe defaults for an empty sample preview", () => {
@@ -117,6 +148,12 @@ describe("buildRepoSettingsPreview", () => {
       sample: { authorLogin: "miner", minerStatus: "confirmed" },
     });
     expect(preview.warnings.some((warning) => /Issues: write/.test(warning))).toBe(true);
+    expect(preview.installPreview.status).toBe("needs_attention");
+    expect(preview.installPreview.permissions).toMatchObject({ status: "needs_attention", missing: ["issues"] });
+    expect(preview.installPreview.checklist.find((item) => item.id === "permissions")).toMatchObject({
+      status: "needs_attention",
+      action: expect.stringContaining("approve the missing permission"),
+    });
   });
 
   it("explains a missing optional Checks: write permission only when check runs are enabled", () => {
@@ -168,6 +205,11 @@ describe("buildRepoSettingsPreview", () => {
   it("warns when installation health is unknown", () => {
     const preview = buildRepoSettingsPreview({ ...base, settings: settings(), installation: null, sample: { authorLogin: "miner", minerStatus: "confirmed" } });
     expect(preview.warnings.some((warning) => /Installation health is unknown/.test(warning))).toBe(true);
+    expect(preview.installPreview).toMatchObject({
+      status: "blocked",
+      permissions: { status: "blocked", required: expect.arrayContaining(["issues: write"]), missing: [], missingEvents: [] },
+    });
+    expect(preview.installPreview.checklist.find((item) => item.id === "permissions")).toMatchObject({ status: "blocked" });
   });
 
   it("explains missing webhook event subscriptions", () => {
@@ -178,6 +220,7 @@ describe("buildRepoSettingsPreview", () => {
       sample: { authorLogin: "miner", minerStatus: "confirmed" },
     });
     expect(preview.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/pull_request webhook event/)]));
+    expect(preview.installPreview.permissions).toMatchObject({ status: "needs_attention", missingEvents: ["pull_request"] });
   });
 
   it("falls back to the installation status warning when no specific remediation is available", () => {
@@ -188,6 +231,26 @@ describe("buildRepoSettingsPreview", () => {
       sample: { authorLogin: "miner", minerStatus: "confirmed" },
     });
     expect(preview.warnings).toEqual(["Installation status is broken; review the installation health endpoint for remediation steps."]);
+    expect(preview.installPreview.status).toBe("blocked");
+    expect(preview.installPreview.permissions.summary).toMatch(/broken/i);
+  });
+
+  it("marks broad all-PR output as needing maintainer attention before enablement", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ commentMode: "all_prs" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+    expect(preview.installPreview.status).toBe("needs_attention");
+    expect(preview.installPreview.checklist.find((item) => item.id === "public-outputs")).toMatchObject({
+      status: "needs_attention",
+      action: expect.stringContaining("confirmed-miner-only"),
+    });
+    expect(preview.installPreview.checklist.find((item) => item.id === "manual-controls")).toMatchObject({
+      status: "needs_attention",
+      action: expect.stringContaining("all-PR mode"),
+    });
   });
 
   it("never leaks private scoring/trust terms into the preview comment (sanitizer regression)", () => {

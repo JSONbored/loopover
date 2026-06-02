@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,12 +16,18 @@ const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://regi
 const upgradeCommand = `npm install -g ${packageName}@latest`;
 const npxFallbackCommand = `npx ${packageName}@latest <command>`;
 const compatibilityPath = "/v1/mcp/compatibility";
+const currentApiVersion = "0.1.0";
+const decisionPackCacheSchemaVersion = 1;
+const decisionPackCacheMaxEntries = 25;
+const decisionPackCacheMaxBytes = 512 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
     ? join(process.env.GITTENSORY_CONFIG_DIR, "config.json")
     : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "gittensory", "config.json"));
+const cacheDir = process.env.GITTENSORY_CACHE_DIR ?? join(dirname(configPath), "cache");
+const decisionPackCacheDir = join(cacheDir, "decision-packs");
 const config = loadConfig();
 const configuredApiUrl = typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
 const apiUrl = (process.env.GITTENSORY_API_URL ?? (configuredApiUrl && !legacyDefaultApiUrls.has(configuredApiUrl) ? configuredApiUrl : defaultApiUrl)).replace(/\/+$/, "");
@@ -234,7 +241,10 @@ server.registerTool(
     description: "Return the canonical private contributor decision pack for a GitHub login.",
     inputSchema: loginShape,
   },
-  async ({ login }) => toolResult(`Gittensory decision pack for ${login}.`, await apiGet(`/v1/contributors/${encodeURIComponent(login)}/decision-pack`)),
+  async ({ login }) => {
+    const payload = await getDecisionPackWithCache(login);
+    return toolResult(decisionPackToolSummary(login, payload), payload);
+  },
 );
 
 server.registerTool(
@@ -243,11 +253,10 @@ server.registerTool(
     description: "Return the contributor/repo decision from the canonical decision pack.",
     inputSchema: loginRepoShape,
   },
-  async ({ login, owner, repo }) =>
-    toolResult(
-      `Gittensory repo decision for ${login} in ${owner}/${repo}.`,
-      await apiGet(`/v1/contributors/${encodeURIComponent(login)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/decision`),
-    ),
+  async ({ login, owner, repo }) => {
+    const payload = await getRepoDecisionWithCache(login, owner, repo);
+    return toolResult(repoDecisionToolSummary(login, `${owner}/${repo}`, payload), payload);
+  },
 );
 
 server.registerTool(
@@ -472,6 +481,7 @@ async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
   if (command === "agent") return runAgentCli(args.slice(1));
+  if (command === "cache") return runCacheCli(args.slice(1));
   const options = parseOptions(args.slice(1));
   if (command === "login") return login(options);
   if (command === "logout") return logout(options);
@@ -480,6 +490,8 @@ async function runCli(args) {
   if (command === "changelog") return changelog(options);
   if (command === "doctor") return doctor(options);
   if (command === "init-client") return initClient(options);
+  if (command === "decision-pack") return decisionPackCli(options);
+  if (command === "repo-decision") return repoDecisionCli(options);
   if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}`);
   const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
@@ -511,6 +523,55 @@ async function runCli(args) {
     return;
   }
   writeBranchAnalysisCli(result, command);
+}
+
+async function decisionPackCli(options) {
+  const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  const payload = await getDecisionPackWithCache(login);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${decisionPackToolSummary(login, payload)}\n`);
+  if (payload.summary) process.stdout.write(`${payload.summary}\n`);
+  if (payload.cache?.rerunGuidance) process.stdout.write(`Rerun when: ${payload.cache.rerunGuidance}\n`);
+}
+
+async function repoDecisionCli(options) {
+  const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  const repoFullName = options.repo;
+  if (!repoFullName || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
+  const [owner, repo] = repoFullName.split("/", 2);
+  const payload = await getRepoDecisionWithCache(login, owner, repo);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${repoDecisionToolSummary(login, repoFullName, payload)}\n`);
+  const actions = payload.decision?.nextActions ?? payload.decision?.publicNextActions ?? [];
+  for (const action of actions.slice(0, 3)) process.stdout.write(`- ${action}\n`);
+  if (payload.cache?.rerunGuidance) process.stdout.write(`Rerun when: ${payload.cache.rerunGuidance}\n`);
+}
+
+function runCacheCli(args) {
+  const subcommand = args[0] ?? "help";
+  if (subcommand === "--help" || subcommand === "help") return printCacheHelp();
+  const options = parseOptions(args.slice(1));
+  if (subcommand === "clear") {
+    const payload = clearDecisionPackCache();
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`Cleared ${payload.removed} decision-pack cache entr${payload.removed === 1 ? "y" : "ies"}.\n`);
+    return;
+  }
+  if (subcommand === "status") {
+    const payload = inspectDecisionPackCache();
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`Decision-pack cache: ${payload.entries} entr${payload.entries === 1 ? "y" : "ies"}.\n`);
+    return;
+  }
+  throw new Error(`Unknown cache command: ${subcommand}`);
 }
 
 async function runAgentCli(args) {
@@ -655,7 +716,10 @@ function printHelp() {
   gittensory-mcp status [--json]
   gittensory-mcp changelog [--json]
   gittensory-mcp doctor [--cwd path] [--json]
+  gittensory-mcp cache status|clear [--json]
   gittensory-mcp init-client --print codex|claude|cursor|mcp [--json]
+  gittensory-mcp decision-pack --login <github-login> [--json]
+  gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--json]
   gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
@@ -672,6 +736,16 @@ Environment:
   GITTENSOR_ROOT
   GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS
   GITTENSORY_UPLOAD_SOURCE=false
+`);
+}
+
+function printCacheHelp() {
+  process.stdout.write(`Usage:
+  gittensory-mcp cache status [--json]
+  gittensory-mcp cache clear [--json]
+
+Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.
+Source upload remains disabled.
 `);
 }
 
@@ -754,7 +828,8 @@ async function logout(options) {
     }
   }
   if (existsSync(configPath)) rmSync(configPath, { force: true });
-  const payload = { status: "logged_out", apiUrl, remote };
+  const decisionPackCache = clearDecisionPackCache();
+  const payload = { status: "logged_out", apiUrl, remote, decisionPackCache };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else process.stdout.write("Logged out.\n");
 }
@@ -783,6 +858,7 @@ async function status(options) {
   const compatibility = await inspectApiCompatibility(health);
   const pkg = await inspectInstallVersion(compatibilityLatestRecommendedVersion(compatibility.report) ?? compatibilityLatestRecommendedVersion(health));
   const apiCompatibility = compatibility.evaluation;
+  const decisionPackCache = inspectDecisionPackCache();
   const payload = {
     apiUrl,
     package: pkg,
@@ -791,6 +867,7 @@ async function status(options) {
     api: health,
     auth,
     config: { configured: existsSync(configPath) },
+    decisionPackCache,
     sourceUploadDefault: false,
     sourceUploadSupported: false,
   };
@@ -800,6 +877,7 @@ async function status(options) {
     process.stdout.write(`API: ${apiUrl}\n`);
     process.stdout.write(`API health: ${health?.status ?? "unknown"}\n`);
     process.stdout.write(`Auth: ${auth.status}${auth.login ? ` (${auth.login})` : ""}\n`);
+    process.stdout.write(`Decision-pack cache: ${decisionPackCache.entries} entr${decisionPackCache.entries === 1 ? "y" : "ies"}\n`);
     process.stdout.write("Source upload: disabled\n");
     if (pkg.state === "stale") {
       process.stdout.write(`Update available: ${packageVersion} -> ${pkg.latestVersion}. Upgrade with:\n  ${pkg.upgradeCommand}\n`);
@@ -900,6 +978,14 @@ async function doctor(options) {
     add("source_upload", "pass", "Source upload is disabled and unsupported in v1.");
   }
 
+  const decisionPackCache = inspectDecisionPackCache();
+  add(
+    "decision_pack_cache",
+    "pass",
+    `Local stale fallback cache has ${decisionPackCache.entries} entr${decisionPackCache.entries === 1 ? "y" : "ies"} and is bounded at ${decisionPackCache.maxEntries}.`,
+    "Run `gittensory-mcp cache clear` to remove local stale fallback data.",
+  );
+
   try {
     const metadata = collectLocalBranchMetadata({
       cwd: options.cwd ?? process.cwd(),
@@ -944,6 +1030,7 @@ async function doctor(options) {
     status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",
     apiUrl,
     config: { configured: existsSync(configPath) },
+    decisionPackCache,
     sourceUploadSupported: false,
     checks,
   };
@@ -1146,6 +1233,240 @@ function clientSnippet(client, command) {
   throw new Error(`Unsupported client: ${client}. Use codex, claude, cursor, or mcp.`);
 }
 
+async function getDecisionPackWithCache(login) {
+  try {
+    const payload = await apiGet(`/v1/contributors/${encodeURIComponent(login)}/decision-pack`);
+    if (isCacheableDecisionPack(payload, login)) writeDecisionPackCache(login, payload);
+    return payload;
+  } catch (error) {
+    if (!isDecisionPackCacheFallbackEligible(error)) throw error;
+    const cached = readDecisionPackCache(login);
+    if (!cached) throw error;
+    return staleDecisionPackFromCache(cached, error);
+  }
+}
+
+async function getRepoDecisionWithCache(login, owner, repo) {
+  const repoFullName = `${owner}/${repo}`;
+  try {
+    return await apiGet(`/v1/contributors/${encodeURIComponent(login)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/decision`);
+  } catch (error) {
+    if (!isDecisionPackCacheFallbackEligible(error)) throw error;
+    const cached = readDecisionPackCache(login);
+    if (!cached) throw error;
+    return repoDecisionFromCachedPack(cached, repoFullName, error);
+  }
+}
+
+function decisionPackToolSummary(login, payload) {
+  if (payload?.source === "local_cache") return `Gittensory decision pack for ${login} (stale local cache).`;
+  if (payload?.freshness === "stale" || payload?.freshness === "rebuilding") return `Gittensory decision pack for ${login} (${payload.freshness}).`;
+  return `Gittensory decision pack for ${login}.`;
+}
+
+function repoDecisionToolSummary(login, repoFullName, payload) {
+  if (payload?.source === "local_cache") return `Gittensory repo decision for ${login} in ${repoFullName} (stale local cache).`;
+  return `Gittensory repo decision for ${login} in ${repoFullName}.`;
+}
+
+function isCacheableDecisionPack(payload, login) {
+  return payload?.status === "ready" && typeof payload.login === "string" && payload.login.toLowerCase() === login.toLowerCase();
+}
+
+function decisionPackAuthCacheKey() {
+  const token = getApiToken();
+  if (!token) return null;
+  return createHash("sha256").update(token).digest("base64url");
+}
+
+function decisionPackCachePath(login, authCacheKey = decisionPackAuthCacheKey()) {
+  if (!authCacheKey) return null;
+  const key = Buffer.from(`${apiUrl}\0${currentApiVersion}\0${login.toLowerCase()}\0${authCacheKey}`).toString("base64url");
+  return join(decisionPackCacheDir, `${key}.json`);
+}
+
+function writeDecisionPackCache(login, payload) {
+  const authCacheKey = decisionPackAuthCacheKey();
+  if (!authCacheKey) return { status: "skipped", reason: "missing_auth" };
+  const cachedAt = new Date().toISOString();
+  const sanitizedPayload = sanitizeDecisionPackForCache(payload);
+  const entry = {
+    schemaVersion: decisionPackCacheSchemaVersion,
+    apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : currentApiVersion,
+    packageVersion,
+    apiUrl,
+    authCacheKey,
+    login: login.toLowerCase(),
+    cachedAt,
+    payload: sanitizedPayload,
+  };
+  if (entry.apiVersion !== currentApiVersion) return { status: "skipped", reason: "api_version_mismatch" };
+  const serialized = `${JSON.stringify(entry, null, 2)}\n`;
+  if (Buffer.byteLength(serialized, "utf8") > decisionPackCacheMaxBytes) return { status: "skipped", reason: "too_large" };
+  mkdirSync(decisionPackCacheDir, { recursive: true, mode: 0o700 });
+  const path = decisionPackCachePath(login, authCacheKey);
+  if (!path) return { status: "skipped", reason: "missing_auth" };
+  writeFileSync(path, serialized, { mode: 0o600 });
+  pruneDecisionPackCache();
+  return { status: "stored", cachedAt };
+}
+
+function readDecisionPackCache(login) {
+  const authCacheKey = decisionPackAuthCacheKey();
+  const path = decisionPackCachePath(login, authCacheKey);
+  if (!path || !existsSync(path)) return null;
+  try {
+    const entry = JSON.parse(readFileSync(path, "utf8"));
+    if (!isCompatibleDecisionPackCacheEntry(entry, login, authCacheKey)) return null;
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function isCompatibleDecisionPackCacheEntry(entry, login, authCacheKey = decisionPackAuthCacheKey()) {
+  return (
+    entry &&
+    typeof entry === "object" &&
+    entry.schemaVersion === decisionPackCacheSchemaVersion &&
+    entry.apiVersion === currentApiVersion &&
+    entry.apiUrl === apiUrl &&
+    typeof entry.authCacheKey === "string" &&
+    entry.authCacheKey === authCacheKey &&
+    typeof entry.cachedAt === "string" &&
+    typeof entry.login === "string" &&
+    entry.login.toLowerCase() === login.toLowerCase() &&
+    isCacheableDecisionPack(entry.payload, login)
+  );
+}
+
+function staleDecisionPackFromCache(entry, error) {
+  const payload = entry.payload;
+  return stripUndefined({
+    ...payload,
+    source: "local_cache",
+    stale: true,
+    freshness: "stale",
+    rebuildEnqueued: false,
+    cachedAt: entry.cachedAt,
+    cache: cacheFallbackMetadata(entry, error),
+  });
+}
+
+function repoDecisionFromCachedPack(entry, repoFullName, error) {
+  const pack = staleDecisionPackFromCache(entry, error);
+  const decision = cachedRepoDecision(pack, repoFullName);
+  return stripUndefined({
+    status: decision ? "ready" : "not_found",
+    login: pack.login,
+    repoFullName,
+    generatedAt: pack.generatedAt,
+    source: "local_cache",
+    stale: true,
+    freshness: "stale",
+    cachedAt: entry.cachedAt,
+    decision,
+    dataQuality: pack.dataQuality,
+    cache: cacheFallbackMetadata(entry, error),
+  });
+}
+
+function cachedRepoDecision(pack, repoFullName) {
+  const key = repoFullName.toLowerCase();
+  return pack.repoDecisions?.find((decision) => String(decision?.repoFullName ?? "").toLowerCase() === key) ?? null;
+}
+
+function cacheFallbackMetadata(entry, error) {
+  return {
+    source: "local_cache",
+    stale: true,
+    cachedAt: entry.cachedAt,
+    apiVersion: entry.apiVersion,
+    schemaVersion: entry.schemaVersion,
+    reason: "api_unavailable",
+    detail: sanitizeDiagnosticText(error instanceof Error ? error.message : "api_unavailable"),
+    rerunGuidance: "Retry when Gittensory API access is restored; cached guidance may be stale.",
+    clearCommand: "gittensory-mcp cache clear",
+  };
+}
+
+function isDecisionPackCacheFallbackEligible(error) {
+  const status = error?.status;
+  if (typeof status !== "number") return true;
+  return status === 429 || status >= 500;
+}
+
+function sanitizeDecisionPackForCache(value) {
+  if (Array.isArray(value)) return value.map((entry) => sanitizeDecisionPackForCache(entry));
+  if (typeof value === "string") return sanitizeCacheString(value);
+  if (!value || typeof value !== "object") return value;
+  const sanitized = {};
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    if (isForbiddenCacheKey(entryKey)) continue;
+    sanitized[entryKey] = sanitizeDecisionPackForCache(entryValue);
+  }
+  return sanitized;
+}
+
+function isForbiddenCacheKey(key) {
+  return /^(?:authorization|token|accessToken|apiToken|githubToken|wallet|hotkey|coldkey|mnemonic|privateKey|private_key|sourceContent|sourceContents|fileContent|fileContents|rawSource|rawSourceContent|content|contents|diff|patch|rawDiff|localPath|absolutePath)$/i.test(
+    key,
+  );
+}
+
+function sanitizeCacheString(value) {
+  return redactPrivateValidationMetrics(redactLocalValidationPaths(sanitizeDiagnosticText(value)));
+}
+
+function decisionPackCacheFiles() {
+  if (!existsSync(decisionPackCacheDir)) return [];
+  return readdirSync(decisionPackCacheDir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => {
+      const path = join(decisionPackCacheDir, name);
+      try {
+        const stats = statSync(path);
+        return { path, mtimeMs: stats.mtimeMs, size: stats.size };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function pruneDecisionPackCache() {
+  const files = decisionPackCacheFiles().sort((left, right) => right.mtimeMs - left.mtimeMs);
+  for (const file of files.slice(decisionPackCacheMaxEntries)) rmSync(file.path, { force: true });
+}
+
+function clearDecisionPackCache() {
+  const removed = decisionPackCacheFiles().length;
+  rmSync(decisionPackCacheDir, { recursive: true, force: true });
+  return {
+    status: "cleared",
+    removed,
+    cache: {
+      source: "local_cache",
+      maxEntries: decisionPackCacheMaxEntries,
+      clearCommand: "gittensory-mcp cache clear",
+    },
+  };
+}
+
+function inspectDecisionPackCache() {
+  const files = decisionPackCacheFiles();
+  const bytes = files.reduce((sum, file) => sum + file.size, 0);
+  return {
+    status: "ok",
+    entries: files.length,
+    bytes,
+    maxEntries: decisionPackCacheMaxEntries,
+    schemaVersion: decisionPackCacheSchemaVersion,
+    apiVersion: currentApiVersion,
+    clearCommand: "gittensory-mcp cache clear",
+  };
+}
+
 function findExecutable(name) {
   for (const directory of String(process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
     const candidate = join(directory, name);
@@ -1208,7 +1529,12 @@ async function apiPost(path, body) {
 
 async function apiFetch(path, init, options = {}) {
   const token = getApiToken();
-  if (options.auth !== false && !token) throw new Error("Run `gittensory-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
+  if (options.auth !== false && !token) {
+    const error = new Error("Run `gittensory-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
+    error.status = 401;
+    error.code = "missing_auth";
+    throw error;
+  }
   const controller = new AbortController();
   const timeoutMs = Number(process.env.GITTENSORY_API_TIMEOUT_MS ?? options.timeoutMs ?? 30000);
   const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000);
@@ -1228,7 +1554,9 @@ async function apiFetch(path, init, options = {}) {
   const payload = text ? JSON.parse(text) : {};
   if (!response.ok) {
     const retry = response.headers.get("retry-after");
-    throw new Error(`Gittensory API ${response.status}${retry ? ` retry-after=${retry}s` : ""}: ${JSON.stringify(payload).slice(0, 500)}`);
+    const error = new Error(`Gittensory API ${response.status}${retry ? ` retry-after=${retry}s` : ""}: ${JSON.stringify(payload).slice(0, 500)}`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }

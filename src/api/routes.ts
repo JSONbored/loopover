@@ -95,9 +95,16 @@ import {
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
-import { GITTENSORY_MENTION_COMMAND_CATALOG } from "../github/commands";
+import {
+  buildPublicAgentCommandComment,
+  buildMaintainerQueueDigest,
+  GITTENSORY_MENTION_COMMAND_CATALOG,
+  isAuthorizedCommandActor,
+  isMaintainerOnlyCommand,
+  sanitizePublicComment,
+  type GittensoryMentionCommandName,
+} from "../github/commands";
 import { handleGitHubWebhook } from "../github/webhook";
-import { sanitizePublicComment } from "../github/commands";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { generateSignalSnapshots } from "../queue/processors";
@@ -171,6 +178,7 @@ import type {
   JsonValue,
   ProductUsageOutcome,
   ProductUsageSurface,
+  PullRequestRecord,
   RepoSyncSegmentRecord,
   RepositoryRecord,
 } from "../types";
@@ -414,6 +422,23 @@ const commandPreviewSchema = z
     repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     pullNumber: z.number().int().positive().optional(),
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    sample: z
+      .object({
+        authorLogin: z.string().trim().min(1).max(100).optional(),
+        authorType: z.enum(["User", "Bot"]).optional(),
+        authorAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
+        commenterLogin: z.string().trim().min(1).max(100).optional(),
+        commenterAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
+        minerStatus: z.enum(["confirmed", "not_found", "unavailable"]).optional(),
+        title: z.string().max(300).optional(),
+        body: z.string().max(10000).nullable().optional(),
+        labels: z.array(z.string().max(100)).max(50).optional(),
+        linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
+        permissions: z.record(z.string(), z.string()).optional(),
+        missingPermissions: z.array(z.string().max(100)).max(50).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -959,13 +984,23 @@ export function createApp() {
   );
 
   app.post("/v1/app/commands/preview", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
     const body = await c.req.json().catch(() => null);
     const parsed = commandPreviewSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_command_preview_request", issues: parsed.error.issues }, 400);
     const command = APP_COMMANDS.find((candidate) => candidate.command === parsed.data.command || candidate.id === parsed.data.command.replace(/^@gittensory\s+/, ""));
     if (!command) return c.json({ error: "command_not_found" }, 404);
-    const identity = await authenticateRequestIdentity(c).catch(() => null);
-    const preview = buildCommandPreview(command, parsed.data);
+    const identity = await authenticateRequestIdentity(c);
+    const [repo, pullRequest] = await Promise.all([
+      parsed.data.repoFullName ? getRepository(c.env, parsed.data.repoFullName) : Promise.resolve(null),
+      parsed.data.repoFullName && parsed.data.pullNumber ? getPullRequest(c.env, parsed.data.repoFullName, parsed.data.pullNumber) : Promise.resolve(null),
+    ]);
+    const repoForbidden = await requireCommandPreviewRepoAccess(c, identity, parsed.data.repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const installationId = repo?.installationId ?? null;
+    const installation = installationId !== null ? await getInstallationHealth(c.env, installationId) : null;
+    const preview = buildCommandPreview(command, parsed.data, { repo, installation, pullRequest });
     await recordRouteProductUsage(c, {
       surface: "control_panel",
       eventName: "command_previewed",
@@ -2144,7 +2179,7 @@ const APP_COMMANDS = [
     endpoint: "/v1/app/commands/preview",
   },
   ...GITTENSORY_MENTION_COMMAND_CATALOG.filter(
-    (command) => !["help", "preflight", "blockers", "packet", "queue-summary", "review-now", "needs-author", "confirmed-miners", "duplicate-clusters"].includes(command.id),
+    (command) => !["preflight", "blockers", "packet", "queue-summary", "review-now", "needs-author", "confirmed-miners", "duplicate-clusters"].includes(command.id),
   ).map((command) => ({
     id: command.id,
     command: `@gittensory ${command.id}`,
@@ -2271,18 +2306,324 @@ function buildMaintainerSettingsPreview() {
   };
 }
 
-function buildCommandPreview(command: (typeof APP_COMMANDS)[number], request: z.infer<typeof commandPreviewSchema>) {
+const PREVIEWABLE_MENTION_COMMANDS = new Set<GittensoryMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
+
+type CommandPreviewDecision = {
+  status: "ready" | "skipped" | "missing_permission" | "private_api";
+  willComment: boolean;
+  willLabel: boolean;
+  willCheckRun: boolean;
+  skipped: boolean;
+  skipReason: string | null;
+  actions: Array<"comment" | "label" | "check_run" | "skip" | "none">;
+  summary: string;
+};
+
+function buildCommandPreview(
+  command: (typeof APP_COMMANDS)[number],
+  request: z.infer<typeof commandPreviewSchema>,
+  context: { repo: RepositoryRecord | null; installation: InstallationHealthRecord | null; pullRequest: PullRequestRecord | null },
+) {
   const target = request.repoFullName ? `${request.repoFullName}${request.pullNumber ? `#${request.pullNumber}` : ""}` : "selected target";
-  if (command.id === "public-summary") {
+  const mentionCommandName = previewableMentionCommandName(command.id);
+  if (!mentionCommandName) {
+    return buildPrivateApiCommandPreview(command, request, target);
+  }
+
+  const sample = buildCommandPreviewSample(request, context.pullRequest);
+  const missingPermissions = commandPreviewMissingPermissions(request, context.installation);
+  const permissionWarnings = commandPreviewPermissionWarnings(missingPermissions);
+  const officialAuthorDetection =
+    sample.minerStatus === "confirmed"
+      ? { status: "confirmed" as const, snapshot: sampleMinerSnapshot(sample.authorLogin) }
+      : sample.minerStatus === "unavailable"
+        ? { status: "unavailable" as const, error: "Official miner detection is unavailable in this preview scenario." }
+        : { status: "not_found" as const };
+  const authorization = isAuthorizedCommandActor({
+    commandName: mentionCommandName,
+    commenterLogin: sample.commenterLogin,
+    commenterAssociation: sample.commenterAssociation,
+    pullRequestAuthorLogin: sample.authorLogin,
+    officialAuthorDetection,
+  });
+
+  const base = {
+    boundary: "public" as const,
+    endpoint: "GitHub issue comment",
+    target,
+    sample,
+    missingPermissions,
+    permissionDiagnostics: permissionWarnings.map((warning) => ({
+      permission: warning.permission,
+      requiredAccess: warning.requiredAccess,
+      currentAccess: warning.currentAccess,
+      ok: false,
+      action: warning.action,
+    })),
+    warnings: permissionWarnings.map((warning) => warning.message),
+  };
+
+  if (!request.repoFullName || !request.pullNumber) {
+    const summary = commandPreviewSkipSummary("missing_target");
+    const body = sanitizePublicComment(`Gittensory would not post a public command response for ${target}: ${summary}`);
     return {
-      boundary: "public",
-      body: `Gittensory can summarize public-safe context for ${target}. Private scorer details stay out of the PR thread.`,
+      ...base,
+      body,
+      sanitizer: commandPreviewSanitizer(body),
+      decision: commandPreviewDecision({
+        status: "skipped",
+        willComment: false,
+        skipReason: "missing_target",
+        summary,
+      }),
     };
   }
+
+  if (!authorization.authorized) {
+    const body = sanitizePublicComment(`Gittensory would not post a public command response for ${target}: ${commandPreviewSkipSummary(authorization.reason)}.`);
+    return {
+      ...base,
+      body,
+      sanitizer: commandPreviewSanitizer(body),
+      decision: commandPreviewDecision({
+        status: "skipped",
+        willComment: false,
+        skipReason: authorization.reason,
+        summary: commandPreviewSkipSummary(authorization.reason),
+      }),
+    };
+  }
+
+  if (missingPermissions.includes("issues")) {
+    const summary = "GitHub App permission Issues: write is required before a command response can be posted.";
+    const body = sanitizePublicComment(`Gittensory preview is ready for ${target}, but ${summary}`);
+    return {
+      ...base,
+      body,
+      sanitizer: commandPreviewSanitizer(body),
+      decision: commandPreviewDecision({
+        status: "missing_permission",
+        willComment: false,
+        skipReason: "missing_permission",
+        summary,
+      }),
+    };
+  }
+
+  const issue = {
+    number: sample.pullNumber,
+    title: sample.title,
+    state: "open",
+    ...(request.repoFullName && request.pullNumber ? { html_url: `https://github.com/${request.repoFullName}/pull/${request.pullNumber}` } : {}),
+    user: { login: sample.authorLogin },
+    author_association: sample.authorAssociation,
+    labels: sample.labels.map((name) => ({ name })),
+    body: sample.body,
+    pull_request: {},
+  };
+  const pullRequest = buildCommandPreviewPullRequest(request, sample, context.pullRequest);
+  const body =
+    command.id === "public-summary"
+      ? `Gittensory can summarize public-safe context for ${target}. Private scorer details stay out of the PR thread.`
+      : buildPublicAgentCommandComment({
+          command: { name: mentionCommandName, raw: `@gittensory ${mentionCommandName}` },
+          repo: context.repo,
+          issue,
+          pullRequest,
+          actorKind: authorization.actorKind === "maintainer" ? "maintainer" : "author",
+          officialMiner: officialAuthorDetection.status === "confirmed" ? officialAuthorDetection.snapshot : null,
+          maintainerDigest: isMaintainerOnlyCommand(mentionCommandName)
+            ? buildMaintainerQueueDigest({
+                repo: context.repo,
+                issues: [],
+                pullRequests: [pullRequest],
+                confirmedMinerLogins: sample.minerStatus === "confirmed" ? [sample.authorLogin] : [],
+              })
+            : null,
+        });
+
+  return {
+    ...base,
+    body,
+    sanitizer: commandPreviewSanitizer(body),
+    decision: commandPreviewDecision({
+      status: "ready",
+      willComment: true,
+      skipReason: null,
+      summary: "Gittensory would post this sanitized command response and would not create labels or check runs.",
+    }),
+  };
+}
+
+function buildPrivateApiCommandPreview(command: (typeof APP_COMMANDS)[number], request: z.infer<typeof commandPreviewSchema>, target: string) {
   return {
     boundary: command.boundary,
     endpoint: command.endpoint,
+    target,
     body: `${command.command} will call ${command.endpoint} for ${target}${request.login ? ` as ${request.login}` : ""}.`,
+    missingPermissions: [],
+    permissionDiagnostics: [],
+    warnings: [],
+    decision: commandPreviewDecision({
+      status: "private_api",
+      willComment: false,
+      skipReason: null,
+      summary: "Private API preview only; no GitHub comment, label, or check run would be created.",
+    }),
+  };
+}
+
+function previewableMentionCommandName(commandId: string): GittensoryMentionCommandName | null {
+  if (PREVIEWABLE_MENTION_COMMANDS.has(commandId as GittensoryMentionCommandName)) return commandId as GittensoryMentionCommandName;
+  if (commandId === "public-summary") return "help";
+  return null;
+}
+
+function commandPreviewDecision(args: {
+  status: CommandPreviewDecision["status"];
+  willComment: boolean;
+  skipReason: string | null;
+  summary: string;
+}): CommandPreviewDecision {
+  return {
+    status: args.status,
+    willComment: args.willComment,
+    willLabel: false,
+    willCheckRun: false,
+    skipped: args.status === "skipped" || args.status === "missing_permission",
+    skipReason: args.skipReason,
+    actions: args.willComment ? ["comment"] : args.status === "private_api" ? ["none"] : ["skip"],
+    summary: args.summary,
+  };
+}
+
+function buildCommandPreviewSample(request: z.infer<typeof commandPreviewSchema>, pullRequest: PullRequestRecord | null) {
+  const sample = request.sample ?? {};
+  const authorLogin = sample.authorLogin?.trim() || pullRequest?.authorLogin || request.login || "sample-contributor";
+  const commenterAssociation =
+    sample.commenterAssociation ?? (isMaintainerOnlyCommand(previewableMentionCommandName(request.command.replace(/^@gittensory\s+/, "")) ?? "help") ? "OWNER" : "NONE");
+  return {
+    pullNumber: request.pullNumber ?? pullRequest?.number ?? 1,
+    authorLogin,
+    authorType: sample.authorType ?? "User",
+    authorAssociation: sample.authorAssociation ?? pullRequest?.authorAssociation ?? "NONE",
+    commenterLogin: sample.commenterLogin?.trim() || request.login || authorLogin,
+    commenterAssociation,
+    minerStatus: sample.minerStatus ?? "confirmed",
+    title: sample.title?.trim() || pullRequest?.title || "Sample pull request",
+    body: sample.body ?? pullRequest?.body ?? null,
+    labels: sample.labels ?? pullRequest?.labels ?? [],
+    linkedIssues: sample.linkedIssues ?? pullRequest?.linkedIssues ?? [],
+  };
+}
+
+function buildCommandPreviewPullRequest(
+  request: z.infer<typeof commandPreviewSchema>,
+  sample: ReturnType<typeof buildCommandPreviewSample>,
+  pullRequest: PullRequestRecord | null,
+): PullRequestRecord {
+  return {
+    repoFullName: request.repoFullName ?? pullRequest?.repoFullName ?? "selected/repository",
+    number: sample.pullNumber,
+    title: sample.title,
+    state: pullRequest?.state ?? "open",
+    authorLogin: sample.authorLogin,
+    authorAssociation: sample.authorAssociation,
+    headSha: pullRequest?.headSha ?? "preview-head-sha",
+    headRef: pullRequest?.headRef ?? "preview-branch",
+    baseRef: pullRequest?.baseRef ?? "main",
+    htmlUrl: pullRequest?.htmlUrl ?? (request.repoFullName && sample.pullNumber ? `https://github.com/${request.repoFullName}/pull/${sample.pullNumber}` : null),
+    mergedAt: null,
+    isDraft: pullRequest?.isDraft ?? false,
+    mergeableState: pullRequest?.mergeableState ?? null,
+    reviewDecision: pullRequest?.reviewDecision ?? null,
+    body: sample.body,
+    createdAt: pullRequest?.createdAt ?? nowIso(),
+    updatedAt: pullRequest?.updatedAt ?? nowIso(),
+    labels: sample.labels,
+    linkedIssues: sample.linkedIssues,
+  };
+}
+
+function commandPreviewMissingPermissions(request: z.infer<typeof commandPreviewSchema>, installation: InstallationHealthRecord | null): string[] {
+  const configured = new Set([...(installation?.missingPermissions ?? []), ...(request.sample?.missingPermissions ?? [])]);
+  const permissions = request.sample?.permissions ?? installation?.permissions;
+  if (permissions && permissions.issues !== "write") configured.add("issues");
+  return [...configured].sort();
+}
+
+function commandPreviewPermissionWarnings(missingPermissions: string[]) {
+  return missingPermissions.map((permission) => {
+    const requiredAccess = "write";
+    const currentAccess = "missing";
+    return {
+      permission,
+      requiredAccess,
+      currentAccess,
+      action: `Set repository permission ${permission} to ${requiredAccess}, then approve the GitHub App permission change.`,
+      message:
+        permission === "issues"
+          ? "Command responses require GitHub App permission Issues: write; preview will not post while it is missing."
+          : `GitHub App permission ${permission}: ${requiredAccess} is missing for this preview scenario.`,
+    };
+  });
+}
+
+function commandPreviewSanitizer(body: string) {
+  const forbiddenTerms = [
+    "wallet",
+    "hotkey",
+    "raw trust",
+    "trust score",
+    "payout",
+    "reward estimate",
+    "farming",
+    "scoreability",
+    "public score estimate",
+  ].filter((term) => new RegExp(term, "i").test(body));
+  return { passed: forbiddenTerms.length === 0, forbiddenTerms };
+}
+
+function commandPreviewSkipSummary(reason: string): string {
+  const summaries: Record<string, string> = {
+    missing_target: "public command previews require a repository and pull request number.",
+    maintainer_command_requires_maintainer: "maintainer-only commands require an owner, member, or collaborator invocation.",
+    not_maintainer_or_pr_author: "the commenter is neither a maintainer nor the pull request author.",
+    miner_detection_unavailable: "official Gittensor miner detection is unavailable, so Gittensory would skip rather than guess.",
+    pr_author_not_confirmed_miner: "the pull request author is not a confirmed Gittensor miner.",
+  };
+  return summaries[reason] ?? reason.replace(/_/g, " ");
+}
+
+function sampleMinerSnapshot(login: string) {
+  return {
+    source: "gittensor_api" as const,
+    githubId: `preview-${login}`,
+    githubUsername: login,
+    isEligible: true,
+    credibility: 1,
+    eligibleRepoCount: 1,
+    issueDiscoveryScore: 0,
+    issueTokenScore: 0,
+    issueCredibility: 1,
+    isIssueEligible: false,
+    issueEligibleRepoCount: 0,
+    alphaPerDay: 0,
+    taoPerDay: 0,
+    usdPerDay: 0,
+    totals: {
+      pullRequests: 1,
+      mergedPullRequests: 0,
+      openPullRequests: 1,
+      closedPullRequests: 0,
+      openIssues: 0,
+      closedIssues: 0,
+      solvedIssues: 0,
+      validSolvedIssues: 0,
+    },
+    repositories: [],
+    pullRequests: [],
+    issueLabels: [],
   };
 }
 
@@ -2682,6 +3023,25 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
   return null;
+}
+
+async function requireCommandPreviewRepoAccess(
+  c: ProtectedRouteContext,
+  identity: AuthIdentity | null,
+  repoFullName: string | undefined,
+  repo: RepositoryRecord | null,
+): Promise<Response | null> {
+  /* v8 ignore next -- The broad route role guard already authenticates protected preview requests. */
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind !== "session" || !repoFullName) return null;
+  const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
+  if (summary.roles.includes("operator")) return null;
+  const scope = await loadControlPanelAccessScope(c.env, identity.actor);
+  const requestedRepo = repoFullName.toLowerCase();
+  const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
+  if (scopedRepoNames.has(requestedRepo)) return null;
+  if (repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase())) return null;
+  return c.json({ error: "forbidden_repo" }, 403);
 }
 
 function requiresApiToken(path: string): boolean {

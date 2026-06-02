@@ -600,6 +600,12 @@ describe("gittensory-mcp CLI", () => {
     expect(plan.run).toMatchObject({ id: "run-1", status: "completed" });
     expect(plan.actions[0]).toMatchObject({ actionType: "choose_next_work" });
 
+    const planText = await runAsync(["agent", "plan", "--login", "JSONbored", "--repo", "JSONbored/gittensory"], env);
+    expect(planText).toContain("why now:");
+    expect(planText).toContain("impact:");
+    expect(planText).toContain("rerun:");
+    expect(planText).not.toMatch(/wallet|hotkey|raw trust|payout|farming|private reviewability|public score estimate/i);
+
     const statusPayload = JSON.parse(await runAsync(["agent", "status", "run-1", "--json"], env)) as { run: { id: string } };
     expect(statusPayload.run.id).toBe("run-1");
 
@@ -1045,6 +1051,7 @@ async function startFixtureServer(
       return;
     }
     if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {
+      await readJsonRequest(request);
       response.end(JSON.stringify(agentFixture()));
       return;
     }
@@ -1169,7 +1176,23 @@ function agentFixture() {
         recommendation: "Pick narrow work and run branch preflight.",
         why: ["Fixture"],
         blockedBy: [],
+        rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
         publicSafeSummary: "Fixture public summary.",
+        explanationCard: {
+          summary: "Pursue now: this action is the current ranked next step.",
+          whyNow: "Current deterministic planning signals rank this action ahead of other available next steps.",
+          scoreabilityBlocker: "No hard scoreability blocker is visible in current signals.",
+          risk: "No major action-specific risk is visible in the current card.",
+          maintainerFriction: "Narrow, validated work is easier for maintainers to review.",
+          expectedImpact: "Advance toward one narrow, validated contribution path.",
+          blockerGroups: [],
+          rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          publicSafe: {
+            summary: "Fixture public summary.",
+            whyNow: "Fixture public summary.",
+            rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          },
+        },
         approvalRequired: true,
         safetyClass: "private",
         payload: {},

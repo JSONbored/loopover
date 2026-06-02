@@ -103,6 +103,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.UpstreamRulesetSnapshot).toBeDefined();
     expect(spec.components?.schemas?.UpstreamDriftReport).toBeDefined();
     expect(JSON.stringify(spec.components?.schemas?.ScorePreviewResult)).toContain("scenarioPreviews");
+    expect(JSON.stringify(spec.components?.schemas?.AgentAction)).toContain("explanationCard");
     expect(JSON.stringify(spec.components?.schemas?.RepoIntelligence)).toContain("burdenForecastFreshness");
     expect(JSON.stringify(spec.components?.schemas?.CommandPreviewResponse)).toContain("missing_permission");
     expect(JSON.stringify(spec.components?.schemas?.ContributorOutcomeHistory)).toContain("reconciliation");

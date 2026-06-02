@@ -29,6 +29,7 @@ import { buildContributorFit, buildContributorOutcomeHistory, buildContributorPr
 import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { withAgentActionExplanationCard } from "./agent-action-explanation-card";
 import type {
   AgentActionRecord,
   AgentActionStatus,
@@ -125,7 +126,7 @@ export async function getAgentRunBundle(env: Env, runId: string): Promise<AgentR
   const [actions, contextSnapshots] = await Promise.all([listAgentActions(env, runId), listAgentContextSnapshots(env, runId)]);
   return {
     run,
-    actions,
+    actions: actions.map(withAgentActionExplanationCard),
     contextSnapshots,
     summary: summarizeRun(run, actions),
   };
@@ -596,7 +597,7 @@ function actionRecord(args: {
   evidence?: RecommendationEvidence | undefined;
 }): AgentActionRecord {
   const evidence = args.evidence ?? defaultRecommendationEvidence(args.actionType);
-  return {
+  const action: AgentActionRecord = {
     id: `${args.run.id}:${String(args.index).padStart(2, "0")}:${args.actionType}`,
     runId: args.run.id,
     actionType: args.actionType,
@@ -620,6 +621,7 @@ function actionRecord(args: {
     },
     createdAt: nowIso(),
   };
+  return withAgentActionExplanationCard(action);
 }
 
 function decisionPackEvidence(pack: ContributorDecisionPack, decision: RepoDecision, sourceSummary: string): RecommendationEvidence {

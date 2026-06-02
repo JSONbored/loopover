@@ -1199,6 +1199,7 @@ describe("api routes", () => {
       roleCards: expect.arrayContaining([expect.objectContaining({ role: "operator", status: "active" })]),
       publicSafe: true,
     });
+    expect((await app.request("/v1/app/roles", {}, env)).status).toBe(401);
 
     const emptyEnv = createTestEnv();
     const emptyOverview = await app.request("/v1/app/overview", { headers: apiHeaders(emptyEnv) }, emptyEnv);
@@ -1239,6 +1240,7 @@ describe("api routes", () => {
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
     const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(forbiddenMiner.status).toBe(403);
+    expect((await app.request("/v1/app/maintainer-dashboard", {}, env)).status).toBe(401);
 
     const unknownEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token: unknownToken } = await createSessionForGitHubUser(unknownEnv, { login: "new-user", id: 2468 });
@@ -1257,6 +1259,7 @@ describe("api routes", () => {
     expect(unknownOverview.status).toBe(200);
     await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/maintainer-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/commands/usefulness", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect(
       (

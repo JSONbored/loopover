@@ -1957,6 +1957,29 @@ export const RegistryChangeReportSchema = z
   })
   .openapi("RegistryChangeReport");
 
+export const AgentActionExplanationCardSchema = z
+  .object({
+    summary: z.string(),
+    whyNow: z.string(),
+    scoreabilityBlocker: z.string(),
+    risk: z.string(),
+    maintainerFriction: z.string(),
+    expectedImpact: z.string(),
+    blockerGroups: z.array(
+      z.object({
+        category: z.enum(["branch", "account", "queue", "scoreability", "risk", "maintainer", "unknown"]),
+        items: z.array(z.string()),
+      }),
+    ),
+    rerunWhen: z.string(),
+    publicSafe: z.object({
+      summary: z.string(),
+      whyNow: z.string(),
+      rerunWhen: z.string(),
+    }),
+  })
+  .openapi("AgentActionExplanationCard");
+
 export const AgentActionSchema = z
   .object({
     id: z.string(),
@@ -1983,6 +2006,7 @@ export const AgentActionSchema = z
     blockedBy: z.array(z.string()),
     rerunWhen: z.string().nullable().optional(),
     publicSafeSummary: z.string(),
+    explanationCard: AgentActionExplanationCardSchema,
     approvalRequired: z.boolean(),
     safetyClass: z.enum(["private", "public_safe", "approval_required"]),
     payload: z.record(z.string(), z.unknown()),

@@ -83,6 +83,22 @@ describe("MCP release changelog detection", () => {
     expect(issue.body).toContain("- [ ] Tag `mcp-v0.4.0`");
   });
 
+  it("escapes untrusted commit subjects in the release-due issue", () => {
+    const maliciousSubject = "feat(mcp): notify @octocat [SECURITY ACTION REQUIRED](https://evil.example/phish) #123";
+    const report = buildMcpReleaseReport({
+      latestTag: { tag: "mcp-v0.3.0", version: "0.3.0" },
+      packageVersion: "0.4.0",
+      publishedVersion: "0.3.0",
+      commits: [commit(maliciousSubject, ["src/mcp/server.ts"])],
+    });
+    const issue = buildMcpReleaseIssue(report);
+
+    expect(issue.body).not.toContain(maliciousSubject);
+    expect(issue.body).toContain("@\u200boctocat");
+    expect(issue.body).toContain("\\[SECURITY ACTION REQUIRED\\]\\(https://evil\\.example/phish\\)");
+    expect(issue.body).toContain("\\#123");
+  });
+
   it("only updates the bot-owned release reminder issue", () => {
     expect(
       isReleaseWatchIssue({

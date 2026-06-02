@@ -685,6 +685,14 @@ describe("agent orchestrator", () => {
       publicSafeSummary: "",
       safetyClass: "public_safe",
     });
+    const cleanup = buildAgentActionExplanationCard({
+      actionType: "cleanup_existing_prs",
+      status: "recommended",
+      why: ["Close stale PRs before opening another one."],
+      blockedBy: ["scoreability gate failed"],
+      publicSafeSummary: "Cleanup existing PRs before asking for another review.",
+      safetyClass: "public_safe",
+    });
 
     expect(recommended.summary).toMatch(/Pursue now/);
     expect(recommended.whyNow).toMatch(/deterministic planning signals/);
@@ -708,6 +716,12 @@ describe("agent orchestrator", () => {
     expect(watch.maintainerFriction).toMatch(/Waiting avoids/);
     expect(watch.expectedImpact).toMatch(/low-confidence/);
     expect(watch.publicSafe.whyNow).toBe(watch.whyNow);
+    expect(cleanup.summary).toMatch(/Cleanup first/);
+    expect(cleanup.whyNow).toMatch(/Open PR pressure/);
+    expect(cleanup.scoreabilityBlocker).toMatch(/scoreability gate failed/);
+    expect(cleanup.risk).toMatch(/increase stale or duplicate review pressure/);
+    expect(cleanup.maintainerFriction).toMatch(/reduces queue noise/);
+    expect(cleanup.expectedImpact).toMatch(/Lower active review pressure/);
   });
 
   it("covers local action ready and blocker-free branches from prepared metadata", () => {

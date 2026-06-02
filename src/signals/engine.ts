@@ -1426,7 +1426,11 @@ function cachedSolvedIssueCounts(issues: IssueRecord[], pullRequests: PullReques
   let solvedIssues = 0;
   let validSolvedIssues = 0;
   for (const issue of issues) {
-    const state = classifyIssueDiscoveryLifecycle(issue, pullRequests, [], lane).state;
+    if (issue.state === "open") continue;
+
+    // Issue linkedPrs can be parsed from contributor-controlled issue body text. Cache-derived
+    // outcome counts only trust solver links carried by the merged PR record itself.
+    const state = classifyIssueDiscoveryLifecycle({ ...issue, linkedPrs: [] }, pullRequests, [], lane).state;
     if (state === "valid_solved") {
       validSolvedIssues += 1;
       solvedIssues += 1;

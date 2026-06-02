@@ -71,5 +71,8 @@ describe("playground tool requests", () => {
     expect(buildPlaygroundRequest({ ...base, tool: "explain-blockers" }).path).toBe(
       "/v1/agent/explain-blockers",
     );
+    expect(buildPlaygroundRequest({ ...base, tool: "preflight-branch" }).path).toBe(
+      "/v1/agent/preflight-branch",
+    );
   });
 });

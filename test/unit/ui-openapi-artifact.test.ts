@@ -33,7 +33,7 @@ describe("UI OpenAPI artifact", () => {
   it("matches the generated modern contract and production server only", () => {
     const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as {
       paths?: Record<string, unknown>;
-      servers?: Array<{ url: string }>;
+      servers?: Array<{ url: string; description?: string }>;
     };
     const spec = buildOpenApiSpec();
     expect(Object.keys(artifact.paths ?? {}).sort()).toEqual(Object.keys(spec.paths ?? {}).sort());

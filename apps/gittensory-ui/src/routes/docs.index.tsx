@@ -103,6 +103,7 @@ const AUDIENCES: Audience[] = [
     description: "Deterministic MCP tools for Codex, Claude Desktop, Cursor.",
     primary: { to: "/docs/mcp-clients", label: "MCP client setup" },
     links: [
+      { to: "/docs/api-explorer", label: "API explorer & playground" },
       { to: "/docs/branch-analysis", label: "Branch analysis schema" },
       { to: "/docs/ai-summaries", label: "AI summary boundaries" },
     ],

@@ -13,6 +13,7 @@ export const docsNav: DocsGroup[] = [
       { to: "/docs/beta-onboarding", label: "Beta onboarding" },
       { to: "/docs/quickstart", label: "Quickstart" },
       { to: "/docs/mcp-clients", label: "MCP client setup" },
+      { to: "/docs/api-explorer", label: "API explorer" },
     ],
   },
   {

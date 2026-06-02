@@ -34,6 +34,7 @@ import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
 import { Route as DocsAiSummariesRouteImport } from './routes/docs.ai-summaries'
+import { Route as DocsApiExplorerRouteImport } from './routes/docs.api-explorer'
 import { Route as AppWorkbenchRouteImport } from './routes/app.workbench'
 import { Route as AppRunsRouteImport } from './routes/app.runs'
 import { Route as AppReposRouteImport } from './routes/app.repos'
@@ -172,6 +173,11 @@ const DocsAiSummariesRoute = DocsAiSummariesRouteImport.update({
   path: '/ai-summaries',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsApiExplorerRoute = DocsApiExplorerRouteImport.update({
+  id: '/api-explorer',
+  path: '/api-explorer',
+  getParentRoute: () => DocsRoute,
+} as any)
 const AppWorkbenchRoute = AppWorkbenchRouteImport.update({
   id: '/workbench',
   path: '/workbench',
@@ -257,6 +263,7 @@ export interface FileRoutesByFullPath {
   '/app/runs': typeof AppRunsRoute
   '/app/workbench': typeof AppWorkbenchRoute
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
+  '/docs/api-explorer': typeof DocsApiExplorerRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
@@ -293,6 +300,7 @@ export interface FileRoutesByTo {
   '/app/runs': typeof AppRunsRoute
   '/app/workbench': typeof AppWorkbenchRoute
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
+  '/docs/api-explorer': typeof DocsApiExplorerRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
@@ -333,6 +341,7 @@ export interface FileRoutesById {
   '/app/runs': typeof AppRunsRoute
   '/app/workbench': typeof AppWorkbenchRoute
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
+  '/docs/api-explorer': typeof DocsApiExplorerRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
@@ -374,6 +383,7 @@ export interface FileRouteTypes {
     | '/app/runs'
     | '/app/workbench'
     | '/docs/ai-summaries'
+    | '/docs/api-explorer'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
@@ -410,6 +420,7 @@ export interface FileRouteTypes {
     | '/app/runs'
     | '/app/workbench'
     | '/docs/ai-summaries'
+    | '/docs/api-explorer'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
@@ -449,6 +460,7 @@ export interface FileRouteTypes {
     | '/app/runs'
     | '/app/workbench'
     | '/docs/ai-summaries'
+    | '/docs/api-explorer'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
@@ -655,6 +667,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsAiSummariesRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/api-explorer': {
+      id: '/docs/api-explorer'
+      path: '/api-explorer'
+      fullPath: '/docs/api-explorer'
+      preLoaderRoute: typeof DocsApiExplorerRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/app/workbench': {
       id: '/app/workbench'
       path: '/workbench'
@@ -788,6 +807,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface DocsRouteChildren {
   DocsAiSummariesRoute: typeof DocsAiSummariesRoute
+  DocsApiExplorerRoute: typeof DocsApiExplorerRoute
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
@@ -804,6 +824,7 @@ interface DocsRouteChildren {
 
 const DocsRouteChildren: DocsRouteChildren = {
   DocsAiSummariesRoute: DocsAiSummariesRoute,
+  DocsApiExplorerRoute: DocsApiExplorerRoute,
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,

@@ -10,6 +10,8 @@ import {
   TerminalSquare,
   Wrench,
   Workflow,
+  BookOpen,
+  FlaskConical,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
@@ -68,6 +70,13 @@ const GROUPS: NavGroup[] = [
         icon: Activity,
         roles: ["miner", "maintainer", "owner", "operator"],
       },
+    ],
+  },
+  {
+    label: "Developer",
+    items: [
+      { to: "/app/playground", label: "Agent playground", icon: FlaskConical },
+      { to: "/api", label: "API reference", icon: BookOpen },
     ],
   },
   {

@@ -11,25 +11,21 @@ import { getApiOrigin } from "@/lib/api/origin";
 import { apiFetch } from "@/lib/api/request";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
 import { cn } from "@/lib/utils";
+import {
+  PLAYGROUND_SCENARIOS,
+  PLAYGROUND_TOOLS,
+  buildPlaygroundRequest,
+  playgroundToolUsesPullNumber,
+  playgroundToolUsesScenario,
+  type PlaygroundScenarioId,
+  type PlaygroundToolId,
+} from "@/lib/playground-tools";
 
-const TOOLS = [
-  { id: "plan-next-work", label: "Plan next work" },
-  { id: "explain-blockers", label: "Explain blockers" },
-  { id: "preflight-branch", label: "Preflight branch" },
-  { id: "prepare-pr-packet", label: "Prepare PR packet" },
-  { id: "public-safe-comment", label: "Public-safe comment preview" },
-] as const;
+const TOOLS = PLAYGROUND_TOOLS;
+type Tool = PlaygroundToolId;
 
-type Tool = (typeof TOOLS)[number]["id"];
-
-const SCENARIOS = [
-  { id: "gated", label: "Gated today" },
-  { id: "after-pending", label: "After pending merges" },
-  { id: "clean", label: "Clean-gate" },
-  { id: "best-reasonable", label: "Best reasonable" },
-] as const;
-
-type Scenario = (typeof SCENARIOS)[number]["id"];
+const SCENARIOS = PLAYGROUND_SCENARIOS;
+type Scenario = PlaygroundScenarioId;
 
 interface HistoryEntry {
   id: string;
@@ -78,6 +74,7 @@ export function PlaygroundPanel({ defaultTool = "preflight-branch" }: { defaultT
   const [branch, setBranch] = useState("feat/coverage-1204");
   const [aiSummary, setAiSummary] = useState(true);
   const [scenario, setScenario] = useState<Scenario>("gated");
+  const [pullNumber, setPullNumber] = useState("1");
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -98,7 +95,8 @@ export function PlaygroundPanel({ defaultTool = "preflight-branch" }: { defaultT
     [branch, liveResult, repo, scenario, tool],
   );
   const ai = useMemo(() => summarizeResult(tool, result), [tool, result]);
-  const showScenarios = tool === "preflight-branch" || tool === "plan-next-work";
+  const showScenarios = playgroundToolUsesScenario(tool);
+  const showPullNumber = playgroundToolUsesPullNumber(tool);
 
   const recordRun = (entry: Omit<HistoryEntry, "id" | "createdAt">) => {
     const next: HistoryEntry = {
@@ -124,10 +122,11 @@ export function PlaygroundPanel({ defaultTool = "preflight-branch" }: { defaultT
       if (canUseLiveApi && session) {
         const live = await runLiveTool({
           tool,
-          repo,
-          branch,
+          repoFullName: repo,
+          branchName: branch,
           scenario,
           login: session.login,
+          pullNumber: showPullNumber ? Number.parseInt(pullNumber, 10) || 1 : undefined,
         });
         if (live.ok) {
           setLiveResult(live.data);
@@ -248,6 +247,19 @@ export function PlaygroundPanel({ defaultTool = "preflight-branch" }: { defaultT
               className="mt-1 w-full rounded-token border-hairline bg-background/60 px-2 py-1.5 font-mono text-token-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             />
           </div>
+          {showPullNumber && (
+            <div>
+              <label className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Pull number
+              </label>
+              <input
+                inputMode="numeric"
+                value={pullNumber}
+                onChange={(e) => setPullNumber(e.target.value.replace(/\D/g, "") || "1")}
+                className="mt-1 w-full rounded-token border-hairline bg-background/60 px-2 py-1.5 font-mono text-token-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              />
+            </div>
+          )}
           <Button
             type="button"
             className="w-full"
@@ -509,61 +521,30 @@ function HistoryRow({
 
 async function runLiveTool(args: {
   tool: Tool;
-  repo: string;
-  branch: string;
+  repoFullName: string;
+  branchName: string;
   scenario: Scenario;
   login: string;
+  pullNumber?: number;
 }) {
-  if (args.tool === "public-safe-comment") {
-    return apiFetch<unknown>(`${getApiOrigin().replace(/\/$/, "")}/v1/app/commands/preview`, {
-      method: "POST",
-      label: "Playground public summary",
-      credentials: "include",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        command: "public-summary",
-        repoFullName: args.repo,
-        login: args.login,
-      }),
-      timeoutMs: 20_000,
-    });
-  }
-  const endpoint =
-    args.tool === "plan-next-work"
-      ? "/v1/agent/plan-next-work"
-      : args.tool === "explain-blockers"
-        ? "/v1/agent/explain-blockers"
-        : args.tool === "preflight-branch"
-          ? "/v1/agent/preflight-branch"
-          : "/v1/agent/prepare-pr-packet";
-  const body =
-    endpoint === "/v1/agent/plan-next-work" || endpoint === "/v1/agent/explain-blockers"
-      ? {
-          login: args.login,
-          repoFullName: args.repo,
-          surface: "api",
-          objective: `${args.tool} for ${args.repo}`,
-        }
-      : {
-          login: args.login,
-          repoFullName: args.repo,
-          branchName: args.branch,
-          headRef: args.branch,
-          title: `${args.tool} preview`,
-          scenarioNotes: [args.scenario],
-        };
-  return apiFetch<unknown>(`${getApiOrigin().replace(/\/$/, "")}${endpoint}`, {
-    method: "POST",
+  const request = buildPlaygroundRequest({
+    tool: args.tool,
+    login: args.login,
+    repoFullName: args.repoFullName,
+    branchName: args.branchName,
+    scenario: args.scenario,
+    pullNumber: args.pullNumber,
+  });
+  const origin = getApiOrigin().replace(/\/$/, "");
+  return apiFetch<unknown>(`${origin}${request.path}`, {
+    method: request.method,
     label: `Playground ${args.tool}`,
     credentials: "include",
     headers: {
       Accept: "application/json",
-      "Content-Type": "application/json",
+      ...(request.body ? { "Content-Type": "application/json" } : {}),
     },
-    body: JSON.stringify(body),
+    body: request.body ? JSON.stringify(request.body) : undefined,
     timeoutMs: 20_000,
   });
 }

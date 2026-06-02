@@ -1135,6 +1135,16 @@ export function createApp() {
       clientName: "browser_extension",
       metadata: { hasContributorContext: Boolean(contributorContext), hasCachedPullRequest: Boolean(pullRequest) },
     });
+    await recordRouteProductUsage(c, {
+      surface: "browser_extension",
+      eventName: "pull_context_viewed",
+      identity,
+      repoFullName: fullName,
+      targetKey: `${fullName}#${pullNumber}`,
+      outcome: "success",
+      clientName: "browser_extension",
+      metadata: { hasContributorContext: Boolean(contributorContext), hasCachedPullRequest: Boolean(pullRequest) },
+    });
     return c.json({
       generatedAt: nowIso(),
       repoFullName: fullName,

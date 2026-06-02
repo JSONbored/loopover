@@ -242,7 +242,7 @@ export function buildOpenApiSpec() {
         content: {
           "application/json": {
             schema: z.object({
-              installations: z.array(z.record(z.unknown())),
+              installations: z.array(z.record(z.string(), z.unknown())),
               health: z.array(InstallationHealthSchema),
             }),
           },
@@ -569,7 +569,7 @@ export function buildOpenApiSpec() {
     method: "get",
     path: "/v1/app/overview",
     responses: {
-      200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.unknown()) } } },
+      200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       401: { description: "Unauthorized" },
     },
   });
@@ -589,7 +589,7 @@ export function buildOpenApiSpec() {
       method: "get",
       path,
       responses: {
-        200: { description: "Live app API response", content: { "application/json": { schema: z.record(z.unknown()) } } },
+        200: { description: "Live app API response", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
         401: { description: "Unauthorized" },
       },
     });
@@ -599,8 +599,8 @@ export function buildOpenApiSpec() {
       method: "post",
       path,
       responses: {
-        200: { description: "Live app mutation or preview response", content: { "application/json": { schema: z.record(z.unknown()) } } },
-        201: { description: "Created", content: { "application/json": { schema: z.record(z.unknown()) } } },
+        200: { description: "Live app mutation or preview response", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+        201: { description: "Created", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
         400: { description: "Invalid request" },
         401: { description: "Unauthorized" },
       },
@@ -617,7 +617,7 @@ export function buildOpenApiSpec() {
       }),
     },
     responses: {
-      200: { description: "Browser extension PR context overlay payload", content: { "application/json": { schema: z.record(z.unknown()) } } },
+      200: { description: "Browser extension PR context overlay payload", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       400: { description: "Invalid pull context query" },
       401: { description: "Unauthorized" },
       403: { description: "Extension-scoped session required" },

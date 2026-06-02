@@ -598,6 +598,69 @@ export const RepoSettingsPreviewSchema = z
   })
   .openapi("RepoSettingsPreview");
 
+export const CommandPreviewResponseSchema = z
+  .object({
+    generatedAt: z.string(),
+    command: z.object({
+      id: z.string(),
+      command: z.string(),
+      audience: z.string(),
+      boundary: z.string(),
+      description: z.string(),
+      endpoint: z.string(),
+    }),
+    request: z.record(z.string(), z.unknown()),
+    preview: z.object({
+      boundary: z.enum(["public", "public-safe", "private-api", "private-mcp"]),
+      endpoint: z.string(),
+      target: z.string(),
+      body: z.string(),
+      missingPermissions: z.array(z.string()),
+      permissionDiagnostics: z.array(
+        z.object({
+          permission: z.string(),
+          requiredAccess: z.string(),
+          currentAccess: z.string(),
+          ok: z.boolean(),
+          action: z.string(),
+        }),
+      ),
+      warnings: z.array(z.string()),
+      decision: z.object({
+        status: z.enum(["ready", "skipped", "missing_permission", "private_api"]),
+        willComment: z.boolean(),
+        willLabel: z.boolean(),
+        willCheckRun: z.boolean(),
+        skipped: z.boolean(),
+        skipReason: z.string().nullable(),
+        actions: z.array(z.enum(["comment", "label", "check_run", "skip", "none"])),
+        summary: z.string(),
+      }),
+      sample: z
+        .object({
+          pullNumber: z.number(),
+          authorLogin: z.string(),
+          authorType: z.string(),
+          authorAssociation: z.string(),
+          commenterLogin: z.string(),
+          commenterAssociation: z.string(),
+          minerStatus: z.enum(["confirmed", "not_found", "unavailable"]),
+          title: z.string(),
+          body: z.string().nullable(),
+          labels: z.array(z.string()),
+          linkedIssues: z.array(z.number()),
+        })
+        .optional(),
+      sanitizer: z
+        .object({
+          passed: z.boolean(),
+          forbiddenTerms: z.array(z.string()),
+        })
+        .optional(),
+    }),
+  })
+  .openapi("CommandPreviewResponse");
+
 export const RepoSyncStateSchema = z
   .object({
     repoFullName: z.string(),

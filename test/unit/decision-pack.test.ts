@@ -1155,6 +1155,61 @@ describe("decision-pack service", () => {
     expect(JSON.stringify(buckets.get("maintainer_lane"))).not.toMatch(/reward payout/i);
   });
 
+  it("builds safe portfolio fallbacks for empty and sparse action inputs", () => {
+    const emptyPortfolio = __decisionPackInternals.buildActionPortfolio({
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      repoDecisions: [{ priorityScore: 99 } as RepoDecision],
+      topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "owner/missing", priorityScore: 99, recommendation: "pursue" } as any],
+    });
+    expect(emptyPortfolio.summary).toBe("No portfolio actions are currently available from the decision pack.");
+    expect(emptyPortfolio.topActions).toEqual([]);
+    expect(emptyPortfolio.buckets.every((bucket) => bucket.actions.length === 0)).toBe(true);
+    expect(emptyPortfolio.buckets.find((bucket) => bucket.bucket === "direct_pr")?.summary).toBe("No direct pr opportunities actions are currently recommended.");
+
+    const sparseDecision = {
+      repoFullName: "owner/sparse",
+      recommendation: "pursue",
+      priorityScore: 17,
+      lane: { lane: "direct_pr" },
+      whyThisHelps: ["Decision-level reason."],
+      riskReasons: ["Queue is busy."],
+      nextActions: ["Use decision next action."],
+      publicNextActions: ["Use public preflight."],
+      scoreBlockers: [{ code: "open_pr_pressure", severity: "warning" }],
+      rewardUpside: { directPrShare: 0.02, issueDiscoveryShare: 0, emissionShare: 0.02 },
+    } as RepoDecision;
+
+    const portfolio = __decisionPackInternals.buildActionPortfolio({
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      repoDecisions: [sparseDecision],
+      topActions: [
+        {
+          actionKind: "open_new_direct_pr",
+          repoFullName: "owner/sparse",
+          priorityScore: Number.NaN,
+          recommendation: "pursue",
+          whyThisHelps: undefined,
+          nextActions: undefined,
+          publicNextActions: undefined,
+        } as any,
+      ],
+    });
+
+    const action = portfolio.buckets.find((bucket) => bucket.bucket === "direct_pr")?.actions[0];
+    expect(action).toMatchObject({
+      repoFullName: "owner/sparse",
+      priorityScore: 17,
+      whyNow: ["Queue is busy."],
+      riskImpact: "Queue is busy.",
+      blockedBy: ["open_pr_pressure"],
+      rerunWhen: "Rerun after the listed scoreability blockers change.",
+      nextActions: ["Use decision next action."],
+      publicNextActions: ["Use public preflight."],
+    });
+    expect(action?.scoreabilityImpact).toMatch(/Blocked by open_pr_pressure/);
+    expect(action?.publicSafeSummary).toBe("Use public preflight.");
+  });
+
   it("produces fully deterministic repoDecisions, priorityScores, and nextActions across builds", () => {
     const fixedArgs = () => ({
       login: "jsonbored",

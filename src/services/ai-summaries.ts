@@ -9,9 +9,9 @@ type AiSummaryVisibility = "private" | "public";
 
 const PRIVATE_CONTEXT_PATTERN =
   /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|private reviewability|private scoreability|public score estimates?)\b/gi;
-const PRIVATE_OUTCOME_PATTERN = /\b(payouts?|farming|reward estimates?|reward optimization)\b/gi;
+const PRIVATE_OUTCOME_PATTERN = /\b(payouts?|farming|rewards?|reward estimates?|reward optimization)\b/gi;
 const PUBLIC_FORBIDDEN_TEXT_PATTERN =
-  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|estimated scores?|score estimates?|public score estimates?|reward estimates?|payouts?|farming|private reviewability|private scoreability|reward optimization)\b/i;
+  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|estimated scores?|score estimates?|public score estimates?|estimated rewards?|rewards?|reward estimates?|payouts?|farming|private reviewability|private scoreability|private rankings?|rankings?|reward optimization)\b/i;
 
 export type AiSummaryResult =
   | { status: "disabled"; reason: string }
@@ -55,7 +55,7 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
           role: "system",
           content:
             visibility === "public"
-              ? "Summarize deterministic Gittensory signals for a public GitHub comment. Do not mention rewards, payouts, wallets, hotkeys, raw trust scores, or private reviewability."
+              ? "Summarize deterministic Gittensory signals for a public GitHub comment. Do not mention rewards, rankings, payouts, wallets, hotkeys, raw trust scores, or private reviewability."
               : "Summarize deterministic Gittensory signals for an authenticated MCP/API user. Be concise and preserve scoreability blockers and next actions.",
         },
         { role: "user", content: prompt },
@@ -175,7 +175,7 @@ function sanitizeAiText(value: string, visibility: AiSummaryVisibility): string 
 function containsPublicForbiddenText(value: string): boolean {
   // Route every public AI output through the canonical public/private sanitizer (issue #151).
   // `sanitizePublicComment` throws on any forbidden public term (wallet, hotkey, raw trust score,
-  // payout, reward estimate, farming, private reviewability, public score estimate).
+  // payout, reward language, farming, private reviewability, public score estimate, or ranking language).
   try {
     sanitizePublicComment(value);
   } catch {
@@ -327,7 +327,7 @@ export async function rewritePublicPrIntelligenceComment(
     bundle: args.bundle,
     fallbackText: args.deterministicBody,
     instructions:
-      "Rewrite this deterministic Gittensory PR signal bundle as a short, friendly public GitHub comment with 3-5 bullet points. Only restate the facts provided. Never mention rewards, payouts, wallets, hotkeys, raw or estimated trust scores, score estimates, farming, or private reviewability, and never claim a guaranteed outcome.",
+      "Rewrite this deterministic Gittensory PR signal bundle as a short, friendly public GitHub comment with 3-5 bullet points. Only restate the facts provided. Never mention rewards, rankings, payouts, wallets, hotkeys, raw or estimated trust scores, score estimates, farming, or private reviewability, and never claim a guaranteed outcome.",
     actor: args.actor,
     route: args.route,
   });

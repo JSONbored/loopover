@@ -808,6 +808,43 @@ export const InstallationHealthSchema = z
   })
   .openapi("InstallationHealth");
 
+export const InstallationRepairSchema = z
+  .object({
+    generatedAt: z.string(),
+    installation: InstallationHealthSchema,
+    installedRepos: z.array(
+      z.object({
+        repoFullName: z.string(),
+        isRegistered: z.boolean(),
+        settings: z.object({
+          publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
+          commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+          checkRunMode: z.enum(["off", "enabled"]),
+          autoLabelEnabled: z.boolean(),
+        }),
+      }),
+    ),
+    requiredPermissions: z.record(z.string(), z.string()),
+    optionalPermissions: z.record(z.string(), z.string()),
+    requiredEvents: z.array(z.string()),
+    optionalEvents: z.array(z.string()),
+    modeImpacts: z.array(
+      z.object({
+        mode: z.enum(["comment", "label", "check_run"]),
+        enabled: z.boolean(),
+        affectedRepoCount: z.number(),
+        requiredPermissions: z.array(z.object({ permission: z.string(), requiredAccess: z.string(), missing: z.boolean(), optional: z.boolean() })),
+        summary: z.string(),
+        action: z.string(),
+      }),
+    ),
+    eventDiagnostics: z.array(z.object({ event: z.string(), missing: z.boolean(), optional: z.boolean(), summary: z.string(), action: z.string() })),
+    repairSteps: z.array(z.string()),
+    refresh: z.object({ method: z.literal("POST"), path: z.string(), lastCheckedAt: z.string() }),
+    refreshed: z.boolean().optional(),
+  })
+  .openapi("InstallationRepair");
+
 export const UpstreamDriftReportSchema = z
   .object({
     id: z.string(),

@@ -432,6 +432,10 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/repos/nope/missing", { headers: apiHeaders(env) }, env)).status).toBe(404);
     expect((await app.request("/v1/installations/not-a-number/health", { headers: apiHeaders(env) }, env)).status).toBe(400);
     expect((await app.request("/v1/installations/999/health", { headers: apiHeaders(env) }, env)).status).toBe(404);
+    expect((await app.request("/v1/installations/not-a-number/repair", { headers: apiHeaders(env) }, env)).status).toBe(400);
+    expect((await app.request("/v1/installations/999/repair", { headers: apiHeaders(env) }, env)).status).toBe(404);
+    expect((await app.request("/v1/installations/not-a-number/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env)).status).toBe(400);
+    expect((await app.request("/v1/installations/999/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env)).status).toBe(404);
     const emptyReadiness = await app.request("/v1/readiness", { headers: apiHeaders(env) }, env);
     expect(emptyReadiness.status).toBe(200);
     await expect(emptyReadiness.json()).resolves.toMatchObject({ registry: null, scoringModel: null, readyForPublicReview: false });

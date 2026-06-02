@@ -7253,6 +7253,382 @@
           "privateTrustEnabled"
         ]
       },
+      "InstallationRepair": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "installation": {
+            "$ref": "#/components/schemas/InstallationHealth"
+          },
+          "installedRepos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "isRegistered": {
+                  "type": "boolean"
+                },
+                "settings": {
+                  "type": "object",
+                  "properties": {
+                    "publicSurface": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "comment_and_label",
+                        "comment_only",
+                        "label_only"
+                      ]
+                    },
+                    "commentMode": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "detected_contributors_only",
+                        "all_prs"
+                      ]
+                    },
+                    "checkRunMode": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "enabled"
+                      ]
+                    },
+                    "autoLabelEnabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "publicSurface",
+                    "commentMode",
+                    "checkRunMode",
+                    "autoLabelEnabled"
+                  ]
+                }
+              },
+              "required": [
+                "repoFullName",
+                "isRegistered",
+                "settings"
+              ]
+            }
+          },
+          "requiredPermissions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "optionalPermissions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "requiredEvents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optionalEvents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modeImpacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "comment",
+                    "label",
+                    "check_run"
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "affectedRepoCount": {
+                  "type": "number"
+                },
+                "requiredPermissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "permission": {
+                        "type": "string"
+                      },
+                      "requiredAccess": {
+                        "type": "string"
+                      },
+                      "missing": {
+                        "type": "boolean"
+                      },
+                      "optional": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "permission",
+                      "requiredAccess",
+                      "missing",
+                      "optional"
+                    ]
+                  }
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "enabled",
+                "affectedRepoCount",
+                "requiredPermissions",
+                "summary",
+                "action"
+              ]
+            }
+          },
+          "eventDiagnostics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "event": {
+                  "type": "string"
+                },
+                "missing": {
+                  "type": "boolean"
+                },
+                "optional": {
+                  "type": "boolean"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event",
+                "missing",
+                "optional",
+                "summary",
+                "action"
+              ]
+            }
+          },
+          "repairSteps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refresh": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "POST"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "lastCheckedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "lastCheckedAt"
+            ]
+          },
+          "refreshed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "installation",
+          "installedRepos",
+          "requiredPermissions",
+          "optionalPermissions",
+          "requiredEvents",
+          "optionalEvents",
+          "modeImpacts",
+          "eventDiagnostics",
+          "repairSteps",
+          "refresh"
+        ]
+      },
+      "InstallationHealth": {
+        "type": "object",
+        "properties": {
+          "installationId": {
+            "type": "number"
+          },
+          "accountLogin": {
+            "type": "string"
+          },
+          "repositorySelection": {
+            "type": "string",
+            "nullable": true
+          },
+          "installedReposCount": {
+            "type": "number"
+          },
+          "registeredInstalledCount": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "needs_attention",
+              "broken"
+            ]
+          },
+          "missingPermissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missingEvents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "checkedAt": {
+            "type": "string"
+          },
+          "errorSummary": {
+            "type": "string",
+            "nullable": true
+          },
+          "requiredPermissions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "requiredEvents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optionalVisibleEvents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permissionRemediation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "permission": {
+                  "type": "string"
+                },
+                "requiredAccess": {
+                  "type": "string"
+                },
+                "currentAccess": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "permission",
+                "requiredAccess",
+                "currentAccess",
+                "ok",
+                "action"
+              ]
+            }
+          },
+          "eventRemediation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "event": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "action": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event",
+                "ok",
+                "action"
+              ]
+            }
+          },
+          "repairSteps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "installationId",
+          "accountLogin",
+          "installedReposCount",
+          "registeredInstalledCount",
+          "status",
+          "missingPermissions",
+          "missingEvents",
+          "permissions",
+          "events",
+          "checkedAt"
+        ]
+      },
       "RepoSettingsPreview": {
         "type": "object",
         "properties": {
@@ -8417,154 +8793,6 @@
           "cappedRepos",
           "staleRepos",
           "rateLimitedRepos"
-        ]
-      },
-      "InstallationHealth": {
-        "type": "object",
-        "properties": {
-          "installationId": {
-            "type": "number"
-          },
-          "accountLogin": {
-            "type": "string"
-          },
-          "repositorySelection": {
-            "type": "string",
-            "nullable": true
-          },
-          "installedReposCount": {
-            "type": "number"
-          },
-          "registeredInstalledCount": {
-            "type": "number"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "healthy",
-              "needs_attention",
-              "broken"
-            ]
-          },
-          "missingPermissions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "missingEvents": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "permissions": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "events": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "checkedAt": {
-            "type": "string"
-          },
-          "errorSummary": {
-            "type": "string",
-            "nullable": true
-          },
-          "requiredPermissions": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "requiredEvents": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "optionalVisibleEvents": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "permissionRemediation": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "permission": {
-                  "type": "string"
-                },
-                "requiredAccess": {
-                  "type": "string"
-                },
-                "currentAccess": {
-                  "type": "string"
-                },
-                "ok": {
-                  "type": "boolean"
-                },
-                "action": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "permission",
-                "requiredAccess",
-                "currentAccess",
-                "ok",
-                "action"
-              ]
-            }
-          },
-          "eventRemediation": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "event": {
-                  "type": "string"
-                },
-                "ok": {
-                  "type": "boolean"
-                },
-                "action": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "event",
-                "ok",
-                "action"
-              ]
-            }
-          },
-          "repairSteps": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "installationId",
-          "accountLogin",
-          "installedReposCount",
-          "registeredInstalledCount",
-          "status",
-          "missingPermissions",
-          "missingEvents",
-          "permissions",
-          "events",
-          "checkedAt"
         ]
       },
       "SyncStatus": {
@@ -10689,6 +10917,60 @@
           },
           "404": {
             "description": "Installation health not found"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/installations/{id}/repair": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "GitHub App installation repair diagnostics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationRepair"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Installation health not found"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/installations/{id}/repair/refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Refreshed GitHub App installation repair diagnostics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationRepair"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Installation not found"
           }
         },
         "security": [

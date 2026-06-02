@@ -1194,6 +1194,113 @@ describe("api routes", () => {
     }
   });
 
+  it("serves installation repair diagnostics and refreshes installation health", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const repoPayload = { name: "gittensory", full_name: "JSONbored/gittensory", private: true, default_branch: "main", owner: { login: "JSONbored" } };
+    await upsertInstallation(env, {
+      installation: {
+        id: 777,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read" },
+        events: ["issues", "pull_request", "repository"],
+      },
+      repositories: [repoPayload],
+    });
+    await upsertRepositoryFromGitHub(env, repoPayload, 777);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: true,
+      checkRunMode: "off",
+    });
+    await upsertInstallationHealth(env, {
+      installationId: 777,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["issues"],
+      missingEvents: ["issue_comment"],
+      permissions: { metadata: "read", pull_requests: "read" },
+      events: ["issues", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    const repair = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
+    expect(repair.status).toBe(200);
+    const repairBody = (await repair.json()) as {
+      installation: { status: string; missingPermissions: string[]; missingEvents: string[] };
+      requiredPermissions: Record<string, string>;
+      optionalPermissions: Record<string, string>;
+      modeImpacts: Array<{ mode: string; enabled: boolean; affectedRepoCount: number; requiredPermissions: Array<{ permission: string; missing: boolean; optional: boolean }> }>;
+      eventDiagnostics: Array<{ event: string; missing: boolean }>;
+      refresh: { method: string; path: string };
+    };
+    expect(repairBody).toMatchObject({
+      installation: { status: "needs_attention", missingPermissions: ["issues"], missingEvents: ["issue_comment"] },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      optionalPermissions: { checks: "write" },
+      refresh: { method: "POST", path: "/v1/installations/777/repair/refresh" },
+    });
+    expect(repairBody.requiredPermissions).not.toHaveProperty("checks");
+    expect(repairBody.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: false, optional: true })] }),
+      ]),
+    );
+    expect(repairBody.eventDiagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ event: "issue_comment", missing: true })]));
+    expect(JSON.stringify(repairBody)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|github_pat|private key/i);
+
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", checkRunMode: "enabled" });
+    await upsertInstallationHealth(env, {
+      installationId: 777,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["checks"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:01:00.000Z",
+    });
+    const repairWithChecks = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
+    const repairWithChecksBody = (await repairWithChecks.json()) as typeof repairBody;
+    expect(repairWithChecksBody.requiredPermissions).toMatchObject({ checks: "write" });
+    expect(repairWithChecksBody.optionalPermissions).toEqual({});
+    expect(repairWithChecksBody.modeImpacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mode: "check_run", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: true, optional: false })] })]),
+    );
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/777")) {
+        return Response.json({
+          id: 777,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+          events: ["issues", "issue_comment", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const refreshed = await app.request("/v1/installations/777/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env);
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({
+      refreshed: true,
+      installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+    });
+  });
+
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other", PRODUCT_USAGE_HASH_SALT: "usage-adoption-test-salt" });
@@ -4592,6 +4699,22 @@ function apiHeaders(env: Env): Record<string, string> {
     authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
     "content-type": "application/json",
   };
+}
+
+async function generatePrivateKeyPem(): Promise<string> {
+  const key = (await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
+  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
+  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
 
 function upstreamContractFetch() {

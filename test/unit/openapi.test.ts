@@ -55,6 +55,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/auth/github/device/start"]).toBeDefined();
     expect(spec.paths["/v1/auth/session"]).toBeDefined();
     expect(spec.paths["/v1/internal/jobs/repair-data-fidelity"]).toBeDefined();
+    expect(spec.paths["/v1/installations/{id}/repair"]).toBeDefined();
+    expect(spec.paths["/v1/installations/{id}/repair/refresh"]).toBeDefined();
 
     for (const removedPath of [
       "/v1/contributors/{login}/opportunities",
@@ -93,6 +95,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.schemas?.PullRequestReviewability).toBeDefined();
     expect(spec.components?.schemas?.LocalBranchAnalysis).toBeDefined();
     expect(spec.components?.schemas?.RepoSettingsPreview).toBeDefined();
+    expect(spec.components?.schemas?.InstallationRepair).toBeDefined();
     expect(spec.components?.schemas?.CommandPreviewResponse).toBeDefined();
     expect(spec.components?.schemas?.AgentRunBundle).toBeDefined();
     expect(spec.components?.schemas?.AgentAction).toBeDefined();

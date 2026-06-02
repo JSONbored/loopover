@@ -697,6 +697,23 @@ describe("agent orchestrator", () => {
       warnings: expect.arrayContaining(["Base branch may be stale.", "GitHub branch status is incomplete.", "Branch eligibility is stale."]),
       assumptions: expect.arrayContaining(["One or more scenario, linked-issue, or branch-eligibility inputs were supplied by the caller."]),
     });
+
+    const staleBaseActions = __agentOrchestratorInternals.buildLocalBranchActions(run, {
+      ...analysis,
+      baseFreshness: { status: "stale", warnings: ["Base branch is stale; rebase before continuing."] },
+    });
+    expect(staleBaseActions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      freshness: "stale",
+    });
+
+    const degradedDataQualityActions = __agentOrchestratorInternals.buildLocalBranchActions(run, {
+      ...analysis,
+      dataQuality: { status: "degraded", warnings: ["Official mirror data unavailable."] },
+    });
+    expect(degradedDataQualityActions[0]?.payload.recommendationEvidence).toMatchObject({
+      freshness: "degraded",
+    });
   });
 
   it("covers watch, pursue, and no-blocker decision branches", async () => {

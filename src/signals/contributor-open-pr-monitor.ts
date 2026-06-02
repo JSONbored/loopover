@@ -58,6 +58,7 @@ export async function buildContributorOpenPrMonitor(env: Env, login: string): Pr
   const packets: ContributorOpenPrNextStepPacket[] = [];
 
   for (const [repoFullName, repoOpen] of byRepo.entries()) {
+    /* v8 ignore next -- openByContributor is filtered through registered which is derived from repositories, so find always succeeds */
     const repo = repositories.find((entry) => entry.fullName.toLowerCase() === repoFullName.toLowerCase()) ?? null;
     const roleContext = buildRoleContext({
       login,
@@ -72,6 +73,7 @@ export async function buildContributorOpenPrMonitor(env: Env, login: string): Pr
     const duplicateNumbers = duplicatePronePullNumbers(repoOpen);
 
     for (const pr of repoOpen) {
+      /* v8 ignore next 2 -- loadContributorRepoOpenPrSignals populates maps for every PR in repoOpen, so get() always returns a value */
       const reviews = signals.reviewsByPullNumber.get(pr.number) ?? [];
       const checks = signals.checksByPullNumber.get(pr.number) ?? [];
       const files = await listPullRequestFiles(env, repoFullName, pr.number);

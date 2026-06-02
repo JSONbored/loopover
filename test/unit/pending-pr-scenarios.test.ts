@@ -343,6 +343,24 @@ describe("pending PR scenario detection", () => {
     ).toMatchObject({ pendingMergedPrCount: 1, pendingScenarioObserved: true, scenarioNotes: ["observed"] });
   });
 
+  it("falls back to createdAt when updatedAt is null and treats unparseable dates as maximally stale", () => {
+    const nullUpdatedAt = classifyOpenPullRequest({
+      pr: pr({ number: 80, updatedAt: null }),
+      roleContext: outsideContributorRole,
+      reviews: [],
+      checks: [],
+    });
+    expect(nullUpdatedAt.classification).toBe("blocked");
+
+    const invalidDate = classifyOpenPullRequest({
+      pr: pr({ number: 81, updatedAt: "not-a-date" }),
+      roleContext: outsideContributorRole,
+      reviews: [approvedReview(81)],
+      checks: [],
+    });
+    expect(invalidDate.classification).toBe("stale_likely_close");
+  });
+
   it("loads cached reviews and checks for contributor open PRs", async () => {
     const env = {} as Env;
     vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(70)]);

@@ -393,6 +393,7 @@ function expectedForRequiredSegment(segment: RepoSyncSegmentRecord, repoTotals: 
     case "pull_request_reviews":
     case "check_summaries":
       return repoTotals.openPullRequestsTotal;
+    /* v8 ignore next -- only called for segments in REQUIRED_OPEN_SEGMENTS, which exactly matches the cases above */
     default:
       return segment.expectedCount;
   }

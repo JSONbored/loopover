@@ -1125,6 +1125,7 @@ export function createApp() {
         hasPublicPacket: publicSafePacketMarkdown.length > 0,
         blockerCount: privateBlockers.length,
       },
+    });
     await recordRouteProductUsage(c, {
       surface: "browser_extension",
       eventName: "pull_context_viewed",

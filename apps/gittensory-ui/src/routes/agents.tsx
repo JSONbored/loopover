@@ -69,6 +69,9 @@ function AgentsPage() {
             <div className="mt-4">
               <CodeBlock code={`gittensory-mcp --stdio`} />
               <div className="mt-2">
+                <CodeBlock code={`npx -y @jsonbored/gittensory-mcp@latest --stdio`} />
+              </div>
+              <div className="mt-2">
                 <CodeBlock lang="http" code={`https://gittensory-api.aethereal.dev/mcp`} />
               </div>
             </div>
@@ -100,9 +103,11 @@ function AgentsPage() {
             </p>
             <div className="mt-4">
               <CodeBlock
-                code={`gittensory-mcp init-client --target codex
-gittensory-mcp init-client --target claude-desktop
-gittensory-mcp init-client --target cursor`}
+                code={`gittensory-mcp doctor
+gittensory-mcp status
+gittensory-mcp init-client --print codex
+gittensory-mcp init-client --print claude
+gittensory-mcp init-client --print cursor`}
               />
             </div>
           </Card>

@@ -56,7 +56,7 @@ function BetaOnboarding() {
           <strong>Install the MCP.</strong> Global install or <code>npx</code> — see{" "}
           <Link to="/docs/quickstart">Quickstart</Link>.
           <CodeBlock
-            code={`npm i -g @jsonbored/gittensory-mcp
+            code={`npm i -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp --help`}
           />
         </li>

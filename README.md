@@ -34,7 +34,7 @@ Cloudflare Workers AI is optional and disabled by default. When enabled, it can 
 Public npm:
 
 ```sh
-npm install -g @jsonbored/gittensory-mcp
+npm install -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp login
 gittensory-mcp doctor
 gittensory-mcp --stdio

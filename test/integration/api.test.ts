@@ -633,6 +633,12 @@ describe("api routes", () => {
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
+    expect(agentPlanPayload.actions[0]?.payload.recommendationEvidence).toMatchObject({
+      confidence: expect.stringMatching(/^(high|medium|low)$/),
+      sourceSummary: expect.any(String),
+      freshness: expect.any(String),
+      sources: expect.arrayContaining([expect.objectContaining({ name: "contributor_decision_pack" })]),
+    });
 
     const fetchedAgentRun = await app.request(`/v1/agent/runs/${agentPlanPayload.run.id}`, { headers: apiHeaders(env) }, env);
     expect(fetchedAgentRun.status).toBe(200);
@@ -3215,8 +3221,15 @@ describe("api routes", () => {
         env,
       );
       expect(response.status).toBe(200);
-      const payload = (await mcpJson(response)) as { result?: { content?: Array<{ text: string }> } };
+      const payload = (await mcpJson(response)) as { result?: { content?: Array<{ text: string }>; structuredContent?: { actions?: Array<{ payload?: Record<string, unknown> }> } } };
       const text = payload.result?.content?.[0]?.text ?? "";
+      if (name === "gittensory_agent_plan_next_work") {
+        expect(payload.result?.structuredContent?.actions?.[0]?.payload?.recommendationEvidence).toMatchObject({
+          confidence: expect.stringMatching(/^(high|medium|low)$/),
+          sourceSummary: expect.any(String),
+          sources: expect.arrayContaining([expect.objectContaining({ name: "contributor_decision_pack" })]),
+        });
+      }
       const privateRewardTools = new Set([
         "gittensory_get_decision_pack",
         "gittensory_explain_repo_decision",

@@ -36,6 +36,9 @@ import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
 
+const FORBIDDEN_PUBLIC_REPORT_TERMS =
+  /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i;
+
 describe("api routes", () => {
   // Freshness/readiness fixtures are dated relative to late May 2026; pin the clock so freshness SLO
   // windows stay deterministic regardless of when CI runs (fixtures otherwise tip "stale" after 7 days).
@@ -618,7 +621,19 @@ describe("api routes", () => {
       status: "ready",
       login: "oktofeesh1",
       repoFullName: "entrius/allways-ui",
-      decision: { repoFullName: "entrius/allways-ui", rewardUpside: expect.any(Object), roleContext: { role: "outside_contributor" } },
+      decision: {
+        repoFullName: "entrius/allways-ui",
+        rewardUpside: expect.any(Object),
+        roleContext: { role: "outside_contributor" },
+        tradeoffSummary: {
+          directPrFit: { level: expect.any(String), summary: expect.any(String) },
+          issueDiscoveryFit: { level: expect.any(String), summary: expect.any(String) },
+          maintainerBurden: { level: expect.any(String), summary: expect.any(String) },
+          queuePressure: { level: expect.any(String), summary: expect.any(String) },
+          policyConfidence: { level: expect.any(String), summary: expect.any(String) },
+          publicSummary: expect.any(String),
+        },
+      },
     });
 
     const agentPlan = await app.request(
@@ -633,7 +648,7 @@ describe("api routes", () => {
     expect(agentPlan.status).toBe(200);
     const agentPlanPayload = (await agentPlan.json()) as {
       run: { id: string; status: string; mode: string; surface: string; payload: Record<string, unknown> };
-      actions: Array<{ actionType: string; publicSafeSummary: string; payload: Record<string, unknown> }>;
+      actions: Array<{ actionType: string; publicSafeSummary: string; explanationCard?: { whyNow: string; rerunWhen: string; publicSafe: Record<string, string> }; payload: Record<string, unknown> }>;
       contextSnapshots: Array<{ payload: Record<string, unknown> }>;
     };
     expect(agentPlanPayload.run).toMatchObject({ status: "completed", mode: "copilot", surface: "api" });
@@ -646,6 +661,12 @@ describe("api routes", () => {
     });
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
+    expect(agentPlanPayload.actions[0]?.explanationCard).toMatchObject({
+      whyNow: expect.any(String),
+      rerunWhen: expect.any(String),
+      publicSafe: expect.any(Object),
+    });
+    expect(JSON.stringify(agentPlanPayload.actions[0]?.explanationCard?.publicSafe)).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score|private reviewability|public score estimate|scoreability/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
     expect(agentPlanPayload.actions[0]?.payload.recommendationEvidence).toMatchObject({
       confidence: expect.stringMatching(/^(high|medium|low)$/),
@@ -1179,6 +1200,113 @@ describe("api routes", () => {
     }
   });
 
+  it("serves installation repair diagnostics and refreshes installation health", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const repoPayload = { name: "gittensory", full_name: "JSONbored/gittensory", private: true, default_branch: "main", owner: { login: "JSONbored" } };
+    await upsertInstallation(env, {
+      installation: {
+        id: 777,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read" },
+        events: ["issues", "pull_request", "repository"],
+      },
+      repositories: [repoPayload],
+    });
+    await upsertRepositoryFromGitHub(env, repoPayload, 777);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: true,
+      checkRunMode: "off",
+    });
+    await upsertInstallationHealth(env, {
+      installationId: 777,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["issues"],
+      missingEvents: ["issue_comment"],
+      permissions: { metadata: "read", pull_requests: "read" },
+      events: ["issues", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    const repair = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
+    expect(repair.status).toBe(200);
+    const repairBody = (await repair.json()) as {
+      installation: { status: string; missingPermissions: string[]; missingEvents: string[] };
+      requiredPermissions: Record<string, string>;
+      optionalPermissions: Record<string, string>;
+      modeImpacts: Array<{ mode: string; enabled: boolean; affectedRepoCount: number; requiredPermissions: Array<{ permission: string; missing: boolean; optional: boolean }> }>;
+      eventDiagnostics: Array<{ event: string; missing: boolean }>;
+      refresh: { method: string; path: string };
+    };
+    expect(repairBody).toMatchObject({
+      installation: { status: "needs_attention", missingPermissions: ["issues"], missingEvents: ["issue_comment"] },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      optionalPermissions: { checks: "write" },
+      refresh: { method: "POST", path: "/v1/installations/777/repair/refresh" },
+    });
+    expect(repairBody.requiredPermissions).not.toHaveProperty("checks");
+    expect(repairBody.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: false, optional: true })] }),
+      ]),
+    );
+    expect(repairBody.eventDiagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ event: "issue_comment", missing: true })]));
+    expect(JSON.stringify(repairBody)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|github_pat|private key/i);
+
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", checkRunMode: "enabled" });
+    await upsertInstallationHealth(env, {
+      installationId: 777,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["checks"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:01:00.000Z",
+    });
+    const repairWithChecks = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
+    const repairWithChecksBody = (await repairWithChecks.json()) as typeof repairBody;
+    expect(repairWithChecksBody.requiredPermissions).toMatchObject({ checks: "write" });
+    expect(repairWithChecksBody.optionalPermissions).toEqual({});
+    expect(repairWithChecksBody.modeImpacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mode: "check_run", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: true, optional: false })] })]),
+    );
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/777")) {
+        return Response.json({
+          id: 777,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+          events: ["issues", "issue_comment", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const refreshed = await app.request("/v1/installations/777/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env);
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({
+      refreshed: true,
+      installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+    });
+  });
+
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other", PRODUCT_USAGE_HASH_SALT: "usage-adoption-test-salt" });
@@ -1368,6 +1496,14 @@ describe("api routes", () => {
     const ownerWeeklyReportBody = await ownerWeeklyReport.json();
     expect(ownerWeeklyReportBody).toMatchObject({ variant: "public", publicSafe: true });
     expect(ownerWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    const ownerWeeklyReportMarkdown = await app.request("/v1/app/analytics/weekly-value-report?format=markdown", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerWeeklyReportMarkdown.status).toBe(200);
+    expect(ownerWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
+    const ownerWeeklyReportMarkdownText = await ownerWeeklyReportMarkdown.text();
+    expect(ownerWeeklyReportMarkdownText).toContain("# Weekly Gittensory value report");
+    expect(ownerWeeklyReportMarkdownText).toContain("## Maintainer trust");
+    expect(ownerWeeklyReportMarkdownText).not.toContain("## Operator detail");
+    expect(ownerWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
     expect((await app.request("/v1/app/analytics/weekly-value-report?variant=operator", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
     expect(ownerExtensionSession.status).toBe(201);
@@ -2563,6 +2699,14 @@ describe("api routes", () => {
       period: expect.objectContaining({ days: 7 }),
       operatorDetails: expect.any(Object),
     });
+    const operatorWeeklyReportMarkdown = await app.request("/v1/app/analytics/weekly-value-report?variant=operator&format=markdown", { headers: apiHeaders(env) }, env);
+    expect(operatorWeeklyReportMarkdown.status).toBe(200);
+    expect(operatorWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
+    const operatorWeeklyReportMarkdownText = await operatorWeeklyReportMarkdown.text();
+    expect(operatorWeeklyReportMarkdownText).toContain("## Adoption metrics");
+    expect(operatorWeeklyReportMarkdownText).toContain("## Operator detail");
+    expect(operatorWeeklyReportMarkdownText).toContain("- Product events:");
+    expect(operatorWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {
@@ -2735,6 +2879,71 @@ describe("api routes", () => {
     expect(githubCalls).toEqual([]);
     const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");
     expect(mutatingCalls).toEqual([]);
+  });
+
+  it("blocks command previews for sibling repos that only share an installation", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: {
+        id: 7001,
+        account: { login: "target-org", id: 7001, type: "Organization" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issue_comment", "pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "allowed", full_name: "target-org/allowed", private: true, default_branch: "main", owner: { login: "target-org" } },
+      7001,
+    );
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "secret", full_name: "target-org/secret", private: true, default_branch: "main", owner: { login: "target-org" } },
+      7001,
+    );
+    await upsertPullRequestFromGitHub(env, "target-org/allowed", {
+      number: 1,
+      title: "Allowed maintainer evidence",
+      state: "open",
+      html_url: "https://github.com/target-org/allowed/pull/1",
+      user: { login: "collab" },
+      author_association: "MEMBER",
+      labels: [],
+      body: "Maintainer evidence for one repository only.",
+    });
+    await upsertPullRequestFromGitHub(env, "target-org/secret", {
+      number: 99,
+      title: "SECRET roadmap PR title",
+      state: "open",
+      html_url: "https://github.com/target-org/secret/pull/99",
+      user: { login: "other-user" },
+      author_association: "NONE",
+      labels: [{ name: "confidential-roadmap" }],
+      body: "SECRET-LAUNCH-CODE: fixes #321; do not disclose.",
+    });
+    const { token } = await createSessionForGitHubUser(env, { login: "collab", id: 7002 });
+    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+
+    const allowedPreview = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers, body: JSON.stringify({ command: "plan-next-work", repoFullName: "target-org/allowed", pullNumber: 1 }) },
+      env,
+    );
+    expect(allowedPreview.status).toBe(200);
+
+    const siblingPreview = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers, body: JSON.stringify({ command: "plan-next-work", repoFullName: "target-org/secret", pullNumber: 99 }) },
+      env,
+    );
+    expect(siblingPreview.status).toBe(403);
+    const body = await siblingPreview.text();
+    expect(body).toContain("forbidden_repo");
+    expect(body).not.toContain("SECRET roadmap PR title");
+    expect(body).not.toContain("SECRET-LAUNCH-CODE");
+    expect(body).not.toContain("confidential-roadmap");
   });
 
   it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {
@@ -4496,6 +4705,22 @@ function apiHeaders(env: Env): Record<string, string> {
     authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
     "content-type": "application/json",
   };
+}
+
+async function generatePrivateKeyPem(): Promise<string> {
+  const key = (await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
+  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
+  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
 
 function upstreamContractFetch() {

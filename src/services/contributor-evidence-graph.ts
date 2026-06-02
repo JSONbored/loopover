@@ -209,7 +209,7 @@ export function buildContributorEvidenceGraph(args: ContributorEvidenceGraphInpu
     const key = repoFullName.toLowerCase();
     if (!repoNamesByKey.has(key)) repoNamesByKey.set(key, repoFullName);
   };
-  for (const repoFullName of args.profile.registeredRepoActivity.reposTouched) addRepo(repoFullName);
+  for (const repoFullName of args.profile.registeredRepoActivity?.reposTouched ?? []) addRepo(repoFullName);
   for (const stat of repoStatsByRepo.values()) addRepo(stat.repoFullName);
   for (const pr of contributorPullRequests) addRepo(pr.repoFullName);
   for (const issue of contributorIssues) addRepo(issue.repoFullName);
@@ -310,7 +310,7 @@ export function evidenceGraphTouchedRepoFullNames(args: {
     const key = repoFullName.toLowerCase();
     if (!namesByKey.has(key)) namesByKey.set(key, repoFullName);
   };
-  for (const repoFullName of args.profile?.registeredRepoActivity.reposTouched ?? []) add(repoFullName);
+  for (const repoFullName of args.profile?.registeredRepoActivity?.reposTouched ?? []) add(repoFullName);
   for (const repo of args.profile?.gittensor?.repositories ?? []) add(repo.repoFullName);
   for (const stat of args.repoStats ?? []) if (sameLogin(stat.login, args.login)) add(stat.repoFullName);
   for (const pr of args.pullRequests ?? []) if (sameLogin(pr.authorLogin, args.login)) add(pr.repoFullName);
@@ -370,8 +370,7 @@ function preferredLabelEdges(buckets: LabelBucket[], generatedAt: string): Contr
       (left, right) =>
         right.pullRequests + right.issues - (left.pullRequests + left.issues) ||
         left.repoFullName.localeCompare(right.repoFullName) ||
-        left.label.localeCompare(right.label) ||
-        SOURCE_PRIORITY[left.source] - SOURCE_PRIORITY[right.source],
+        left.label.localeCompare(right.label),
     );
 }
 

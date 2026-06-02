@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -346,6 +346,120 @@ describe("gittensory-mcp CLI", () => {
     });
     expect(telemetryHeaders).not.toContain("session-token");
     expect(telemetryHeaders).not.toContain(tempDir);
+  });
+
+  it("caches last-good decision packs and returns explicitly stale local fallback when the API is unavailable", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_API_TIMEOUT_MS: "100",
+    };
+
+    const online = JSON.parse(await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)) as { status: string; source: string };
+    expect(online).toMatchObject({ status: "ready", source: "snapshot" });
+
+    const cacheText = readDecisionPackCacheText(tempDir);
+    expect(cacheText).not.toMatch(/must stay local|wallet-value|hotkey-value|\/tmp\/source/i);
+
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = null;
+
+    const offline = JSON.parse(await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)) as {
+      source: string;
+      stale: boolean;
+      freshness: string;
+      cachedAt: string;
+      cache: { source: string; clearCommand: string; rerunGuidance: string };
+    };
+    expect(offline).toMatchObject({
+      source: "local_cache",
+      stale: true,
+      freshness: "stale",
+      cache: { source: "local_cache", clearCommand: "gittensory-mcp cache clear" },
+    });
+    expect(offline.cachedAt).toEqual(expect.any(String));
+    expect(offline.cache.rerunGuidance).toMatch(/Retry when Gittensory API access is restored/);
+
+    const repoDecision = JSON.parse(await runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)) as {
+      status: string;
+      source: string;
+      stale: boolean;
+      decision: { repoFullName: string; recommendation: string };
+    };
+    expect(repoDecision).toMatchObject({
+      status: "ready",
+      source: "local_cache",
+      stale: true,
+      decision: { repoFullName: "JSONbored/gittensory", recommendation: "pursue" },
+    });
+  });
+
+  it("ignores incompatible decision-pack cache entries and clears cache entries on request", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_API_TIMEOUT_MS: "100",
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    const cachePath = decisionPackCacheFile(tempDir);
+    const entry = JSON.parse(readFileSync(cachePath, "utf8"));
+    writeFileSync(cachePath, `${JSON.stringify({ ...entry, schemaVersion: 999 }, null, 2)}\n`, { mode: 0o600 });
+
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = null;
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/fetch failed|ECONNREFUSED|aborted/i);
+
+    const cleared = JSON.parse(run(["cache", "clear", "--json"], env)) as { status: string; removed: number };
+    expect(cleared).toMatchObject({ status: "cleared", removed: 1 });
+    const cacheStatus = JSON.parse(run(["cache", "status", "--json"], env)) as { entries: number };
+    expect(cacheStatus.entries).toBe(0);
+  });
+
+  it("does not use stale decision-pack cache for authorization failures", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const fixtureOptions: { decisionPackStatus?: number } = {};
+    const url = await startFixtureServer(fixtureOptions);
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    fixtureOptions.decisionPackStatus = 403;
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
+  });
+
+  it("does not use stale decision-pack cache when local credentials are missing", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    const withoutToken = {
+      ...env,
+      GITTENSORY_API_TOKEN: "",
+      GITTENSORY_TOKEN: "",
+      GITTENSORY_MCP_TOKEN: "",
+    };
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], withoutToken)).rejects.toThrow(/Run `gittensory-mcp login`/);
+    await expect(runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], withoutToken)).rejects.toThrow(
+      /Run `gittensory-mcp login`/,
+    );
   });
 
   it("runs base-agent CLI commands against API fixtures", async () => {
@@ -703,6 +817,19 @@ async function capturePacketValidation(tempDir: string, validationArgs: string[]
   return (requests[0] as { validation: Array<{ command: string; status: string; exitCode?: number; summary?: string }> }).validation;
 }
 
+function decisionPackCacheFile(configDir: string) {
+  const cacheDir = join(configDir, "cache", "decision-packs");
+  const files = readdirSync(cacheDir).filter((name) => name.endsWith(".json"));
+  expect(files).toHaveLength(1);
+  const file = files[0];
+  if (!file) throw new Error("expected one decision-pack cache file");
+  return join(cacheDir, file);
+}
+
+function readDecisionPackCacheText(configDir: string) {
+  return readFileSync(decisionPackCacheFile(configDir), "utf8");
+}
+
 async function startFixtureServer(
   options: {
     latestVersion?: string;
@@ -710,6 +837,7 @@ async function startFixtureServer(
     minMcpVersion?: string;
     compatibilityStatus?: number;
     npmStatus?: number;
+    decisionPackStatus?: number;
     packetMarkdown?: string;
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
@@ -762,6 +890,15 @@ async function startFixtureServer(
     }
     if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-token") {
       response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/decision-pack" && request.method === "GET") {
+      if (options.decisionPackStatus && options.decisionPackStatus >= 400) {
+        response.statusCode = options.decisionPackStatus;
+        response.end(JSON.stringify({ error: "decision_pack_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify(decisionPackFixture()));
       return;
     }
     if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {
@@ -823,6 +960,49 @@ function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Linked Con
         },
       },
     ],
+  };
+}
+
+function decisionPackFixture() {
+  return {
+    status: "ready",
+    source: "snapshot",
+    login: "JSONbored",
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    stale: false,
+    freshness: "fresh",
+    rebuildEnqueued: false,
+    scoringModelSnapshotId: "scoring-1",
+    profile: {
+      login: "JSONbored",
+      github: { topLanguages: ["TypeScript"] },
+      source: { cache: "fixture" },
+      officialStats: { totalMergedPrs: 12, hotkey: "hotkey-value", wallet: "wallet-value" },
+      registeredRepoActivity: {},
+      trustSignals: {},
+    },
+    outcomeHistory: {},
+    roleContexts: [],
+    opportunities: [],
+    repoDecisions: [
+      {
+        repoFullName: "JSONbored/gittensory",
+        recommendation: "pursue",
+        nextActions: ["Pick one narrow change."],
+        changedFiles: [{ path: "src/cache.ts", content: "must stay local" }],
+        localPath: "/tmp/source/private.ts",
+      },
+    ],
+    topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "JSONbored/gittensory", priorityScore: 50 }],
+    cleanupFirst: [],
+    pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "pursue" }],
+    avoidRepos: [],
+    maintainerLaneRepos: [],
+    scoreBlockers: [],
+    dataQuality: { signalFidelity: { status: "complete" } },
+    summary: "fixture decision pack",
+    nextActions: ["Pick one narrow change."],
+    sourceContents: "must stay local",
   };
 }
 

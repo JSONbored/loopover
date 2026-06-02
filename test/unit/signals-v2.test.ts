@@ -282,6 +282,25 @@ describe("v2 signal builders", () => {
     expect(report.changedRepos[0]?.changes).toContain("emission_share 0.01 -> 0.02");
   });
 
+  it("reports changes to fixed base score, default label multiplier, and eligibility mode", () => {
+    // Only fixedBaseScore changes; every other compared field is identical. The base
+    // score override is the highest-impact registry change, so it must be surfaced.
+    const previous = snapshot("old", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, fixedBaseScore: 2 }]);
+    const current = snapshot("new", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, fixedBaseScore: 50 }]);
+    const report = buildRegistryChangeReport([current, previous]);
+    expect(report.changedRepos).toHaveLength(1);
+    expect(report.changedRepos[0]?.changes).toContain("fixed_base_score 2 -> 50");
+    expect(report.summary).toContain("1 changed");
+
+    // eligibility_mode and default_label_multiplier are tracked too.
+    const beforeMode = snapshot("old2", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, eligibilityMode: "branch_required", defaultLabelMultiplier: 1 }]);
+    const afterMode = snapshot("new2", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, eligibilityMode: "any_branch", defaultLabelMultiplier: 1.2 }]);
+    const modeReport = buildRegistryChangeReport([afterMode, beforeMode]);
+    expect(modeReport.changedRepos[0]?.changes).toEqual(
+      expect.arrayContaining(["eligibility_mode branch_required -> any_branch", "default_label_multiplier 1 -> 1.2"]),
+    );
+  });
+
   it("builds repo-level maintainer packets with fallback actions", () => {
     const packet = buildMaintainerPacket(repo, [], [], repo.fullName);
     const busyPacket = buildMaintainerPacket(repo, issues, pullRequests, repo.fullName);
@@ -1451,7 +1470,18 @@ describe("v2 signal builders", () => {
   });
 });
 
-function snapshot(id: string, repositories: Array<{ repo: string; emissionShare: number; issueDiscoveryShare: number; labelMultipliers: Record<string, number> }>): RegistrySnapshot {
+function snapshot(
+  id: string,
+  repositories: Array<{
+    repo: string;
+    emissionShare: number;
+    issueDiscoveryShare: number;
+    labelMultipliers: Record<string, number>;
+    fixedBaseScore?: number | null;
+    defaultLabelMultiplier?: number | null;
+    eligibilityMode?: string | null;
+  }>,
+): RegistrySnapshot {
   return {
     id,
     generatedAt: "2026-05-23T00:00:00.000Z",

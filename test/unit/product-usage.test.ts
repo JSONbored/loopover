@@ -532,11 +532,13 @@ describe("product usage events", () => {
         roles: [
           "miners",
           "maintainers",
+          "owner",
           "owners",
           "repo-owner",
           "repo owners",
           "repository-owner",
           "repository owners",
+          "operator",
           "operators",
           "author",
           "contributors",
@@ -776,6 +778,10 @@ describe("product usage events", () => {
     const invalidDay = await rollupProductUsageDaily(env, { day: "not-a-day", nowIso: "2026-05-27T12:00:00.000Z" });
     expect(invalidDay.rollups[0]?.day).toBe("2026-05-27");
 
+    const invalidGeneratedAt = await rollupProductUsageDaily(env, { day: "not-a-day", nowIso: "not-an-iso" });
+    expect(invalidGeneratedAt.requestedDays[0]).toBe(invalidGeneratedAt.rollups[0]?.day);
+    expect(invalidGeneratedAt.rollups[0]?.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
     await env.DB.prepare(
       "insert into product_usage_daily_rollups (day, status, total_events, active_actors, active_sessions, active_repos, source_event_count, max_event_capacity, first_event_at, last_event_at, surfaces_json, outcomes_json, events_json, repos_json, commands_json, tools_json, route_classes_json, activation_json, generated_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -848,6 +854,74 @@ describe("product usage events", () => {
     await expect(getProductUsageRollupStatus(env, { nowIso: "2026-05-30T00:20:00.000Z" })).resolves.toMatchObject({
       status: "incomplete",
       incompleteDays: [day],
+    });
+  });
+
+  it("marks retention windows capped when previous usage exceeds the retention scan cap", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const day = "2026-06-20";
+    const previousDay = "2026-06-10";
+    const previousStartMs = Date.parse(`${previousDay}T00:00:00.000Z`);
+    await env.DB.batch(
+      Array.from({ length: 5001 }, (_, index) =>
+        env.DB.prepare(
+          "insert into product_usage_events (id, surface, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(
+          `retention-cap-event-${index}`,
+          "mcp",
+          "mcp_request",
+          "/mcp",
+          index === 5000 ? "retained-actor-hash" : `previous-actor-${index}`,
+          null,
+          null,
+          null,
+          "success",
+          null,
+          null,
+          null,
+          JSON.stringify({ role: "miner" }),
+          new Date(previousStartMs + index * 1000).toISOString(),
+        ),
+      ),
+    );
+    await env.DB.prepare(
+      "insert into product_usage_events (id, surface, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        "retention-cap-current-event",
+        "mcp",
+        "mcp_request",
+        "/mcp",
+        "retained-actor-hash",
+        null,
+        null,
+        null,
+        "success",
+        null,
+        null,
+        null,
+        JSON.stringify({ role: "miner" }),
+        `${day}T01:00:00.000Z`,
+      )
+      .run();
+
+    const result = await rollupProductUsageDaily(env, { day, nowIso: "2026-06-21T00:00:00.000Z" });
+
+    expect(result.rollups[0]).toMatchObject({
+      day,
+      status: "complete",
+      totalEvents: 1,
+      retention: expect.arrayContaining([
+        expect.objectContaining({
+          window: "previous_30_days",
+          capped: true,
+          activeActors: 1,
+          retainedActors: 1,
+          retentionRate: 1,
+          byRole: [{ role: "miner", activeActors: 1, retainedActors: 1, retentionRate: 1 }],
+          bySurface: [{ surface: "mcp", activeActors: 1, retainedActors: 1, retentionRate: 1 }],
+        }),
+      ]),
     });
   });
 });

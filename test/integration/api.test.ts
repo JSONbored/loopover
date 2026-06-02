@@ -618,7 +618,19 @@ describe("api routes", () => {
       status: "ready",
       login: "oktofeesh1",
       repoFullName: "entrius/allways-ui",
-      decision: { repoFullName: "entrius/allways-ui", rewardUpside: expect.any(Object), roleContext: { role: "outside_contributor" } },
+      decision: {
+        repoFullName: "entrius/allways-ui",
+        rewardUpside: expect.any(Object),
+        roleContext: { role: "outside_contributor" },
+        tradeoffSummary: {
+          directPrFit: { level: expect.any(String), summary: expect.any(String) },
+          issueDiscoveryFit: { level: expect.any(String), summary: expect.any(String) },
+          maintainerBurden: { level: expect.any(String), summary: expect.any(String) },
+          queuePressure: { level: expect.any(String), summary: expect.any(String) },
+          policyConfidence: { level: expect.any(String), summary: expect.any(String) },
+          publicSummary: expect.any(String),
+        },
+      },
     });
 
     const agentPlan = await app.request(
@@ -2735,6 +2747,71 @@ describe("api routes", () => {
     expect(githubCalls).toEqual([]);
     const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");
     expect(mutatingCalls).toEqual([]);
+  });
+
+  it("blocks command previews for sibling repos that only share an installation", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: {
+        id: 7001,
+        account: { login: "target-org", id: 7001, type: "Organization" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issue_comment", "pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "allowed", full_name: "target-org/allowed", private: true, default_branch: "main", owner: { login: "target-org" } },
+      7001,
+    );
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "secret", full_name: "target-org/secret", private: true, default_branch: "main", owner: { login: "target-org" } },
+      7001,
+    );
+    await upsertPullRequestFromGitHub(env, "target-org/allowed", {
+      number: 1,
+      title: "Allowed maintainer evidence",
+      state: "open",
+      html_url: "https://github.com/target-org/allowed/pull/1",
+      user: { login: "collab" },
+      author_association: "MEMBER",
+      labels: [],
+      body: "Maintainer evidence for one repository only.",
+    });
+    await upsertPullRequestFromGitHub(env, "target-org/secret", {
+      number: 99,
+      title: "SECRET roadmap PR title",
+      state: "open",
+      html_url: "https://github.com/target-org/secret/pull/99",
+      user: { login: "other-user" },
+      author_association: "NONE",
+      labels: [{ name: "confidential-roadmap" }],
+      body: "SECRET-LAUNCH-CODE: fixes #321; do not disclose.",
+    });
+    const { token } = await createSessionForGitHubUser(env, { login: "collab", id: 7002 });
+    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+
+    const allowedPreview = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers, body: JSON.stringify({ command: "plan-next-work", repoFullName: "target-org/allowed", pullNumber: 1 }) },
+      env,
+    );
+    expect(allowedPreview.status).toBe(200);
+
+    const siblingPreview = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers, body: JSON.stringify({ command: "plan-next-work", repoFullName: "target-org/secret", pullNumber: 99 }) },
+      env,
+    );
+    expect(siblingPreview.status).toBe(403);
+    const body = await siblingPreview.text();
+    expect(body).toContain("forbidden_repo");
+    expect(body).not.toContain("SECRET roadmap PR title");
+    expect(body).not.toContain("SECRET-LAUNCH-CODE");
+    expect(body).not.toContain("confidential-roadmap");
   });
 
   it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {

@@ -10,6 +10,9 @@ import {
 } from "../../src/services/decision-pack";
 import { createTestEnv } from "../helpers/d1";
 
+const FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE =
+  /\b(wallet|hotkey|coldkey|raw[-\s]?trust|trust[-\s]?score|reward|reward[-\s]?estimate|payout|farming(?:[-\s]?language)?|private[-\s]?reviewability|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction)|estimated[-\s]?score|score[-\s]?estimate)\b/i;
+
 describe("decision-pack service", () => {
   it("classifies score blockers, recommendations, actions, and explanations deterministically", () => {
     const maintainerRole = { maintainerLane: true } as any;
@@ -981,6 +984,84 @@ describe("decision-pack service", () => {
       expect(joined).not.toMatch(/share|emission|priority/i);
       expect(noStructuralCountLeak(decision.publicNextActions)).toBe(true);
     }
+  });
+
+  it("separates direct-PR, issue-discovery, burden, queue, and policy tradeoff dimensions", async () => {
+    const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
+    const direct = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/direct-fit", 0.04, 0, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 2, closedPullRequestRate: 0, credibility: 1 } as any,
+      totals: { openPullRequestsTotal: 1, openIssuesTotal: 8, mergedPullRequestsTotal: 4, closedUnmergedPullRequestsTotal: 0 } as any,
+      syncState: { primaryLanguage: "TypeScript" } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(direct.tradeoffSummary).toMatchObject({
+      directPrFit: { level: "strong" },
+      issueDiscoveryFit: { level: "weak" },
+      maintainerBurden: { level: "low" },
+      queuePressure: { level: "low" },
+      policyConfidence: { level: "medium" },
+    });
+    expect(direct.tradeoffSummary?.publicSummary).toMatch(/direct PR work is the clearest path/i);
+
+    const issueOnly = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/issue-fit", 0.03, 1, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      issueQuality: {
+        repoFullName: "owner/issue-fit",
+        generatedAt: "2026-06-02T00:00:00.000Z",
+        lane: { repoFullName: "owner/issue-fit", lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 7, title: "Ready duplicate-safe issue", status: "ready", score: 88, reasons: [], warnings: [] }],
+        summary: "1 issue evaluated.",
+      },
+    });
+    expect(issueOnly.tradeoffSummary).toMatchObject({
+      directPrFit: { level: "blocked" },
+      issueDiscoveryFit: { level: "strong" },
+    });
+    expect(issueOnly.tradeoffSummary?.publicSummary).toMatch(/issue discovery is the clearest path/i);
+
+    const splitBusy = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/split-busy", 0.03, 0.5, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequestRate: 0, credibility: 1 } as any,
+      totals: { openPullRequestsTotal: 12, openIssuesTotal: 120, mergedPullRequestsTotal: 4, closedUnmergedPullRequestsTotal: 0 } as any,
+      focusManifest: parseFocusManifest({ source: "repo_file", issueDiscoveryPolicy: "encouraged" }),
+      issueQuality: {
+        repoFullName: "owner/split-busy",
+        generatedAt: "2026-06-02T00:00:00.000Z",
+        lane: { repoFullName: "owner/split-busy", lane: "split", issueDiscoveryShare: 0.5, directPrShare: 0.5, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [{ number: 8, title: "Ready split issue", status: "ready", score: 90, reasons: [], warnings: [] }],
+        summary: "1 issue evaluated.",
+      },
+    });
+    expect(splitBusy.tradeoffSummary).toMatchObject({
+      directPrFit: { level: "moderate" },
+      issueDiscoveryFit: { level: "strong" },
+      maintainerBurden: { level: "high" },
+      queuePressure: { level: "high" },
+      policyConfidence: { level: "high" },
+    });
+
+    const policyConflict = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/policy-conflict", 0.03, 0.5, { bug: 1 }),
+      roleContext: { maintainerLane: false } as any,
+      focusManifest: parseFocusManifest({ source: "repo_file", issueDiscoveryPolicy: "discouraged" }),
+    });
+    expect(policyConflict.tradeoffSummary).toMatchObject({
+      issueDiscoveryFit: { level: "weak" },
+      policyConfidence: { level: "low" },
+    });
+
+    const serialized = JSON.stringify([direct.tradeoffSummary, issueOnly.tradeoffSummary, splitBusy.tradeoffSummary, policyConflict.tradeoffSummary]);
+    expect(serialized).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
+    expect(
+      __decisionPackInternals.sanitizeTradeoffPublicText(
+        "wallet hotkey reward-estimate payout scoreability public-score-prediction trust-score private-reviewability private-scoreability farming-language",
+      ),
+    ).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
   });
 
   it("covers languageMatch true/false and labelFit empty/non-empty paths", () => {

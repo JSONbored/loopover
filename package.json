@@ -67,8 +67,10 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.10",
+    "@cloudflare/workers-types": "^4.20260602.1",
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.1.7",
+    "ai": "^6.0.194",
     "drizzle-kit": "^0.31.7",
     "git-cliff": "^2.13.1",
     "github-actionlint": "^1.7.12",

@@ -1857,22 +1857,28 @@ export function buildRepoOutcomePatterns(args: {
         };
       }),
     // Include merged PRs that exist only in recent_merged_pull_requests (absent from pull_requests).
+    // Derive maintainer lane and author role from payload.author_association when present so that
+    // owner/member/collaborator merges are not counted in the outside-contributor merge rate.
     ...(args.recentMergedPullRequests ?? [])
       .filter((record) => record.repoFullName.toLowerCase() === repoKey && !knownPrNumbers.has(record.number))
-      .map((record): RepoOutcomePullRequest => ({
-        number: record.number,
-        bucket: "merged",
-        decided: true,
-        merged: true,
-        maintainerLane: false,
-        linked: record.linkedIssues.length > 0,
-        labels: [...record.labels].sort(),
-        filePaths: [...record.changedFiles].sort(),
-        changedLineCount: 0,
-        authorRole: "first_time_or_external",
-        hasReview: false,
-        changesRequested: false,
-      })),
+      .map((record): RepoOutcomePullRequest => {
+        const payloadAssociation = typeof record.payload["author_association"] === "string" ? record.payload["author_association"] : undefined;
+        const isMaintainer = isMaintainerAssociation(payloadAssociation);
+        return {
+          number: record.number,
+          bucket: "merged",
+          decided: true,
+          merged: true,
+          maintainerLane: isMaintainer,
+          linked: record.linkedIssues.length > 0,
+          labels: [...record.labels].sort(),
+          filePaths: [...record.changedFiles].sort(),
+          changedLineCount: 0,
+          authorRole: payloadAssociation === "CONTRIBUTOR" ? "returning_contributor" : "first_time_or_external",
+          hasReview: false,
+          changesRequested: false,
+        };
+      }),
   ];
 
   const decided = analyzed.filter((pr) => pr.decided);

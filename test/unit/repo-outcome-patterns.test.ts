@@ -470,6 +470,65 @@ describe("buildRepoOutcomePatterns", () => {
     expect(result.totals.merged).toBe(3);
   });
 
+  it("does not count merged-only OWNER/MEMBER/COLLABORATOR PRs in the outside-contributor merge rate", () => {
+    // 3 outside-contributor PRs from pull_requests: 1 merged, 2 closed.
+    // 10 merged-only maintainer PRs in recent_merged_pull_requests with OWNER/MEMBER/COLLABORATOR associations.
+    // Without the fix: outside merge rate = 11/13 ≈ 0.85 (falsely inflated by owner work).
+    // With the fix: outside merge rate = 1/3 ≈ 0.33 (only outside-contributor decided PRs counted).
+    const pullRequests: PullRequestRecord[] = [
+      mergedPr(1, { authorAssociation: "NONE" }),
+      closedPr(2, { authorAssociation: "NONE" }),
+      closedPr(3, { authorAssociation: "NONE" }),
+    ];
+    const recentMergedPullRequests: RecentMergedPullRequestRecord[] = [
+      ...["OWNER", "OWNER", "OWNER", "MEMBER", "MEMBER", "COLLABORATOR", "COLLABORATOR", "COLLABORATOR", "OWNER", "MEMBER"].map(
+        (association, i): RecentMergedPullRequestRecord => ({
+          repoFullName: REPO,
+          number: 100 + i,
+          title: `Maintainer PR ${100 + i}`,
+          authorLogin: "repo-owner",
+          mergedAt: "2026-05-01T00:00:00.000Z",
+          labels: [],
+          linkedIssues: [],
+          changedFiles: ["src/internal.ts"],
+          payload: { author_association: association },
+        }),
+      ),
+    ];
+    const result = buildRepoOutcomePatterns({ repo: repo(), repoFullName: REPO, pullRequests, recentMergedPullRequests });
+
+    expect(result.totals.analyzed).toBe(13);
+    expect(result.totals.maintainerLanePullRequests).toBe(10);
+    expect(result.totals.outsideContributorPullRequests).toBe(3);
+    // Only the 3 outside-contributor PRs (1 merged, 2 closed) form the denominator.
+    expect(result.outsideContributorMergeRate).toBeCloseTo(1 / 3, 4);
+    // Maintainer merge rate covers the 10 merged-only maintainer PRs.
+    expect(result.maintainerLaneMergeRate).toBeCloseTo(1, 4);
+    // The repo should NOT be flagged as "merges well" since outside rate is low.
+    expect(result.successPatterns.some((p) => p.title === "Outside contributors merge well here")).toBe(false);
+  });
+
+  it("derives returning_contributor authorRole from payload.author_association CONTRIBUTOR on merged-only rows", () => {
+    const pullRequests: PullRequestRecord[] = [closedPr(1)];
+    const recentMergedPullRequests: RecentMergedPullRequestRecord[] = [
+      {
+        repoFullName: REPO,
+        number: 99,
+        title: "Returning contributor PR",
+        authorLogin: "returning-dev",
+        mergedAt: "2026-05-01T00:00:00.000Z",
+        labels: [],
+        linkedIssues: [],
+        changedFiles: [],
+        payload: { author_association: "CONTRIBUTOR" },
+      },
+    ];
+    const result = buildRepoOutcomePatterns({ repo: repo(), repoFullName: REPO, pullRequests, recentMergedPullRequests });
+    // CONTRIBUTOR is outside-contributor lane but returning — must not be maintainerLane.
+    expect(result.totals.maintainerLanePullRequests).toBe(0);
+    expect(result.outsideContributorMergeRate).toBeCloseTo(1 / 2, 4);
+  });
+
   it("never emits forbidden public-surface language", () => {
     const fixtures = [
       buildRepoOutcomePatterns(primaryFixture()),

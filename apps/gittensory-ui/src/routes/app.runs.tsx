@@ -471,9 +471,10 @@ function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
             ? evidencePayload.assumptions
             : []
           ).filter(isString),
-          warnings: (Array.isArray(evidencePayload.warnings) ? evidencePayload.warnings : []).filter(
-            isString,
-          ),
+          warnings: (Array.isArray(evidencePayload.warnings)
+            ? evidencePayload.warnings
+            : []
+          ).filter(isString),
           userSuppliedScenarios: Boolean(evidencePayload.userSuppliedScenarios),
           userSuppliedScenarioCount: Number(evidencePayload.userSuppliedScenarioCount ?? 0),
         }
@@ -953,7 +954,13 @@ function FreshnessWarningsBanner({ warnings }: { warnings: string[] }) {
   );
 }
 
-function SafetyClassBadge({ safetyClass, approvalRequired }: { safetyClass: AgentSafetyClass; approvalRequired: boolean }) {
+function SafetyClassBadge({
+  safetyClass,
+  approvalRequired,
+}: {
+  safetyClass: AgentSafetyClass;
+  approvalRequired: boolean;
+}) {
   if (safetyClass === "public_safe") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-mint/30 bg-mint/10 px-2 py-0.5 font-mono text-token-2xs text-mint">
@@ -980,7 +987,8 @@ function SafetyClassBadge({ safetyClass, approvalRequired }: { safetyClass: Agen
 
 function FreshnessIcon({ freshness }: { freshness: string }) {
   if (freshness === "fresh") return <CheckCircle2 className="size-3 text-mint" />;
-  if (freshness === "stale" || freshness === "possibly_stale") return <AlertTriangle className="size-3 text-warning" />;
+  if (freshness === "stale" || freshness === "possibly_stale")
+    return <AlertTriangle className="size-3 text-warning" />;
   if (freshness === "missing") return <ShieldOff className="size-3 text-muted-foreground" />;
   return <Clock className="size-3 text-muted-foreground" />;
 }
@@ -1013,7 +1021,13 @@ function EvidenceSources({ sources }: { sources: EvidenceSource[] }) {
   );
 }
 
-function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; boundary: Boundary }) {
+function ActionEvidenceList({
+  actions,
+  boundary,
+}: {
+  actions: ActionEvidence[];
+  boundary: Boundary;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
   if (!actions.length) {
     return (
@@ -1038,10 +1052,7 @@ function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; 
           const isOpen = expanded === action.id;
           const ev = action.evidence;
           return (
-            <li
-              key={action.id}
-              className="rounded-token border border-border bg-background/40"
-            >
+            <li key={action.id} className="rounded-token border border-border bg-background/40">
               <button
                 type="button"
                 onClick={() => setExpanded(isOpen ? null : action.id)}
@@ -1087,7 +1098,10 @@ function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; 
                       </div>
                       <ul className="space-y-1">
                         {action.why.map((reason, j) => (
-                          <li key={j} className="flex items-start gap-1.5 text-token-xs text-foreground/80">
+                          <li
+                            key={j}
+                            className="flex items-start gap-1.5 text-token-xs text-foreground/80"
+                          >
                             <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-mint" />
                             {reason}
                           </li>
@@ -1103,7 +1117,10 @@ function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; 
                       </div>
                       <ul className="space-y-1">
                         {action.blockedBy.map((blocker, j) => (
-                          <li key={j} className="flex items-start gap-1.5 text-token-xs text-destructive/80">
+                          <li
+                            key={j}
+                            className="flex items-start gap-1.5 text-token-xs text-destructive/80"
+                          >
                             <AlertTriangle className="mt-0.5 size-3 shrink-0" />
                             {blocker}
                           </li>
@@ -1112,46 +1129,49 @@ function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; 
                     </div>
                   )}
 
-                  {boundary !== "public" && (action.scoreabilityImpact || action.riskImpact || action.maintainerImpact) && (
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      {action.scoreabilityImpact && (
-                        <div>
-                          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                            Scoreability
+                  {boundary !== "public" &&
+                    (action.scoreabilityImpact || action.riskImpact || action.maintainerImpact) && (
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        {action.scoreabilityImpact && (
+                          <div>
+                            <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                              Scoreability
+                            </div>
+                            <p className="mt-0.5 text-token-xs text-foreground/80">
+                              {action.scoreabilityImpact}
+                            </p>
                           </div>
-                          <p className="mt-0.5 text-token-xs text-foreground/80">
-                            {action.scoreabilityImpact}
-                          </p>
-                        </div>
-                      )}
-                      {action.riskImpact && (
-                        <div>
-                          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                            Risk
+                        )}
+                        {action.riskImpact && (
+                          <div>
+                            <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                              Risk
+                            </div>
+                            <p className="mt-0.5 text-token-xs text-foreground/80">
+                              {action.riskImpact}
+                            </p>
                           </div>
-                          <p className="mt-0.5 text-token-xs text-foreground/80">
-                            {action.riskImpact}
-                          </p>
-                        </div>
-                      )}
-                      {action.maintainerImpact && (
-                        <div>
-                          <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                            Maintainer
+                        )}
+                        {action.maintainerImpact && (
+                          <div>
+                            <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                              Maintainer
+                            </div>
+                            <p className="mt-0.5 text-token-xs text-foreground/80">
+                              {action.maintainerImpact}
+                            </p>
                           </div>
-                          <p className="mt-0.5 text-token-xs text-foreground/80">
-                            {action.maintainerImpact}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    )}
 
                   <div>
                     <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
                       Public-safe summary
                     </div>
-                    <p className="mt-0.5 text-token-xs text-foreground/80">{action.publicSafeSummary}</p>
+                    <p className="mt-0.5 text-token-xs text-foreground/80">
+                      {action.publicSafeSummary}
+                    </p>
                   </div>
 
                   {action.rerunWhen && (
@@ -1169,10 +1189,16 @@ function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; 
                         <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
                           Provenance
                         </div>
-                        <span className={cn(
-                          "font-mono text-token-2xs",
-                          ev.confidence === "high" ? "text-mint" : ev.confidence === "medium" ? "text-foreground/60" : "text-warning",
-                        )}>
+                        <span
+                          className={cn(
+                            "font-mono text-token-2xs",
+                            ev.confidence === "high"
+                              ? "text-mint"
+                              : ev.confidence === "medium"
+                                ? "text-foreground/60"
+                                : "text-warning",
+                          )}
+                        >
                           {ev.confidence} confidence · {ev.freshness}
                         </span>
                       </div>
@@ -1181,7 +1207,10 @@ function ActionEvidenceList({ actions, boundary }: { actions: ActionEvidence[]; 
                       {ev.warnings.length > 0 && (
                         <ul className="mt-2 space-y-1">
                           {ev.warnings.map((w, j) => (
-                            <li key={j} className="flex items-start gap-1.5 text-token-xs text-warning/80">
+                            <li
+                              key={j}
+                              className="flex items-start gap-1.5 text-token-xs text-warning/80"
+                            >
                               <AlertTriangle className="mt-0.5 size-3 shrink-0" />
                               {w}
                             </li>

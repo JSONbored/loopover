@@ -596,11 +596,17 @@ describe("api routes", () => {
       profile: { github: { topLanguages: string[] }; officialStats?: Record<string, unknown> | null };
       outcomeHistory: { totals: Record<string, unknown> };
       topActions: unknown[];
+      actionPortfolio: { bucketOrder: string[]; buckets: unknown[]; topActions: unknown[] };
     };
     expect(builtDecisionPayload.profile.github.topLanguages).toEqual(["TypeScript", "Python"]);
     expect(builtDecisionPayload.profile.officialStats).not.toHaveProperty("hotkey");
     expect(builtDecisionPayload.outcomeHistory.totals).toMatchObject({ pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1 });
     expect(builtDecisionPayload.topActions.length).toBeGreaterThan(0);
+    expect(builtDecisionPayload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.any(Array),
+      topActions: expect.any(Array),
+    });
 
     const decisionPack = await app.request("/v1/contributors/oktofeesh1/decision-pack", { headers: apiHeaders(env) }, env);
     expect(decisionPack.status).toBe(200);
@@ -626,10 +632,18 @@ describe("api routes", () => {
     );
     expect(agentPlan.status).toBe(200);
     const agentPlanPayload = (await agentPlan.json()) as {
-      run: { id: string; status: string; mode: string; surface: string };
+      run: { id: string; status: string; mode: string; surface: string; payload: Record<string, unknown> };
       actions: Array<{ actionType: string; publicSafeSummary: string; payload: Record<string, unknown> }>;
+      contextSnapshots: Array<{ payload: Record<string, unknown> }>;
     };
     expect(agentPlanPayload.run).toMatchObject({ status: "completed", mode: "copilot", surface: "api" });
+    expect(agentPlanPayload.run.payload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.any(Array),
+    });
+    expect(agentPlanPayload.contextSnapshots[0]?.payload.actionPortfolio).toMatchObject({
+      buckets: expect.arrayContaining([expect.objectContaining({ bucket: expect.any(String), actions: expect.any(Array) })]),
+    });
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");

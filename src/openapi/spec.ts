@@ -2,6 +2,7 @@ import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-open
 import { z } from "zod";
 import {
   AdvisorySchema,
+  ActionPortfolioSchema,
   AgentActionSchema,
   AgentContextSnapshotSchema,
   AgentRunBundleSchema,
@@ -79,6 +80,7 @@ export function buildOpenApiSpec() {
   registry.register("RegistrySnapshot", RegistrySnapshotSchema);
   registry.register("Repository", RepositorySchema);
   registry.register("Advisory", AdvisorySchema);
+  registry.register("ActionPortfolio", ActionPortfolioSchema);
   registry.register("WorkboardItem", WorkboardItemSchema);
   registry.register("QueueHealth", QueueHealthSchema);
   registry.register("CollisionReport", CollisionReportSchema);

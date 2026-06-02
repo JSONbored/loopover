@@ -1362,6 +1362,63 @@ export const ContributorStrategySchema = z
 
 export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]).openapi("DecisionPackFreshness");
 
+export const DecisionRecommendationSchema = z.enum(["pursue", "cleanup_first", "maintainer_lane", "avoid_for_now", "watch"]).openapi("DecisionRecommendation");
+
+export const DecisionActionKindSchema = z
+  .enum(["cleanup_existing_prs", "land_existing_prs", "open_new_direct_pr", "file_issue_discovery", "maintainer_lane_improve_repo", "maintainer_cut_readiness"])
+  .openapi("DecisionActionKind");
+
+export const ActionPortfolioBucketNameSchema = z.enum(["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"]).openapi("ActionPortfolioBucketName");
+
+export const ActionPortfolioItemSchema = z
+  .object({
+    bucket: ActionPortfolioBucketNameSchema,
+    repoFullName: z.string(),
+    actionKind: DecisionActionKindSchema.optional(),
+    priorityScore: z.number(),
+    recommendation: DecisionRecommendationSchema,
+    status: z.enum(["recommended", "blocked", "watch"]),
+    whyNow: z.array(z.string()),
+    scoreabilityImpact: z.string(),
+    riskImpact: z.string(),
+    maintainerImpact: z.string(),
+    blockedBy: z.array(z.string()),
+    rerunWhen: z.string(),
+    publicSafeSummary: z.string(),
+    nextActions: z.array(z.string()),
+    publicNextActions: z.array(z.string()),
+    source: z.enum(["decision_pack"]),
+    scenarioProjection: z
+      .object({
+        source: z.enum(["github_observed", "user_supplied"]),
+        pendingMergedPrCount: z.number(),
+        pendingClosedPrCount: z.number(),
+        approvedPrCount: z.number(),
+        expectedOpenPrCountAfterMerge: z.number().optional(),
+        notes: z.array(z.string()),
+      })
+      .optional(),
+  })
+  .openapi("ActionPortfolioItem");
+
+export const ActionPortfolioSchema = z
+  .object({
+    generatedAt: z.string(),
+    bucketOrder: z.array(ActionPortfolioBucketNameSchema),
+    buckets: z.array(
+      z.object({
+        bucket: ActionPortfolioBucketNameSchema,
+        label: z.string(),
+        summary: z.string(),
+        actions: z.array(ActionPortfolioItemSchema),
+      }),
+    ),
+    topActions: z.array(ActionPortfolioItemSchema),
+    counts: z.record(z.number()),
+    summary: z.string(),
+  })
+  .openapi("ActionPortfolio");
+
 export const ContributorDecisionPackSchema = z
   .object({
     status: z.enum(["ready"]),
@@ -1379,6 +1436,7 @@ export const ContributorDecisionPackSchema = z
     opportunities: z.array(ContributorOpportunitySchema),
     repoDecisions: z.array(z.record(z.unknown())),
     topActions: z.array(z.record(z.unknown())),
+    actionPortfolio: ActionPortfolioSchema,
     cleanupFirst: z.array(z.record(z.unknown())),
     pursueRepos: z.array(z.record(z.unknown())),
     avoidRepos: z.array(z.record(z.unknown())),

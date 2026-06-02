@@ -639,6 +639,14 @@ describe("agent orchestrator", () => {
     expect(joined).toMatch(/touchpilot\/touchpilot:.*narrow change/);
     expect(joined).toMatch(/entrius\/allways:.*non-duplicate/);
     expect(plan.contextSnapshots[0]?.freshnessWarnings).toEqual(expect.arrayContaining(["entrius/allways: capped signal coverage", "entrius/allways: rate limited signal coverage"]));
+    expect(plan.run.payload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.arrayContaining([
+        expect.objectContaining({ bucket: "direct_pr", actions: expect.arrayContaining([expect.objectContaining({ repoFullName: "touchpilot/touchpilot" })]) }),
+        expect.objectContaining({ bucket: "issue_discovery", actions: expect.arrayContaining([expect.objectContaining({ repoFullName: "entrius/allways" })]) }),
+      ]),
+    });
+    expect(plan.contextSnapshots[0]?.payload.actionPortfolio).toMatchObject({ summary: expect.stringContaining("Scoped portfolio") });
     expect(noBlockers.actions[0]).toMatchObject({
       status: "ready",
       scoreabilityImpact: "Current signals do not show a hard scoreability gate.",

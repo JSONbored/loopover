@@ -421,6 +421,231 @@
           "generatedAt"
         ]
       },
+      "ActionPortfolioBucketName": {
+        "type": "string",
+        "enum": [
+          "cleanup",
+          "wait",
+          "direct_pr",
+          "issue_discovery",
+          "avoid",
+          "maintainer_lane"
+        ]
+      },
+      "DecisionActionKind": {
+        "type": "string",
+        "enum": [
+          "cleanup_existing_prs",
+          "land_existing_prs",
+          "open_new_direct_pr",
+          "file_issue_discovery",
+          "maintainer_lane_improve_repo",
+          "maintainer_cut_readiness"
+        ]
+      },
+      "DecisionRecommendation": {
+        "type": "string",
+        "enum": [
+          "pursue",
+          "cleanup_first",
+          "maintainer_lane",
+          "avoid_for_now",
+          "watch"
+        ]
+      },
+      "ActionPortfolioItem": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "$ref": "#/components/schemas/ActionPortfolioBucketName"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "actionKind": {
+            "$ref": "#/components/schemas/DecisionActionKind"
+          },
+          "priorityScore": {
+            "type": "number"
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/DecisionRecommendation"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "recommended",
+              "blocked",
+              "watch"
+            ]
+          },
+          "whyNow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scoreabilityImpact": {
+            "type": "string"
+          },
+          "riskImpact": {
+            "type": "string"
+          },
+          "maintainerImpact": {
+            "type": "string"
+          },
+          "blockedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rerunWhen": {
+            "type": "string"
+          },
+          "publicSafeSummary": {
+            "type": "string"
+          },
+          "nextActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publicNextActions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "decision_pack"
+            ]
+          },
+          "scenarioProjection": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "github_observed",
+                  "user_supplied"
+                ]
+              },
+              "pendingMergedPrCount": {
+                "type": "number"
+              },
+              "pendingClosedPrCount": {
+                "type": "number"
+              },
+              "approvedPrCount": {
+                "type": "number"
+              },
+              "expectedOpenPrCountAfterMerge": {
+                "type": "number"
+              },
+              "notes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "source",
+              "pendingMergedPrCount",
+              "pendingClosedPrCount",
+              "approvedPrCount",
+              "notes"
+            ]
+          }
+        },
+        "required": [
+          "bucket",
+          "repoFullName",
+          "priorityScore",
+          "recommendation",
+          "status",
+          "whyNow",
+          "scoreabilityImpact",
+          "riskImpact",
+          "maintainerImpact",
+          "blockedBy",
+          "rerunWhen",
+          "publicSafeSummary",
+          "nextActions",
+          "publicNextActions",
+          "source"
+        ]
+      },
+      "ActionPortfolio": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "bucketOrder": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionPortfolioBucketName"
+            }
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bucket": {
+                  "$ref": "#/components/schemas/ActionPortfolioBucketName"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ActionPortfolioItem"
+                  }
+                }
+              },
+              "required": [
+                "bucket",
+                "label",
+                "summary",
+                "actions"
+              ]
+            }
+          },
+          "topActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionPortfolioItem"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "bucketOrder",
+          "buckets",
+          "topActions",
+          "counts",
+          "summary"
+        ]
+      },
       "WorkboardItem": {
         "type": "object",
         "properties": {
@@ -2172,6 +2397,9 @@
               }
             }
           },
+          "actionPortfolio": {
+            "$ref": "#/components/schemas/ActionPortfolio"
+          },
           "cleanupFirst": {
             "type": "array",
             "items": {
@@ -2251,6 +2479,7 @@
           "opportunities",
           "repoDecisions",
           "topActions",
+          "actionPortfolio",
           "cleanupFirst",
           "pursueRepos",
           "avoidRepos",

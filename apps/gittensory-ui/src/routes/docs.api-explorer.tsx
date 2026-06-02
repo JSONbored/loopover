@@ -36,8 +36,8 @@ function ApiExplorerDocs() {
 
       <h2>Interactive API reference</h2>
       <p>
-        Browse every canonical <code>/v1</code> route, copy curl/fetch/python samples, and run Try It
-        requests when you have a session token. Private routes show a lock badge and require auth
+        Browse every canonical <code>/v1</code> route, copy curl/fetch/python samples, and run Try
+        It requests when you have a session token. Private routes show a lock badge and require auth
         before sending.
       </p>
       <Link
@@ -63,7 +63,11 @@ function ApiExplorerDocs() {
           — full-width tool runner with local history.
         </li>
         <li>
-          <Link to="/app/workbench" search={{ tab: "playground" }} className="text-mint hover:underline">
+          <Link
+            to="/app/workbench"
+            search={{ tab: "playground" }}
+            className="text-mint hover:underline"
+          >
             Workbench tab
           </Link>{" "}
           — playground beside miner commands and digests.

@@ -72,6 +72,7 @@ const pendingDecisionPackRebuilds = new Map<string, Promise<boolean>>();
 export type DecisionRecommendation = "pursue" | "cleanup_first" | "maintainer_lane" | "avoid_for_now" | "watch";
 export type DecisionActionKind = "cleanup_existing_prs" | "land_existing_prs" | "open_new_direct_pr" | "file_issue_discovery" | "maintainer_lane_improve_repo" | "maintainer_cut_readiness";
 export type DecisionPackFreshness = "fresh" | "stale" | "rebuilding" | "missing";
+export type ActionPortfolioBucketName = "cleanup" | "wait" | "direct_pr" | "issue_discovery" | "avoid" | "maintainer_lane";
 
 export type ContributorDecisionPack = {
   status: "ready";
@@ -96,6 +97,7 @@ export type ContributorDecisionPack = {
   opportunities: ContributorOpportunity[];
   repoDecisions: RepoDecision[];
   topActions: DecisionAction[];
+  actionPortfolio: ActionPortfolio;
   cleanupFirst: RepoDecision[];
   pursueRepos: RepoDecision[];
   avoidRepos: RepoDecision[];
@@ -186,6 +188,51 @@ export type DecisionAction = {
   whyThisHelps: string[];
   nextActions: string[];
   publicNextActions: string[];
+};
+
+export type ActionPortfolioScenarioProjection = {
+  source: ContributorOpenPrMonitor["pendingScenarios"][number]["detection"]["source"];
+  pendingMergedPrCount: number;
+  pendingClosedPrCount: number;
+  approvedPrCount: number;
+  expectedOpenPrCountAfterMerge?: number | undefined;
+  notes: string[];
+};
+
+export type ActionPortfolioItem = {
+  bucket: ActionPortfolioBucketName;
+  repoFullName: string;
+  actionKind?: DecisionActionKind | undefined;
+  priorityScore: number;
+  recommendation: DecisionRecommendation;
+  status: "recommended" | "blocked" | "watch";
+  whyNow: string[];
+  scoreabilityImpact: string;
+  riskImpact: string;
+  maintainerImpact: string;
+  blockedBy: string[];
+  rerunWhen: string;
+  publicSafeSummary: string;
+  nextActions: string[];
+  publicNextActions: string[];
+  source: "decision_pack";
+  scenarioProjection?: ActionPortfolioScenarioProjection | undefined;
+};
+
+export type ActionPortfolioBucket = {
+  bucket: ActionPortfolioBucketName;
+  label: string;
+  summary: string;
+  actions: ActionPortfolioItem[];
+};
+
+export type ActionPortfolio = {
+  generatedAt: string;
+  bucketOrder: ActionPortfolioBucketName[];
+  buckets: ActionPortfolioBucket[];
+  topActions: ActionPortfolioItem[];
+  counts: Record<ActionPortfolioBucketName, number>;
+  summary: string;
 };
 
 export type ScoreBlocker = {
@@ -502,11 +549,18 @@ function buildContributorDecisionPack(args: {
   const monitorNextSteps = monitor.guidance.slice(0, 6);
   const packNextActions = [...new Set([...monitorNextSteps, ...topActions.flatMap((action) => action.nextActions)])].slice(0, 12);
   const monitorSummary = monitor.openPrCount > 0 ? ` ${monitor.summary}` : "";
+  const generatedAt = nowIso();
+  const actionPortfolio = buildActionPortfolio({
+    generatedAt,
+    repoDecisions,
+    topActions,
+    openPrMonitor: monitor,
+  });
   return {
     status: "ready",
     source: "computed",
     login: args.login,
-    generatedAt: nowIso(),
+    generatedAt,
     stale: false,
     freshness: "fresh",
     rebuildEnqueued: false,
@@ -524,6 +578,7 @@ function buildContributorDecisionPack(args: {
     opportunities: args.opportunities ?? [],
     repoDecisions,
     topActions,
+    actionPortfolio,
     cleanupFirst: repoDecisions.filter((decision) => decision.recommendation === "cleanup_first").slice(0, 8),
     pursueRepos: repoDecisions.filter((decision) => decision.recommendation === "pursue").slice(0, 8),
     avoidRepos: repoDecisions.filter((decision) => decision.recommendation === "avoid_for_now").slice(0, 8),
@@ -761,6 +816,235 @@ function action(kind: DecisionActionKind, decision: RepoDecision, priorityScore:
   };
 }
 
+const ACTION_PORTFOLIO_BUCKET_ORDER: ActionPortfolioBucketName[] = ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"];
+
+function buildActionPortfolio(args: {
+  generatedAt: string;
+  repoDecisions: RepoDecision[];
+  topActions: DecisionAction[];
+  openPrMonitor?: ContributorOpenPrMonitor | undefined;
+}): ActionPortfolio {
+  const repoDecisions = args.repoDecisions.filter(isPortfolioDecision);
+  const decisionByRepo = new Map(repoDecisions.map((decision) => [decision.repoFullName.toLowerCase(), decision]));
+  const scenarioByRepo = new Map((args.openPrMonitor?.pendingScenarios ?? []).map((scenario) => [scenario.repoFullName.toLowerCase(), scenario.detection]));
+  const items = [
+    ...args.topActions
+      .filter((entry) => typeof entry.repoFullName === "string")
+      .map((entry) => {
+        const decision = decisionByRepo.get(entry.repoFullName.toLowerCase());
+        return decision ? portfolioItemFromAction(entry, decision, scenarioByRepo.get(entry.repoFullName.toLowerCase())) : null;
+      })
+      .filter((entry): entry is ActionPortfolioItem => Boolean(entry)),
+    ...repoDecisions
+      .filter((decision) => decision.recommendation === "avoid_for_now")
+      .map((decision) => portfolioItemFromDecision(decision, "avoid", scenarioByRepo.get(decision.repoFullName.toLowerCase()))),
+  ];
+  const uniqueItems = dedupePortfolioItems(items).sort(comparePortfolioItems);
+  const buckets = ACTION_PORTFOLIO_BUCKET_ORDER.map((bucket) => {
+    const actions = uniqueItems.filter((entry) => entry.bucket === bucket);
+    return {
+      bucket,
+      label: portfolioBucketLabel(bucket),
+      summary: portfolioBucketSummary(bucket, actions),
+      actions,
+    } satisfies ActionPortfolioBucket;
+  });
+  const counts = Object.fromEntries(buckets.map((bucket) => [bucket.bucket, bucket.actions.length])) as Record<ActionPortfolioBucketName, number>;
+  const activeBuckets = buckets.filter((bucket) => bucket.actions.length > 0);
+  return {
+    generatedAt: args.generatedAt,
+    bucketOrder: ACTION_PORTFOLIO_BUCKET_ORDER,
+    buckets,
+    topActions: uniqueItems.slice(0, 12),
+    counts,
+    summary:
+      activeBuckets.length === 0
+        ? "No portfolio actions are currently available from the decision pack."
+        : `Portfolio has ${uniqueItems.length} action(s) across ${activeBuckets.length} active bucket(s): ${activeBuckets.map((bucket) => `${bucket.bucket} ${bucket.actions.length}`).join(", ")}.`,
+  };
+}
+
+function portfolioItemFromAction(
+  actionEntry: DecisionAction,
+  decision: RepoDecision,
+  scenario: ContributorOpenPrMonitor["pendingScenarios"][number]["detection"] | undefined,
+): ActionPortfolioItem {
+  const bucket = bucketForAction(actionEntry);
+  return portfolioItem({
+    bucket,
+    actionKind: actionEntry.actionKind,
+    decision,
+    priorityScore: Number.isFinite(actionEntry.priorityScore) ? actionEntry.priorityScore : decision.priorityScore,
+    whyNow: [...safeStringArray(actionEntry.whyThisHelps), ...safeStringArray(decision.riskReasons), ...scenarioWhyNow(scenario)].slice(0, 8),
+    nextActions: safeStringArray(actionEntry.nextActions).length > 0 ? safeStringArray(actionEntry.nextActions) : safeStringArray(decision.nextActions),
+    publicNextActions: safeStringArray(actionEntry.publicNextActions).length > 0 ? safeStringArray(actionEntry.publicNextActions) : safeStringArray(decision.publicNextActions),
+    scenario,
+  });
+}
+
+function portfolioItemFromDecision(
+  decision: RepoDecision,
+  bucket: ActionPortfolioBucketName,
+  scenario: ContributorOpenPrMonitor["pendingScenarios"][number]["detection"] | undefined,
+): ActionPortfolioItem {
+  return portfolioItem({
+    bucket,
+    decision,
+    priorityScore: decision.priorityScore,
+    whyNow: [...safeStringArray(decision.whyThisHelps), ...safeStringArray(decision.riskReasons), ...scenarioWhyNow(scenario)].slice(0, 8),
+    nextActions: safeStringArray(decision.nextActions),
+    publicNextActions: safeStringArray(decision.publicNextActions),
+    scenario,
+  });
+}
+
+function portfolioItem(args: {
+  bucket: ActionPortfolioBucketName;
+  actionKind?: DecisionActionKind | undefined;
+  decision: RepoDecision;
+  priorityScore: number;
+  whyNow: string[];
+  nextActions: string[];
+  publicNextActions: string[];
+  scenario?: ContributorOpenPrMonitor["pendingScenarios"][number]["detection"] | undefined;
+}): ActionPortfolioItem {
+  return {
+    bucket: args.bucket,
+    repoFullName: args.decision.repoFullName,
+    actionKind: args.actionKind,
+    priorityScore: args.priorityScore,
+    recommendation: args.decision.recommendation,
+    status: portfolioStatusFor(args.decision, args.bucket),
+    whyNow: args.whyNow.length > 0 ? args.whyNow : [`${args.decision.repoFullName}: current decision-pack signals place this repo in ${args.bucket}.`],
+    scoreabilityImpact: portfolioScoreabilityImpact(args.decision, args.bucket),
+    riskImpact: safeStringArray(args.decision.riskReasons)[0] ?? "No major repo-specific risk is visible in the current decision pack.",
+    maintainerImpact: portfolioMaintainerImpact(args.decision, args.bucket),
+    blockedBy: safeScoreBlockers(args.decision).map((blocker) => blocker.code),
+    rerunWhen: portfolioRerunWhen(args.decision, args.bucket),
+    publicSafeSummary: sanitizePortfolioPublicSummary(args.publicNextActions[0] ?? `${args.decision.repoFullName}: Use Gittensory preflight before posting public PR context.`),
+    nextActions: args.nextActions,
+    publicNextActions: args.publicNextActions.map(sanitizePortfolioPublicSummary),
+    source: "decision_pack",
+    scenarioProjection: args.scenario ? portfolioScenarioProjection(args.scenario) : undefined,
+  };
+}
+
+function bucketForAction(actionEntry: DecisionAction): ActionPortfolioBucketName {
+  if (actionEntry.actionKind === "cleanup_existing_prs") return "cleanup";
+  if (actionEntry.actionKind === "land_existing_prs") return "wait";
+  if (actionEntry.actionKind === "file_issue_discovery") return "issue_discovery";
+  if (actionEntry.actionKind === "maintainer_lane_improve_repo" || actionEntry.actionKind === "maintainer_cut_readiness") return "maintainer_lane";
+  return "direct_pr";
+}
+
+function portfolioStatusFor(decision: RepoDecision, bucket: ActionPortfolioBucketName): ActionPortfolioItem["status"] {
+  if (bucket === "avoid" || bucket === "wait") return "watch";
+  if (safeScoreBlockers(decision).some((blocker) => blocker.severity === "critical")) return "blocked";
+  return "recommended";
+}
+
+function portfolioScoreabilityImpact(decision: RepoDecision, bucket: ActionPortfolioBucketName): string {
+  if (bucket === "cleanup") return "Resolving open PR pressure can unblock scoreability before opening new work.";
+  if (bucket === "wait") return "Wait for current PR outcomes or close stale work before adding more queue pressure.";
+  if (bucket === "issue_discovery") return "Direct PR scoreability is not the target; issue-discovery evidence is the useful lane.";
+  if (bucket === "maintainer_lane") return "Maintainer-lane work is separated from outside-contributor scoreability evidence.";
+  const blockers = safeScoreBlockers(decision);
+  if (blockers.length > 0) return `Blocked by ${blockers.map((blocker) => blocker.code).join(", ")}.`;
+  return `Lane fit: ${decision.lane?.lane ?? "unknown"}; direct PR share ${decision.rewardUpside?.directPrShare ?? 0}.`;
+}
+
+function portfolioMaintainerImpact(decision: RepoDecision, bucket: ActionPortfolioBucketName): string {
+  if (bucket === "cleanup") return "Cleanup lowers active-review pressure before adding more queue load.";
+  if (bucket === "wait") return "Waiting on merge-ready or stale PR outcomes avoids noisy parallel work.";
+  if (bucket === "maintainer_lane") return "Repo-owner work should improve intake quality and contributor routing.";
+  if (bucket === "avoid") return "Avoiding this repo keeps maintainer attention away from low-fit or blocked submissions.";
+  return "Narrow, validated work with clear lane fit is easier to review.";
+}
+
+function portfolioRerunWhen(decision: RepoDecision, bucket: ActionPortfolioBucketName): string {
+  if (bucket === "cleanup" || bucket === "wait") return "Rerun after open PRs merge, close, or are withdrawn.";
+  if (safeScoreBlockers(decision).length > 0) return "Rerun after the listed scoreability blockers change.";
+  return "Rerun before opening a PR or when repo queue/registry signals change.";
+}
+
+function scenarioWhyNow(scenario: ContributorOpenPrMonitor["pendingScenarios"][number]["detection"] | undefined): string[] {
+  if (!scenario) return [];
+  return scenario.scenarioNotes.slice(0, 2).map((note) => `Scenario projection: ${note}`);
+}
+
+function portfolioScenarioProjection(
+  scenario: ContributorOpenPrMonitor["pendingScenarios"][number]["detection"],
+): ActionPortfolioScenarioProjection {
+  return {
+    source: scenario.source,
+    pendingMergedPrCount: scenario.pendingMergedPrCount,
+    pendingClosedPrCount: scenario.pendingClosedPrCount,
+    approvedPrCount: scenario.approvedPrCount,
+    ...(scenario.expectedOpenPrCountAfterMerge !== undefined ? { expectedOpenPrCountAfterMerge: scenario.expectedOpenPrCountAfterMerge } : {}),
+    notes: scenario.scenarioNotes.slice(0, 4),
+  };
+}
+
+function portfolioBucketLabel(bucket: ActionPortfolioBucketName): string {
+  if (bucket === "cleanup") return "Cleanup first";
+  if (bucket === "wait") return "Wait or land existing work";
+  if (bucket === "direct_pr") return "Direct PR opportunities";
+  if (bucket === "issue_discovery") return "Issue discovery";
+  if (bucket === "avoid") return "Avoid for now";
+  return "Maintainer lane";
+}
+
+function portfolioBucketSummary(bucket: ActionPortfolioBucketName, actions: ActionPortfolioItem[]): string {
+  if (actions.length === 0) return `No ${portfolioBucketLabel(bucket).toLowerCase()} actions are currently recommended.`;
+  const topRepo = actions[0]?.repoFullName ?? "repo";
+  if (bucket === "cleanup") return `${actions.length} cleanup action(s), led by ${topRepo}.`;
+  if (bucket === "wait") return `${actions.length} wait/land action(s), led by ${topRepo}.`;
+  if (bucket === "direct_pr") return `${actions.length} direct-PR action(s), led by ${topRepo}.`;
+  if (bucket === "issue_discovery") return `${actions.length} issue-discovery action(s), led by ${topRepo}.`;
+  if (bucket === "avoid") return `${actions.length} repo(s) should be avoided for now, led by ${topRepo}.`;
+  return `${actions.length} maintainer-lane action(s), led by ${topRepo}.`;
+}
+
+function dedupePortfolioItems(items: ActionPortfolioItem[]): ActionPortfolioItem[] {
+  const seen = new Set<string>();
+  const deduped: ActionPortfolioItem[] = [];
+  for (const item of items) {
+    const key = `${item.bucket}:${item.repoFullName.toLowerCase()}:${item.actionKind ?? item.recommendation}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+function comparePortfolioItems(left: ActionPortfolioItem, right: ActionPortfolioItem): number {
+  return (
+    ACTION_PORTFOLIO_BUCKET_ORDER.indexOf(left.bucket) - ACTION_PORTFOLIO_BUCKET_ORDER.indexOf(right.bucket) ||
+    right.priorityScore - left.priorityScore ||
+    left.repoFullName.localeCompare(right.repoFullName) ||
+    (left.actionKind ?? "").localeCompare(right.actionKind ?? "")
+  );
+}
+
+function isPortfolioDecision(value: RepoDecision): boolean {
+  return typeof value.repoFullName === "string" && typeof value.recommendation === "string";
+}
+
+function safeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function safeScoreBlockers(decision: RepoDecision): ScoreBlocker[] {
+  return Array.isArray(decision.scoreBlockers) ? decision.scoreBlockers : [];
+}
+
+function sanitizePortfolioPublicSummary(value: string): string {
+  return value
+    .replace(/\b(reward|payout|farming|estimated score|public score estimate|raw trust score|trust score|scoreability|wallet|hotkey|coldkey|private reviewability)\b/gi, "private signal")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 type RepoCopyContext = {
   repoFullName: string;
   lane: string;
@@ -897,6 +1181,14 @@ function withSnapshotMetadata(snapshot: SignalSnapshotRecord): ContributorDecisi
   const generatedAt = snapshot.generatedAt ?? payload.generatedAt ?? nowIso();
   const ageSeconds = Math.max(0, Math.floor(snapshotAgeMs(generatedAt) / 1000));
   const stale = snapshotAgeMs(generatedAt) > DECISION_PACK_MAX_AGE_MS;
+  const actionPortfolio =
+    (payload as Partial<ContributorDecisionPack>).actionPortfolio ??
+    buildActionPortfolio({
+      generatedAt,
+      repoDecisions: payload.repoDecisions ?? [],
+      topActions: payload.topActions ?? [],
+      openPrMonitor: payload.openPrMonitor,
+    });
   return {
     ...payload,
     status: "ready",
@@ -907,6 +1199,7 @@ function withSnapshotMetadata(snapshot: SignalSnapshotRecord): ContributorDecisi
     freshness: stale ? "stale" : "fresh",
     rebuildEnqueued: false,
     opportunities: payload.opportunities ?? [],
+    actionPortfolio,
   };
 }
 
@@ -944,6 +1237,7 @@ export const __decisionPackInternals = {
   recommendationFor,
   priorityFor,
   actionsForDecision,
+  buildActionPortfolio,
   whyThisHelpsFor,
   nextActionsFor,
   publicNextActionsFor,

@@ -362,6 +362,8 @@ describe("gittensory-mcp CLI", () => {
     expect(online).toMatchObject({ status: "ready", source: "snapshot" });
 
     const cacheText = readDecisionPackCacheText(tempDir);
+    expect(cacheText).toMatch(/"authCacheKey":/);
+    expect(cacheText).not.toContain("session-token");
     expect(cacheText).not.toMatch(/must stay local|wallet-value|hotkey-value|\/tmp\/source/i);
 
     await new Promise<void>((resolve) => server?.close(() => resolve()));
@@ -404,7 +406,7 @@ describe("gittensory-mcp CLI", () => {
       GITTENSORY_API_URL: url,
       GITTENSORY_TOKEN: "session-token",
       GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_API_TIMEOUT_MS: "100",
+      GITTENSORY_API_TIMEOUT_MS: "1000",
     };
 
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
@@ -415,12 +417,33 @@ describe("gittensory-mcp CLI", () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = null;
 
-    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/fetch failed|ECONNREFUSED|aborted/i);
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/fetch failed|ECONNREFUSED|AbortError|aborted/i);
 
     const cleared = JSON.parse(run(["cache", "clear", "--json"], env)) as { status: string; removed: number };
     expect(cleared).toMatchObject({ status: "cleared", removed: 1 });
     const cacheStatus = JSON.parse(run(["cache", "status", "--json"], env)) as { entries: number };
     expect(cacheStatus.entries).toBe(0);
+  });
+
+  it("does not use stale decision-pack cache created by a different local token", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const fixtureOptions: { decisionPackStatus?: number } = {};
+    const url = await startFixtureServer(fixtureOptions);
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    fixtureOptions.decisionPackStatus = 429;
+
+    await expect(
+      runAsync(["decision-pack", "--login", "JSONbored", "--json"], {
+        ...env,
+        GITTENSORY_TOKEN: "different-session-token",
+      }),
+    ).rejects.toThrow(/Gittensory API 429/);
   });
 
   it("does not use stale decision-pack cache for authorization failures", async () => {

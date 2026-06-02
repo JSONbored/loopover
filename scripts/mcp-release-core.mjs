@@ -185,7 +185,10 @@ export function buildMcpReleaseIssue(report) {
   const title = `MCP release due: ${report.proposedVersion}`;
   const npmVersion = report.publishedVersion ?? "unknown";
   const latestTag = report.latestTag ?? "none";
-  const commits = report.commits.length > 0 ? report.commits.map((commit) => `- \`${shortSha(commit.sha)}\` ${commit.subject}`).join("\n") : "- No unreleased MCP-related commits detected.";
+  const commits =
+    report.commits.length > 0
+      ? report.commits.map((commit) => `- \`${shortSha(commit.sha)}\` ${escapeIssueMarkdownText(commit.subject)}`).join("\n")
+      : "- No unreleased MCP-related commits detected.";
   const changedFiles = report.changedFiles.length > 0 ? report.changedFiles.map((file) => `- \`${file}\``).join("\n") : "- No MCP-related changed files detected.";
 
   const body = `${MCP_RELEASE_DUE_MARKER}
@@ -225,6 +228,13 @@ ${changedFiles}
 `;
 
   return { title, body };
+}
+
+function escapeIssueMarkdownText(value) {
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/@/g, "@\u200b")
+    .replace(/([\\`*_{}[\]()#+.!|>-])/g, "\\$1");
 }
 
 export function normalizeNewlines(value) {

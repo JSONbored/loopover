@@ -22,7 +22,7 @@ import {
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { getOrCreateScoringModelSnapshot } from "../scoring/model";
-import { loadContributorDecisionPackForServing, repoDecisionFromPack, type ContributorDecisionPack, type DecisionAction, type RepoDecision } from "./decision-pack";
+import { loadContributorDecisionPackForServing, repoDecisionFromPack, type ActionPortfolio, type ActionPortfolioBucketName, type ContributorDecisionPack, type DecisionAction, type RepoDecision } from "./decision-pack";
 import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
@@ -263,6 +263,7 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
       ? buildBlockerActions(run, pack, decisions, { allowFallback: allowCrossRepoFallback })
       : buildDecisionActions(run, pack, scopedDecisionActions);
   const contexts = [contextSnapshotFromPack(run.id, pack, decisions)];
+  const selectedActionPortfolio = contexts[0]?.payload.actionPortfolio ?? null;
   await replaceAgentActions(env, run.id, actions);
   await persistAgentContextSnapshot(env, contexts[0]!);
   const dataQualityStatus = isStale ? "degraded" : pack.dataQuality.signalFidelity.status;
@@ -275,6 +276,7 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
       actionCount: actions.length,
       freshness: pack.freshness,
       rebuildEnqueued: pack.rebuildEnqueued,
+      actionPortfolio: selectedActionPortfolio,
       ...(isStale
         ? { refreshReason: pack.rebuildEnqueued ? "stale_decision_pack" : "stale_decision_pack_queue_unavailable" }
         : {}),
@@ -849,6 +851,7 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       login: pack.login,
       source: pack.source,
       selectedRepos: decisions.map((decision) => decision.repoFullName),
+      actionPortfolio: scopedActionPortfolio(pack.actionPortfolio, decisions) as unknown as JsonValue,
       evidenceGraph: (pack.evidenceGraph
         ? {
             version: pack.evidenceGraph.version,
@@ -861,6 +864,29 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       dataQuality: pack.dataQuality as unknown as JsonValue,
       openPrMonitor: (pack.openPrMonitor ?? null) as unknown as JsonValue,
     },
+  };
+}
+
+function scopedActionPortfolio(portfolio: ActionPortfolio | undefined, decisions: RepoDecision[]): ActionPortfolio | null {
+  if (!portfolio) return null;
+  const repoKeys = new Set(decisions.map((decision) => decision.repoFullName.toLowerCase()));
+  if (repoKeys.size === 0) return null;
+  const buckets = portfolio.buckets.map((bucket) => ({
+    ...bucket,
+    actions: bucket.actions.filter((action) => repoKeys.has(action.repoFullName.toLowerCase())),
+  }));
+  const topActions = portfolio.topActions.filter((action) => repoKeys.has(action.repoFullName.toLowerCase()));
+  const counts = Object.fromEntries(buckets.map((bucket) => [bucket.bucket, bucket.actions.length])) as Record<ActionPortfolioBucketName, number>;
+  const activeBuckets = buckets.filter((bucket) => bucket.actions.length > 0);
+  return {
+    ...portfolio,
+    buckets,
+    topActions,
+    counts,
+    summary:
+      activeBuckets.length === 0
+        ? "No portfolio actions are currently available for the selected repo scope."
+        : `Scoped portfolio has ${topActions.length} action(s) across ${activeBuckets.length} active bucket(s): ${activeBuckets.map((bucket) => `${bucket.bucket} ${bucket.actions.length}`).join(", ")}.`,
   };
 }
 
@@ -947,6 +973,7 @@ export const __agentOrchestratorInternals = {
   actionFromRepoDecision,
   actionRecord,
   contextSnapshotFromPack,
+  scopedActionPortfolio,
   buildRunRecord,
   mapDecisionAction,
   recommendationText,

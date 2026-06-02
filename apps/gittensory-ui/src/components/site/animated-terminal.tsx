@@ -10,7 +10,7 @@ export interface TerminalScene {
 
 const DEFAULT_SCENES: TerminalScene[] = [
   {
-    prompt: "npx -y @jsonbored/gittensory-mcp login",
+    prompt: "npx -y @jsonbored/gittensory-mcp@latest login",
     output: "→ GitHub Device Flow opened… authorized as octocat",
   },
   {

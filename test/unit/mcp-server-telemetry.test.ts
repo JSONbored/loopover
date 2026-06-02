@@ -24,7 +24,7 @@ describe("MCP server telemetry", () => {
         authorization: `Bearer ${env.GITTENSORY_MCP_TOKEN}`,
         "content-type": "application/json",
         "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
-        "x-gittensory-mcp-version": "0.3.0",
+        "x-gittensory-mcp-version": "0.4.0",
         "x-gittensory-mcp-client": "gittensory-mcp-cli",
       },
       body: JSON.stringify({
@@ -54,7 +54,7 @@ describe("MCP server telemetry", () => {
         eventName: "mcp_tool_called",
         outcome: "error",
         clientName: "gittensory-mcp-cli",
-        clientVersion: "0.3.0",
+        clientVersion: "0.4.0",
         metadata: expect.objectContaining({
           toolName: "gittensory_local_status",
           compatibilityStatus: "current",

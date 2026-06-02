@@ -1,7 +1,7 @@
 export const GITTENSORY_API_VERSION = "0.1.0";
 export const GITTENSORY_MCP_PACKAGE_NAME = "@jsonbored/gittensory-mcp";
-export const MINIMUM_SUPPORTED_MCP_VERSION = "0.2.0";
-export const LATEST_RECOMMENDED_MCP_VERSION = "0.3.0";
+export const MINIMUM_SUPPORTED_MCP_VERSION = "0.4.0";
+export const LATEST_RECOMMENDED_MCP_VERSION = "0.4.0";
 
 export type McpCompatibilityStatus = "current" | "stale" | "incompatible" | "unknown";
 
@@ -59,8 +59,7 @@ export function classifyMcpClientVersion(version: string | null | undefined): Mc
   const minimumComparison = compareMcpSemver(version, MINIMUM_SUPPORTED_MCP_VERSION);
   if (minimumComparison === null) return "unknown";
   if (minimumComparison < 0) return "incompatible";
-  const latestComparison = compareMcpSemver(version, LATEST_RECOMMENDED_MCP_VERSION)!;
-  return latestComparison < 0 ? "stale" : "current";
+  return "current";
 }
 
 function parseSemver(version: string) {

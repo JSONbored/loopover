@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { applyTypeLabel, classifyTypeLabel, getTypeLabelDecision, readCurrentLabels } from "../../scripts/github-type-label.mjs";
 
 describe("GitHub type label classifier", () => {
@@ -60,6 +61,18 @@ describe("GitHub type label classifier", () => {
       number: 42,
       title: "feat(mcp): add metadata boundary checks",
     });
+  });
+
+  it("grants the workflow permission to write pull request labels", () => {
+    const workflow = readFileSync(".github/workflows/type-label.yml", "utf8");
+
+    expect(workflow).toMatch(/pull_request_target:/);
+    expect(workflow).toMatch(/issues:\s+write/);
+    expect(workflow).toMatch(/pull-requests:\s+write/);
+    expect(workflow).toContain("Checkout base branch");
+    expect(workflow).toContain("ref: ${{ github.event.repository.default_branch }}");
+    expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).not.toMatch(/npm\s+(ci|install)/);
   });
 
   it("does not post when a current type label already exists", async () => {

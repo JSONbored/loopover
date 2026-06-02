@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 type CommandSample = {
   id: string;
@@ -32,15 +33,24 @@ type CommandPreviewResponse = {
 export function CommandsPanel() {
   const commands = useApiResource<CommandsResponse>("/v1/app/commands", "Command catalog");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [repoFullName, setRepoFullName] = useState("");
+  const [pullNumber, setPullNumber] = useState("");
   const [preview, setPreview] = useState<CommandPreviewResponse | null>(null);
   const selected =
     commands.status === "ready"
       ? (commands.data.commands.find((command) => command.id === selectedId) ??
         commands.data.commands[0])
       : null;
+  const parsedPullNumber = Number(pullNumber);
+  const validContext =
+    /^[^/\s]+\/[^/\s]+$/.test(repoFullName.trim()) &&
+    Number.isInteger(parsedPullNumber) &&
+    parsedPullNumber > 0;
 
   useEffect(() => {
-    if (!selected) return;
+    setPreview(null);
+    if (!selected || !validContext) return;
+    let active = true;
     const origin = getApiOrigin().replace(/\/$/, "");
     void apiFetch<CommandPreviewResponse>(`${origin}/v1/app/commands/preview`, {
       method: "POST",
@@ -49,14 +59,17 @@ export function CommandsPanel() {
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({
         command: selected.id,
-        repoFullName: "jsonbored/gittensory",
-        pullNumber: 1218,
+        repoFullName: repoFullName.trim(),
+        pullNumber: parsedPullNumber,
       }),
       silentStatus: true,
     }).then((result) => {
-      if (result.ok) setPreview(result.data);
+      if (active && result.ok) setPreview(result.data);
     });
-  }, [selected]);
+    return () => {
+      active = false;
+    };
+  }, [parsedPullNumber, repoFullName, selected, validContext]);
 
   return (
     <StateBoundary
@@ -71,40 +84,74 @@ export function CommandsPanel() {
       errorDescription={commands.status === "error" ? commands.error : undefined}
     >
       {commands.status === "ready" && selected ? (
-        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-          <ul className="space-y-2">
-            {commands.data.commands.map((command) => {
-              const active = command.id === selected.id;
-              return (
-                <li key={command.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(command.id)}
-                    className={cn(
-                      "w-full rounded-token border-hairline p-3 text-left transition-all duration-150 focus-ring motion-reduce:transition-none motion-reduce:active:scale-100 active:scale-[0.99]",
-                      active
-                        ? "border-strong bg-mint/[0.04]"
-                        : "hover:border-strong hover:bg-muted/40",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-token-xs text-foreground">
-                        {command.command}
-                      </span>
-                      <StatusPill status={command.boundary === "public" ? "ready" : "info"}>
-                        {command.audience}
-                      </StatusPill>
-                    </div>
-                    <p className="mt-1 text-token-xs text-muted-foreground">
-                      {command.description}
-                    </p>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="space-y-4">
+          <div className="grid gap-3 rounded-token border-hairline bg-card p-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+            <label className="block">
+              <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Repository
+              </span>
+              <Input
+                value={repoFullName}
+                onChange={(event) => setRepoFullName(event.target.value)}
+                placeholder="owner/repo"
+                className="mt-1 font-mono text-token-xs"
+                autoComplete="off"
+              />
+            </label>
+            <label className="block">
+              <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Pull request
+              </span>
+              <Input
+                value={pullNumber}
+                onChange={(event) => setPullNumber(event.target.value)}
+                placeholder="123"
+                inputMode="numeric"
+                className="mt-1 font-mono text-token-xs"
+              />
+            </label>
+          </div>
 
-          <PrThread sample={selected} preview={preview?.preview ?? null} />
+          <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+            <ul className="space-y-2">
+              {commands.data.commands.map((command) => {
+                const active = command.id === selected.id;
+                return (
+                  <li key={command.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(command.id)}
+                      className={cn(
+                        "w-full rounded-token border-hairline p-3 text-left transition-all duration-150 focus-ring motion-reduce:transition-none motion-reduce:active:scale-100 active:scale-[0.99]",
+                        active
+                          ? "border-strong bg-mint/[0.04]"
+                          : "hover:border-strong hover:bg-muted/40",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-token-xs text-foreground">
+                          {command.command}
+                        </span>
+                        <StatusPill status={command.boundary === "public" ? "ready" : "info"}>
+                          {command.audience}
+                        </StatusPill>
+                      </div>
+                      <p className="mt-1 text-token-xs text-muted-foreground">
+                        {command.description}
+                      </p>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <PrThread
+              sample={selected}
+              preview={preview?.preview ?? null}
+              repoFullName={repoFullName.trim()}
+              pullNumber={validContext ? parsedPullNumber : null}
+            />
+          </div>
         </div>
       ) : null}
     </StateBoundary>
@@ -114,16 +161,23 @@ export function CommandsPanel() {
 function PrThread({
   sample,
   preview,
+  repoFullName,
+  pullNumber,
 }: {
   sample: CommandSample;
   preview: CommandPreviewResponse["preview"] | null;
+  repoFullName: string;
+  pullNumber: number | null;
 }) {
+  const hasContext = Boolean(repoFullName && pullNumber);
   return (
     <div className="overflow-hidden rounded-token border-hairline bg-card">
       <div className="flex items-center gap-2 border-b-hairline bg-background/40 px-4 py-2.5">
         <GitPullRequestArrow className="size-4 text-mint" />
         <div className="font-mono text-token-xs text-foreground/90">
-          jsonbored/gittensory <span className="text-muted-foreground">·</span> PR #1218
+          {hasContext ? repoFullName : "Enter repo context"}{" "}
+          <span className="text-muted-foreground">·</span>{" "}
+          {pullNumber ? `PR #${pullNumber}` : "PR #"}
         </div>
         <span className="ml-auto rounded-full border-hairline bg-mint/10 px-2 py-0.5 font-mono text-token-2xs uppercase tracking-wider text-mint">
           private preview
@@ -131,7 +185,14 @@ function PrThread({
       </div>
 
       <div className="space-y-4 p-4">
-        <Comment author="maintainer" body={sample.command} muted />
+        {hasContext ? (
+          <Comment author="maintainer" body={sample.command} muted />
+        ) : (
+          <div className="rounded-token border-hairline bg-background/40 p-3 text-token-xs text-muted-foreground">
+            Enter a repository and pull request number to preview this command against live API
+            context.
+          </div>
+        )}
         <AnimatePresence mode="wait">
           <motion.div
             key={sample.id}

@@ -376,7 +376,7 @@ function commandSourceNotes(
     command === "help"
       ? "static command catalog"
       : command === "ask"
-        ? "cached GitHub issues/PRs/recent merges/checks, signal snapshots, focus manifest, and upstream ruleset status"
+        ? askCommandSourceSummary(bundle)
       : command === "miner-context"
         ? officialMiner
           ? "official Gittensor miner API"
@@ -481,6 +481,15 @@ function helpSections(): string[] {
   ];
 }
 
+type AskContributingSource = {
+  key: string;
+  label: string;
+  origin: string;
+  generatedAt: string | null;
+  freshness: string;
+  detail: string;
+};
+
 function askSections(bundle: AgentRunBundle | null | undefined, question?: string): string[] {
   if (bundle?.run.status === "needs_snapshot_refresh") {
     return refreshSections("ask");
@@ -504,27 +513,190 @@ function askSections(bundle: AgentRunBundle | null | undefined, question?: strin
     "",
     ...(sourceReferences.length > 0 ? sourceReferences : ["- No concrete cached source reference is available for this response."]),
     "",
-    "**Source coverage**",
+    "**Policy**",
     "",
-    "- Connected sources: cached issues, pull requests, recent merges, check/review status, signal snapshots, focus manifest, and upstream ruleset status.",
-    "- README/docs context is used only when available from connected repo sources and app access allows it.",
+    "- README/docs context is included only when connected repo sources and app permissions allow it.",
     "- Source contents are not sent to optional AI unless explicitly enabled.",
   ];
 }
 
 function askSourceReferences(bundle: AgentRunBundle | null | undefined): string[] {
-  if (!bundle || bundle.actions.length === 0) return [];
-  return bundle.actions.slice(0, 6).map((action) => {
-    const target = [
-      action.targetRepoFullName ?? null,
-      action.targetPullNumber ? `PR #${action.targetPullNumber}` : null,
-      action.targetIssueNumber ? `issue #${action.targetIssueNumber}` : null,
-    ]
-      .filter((entry): entry is string => Boolean(entry))
-      .join(" ");
-    const reference = target.length > 0 ? target : "cached contributor context";
-    return `- ${reference}; source: action ${action.actionType}; freshness: ${publicStatus(bundle.run.status)}.`;
-  });
+  return collectAskContributingSources(bundle).slice(0, 8).map(formatAskCitation);
+}
+
+function collectAskContributingSources(bundle: AgentRunBundle | null | undefined): AskContributingSource[] {
+  if (!bundle) return [];
+  const collected: AskContributingSource[] = [];
+  const seen = new Set<string>();
+  const add = (entry: AskContributingSource | null | undefined) => {
+    if (!entry) return;
+    const dedupeKey = `${entry.key}|${entry.origin}|${entry.freshness}|${entry.generatedAt ?? ""}|${entry.detail}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    collected.push(entry);
+  };
+  for (const snapshot of bundle.contextSnapshots) {
+    for (const entry of askSourcesFromContextSnapshot(snapshot)) add(entry);
+  }
+  for (const action of bundle.actions) {
+    for (const entry of askSourcesFromActionEvidence(action)) add(entry);
+  }
+  return collected;
+}
+
+function askCommandSourceSummary(bundle: AgentRunBundle | null | undefined): string {
+  const sources = collectAskContributingSources(bundle);
+  if (sources.length === 0) return "cached Gittensory agent context (no connected-source metadata in this run)";
+  return sources
+    .slice(0, 4)
+    .map((source) => source.label)
+    .join("; ");
+}
+
+function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshots"][number]): AskContributingSource[] {
+  const payload = snapshot.payload ?? {};
+  const generatedAt = snapshot.createdAt ?? snapshot.decisionPackVersion ?? null;
+  const sources: AskContributingSource[] = [];
+  const graph = payload.evidenceGraph;
+  if (graph && typeof graph === "object" && !Array.isArray(graph)) {
+    const graphRecord = graph as Record<string, unknown>;
+    const graphGeneratedAt = typeof graphRecord.generatedAt === "string" ? graphRecord.generatedAt : generatedAt;
+    const graphSources = graphRecord.sources;
+    if (Array.isArray(graphSources)) {
+      for (const item of graphSources) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        const kind = typeof record.source === "string" ? record.source : "connected_source";
+        sources.push({
+          key: `evidence_graph_${kind}`,
+          label: askSourceLabel(kind),
+          origin: kind,
+          generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : graphGeneratedAt,
+          freshness: typeof record.freshness === "string" ? record.freshness : "unknown",
+          detail: typeof record.detail === "string" ? record.detail : "Connected contributor evidence graph source.",
+        });
+      }
+    }
+  }
+  const baseFreshness = readRecord(payload.baseFreshness);
+  if (baseFreshness) {
+    sources.push({
+      key: "base_freshness",
+      label: askSourceLabel("base_freshness"),
+      origin: "metadata_only",
+      generatedAt: typeof baseFreshness.observedAt === "string" ? baseFreshness.observedAt : generatedAt,
+      freshness: typeof baseFreshness.status === "string" ? baseFreshness.status : "unknown",
+      detail: "Repo/issue/PR sync freshness used for contribution-context answers.",
+    });
+  }
+  const branchEligibility = readRecord(payload.branchEligibility);
+  if (branchEligibility) {
+    sources.push({
+      key: "branch_eligibility",
+      label: askSourceLabel("branch_eligibility"),
+      origin: "metadata_only",
+      generatedAt,
+      freshness: branchEligibility.stale === true ? "stale" : branchEligibility.evidence === "missing" ? "missing" : "fresh",
+      detail: "Branch eligibility metadata from connected local/GitHub context.",
+    });
+  }
+  if (typeof payload.scoreabilityStatus === "string") {
+    sources.push({
+      key: "scoreability_status",
+      label: "contribution readiness metadata",
+      origin: "metadata_only",
+      generatedAt,
+      freshness: snapshotFreshnessFromWarnings(snapshot),
+      detail: `Contribution readiness status: ${payload.scoreabilityStatus}.`,
+    });
+  }
+  const dataQuality = readRecord(payload.dataQuality);
+  if (dataQuality && typeof dataQuality.status === "string") {
+    sources.push({
+      key: "signal_data_quality",
+      label: askSourceLabel("data_quality"),
+      origin: "cached_signals",
+      generatedAt,
+      freshness: dataQuality.status === "complete" ? "fresh" : String(dataQuality.status),
+      detail: "Signal fidelity and data-quality status for connected repo sources.",
+    });
+  }
+  if (snapshot.freshnessWarnings.length > 0) {
+    sources.push({
+      key: "freshness_warnings",
+      label: "snapshot freshness warnings",
+      origin: "cached_signals",
+      generatedAt,
+      freshness: "degraded",
+      detail: snapshot.freshnessWarnings.slice(0, 2).join(" "),
+    });
+  }
+  return sources;
+}
+
+function askSourcesFromActionEvidence(action: AgentActionRecord): AskContributingSource[] {
+  const evidence = readRecord(action.payload.recommendationEvidence);
+  if (!evidence || !Array.isArray(evidence.sources)) return [];
+  return evidence.sources
+    .map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const source = raw as Record<string, unknown>;
+      const name = typeof source.name === "string" ? source.name : "connected_source";
+      return {
+        key: name,
+        label: askSourceLabel(name),
+        origin: name,
+        generatedAt: typeof source.generatedAt === "string" ? source.generatedAt : null,
+        freshness: typeof source.freshness === "string" ? source.freshness : "unknown",
+        detail: typeof source.summary === "string" ? source.summary : "Connected recommendation evidence source.",
+      };
+    })
+    .filter((entry): entry is AskContributingSource => entry !== null);
+}
+
+function formatAskCitation(source: AskContributingSource): string {
+  const header = [`Source: ${source.label}`, source.origin ? `origin: ${source.origin}` : null, `freshness: ${source.freshness}`]
+    .filter((part): part is string => Boolean(part))
+    .join("; ");
+  const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
+  const detail = source.detail ? ` — ${publicBlockerDetail(source.detail)}` : "";
+  return `- ${header}${observed}${detail}.`;
+}
+
+function askSourceLabel(name: string): string {
+  const labels: Record<string, string> = {
+    contributor_decision_pack: "contributor decision pack snapshot",
+    repo_decision: "repo decision snapshot",
+    official_contributor_stats: "official Gittensor contributor stats",
+    repo_outcome_history: "repo outcome history",
+    open_pr_monitor: "cached GitHub open PR/issue queue",
+    local_branch_metadata: "local branch metadata (metadata-only)",
+    base_branch_freshness: "local git branch freshness",
+    base_freshness: "repo sync freshness metadata",
+    branch_eligibility: "branch eligibility metadata",
+    github_branch_status: "cached GitHub branch status",
+    linked_issue_multiplier: "linked-issue policy context",
+    score_preview: "private score preview metadata",
+    data_quality: "signal data-quality status",
+    official_gittensor: "official Gittensor API/cache",
+    mirror: "Gittensor mirror registry snapshot",
+    github_cache: "cached GitHub issues, PRs, reviews, and checks",
+    computed: "derived Gittensory contribution signals",
+    repo_focus_manifest: "repo focus manifest",
+    issue_quality: "issue quality snapshot",
+    upstream_ruleset: "upstream ruleset status",
+  };
+  return labels[name] ?? name.replace(/_/g, " ");
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function snapshotFreshnessFromWarnings(snapshot: AgentRunBundle["contextSnapshots"][number]): string {
+  if (snapshot.freshnessWarnings.some((warning) => /stale|rebuild/i.test(warning))) return "stale";
+  return "fresh";
 }
 
 function minerContextSections(miner: GittensorContributorSnapshot | null | undefined): string[] {

@@ -85,12 +85,43 @@ export function buildIssueAdvisory(repo: RepositoryRecord | null, issue: IssueRe
   return advisory("issue", targetKey, repoFullName, findings, "Issue advisory generated.", undefined, issue?.number);
 }
 
-export function formatCheckRunOutput(advisoryResult: Advisory): { title: string; summary: string; text: string } {
-  return {
-    title: advisoryResult.conclusion === "success" ? "Gittensory context checked" : "Gittensory context posted",
-    summary: "Gittensory public check output is intentionally minimal. Detailed maintainer context is available only through private API/MCP surfaces.",
-    text: "No detailed findings are published in check runs.",
-  };
+const CHECK_RUN_FORBIDDEN_TERMS = /\b(reward|payout|farming|estimated score|raw trust score|wallet|hotkey|coldkey|reviewability|scoreability|private signal)\b/gi;
+
+function sanitizeForCheckRun(text: string): string {
+  return text.replace(CHECK_RUN_FORBIDDEN_TERMS, "[context]").replace(/\s+/g, " ").trim();
+}
+
+export function formatCheckRunOutput(
+  advisoryResult: Advisory,
+  detailLevel: "minimal" | "standard" | "deep" = "minimal",
+): { title: string; summary: string; text: string } {
+  const title = advisoryResult.conclusion === "success" ? "Gittensory context checked" : "Gittensory context posted";
+  const summary = "Gittensory public check output is intentionally minimal. Detailed maintainer context is available only through private API/MCP surfaces.";
+
+  if (detailLevel === "minimal" || advisoryResult.findings.length === 0) {
+    return { title, summary, text: "No detailed findings are published in check runs." };
+  }
+
+  const publicLines = advisoryResult.findings.map((f) => {
+    const label = f.severity === "warning" ? "⚠️" : "ℹ️";
+    const text = f.publicText ? sanitizeForCheckRun(f.publicText) : sanitizeForCheckRun(f.title);
+    return `${label} ${text}`;
+  });
+
+  if (detailLevel === "standard") {
+    return { title, summary, text: publicLines.join("\n") };
+  }
+
+  // deep: include action hints for findings that carry publicText
+  const deepLines = advisoryResult.findings.flatMap((f) => {
+    const label = f.severity === "warning" ? "⚠️" : "ℹ️";
+    const text = f.publicText ? sanitizeForCheckRun(f.publicText) : sanitizeForCheckRun(f.title);
+    const lines = [`${label} ${text}`];
+    if (f.publicText && f.action) lines.push(`  → ${sanitizeForCheckRun(f.action)}`);
+    return lines;
+  });
+
+  return { title, summary, text: deepLines.join("\n") };
 }
 
 function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): void {

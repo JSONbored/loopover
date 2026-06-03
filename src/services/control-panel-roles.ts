@@ -259,3 +259,5 @@ function sanitizeRoleText(value: string): string {
   if (/\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|payout|reward estimate|farming|private reviewability|public score estimate)\b/i.test(redacted)) return "<redacted>";
   return redacted.slice(0, 200);
 }
+
+export const __controlPanelRolesInternals = { sanitizeRoleText };

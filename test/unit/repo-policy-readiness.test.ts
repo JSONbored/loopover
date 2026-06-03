@@ -324,4 +324,27 @@ describe("buildRepoPolicyReadiness", () => {
       ]),
     );
   });
+
+  it("falls back to safe owner-context defaults when no focus manifest is supplied at all", () => {
+    // An entirely absent manifest (undefined, not a parsed empty manifest) exercises the
+    // owner-context `?? default` fallbacks so counts and policy fields stay well-defined.
+    const report = buildRepoPolicyReadiness(input({ focusManifest: undefined }));
+
+    expect(report.present).toBe(false);
+    expect(report.ownerContext).toMatchObject({
+      manifestPresent: false,
+      manifestSource: "none",
+      privateNoteCount: 0,
+      manifestWarningCount: 0,
+      wantedPathCount: 0,
+      blockedPathCount: 0,
+      validationExpectationCount: 0,
+      issueDiscoveryPolicy: "neutral",
+    });
+    expect(report.publicWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "focus_policy_missing" }),
+      ]),
+    );
+  });
 });

@@ -224,3 +224,35 @@ describe("renderScenarioSummary private", () => {
     expect(JSON.stringify(summary)).not.toMatch(/wallet|hotkey|raw trust|trust score/i);
   });
 });
+
+describe("renderScenarioSummary tie-breaking", () => {
+  it("breaks score ties deterministically using the canonical scenario order", () => {
+    // Equal scores force the comparator past the score delta into the order tie-breaker:
+    // afterPendingMerges precedes afterStalePrsClose in the canonical ranking order.
+    const summary = renderScenarioSummary(
+      source({
+        scenarioPreviews: [
+          scenario({ name: "afterStalePrsClose", source: "gittensory_projection", effectiveEstimatedScore: 150 }),
+          scenario({ name: "afterPendingMerges", source: "github_observed", effectiveEstimatedScore: 150 }),
+        ],
+      }),
+      { visibility: "public_safe" },
+    );
+    expect(summary.rankedScenarios.map((s) => s.name)).toEqual(["afterPendingMerges", "afterStalePrsClose"]);
+  });
+
+  it("falls back to a stable name comparison when score and order are both equal", () => {
+    // Same name and equal score collapse both leading tie-breakers, exercising the final
+    // localeCompare fallback so ranking stays deterministic for duplicated previews.
+    const summary = renderScenarioSummary(
+      source({
+        scenarioPreviews: [
+          scenario({ name: "current", source: "current_data", effectiveEstimatedScore: 100 }),
+          scenario({ name: "current", source: "current_data", effectiveEstimatedScore: 100 }),
+        ],
+      }),
+      { visibility: "public_safe" },
+    );
+    expect(summary.rankedScenarios.map((s) => s.name)).toEqual(["current", "current"]);
+  });
+});

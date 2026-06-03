@@ -2829,10 +2829,11 @@ async function buildRepoOutcomePatternsResponse(env: Env, fullName: string) {
 
 async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
   /* v8 ignore start -- Registration readiness route-level shaping over covered signal helpers. */
-  const [intelligence, settings, upstreamReports] = await Promise.all([
+  const [intelligence, settings, upstreamReports, focusManifest] = await Promise.all([
     buildRepoIntelligenceResponse(env, fullName),
     getRepositorySettings(env, fullName),
     listUpstreamDriftReports(env, 20),
+    loadRepoFocusManifest(env, fullName, { fetcher: async () => null }),
   ]);
   const repo = intelligence.repo;
   const installation = await loadInstallationHealthSummary(env, repo);
@@ -2848,6 +2849,7 @@ async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
     contributorIntakeHealth: intelligence.contributorIntakeHealth as ReturnType<typeof buildContributorIntakeHealth>,
     installation,
     upstreamRegistryDriftWarnings: registryHyperparameterDriftWarningsForRepo(upstreamReports, fullName),
+    focusManifest,
   });
   return { ...report, dataQuality: intelligence.dataQuality };
   /* v8 ignore stop */

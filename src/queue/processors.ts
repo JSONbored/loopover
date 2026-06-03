@@ -776,14 +776,17 @@ async function maybePublishPrPublicSurface(
     });
   }
   if (decision.willCheckRun && advisory.headSha) {
-    await createOrUpdateCheckRun(env, installationId, repoFullName, {
-      ...advisory,
-      conclusion: "success",
-      severity: "info",
-      title: "Gittensory context posted",
-      summary: "Gittensory posted public-safe contributor context.",
-      findings: [],
-    });
+    const checkRunResult = await createOrUpdateCheckRun(env, installationId, repoFullName, advisory, settings.checkRunDetailLevel);
+    if (checkRunResult?.kind === "permission_missing") {
+      await recordAuditEvent(env, {
+        eventType: "github_app.check_run_permission_missing",
+        actor: author,
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "error",
+        detail: checkRunResult.warning,
+        metadata: { deliveryId: webhook.deliveryId, repoFullName },
+      });
+    }
   }
   await recordAuditEvent(env, {
     eventType: "github_app.pr_public_surface_published",

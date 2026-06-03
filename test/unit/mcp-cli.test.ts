@@ -302,6 +302,137 @@ describe("gittensory-mcp CLI", () => {
     expect(statusOutput).toContain("npm install -g @jsonbored/gittensory-mcp@latest");
   });
 
+  it("stores, switches, and reports named MCP profiles without mixing sessions", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    const firstLogin = JSON.parse(await runAsync(["login", "--profile", "JSONbored", "--github-token", "github-jsonbored", "--json"], env)) as { profile: string; login: string };
+    const secondLogin = JSON.parse(await runAsync(["login", "--profile", "Okto", "--github-token", "github-okto", "--json"], env)) as { profile: string; login: string };
+    const list = JSON.parse(await runAsync(["profile", "list", "--json"], env)) as { activeProfile: string; profiles: Array<{ name: string; login: string | null; authenticated: boolean }> };
+    const firstWhoami = JSON.parse(await runAsync(["whoami", "--profile", "jsonbored", "--json"], env)) as { profile: string; login: string };
+    const secondWhoami = JSON.parse(await runAsync(["whoami", "--profile", "okto", "--json"], env)) as { profile: string; login: string };
+    const switched = JSON.parse(await runAsync(["profile", "switch", "jsonbored", "--json"], env)) as { activeProfile: string };
+    const activeWhoami = JSON.parse(await runAsync(["whoami", "--json"], env)) as { profile: string; login: string };
+
+    expect(firstLogin).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
+    expect(secondLogin).toMatchObject({ profile: "okto", login: "oktofeesh1" });
+    expect(list.activeProfile).toBe("okto");
+    expect(list.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "jsonbored", login: "JSONbored", authenticated: true }),
+        expect.objectContaining({ name: "okto", login: "oktofeesh1", authenticated: true }),
+      ]),
+    );
+    expect(firstWhoami).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
+    expect(secondWhoami).toMatchObject({ profile: "okto", login: "oktofeesh1" });
+    expect(switched.activeProfile).toBe("jsonbored");
+    expect(activeWhoami).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
+    expect(requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-jsonbored" }),
+        expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" }),
+      ]),
+    );
+    expect(JSON.stringify(list)).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|gittensory-cli-/);
+  });
+
+  it("keeps environment tokens ahead of active profile sessions", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    await runAsync(["login", "--profile", "jsonbored", "--github-token", "github-jsonbored", "--json"], env);
+    await runAsync(["profile", "switch", "jsonbored", "--json"], env);
+    const whoami = JSON.parse(await runAsync(["whoami", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: string; login: string };
+    const status = JSON.parse(await runAsync(["status", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: { tokenSource: string }; auth: { login: string } };
+
+    expect(whoami).toMatchObject({ profile: "jsonbored", login: "oktofeesh1" });
+    expect(status).toMatchObject({ auth: { login: "oktofeesh1" }, profile: { tokenSource: "environment" } });
+    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" })]));
+  });
+
+  it("removes the default profile without rehydrating its legacy session token", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const configPath = join(tempDir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          apiUrl: "https://api.example.test",
+          activeProfile: "default",
+          profiles: {
+            default: { session: { token: "default-session-token", login: "default-user", scopes: [] } },
+            beta: { session: { token: "beta-session-token", login: "beta-user", scopes: [] } },
+          },
+          session: { token: "default-session-token", login: "default-user", scopes: [] },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const removed = JSON.parse(await runAsync(["profile", "remove", "default", "--json"], { GITTENSORY_CONFIG_DIR: tempDir })) as { status: string; removedProfile: string; activeProfile: string };
+    const saved = JSON.parse(readFileSync(configPath, "utf8")) as { activeProfile: string; profiles?: Record<string, unknown>; session?: unknown };
+
+    expect(removed).toMatchObject({ status: "removed", removedProfile: "default", activeProfile: "beta" });
+    expect(saved.activeProfile).toBe("beta");
+    expect(saved.profiles).not.toHaveProperty("default");
+    expect(saved.profiles).toHaveProperty("beta");
+    expect(saved.session).toBeUndefined();
+    expect(JSON.stringify(saved)).not.toContain("default-session-token");
+    expect(JSON.stringify(saved)).toContain("beta-session-token");
+  });
+
+  it("logs out only the selected profile and reports missing profiles safely", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    await runAsync(["login", "--profile", "alpha", "--github-token", "github-jsonbored", "--json"], env);
+    await runAsync(["login", "--profile", "beta", "--github-token", "github-okto", "--json"], env);
+    const logout = JSON.parse(await runAsync(["logout", "--profile", "alpha", "--json"], env)) as { profile: string; status: string };
+    const list = JSON.parse(await runAsync(["profile", "list", "--json"], env)) as { profiles: Array<{ name: string; authenticated: boolean; login: string | null }> };
+    const betaWhoami = JSON.parse(await runAsync(["whoami", "--profile", "beta", "--json"], env)) as { profile: string; login: string };
+    const missingStatus = JSON.parse(await runAsync(["status", "--profile", "missing", "--json"], env)) as { auth: { status: string }; profile: { name: string; configured: boolean; authenticated: boolean } };
+    const doctor = JSON.parse(await runAsync(["doctor", "--profile", "missing", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env)) as { profile: { name: string; configured: boolean }; checks: Array<{ name: string; status: string; detail: string }> };
+
+    expect(logout).toMatchObject({ status: "logged_out", profile: "alpha" });
+    expect(list.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "alpha", authenticated: false, login: null }),
+        expect.objectContaining({ name: "beta", authenticated: true, login: "oktofeesh1" }),
+      ]),
+    );
+    expect(betaWhoami).toMatchObject({ profile: "beta", login: "oktofeesh1" });
+    expect(missingStatus).toMatchObject({ auth: { status: "unauthenticated" }, profile: { name: "missing", configured: false, authenticated: false } });
+    expect(doctor.profile).toMatchObject({ name: "missing", configured: false });
+    expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "auth", status: "fail" })]));
+    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/logout", authorization: "Bearer session-jsonbored" })]));
+    expect(JSON.stringify({ logout, list, missingStatus, doctor })).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|gittensory-cli-/);
+  });
+
   it("reports package status and prints the packaged changelog", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -500,6 +631,12 @@ describe("gittensory-mcp CLI", () => {
     };
     expect(plan.run).toMatchObject({ id: "run-1", status: "completed" });
     expect(plan.actions[0]).toMatchObject({ actionType: "choose_next_work" });
+
+    const planText = await runAsync(["agent", "plan", "--login", "JSONbored", "--repo", "JSONbored/gittensory"], env);
+    expect(planText).toContain("why now:");
+    expect(planText).toContain("impact:");
+    expect(planText).toContain("rerun:");
+    expect(planText).not.toMatch(/wallet|hotkey|raw trust|payout|farming|private reviewability|public score estimate/i);
 
     const statusPayload = JSON.parse(await runAsync(["agent", "status", "run-1", "--json"], env)) as { run: { id: string } };
     expect(statusPayload.run.id).toBe("run-1");
@@ -905,8 +1042,35 @@ async function startFixtureServer(
       response.end(JSON.stringify({ status: "ok", service: "gittensory-api", ...(options.minMcpVersion ? { minMcpVersion: options.minMcpVersion } : {}) }));
       return;
     }
+    if (request.url === "/v1/auth/github/session" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { githubToken?: string };
+      const sessions: Record<string, { token: string; login: string }> = {
+        "github-jsonbored": { token: "session-jsonbored", login: "JSONbored" },
+        "github-okto": { token: "session-okto", login: "oktofeesh1" },
+      };
+      const session = body.githubToken ? sessions[body.githubToken] : null;
+      if (!session) {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "github_session_create_failed" }));
+        return;
+      }
+      response.end(JSON.stringify({ status: "authenticated", token: session.token, login: session.login, expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
     if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-token") {
       response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-jsonbored") {
+      response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-okto") {
+      response.end(JSON.stringify({ status: "authenticated", login: "oktofeesh1", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/logout" && request.method === "POST") {
+      response.end(JSON.stringify({ status: "logged_out" }));
       return;
     }
     if (request.url === "/v1/contributors/JSONbored/decision-pack" && request.method === "GET") {
@@ -919,6 +1083,7 @@ async function startFixtureServer(
       return;
     }
     if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {
+      await readJsonRequest(request);
       response.end(JSON.stringify(agentFixture()));
       return;
     }
@@ -1043,7 +1208,23 @@ function agentFixture() {
         recommendation: "Pick narrow work and run branch preflight.",
         why: ["Fixture"],
         blockedBy: [],
+        rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
         publicSafeSummary: "Fixture public summary.",
+        explanationCard: {
+          summary: "Pursue now: this action is the current ranked next step.",
+          whyNow: "Current deterministic planning signals rank this action ahead of other available next steps.",
+          scoreabilityBlocker: "No hard scoreability blocker is visible in current signals.",
+          risk: "No major action-specific risk is visible in the current card.",
+          maintainerFriction: "Narrow, validated work is easier for maintainers to review.",
+          expectedImpact: "Advance toward one narrow, validated contribution path.",
+          blockerGroups: [],
+          rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          publicSafe: {
+            summary: "Fixture public summary.",
+            whyNow: "Fixture public summary.",
+            rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          },
+        },
         approvalRequired: true,
         safetyClass: "private",
         payload: {},

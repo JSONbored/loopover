@@ -5,6 +5,7 @@ import {
   aiUsageEvents,
   agentActions,
   agentContextSnapshots,
+  agentRecommendationOutcomes,
   agentRuns,
   auditEvents,
   authSessions,
@@ -57,6 +58,11 @@ import type {
   AgentCommandAnswerRecord,
   AgentCommandFeedbackRecord,
   AgentContextSnapshotRecord,
+  AgentRecommendationOutcomeConfidence,
+  AgentRecommendationOutcomeRecord,
+  AgentRecommendationOutcomeState,
+  AgentRecommendationOutcomeSummary,
+  AgentRecommendationOutcomeTargetType,
   AgentMode,
   AgentRunRecord,
   AgentRunStatus,
@@ -189,6 +195,12 @@ export async function markInstallationDeleted(env: Env, installationId: number):
     .update(repositories)
     .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
     .where(eq(repositories.installationId, installationId));
+}
+
+export async function getInstallation(env: Env, installationId: number): Promise<InstallationRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(installations).where(eq(installations.id, installationId)).limit(1);
+  return row ? toInstallationRecord(row) : null;
 }
 
 export async function listInstallations(env: Env): Promise<InstallationRecord[]> {
@@ -1469,6 +1481,73 @@ function maxIso(left: string | null | undefined, right: string | null | undefine
   return right > left ? right : left;
 }
 
+function outcomeStateBuckets(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["states"] {
+  const states: AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved", "closed", "stale", "ignored"];
+  return states.flatMap((state) => {
+    const count = outcomes.filter((outcome) => outcome.outcomeState === state).length;
+    return count > 0 ? [{ state, count }] : [];
+  });
+}
+
+function recommendationOutcomeTotals(
+  outcomes: AgentRecommendationOutcomeRecord[],
+  maintainerLaneTotal: number,
+): AgentRecommendationOutcomeSummary["totals"] {
+  const accepted = outcomes.filter((outcome) => outcome.outcomeState === "accepted").length;
+  const merged = outcomes.filter((outcome) => outcome.outcomeState === "merged").length;
+  const improved = outcomes.filter((outcome) => outcome.outcomeState === "improved").length;
+  const closed = outcomes.filter((outcome) => outcome.outcomeState === "closed").length;
+  const stale = outcomes.filter((outcome) => outcome.outcomeState === "stale").length;
+  const ignored = outcomes.filter((outcome) => outcome.outcomeState === "ignored").length;
+  return {
+    total: outcomes.length,
+    accepted,
+    ignored,
+    stale,
+    merged,
+    closed,
+    improved,
+    positive: accepted + merged + improved,
+    negative: closed + stale + ignored,
+    maintainerLaneTotal,
+  };
+}
+
+function summarizeRecommendationOutcomeRepos(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["repos"] {
+  const byRepo = new Map<string, AgentRecommendationOutcomeRecord[]>();
+  for (const outcome of outcomes) {
+    const repoFullName = outcome.outcomeRepoFullName ?? outcome.targetRepoFullName;
+    if (!repoFullName) continue;
+    const key = repoFullName.toLowerCase();
+    byRepo.set(key, [...(byRepo.get(key) ?? []), outcome]);
+  }
+  return [...byRepo.values()]
+    .map((repoOutcomes) => {
+      const firstRepo = repoOutcomes[0]!;
+      const nonMaintainer = repoOutcomes.filter((outcome) => !outcome.maintainerLane);
+      const totals = recommendationOutcomeTotals(nonMaintainer, repoOutcomes.length - nonMaintainer.length);
+      const signal: AgentRecommendationOutcomeSummary["repos"][number]["signal"] =
+        totals.positive > totals.negative ? "positive" : totals.negative > totals.positive ? "negative" : totals.total > 0 ? "mixed" : "neutral";
+      return {
+        repoFullName: firstRepo.outcomeRepoFullName ?? firstRepo.targetRepoFullName ?? "unknown/repo",
+        total: totals.total,
+        accepted: totals.accepted,
+        ignored: totals.ignored,
+        stale: totals.stale,
+        merged: totals.merged,
+        closed: totals.closed,
+        improved: totals.improved,
+        positive: totals.positive,
+        negative: totals.negative,
+        maintainerLaneTotal: totals.maintainerLaneTotal,
+        latestOutcomeAt: repoOutcomes.reduce((latest, outcome) => maxIso(latest, outcome.updatedAt ?? outcome.detectedAt), null as string | null),
+        signal,
+      };
+    })
+    .sort((left, right) => right.total - left.total || left.repoFullName.localeCompare(right.repoFullName))
+    .slice(0, 20);
+}
+
 function finiteNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
@@ -2340,6 +2419,117 @@ export async function listAgentContextSnapshots(env: Env, runId: string): Promis
   return rows.map(toAgentContextSnapshotRecord);
 }
 
+export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentRecommendationOutcomeRecord): Promise<AgentRecommendationOutcomeRecord> {
+  const now = outcome.updatedAt ?? nowIso();
+  const values = {
+    id: outcome.id ?? `outcome:${outcome.actionId}`,
+    actionId: outcome.actionId,
+    runId: outcome.runId,
+    actorLogin: boundedString(outcome.actorLogin, 100),
+    actionType: outcome.actionType,
+    targetRepoFullName: outcome.targetRepoFullName ? boundedString(outcome.targetRepoFullName, 200) : null,
+    targetPullNumber: outcome.targetPullNumber ?? null,
+    targetIssueNumber: outcome.targetIssueNumber ?? null,
+    outcomeState: outcome.outcomeState,
+    outcomeTargetType: outcome.outcomeTargetType,
+    outcomeRepoFullName: outcome.outcomeRepoFullName ? boundedString(outcome.outcomeRepoFullName, 200) : null,
+    outcomePullNumber: outcome.outcomePullNumber ?? null,
+    outcomeIssueNumber: outcome.outcomeIssueNumber ?? null,
+    maintainerLane: outcome.maintainerLane,
+    confidence: outcome.confidence,
+    reason: boundedString(outcome.reason, 500),
+    sourceUpdatedAt: outcome.sourceUpdatedAt ?? null,
+    detectedAt: outcome.detectedAt ?? now,
+    metadataJson: jsonString(outcome.metadata ?? {}),
+    createdAt: outcome.createdAt ?? now,
+    updatedAt: now,
+  };
+  await getDb(env.DB)
+    .insert(agentRecommendationOutcomes)
+    .values(values)
+    .onConflictDoUpdate({
+      target: agentRecommendationOutcomes.actionId,
+      set: {
+        actorLogin: values.actorLogin,
+        actionType: values.actionType,
+        targetRepoFullName: values.targetRepoFullName,
+        targetPullNumber: values.targetPullNumber,
+        targetIssueNumber: values.targetIssueNumber,
+        outcomeState: values.outcomeState,
+        outcomeTargetType: values.outcomeTargetType,
+        outcomeRepoFullName: values.outcomeRepoFullName,
+        outcomePullNumber: values.outcomePullNumber,
+        outcomeIssueNumber: values.outcomeIssueNumber,
+        maintainerLane: values.maintainerLane,
+        confidence: values.confidence,
+        reason: values.reason,
+        sourceUpdatedAt: values.sourceUpdatedAt,
+        detectedAt: values.detectedAt,
+        metadataJson: values.metadataJson,
+        updatedAt: values.updatedAt,
+      },
+    });
+  return (await getAgentRecommendationOutcome(env, outcome.actionId))!;
+}
+
+export async function getAgentRecommendationOutcome(env: Env, actionId: string): Promise<AgentRecommendationOutcomeRecord | null> {
+  const [row] = await getDb(env.DB).select().from(agentRecommendationOutcomes).where(eq(agentRecommendationOutcomes.actionId, actionId)).limit(1);
+  return row ? toAgentRecommendationOutcomeRecord(row) : null;
+}
+
+export async function listAgentRecommendationOutcomes(
+  env: Env,
+  options: { actorLogin?: string; windowDays?: number; now?: string; limit?: number } = {},
+): Promise<AgentRecommendationOutcomeRecord[]> {
+  const limit = clampInteger(options.limit ?? 500, 1, 5000);
+  const conditions = [];
+  if (options.actorLogin) conditions.push(eq(agentRecommendationOutcomes.actorLogin, options.actorLogin));
+  if (options.windowDays !== undefined) {
+    const windowDays = clampInteger(options.windowDays, 1, 365);
+    const now = options.now ?? nowIso();
+    conditions.push(gte(agentRecommendationOutcomes.updatedAt, new Date(Date.parse(now) - windowDays * 24 * 60 * 60 * 1000).toISOString()));
+  }
+  const rows = await getDb(env.DB)
+    .select()
+    .from(agentRecommendationOutcomes)
+    .where(conditions.length === 0 ? undefined : and(...conditions))
+    .orderBy(desc(agentRecommendationOutcomes.updatedAt), agentRecommendationOutcomes.actionId)
+    .limit(limit);
+  return rows.map(toAgentRecommendationOutcomeRecord);
+}
+
+export async function getAgentRecommendationOutcomeSummary(
+  env: Env,
+  actorLogin: string,
+  options: { windowDays?: number; now?: string } = {},
+): Promise<AgentRecommendationOutcomeSummary> {
+  const windowDays = clampInteger(options.windowDays ?? 90, 1, 365);
+  const generatedAt = options.now ?? nowIso();
+  const outcomes = await listAgentRecommendationOutcomes(env, { actorLogin, windowDays, now: generatedAt });
+  const nonMaintainer = outcomes.filter((outcome) => !outcome.maintainerLane);
+  const maintainer = outcomes.filter((outcome) => outcome.maintainerLane);
+  const states = outcomeStateBuckets(nonMaintainer);
+  const maintainerStates = outcomeStateBuckets(maintainer);
+  const repos = summarizeRecommendationOutcomeRepos(outcomes);
+  const totals = recommendationOutcomeTotals(nonMaintainer, maintainer.length);
+  return {
+    login: actorLogin,
+    generatedAt,
+    windowDays,
+    totals,
+    states,
+    repos,
+    maintainerLane: {
+      total: maintainer.length,
+      states: maintainerStates,
+    },
+    privateSummary:
+      outcomes.length === 0
+        ? `${actorLogin} has no evaluated recommendation outcomes in the last ${windowDays} day(s).`
+        : `${actorLogin} has ${nonMaintainer.length} contributor-lane recommendation outcome(s), ${totals.positive} positive and ${totals.negative} negative, plus ${maintainer.length} maintainer-lane outcome(s) kept separate.`,
+  };
+}
+
 export async function upsertInstallationHealth(env: Env, health: InstallationHealthRecord): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -3002,6 +3192,32 @@ function toAgentContextSnapshotRecord(row: typeof agentContextSnapshots.$inferSe
     freshnessWarnings: parseJson<string[]>(row.freshnessWarningsJson, []),
     payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
     createdAt: row.createdAt,
+  };
+}
+
+function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutcomes.$inferSelect): AgentRecommendationOutcomeRecord {
+  return {
+    id: row.id,
+    actionId: row.actionId,
+    runId: row.runId,
+    actorLogin: row.actorLogin,
+    actionType: parseAgentActionType(row.actionType),
+    targetRepoFullName: row.targetRepoFullName,
+    targetPullNumber: row.targetPullNumber,
+    targetIssueNumber: row.targetIssueNumber,
+    outcomeState: parseAgentRecommendationOutcomeState(row.outcomeState),
+    outcomeTargetType: parseAgentRecommendationOutcomeTargetType(row.outcomeTargetType),
+    outcomeRepoFullName: row.outcomeRepoFullName,
+    outcomePullNumber: row.outcomePullNumber,
+    outcomeIssueNumber: row.outcomeIssueNumber,
+    maintainerLane: row.maintainerLane,
+    confidence: parseAgentRecommendationOutcomeConfidence(row.confidence),
+    reason: row.reason,
+    sourceUpdatedAt: row.sourceUpdatedAt,
+    detectedAt: row.detectedAt,
+    metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -3777,6 +3993,21 @@ function parseAgentActionStatus(value: string): AgentActionStatus {
 function parseAgentSafetyClass(value: string): AgentSafetyClass {
   if (value === "public_safe" || value === "approval_required") return value;
   return "private";
+}
+
+function parseAgentRecommendationOutcomeState(value: string): AgentRecommendationOutcomeState {
+  if (value === "accepted" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
+  return "ignored";
+}
+
+function parseAgentRecommendationOutcomeTargetType(value: string): AgentRecommendationOutcomeTargetType {
+  if (value === "pull_request" || value === "issue" || value === "repository") return value;
+  return "none";
+}
+
+function parseAgentRecommendationOutcomeConfidence(value: string): AgentRecommendationOutcomeConfidence {
+  if (value === "high" || value === "low") return value;
+  return "medium";
 }
 
 function parseCommentMode(value: string): RepositorySettings["commentMode"] {

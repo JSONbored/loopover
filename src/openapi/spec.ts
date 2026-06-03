@@ -28,6 +28,7 @@ import {
   ContributorStrategySchema,
   HealthSchema,
   InstallationHealthSchema,
+  InstallationRepairSchema,
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
   LabelAuditSchema,
@@ -116,6 +117,7 @@ export function buildOpenApiSpec() {
   registry.register("BountyAdvisory", BountyAdvisorySchema);
   registry.register("BountyLifecycleEvents", BountyLifecycleEventsSchema);
   registry.register("RepositorySettings", RepositorySettingsSchema);
+  registry.register("InstallationRepair", InstallationRepairSchema);
   registry.register("RepoSettingsPreview", RepoSettingsPreviewSchema);
   registry.register("CommandPreviewResponse", CommandPreviewResponseSchema);
   registry.register("AgentRun", AgentRunSchema);
@@ -260,6 +262,22 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "GitHub App installation health", content: { "application/json": { schema: InstallationHealthSchema } } },
       404: { description: "Installation health not found" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/installations/{id}/repair",
+    responses: {
+      200: { description: "GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
+      404: { description: "Installation health not found" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/installations/{id}/repair/refresh",
+    responses: {
+      200: { description: "Refreshed GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
+      404: { description: "Installation not found" },
     },
   });
   registry.registerPath({

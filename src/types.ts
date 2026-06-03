@@ -615,6 +615,26 @@ export type AgentActionType =
   | "explain_repo_fit";
 export type AgentActionStatus = "recommended" | "ready" | "blocked" | "watch" | "needs_input";
 export type AgentSafetyClass = "private" | "public_safe" | "approval_required";
+export type AgentActionBlockerCategory = "branch" | "account" | "queue" | "scoreability" | "risk" | "maintainer" | "unknown";
+
+export type AgentActionExplanationCard = {
+  summary: string;
+  whyNow: string;
+  scoreabilityBlocker: string;
+  risk: string;
+  maintainerFriction: string;
+  expectedImpact: string;
+  blockerGroups: Array<{
+    category: AgentActionBlockerCategory;
+    items: string[];
+  }>;
+  rerunWhen: string;
+  publicSafe: {
+    summary: string;
+    whyNow: string;
+    rerunWhen: string;
+  };
+};
 
 export type AgentRunRecord = {
   id: string;
@@ -646,6 +666,7 @@ export type AgentActionRecord = {
   blockedBy: string[];
   rerunWhen?: string | null | undefined;
   publicSafeSummary: string;
+  explanationCard?: AgentActionExplanationCard | undefined;
   approvalRequired: boolean;
   safetyClass: AgentSafetyClass;
   payload: Record<string, JsonValue>;
@@ -661,6 +682,80 @@ export type AgentContextSnapshotRecord = {
   freshnessWarnings: string[];
   payload: Record<string, JsonValue>;
   createdAt?: string | null | undefined;
+};
+
+export type AgentRecommendationOutcomeState = "accepted" | "ignored" | "stale" | "merged" | "closed" | "improved";
+export type AgentRecommendationOutcomeTargetType = "pull_request" | "issue" | "repository" | "none";
+export type AgentRecommendationOutcomeConfidence = "high" | "medium" | "low";
+
+export type AgentRecommendationOutcomeRecord = {
+  id?: string | undefined;
+  actionId: string;
+  runId: string;
+  actorLogin: string;
+  actionType: AgentActionType;
+  targetRepoFullName?: string | null | undefined;
+  targetPullNumber?: number | null | undefined;
+  targetIssueNumber?: number | null | undefined;
+  outcomeState: AgentRecommendationOutcomeState;
+  outcomeTargetType: AgentRecommendationOutcomeTargetType;
+  outcomeRepoFullName?: string | null | undefined;
+  outcomePullNumber?: number | null | undefined;
+  outcomeIssueNumber?: number | null | undefined;
+  maintainerLane: boolean;
+  confidence: AgentRecommendationOutcomeConfidence;
+  reason: string;
+  sourceUpdatedAt?: string | null | undefined;
+  detectedAt?: string | null | undefined;
+  metadata: Record<string, JsonValue>;
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+};
+
+export type AgentRecommendationOutcomeStateBucket = {
+  state: AgentRecommendationOutcomeState;
+  count: number;
+};
+
+export type AgentRecommendationOutcomeRepoSummary = {
+  repoFullName: string;
+  total: number;
+  accepted: number;
+  ignored: number;
+  stale: number;
+  merged: number;
+  closed: number;
+  improved: number;
+  positive: number;
+  negative: number;
+  maintainerLaneTotal: number;
+  latestOutcomeAt?: string | null | undefined;
+  signal: "positive" | "negative" | "mixed" | "neutral";
+};
+
+export type AgentRecommendationOutcomeSummary = {
+  login: string;
+  generatedAt: string;
+  windowDays: number;
+  totals: {
+    total: number;
+    accepted: number;
+    ignored: number;
+    stale: number;
+    merged: number;
+    closed: number;
+    improved: number;
+    positive: number;
+    negative: number;
+    maintainerLaneTotal: number;
+  };
+  states: AgentRecommendationOutcomeStateBucket[];
+  repos: AgentRecommendationOutcomeRepoSummary[];
+  maintainerLane: {
+    total: number;
+    states: AgentRecommendationOutcomeStateBucket[];
+  };
+  privateSummary: string;
 };
 
 export type InstallationRecord = {

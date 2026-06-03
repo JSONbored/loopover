@@ -33,6 +33,9 @@ gittensory-mcp whoami
 gittensory-mcp status
 gittensory-mcp changelog
 gittensory-mcp doctor
+gittensory-mcp profile list
+gittensory-mcp profile create work
+gittensory-mcp profile switch work
 gittensory-mcp cache status
 gittensory-mcp cache clear
 gittensory-mcp init-client --print codex
@@ -70,6 +73,19 @@ gittensory-mcp login --github-token "$(gh auth token)"
 
 The wrapper stores a Gittensory session token, not a GitHub token.
 
+The default profile keeps normal single-account usage simple. For multiple identities, use named profiles:
+
+```sh
+gittensory-mcp login --profile personal --github-token "$(gh auth token)"
+gittensory-mcp login --profile work --github-token "$WORK_GITHUB_TOKEN"
+gittensory-mcp profile list
+gittensory-mcp profile switch work
+gittensory-mcp whoami
+gittensory-mcp logout --profile work
+```
+
+Use `--profile <name>` on `login`, `logout`, `whoami`, `status`, and `doctor`, or set `GITTENSORY_PROFILE`. `logout` only clears the selected local profile unless `--all` is passed. Profile output redacts session tokens and local config paths.
+
 ## Base-Agent Mode
 
 The agent commands are copilot-only. They rank, explain, preflight, and draft public-safe packets, but they do not edit code, open PRs, post comments, close, merge, or label from the local wrapper.
@@ -90,6 +106,7 @@ The same capabilities are exposed to MCP clients as:
 ## Environment
 
 - `GITTENSORY_API_URL`
+- `GITTENSORY_PROFILE`
 - `GITTENSORY_CONFIG_PATH` or `GITTENSORY_CONFIG_DIR`
 - `GITTENSORY_API_TOKEN`, `GITTENSORY_MCP_TOKEN`, or `GITTENSORY_TOKEN`
 - `GITHUB_TOKEN` for non-interactive login bootstrap

@@ -89,9 +89,11 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
+  buildInstallationRepairDiagnostics,
   enrichInstallationHealth,
   refreshContributorActivity,
   refreshInstallationHealth,
+  refreshInstallationHealthForInstallation,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -1430,6 +1432,24 @@ export function createApp() {
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json(enrichInstallationHealth(health));
+  });
+
+  app.get("/v1/installations/:id/repair", async (c) => {
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    const health = await getInstallationHealth(c.env, installationId);
+    if (!health) return c.json({ error: "installation_health_not_found" }, 404);
+    return c.json(await buildInstallationRepairDiagnostics(c.env, health));
+  });
+
+  app.post("/v1/installations/:id/repair/refresh", async (c) => {
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    const refreshed = await refreshInstallationHealthForInstallation(c.env, installationId);
+    if (!refreshed) return c.json({ error: "installation_not_found" }, 404);
+    const health = await getInstallationHealth(c.env, installationId);
+    if (!health) return c.json({ error: "installation_health_not_found" }, 404);
+    return c.json({ ...(await buildInstallationRepairDiagnostics(c.env, health)), refreshed: true });
   });
 
   app.get("/v1/repos", async (c) => c.json(await listRepositories(c.env)));

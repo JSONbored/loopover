@@ -26,6 +26,7 @@ import {
   backfillOpenPullRequestDetails,
   backfillRegisteredRepositories,
   backfillRepositorySegment,
+  buildInstallationRepairDiagnostics,
   enqueueRepositoryOpenDataBackfill,
   refreshContributorActivity,
   refreshInstallationHealth,
@@ -372,6 +373,83 @@ describe("GitHub backfill", () => {
           missingPermissions: ["checks"],
           requiredPermissions: expect.objectContaining({ checks: "write" }),
         }),
+      ]),
+    );
+  });
+
+  it("marks comment, label, and check repair impacts disabled by repo settings", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+    });
+
+    const repair = await buildInstallationRepairDiagnostics(env, {
+      installationId: 123,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "healthy",
+      missingPermissions: [],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(repair.repairSteps).toEqual(["No repair needed."]);
+    expect(repair.requiredPermissions).not.toHaveProperty("checks");
+    expect(repair.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "comment", enabled: false, affectedRepoCount: 0, action: "No change needed." }),
+        expect.objectContaining({ mode: "label", enabled: false, affectedRepoCount: 0, action: "No change needed." }),
+        expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ optional: true })] }),
+      ]),
+    );
+  });
+
+  it("counts comment-only and label-only repair surfaces separately", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "comments", full_name: "JSONbored/comments", private: true, owner: { login: "JSONbored" } }, 124);
+    await upsertRepositoryFromGitHub(env, { name: "labels", full_name: "JSONbored/labels", private: true, owner: { login: "JSONbored" } }, 124);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/comments",
+      commentMode: "detected_contributors_only",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/labels",
+      commentMode: "off",
+      publicSurface: "label_only",
+      autoLabelEnabled: true,
+      checkRunMode: "off",
+    });
+
+    const repair = await buildInstallationRepairDiagnostics(env, {
+      installationId: 124,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 2,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["issues"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(repair.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true })] }),
       ]),
     );
   });

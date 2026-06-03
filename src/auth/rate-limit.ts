@@ -104,6 +104,7 @@ export function routeClassForPath(path: string): RateLimitClass {
     path.includes("/scoring/preview") ||
     path.includes("/decision-pack") ||
     path.includes("/open-pr-monitor") ||
+    /^\/v1\/installations\/[^/]+\/repair\/refresh$/.test(path) ||
     path.includes("/upstream/") ||
     path.includes("/internal/jobs/generate-signal-snapshots") ||
     path.includes("/internal/jobs/build-contributor-decision-packs") ||

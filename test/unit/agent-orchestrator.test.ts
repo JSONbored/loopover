@@ -394,7 +394,6 @@ describe("agent orchestrator", () => {
       publicSafeSummary: "Run branch preflight after resolving public readiness blockers.",
       payload: {},
     });
-    const outcomeRepoFit = __agentOrchestratorInternals.actionFromRepoDecision(run, { ...readyDecision, outcome: { repoFullName: "owner/ready" } as any }, 5);
     const defaultEvidenceAction = __agentOrchestratorInternals.actionRecord({
       run,
       actionType: "choose_next_work",

@@ -709,6 +709,8 @@ export type DecisionSnapshotReplay = {
   };
   context: AgentContextSnapshotRecord;
   actions: AgentActionRecord[];
+};
+
 export type AgentRecommendationOutcomeState = "accepted" | "rejected" | "ignored" | "stale" | "merged" | "closed" | "improved";
 export type AgentRecommendationOutcomeTargetType = "pull_request" | "issue" | "repository" | "none";
 export type AgentRecommendationOutcomeConfidence = "high" | "medium" | "low";

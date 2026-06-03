@@ -1,0 +1,68 @@
+{
+  "name": "@jsonbored/gittensory-raycast",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "description": "Raycast extension scaffold for Gittensory — GitHub Device Flow via the Gittensory API.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JSONbored/gittensory.git",
+    "directory": "packages/gittensory-raycast"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.lib.json && tsc -p tsconfig.src.json",
+    "lint": "eslint .",
+    "test": "vitest run --coverage",
+    "test:ci": "npm run build && npm run lint && npm run test",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit && tsc -p tsconfig.src.json --noEmit"
+  },
+  "dependencies": {
+    "@raycast/api": "^1.103.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.0.4",
+    "@types/node": "^24.10.1",
+    "@types/react": "19.0.10",
+    "eslint": "^9.39.1",
+    "react": "19.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.7"
+  },
+  "title": "Gittensory",
+  "description": "Fast Raycast commands for Gittensory session auth and status.",
+  "icon": "assets/extension-icon.png",
+  "author": "jsonbored",
+  "categories": ["Developer Tools"],
+  "license": "AGPL-3.0",
+  "commands": [
+    {
+      "name": "login",
+      "title": "Login",
+      "description": "Authenticate with GitHub Device Flow through Gittensory",
+      "mode": "no-view"
+    },
+    {
+      "name": "status",
+      "title": "Status",
+      "description": "Show current Gittensory session status",
+      "mode": "view"
+    },
+    {
+      "name": "logout",
+      "title": "Logout",
+      "description": "Revoke the local Gittensory session",
+      "mode": "no-view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiOrigin",
+      "type": "textfield",
+      "required": false,
+      "title": "API Origin",
+      "description": "Gittensory API base URL",
+      "default": "https://gittensory-api.aethereal.dev"
+    }
+  ]
+}

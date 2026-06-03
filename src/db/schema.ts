@@ -473,6 +473,41 @@ export const agentContextSnapshots = sqliteTable(
   }),
 );
 
+export const agentRecommendationOutcomes = sqliteTable(
+  "agent_recommendation_outcomes",
+  {
+    id: text("id").primaryKey(),
+    actionId: text("action_id").notNull(),
+    runId: text("run_id").notNull(),
+    actorLogin: text("actor_login").notNull(),
+    actionType: text("action_type").notNull(),
+    targetRepoFullName: text("target_repo_full_name"),
+    targetPullNumber: integer("target_pull_number"),
+    targetIssueNumber: integer("target_issue_number"),
+    surface: text("surface"),
+    snapshotId: text("snapshot_id"),
+    outcomeState: text("outcome_state").notNull(),
+    outcomeTargetType: text("outcome_target_type").notNull(),
+    outcomeRepoFullName: text("outcome_repo_full_name"),
+    outcomePullNumber: integer("outcome_pull_number"),
+    outcomeIssueNumber: integer("outcome_issue_number"),
+    maintainerLane: integer("maintainer_lane", { mode: "boolean" }).notNull().default(false),
+    confidence: text("confidence").notNull(),
+    reason: text("reason").notNull(),
+    sourceUpdatedAt: text("source_updated_at"),
+    detectedAt: text("detected_at").notNull().default("CURRENT_TIMESTAMP"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  },
+  (table) => ({
+    action: uniqueIndex("agent_recommendation_outcomes_action_unique").on(table.actionId),
+    actorState: index("agent_recommendation_outcomes_actor_state_idx").on(table.actorLogin, table.outcomeState, table.updatedAt),
+    target: index("agent_recommendation_outcomes_target_idx").on(table.targetRepoFullName, table.targetPullNumber, table.targetIssueNumber),
+    maintainer: index("agent_recommendation_outcomes_maintainer_idx").on(table.actorLogin, table.maintainerLane, table.updatedAt),
+  }),
+);
+
 export const installationHealth = sqliteTable("installation_health", {
   installationId: integer("installation_id").primaryKey(),
   accountLogin: text("account_login").notNull(),
@@ -800,6 +835,7 @@ export const productUsageEvents = sqliteTable(
   {
     id: text("id").primaryKey(),
     surface: text("surface").notNull(),
+    role: text("role").notNull().default("unknown"),
     eventName: text("event_name").notNull(),
     route: text("route"),
     actorHash: text("actor_hash"),
@@ -815,6 +851,7 @@ export const productUsageEvents = sqliteTable(
   },
   (table) => ({
     surfaceOccurred: index("product_usage_events_surface_occurred_idx").on(table.surface, table.occurredAt),
+    roleOccurred: index("product_usage_events_role_occurred_idx").on(table.role, table.occurredAt),
     eventOccurred: index("product_usage_events_event_occurred_idx").on(table.eventName, table.occurredAt),
     actorOccurred: index("product_usage_events_actor_occurred_idx").on(table.actorHash, table.occurredAt),
     repoOccurred: index("product_usage_events_repo_occurred_idx").on(table.repoFullName, table.occurredAt),
@@ -842,6 +879,10 @@ export const productUsageDailyRollups = sqliteTable(
     toolsJson: text("tools_json").notNull().default("[]"),
     routeClassesJson: text("route_classes_json").notNull().default("[]"),
     activationJson: text("activation_json").notNull().default("{}"),
+    rolesJson: text("roles_json").notNull().default("[]"),
+    activationByRoleJson: text("activation_by_role_json").notNull().default("[]"),
+    activationBySurfaceJson: text("activation_by_surface_json").notNull().default("[]"),
+    retentionJson: text("retention_json").notNull().default("[]"),
     generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
     updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
   },

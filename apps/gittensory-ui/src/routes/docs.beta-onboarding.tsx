@@ -48,15 +48,17 @@ function BetaOnboarding() {
 
       <h2>Miner journey</h2>
       <p>
-        Miners and contributors use the local MCP package. Metadata stays on your machine; private
-        scoreability and blockers appear only in authenticated MCP/API responses.
+        Miners and contributors use the local MCP package. Source contents stay on your machine but
+        branch metadata (such as branch names, SHAs, changed file paths, commit messages, validation
+        details, labels, body text, linked issues, and scenario notes) is sent to authenticated
+        Gittensory MCP/API responses for analysis and packet preparation.
       </p>
       <ol>
         <li>
           <strong>Install the MCP.</strong> Global install or <code>npx</code> — see{" "}
           <Link to="/docs/quickstart">Quickstart</Link>.
           <CodeBlock
-            code={`npm i -g @jsonbored/gittensory-mcp
+            code={`npm i -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp --help`}
           />
         </li>

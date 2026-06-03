@@ -63,6 +63,31 @@ describe("maintainer settings preview UI helpers", () => {
     });
   });
 
+  it("falls back to the default scenario and omits blank optional body text", () => {
+    expect(findPreviewScenario("unknown-scenario" as never)).toEqual(findPreviewScenario("confirmed-miner"));
+
+    expect(
+      buildSettingsPreviewRequest({
+        repoFullName: "JSONbored/gittensory",
+        scenarioId: "confirmed-miner",
+        title: "Review cache preview",
+        labels: "",
+        linkedIssues: "",
+        body: "   ",
+      }),
+    ).toEqual({
+      sample: {
+        authorLogin: "sample-miner",
+        authorType: "User",
+        authorAssociation: "CONTRIBUTOR",
+        minerStatus: "confirmed",
+        title: "Review cache preview",
+        labels: [],
+        linkedIssues: [],
+      },
+    });
+  });
+
   it("keeps all required simulator scenarios available", () => {
     expect(findPreviewScenario("confirmed-miner").sample).toMatchObject({
       minerStatus: "confirmed",
@@ -80,5 +105,25 @@ describe("maintainer settings preview UI helpers", () => {
     expect(findPreviewScenario("miner-api-unavailable").sample).toMatchObject({
       minerStatus: "unavailable",
     });
+  });
+
+  it("falls back safely for sparse preview helper inputs", () => {
+    expect(findPreviewScenario("unknown-scenario" as never).id).toBe("confirmed-miner");
+    expect(
+      extractPreviewRepoOptions([
+        { pr: { split: () => [] } as unknown as string },
+        { pr: "JSONbored/gittensory#251" },
+      ]),
+    ).toEqual(["JSONbored/gittensory"]);
+
+    const request = buildSettingsPreviewRequest({
+      repoFullName: "JSONbored/gittensory",
+      scenarioId: "confirmed-miner",
+      title: "Export weekly report",
+      labels: "",
+      linkedIssues: "",
+      body: "   ",
+    });
+    expect(request.sample).not.toHaveProperty("body");
   });
 });

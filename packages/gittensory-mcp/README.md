@@ -13,7 +13,7 @@ The package is public. Gittensory keeps sensitive score, trust, wallet, and main
 Public npm:
 
 ```sh
-npm install -g @jsonbored/gittensory-mcp
+npm install -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp login
 ```
 
@@ -33,9 +33,16 @@ gittensory-mcp whoami
 gittensory-mcp status
 gittensory-mcp changelog
 gittensory-mcp doctor
+gittensory-mcp profile list
+gittensory-mcp profile create work
+gittensory-mcp profile switch work
+gittensory-mcp cache status
+gittensory-mcp cache clear
 gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
+gittensory-mcp decision-pack --login jsonbored --json
+gittensory-mcp repo-decision --login jsonbored --repo we-promise/sure --json
 gittensory-mcp analyze-branch --login jsonbored --json
 gittensory-mcp preflight --login jsonbored --json
 gittensory-mcp agent plan --login jsonbored --json
@@ -66,6 +73,19 @@ gittensory-mcp login --github-token "$(gh auth token)"
 
 The wrapper stores a Gittensory session token, not a GitHub token.
 
+The default profile keeps normal single-account usage simple. For multiple identities, use named profiles:
+
+```sh
+gittensory-mcp login --profile personal --github-token "$(gh auth token)"
+gittensory-mcp login --profile work --github-token "$WORK_GITHUB_TOKEN"
+gittensory-mcp profile list
+gittensory-mcp profile switch work
+gittensory-mcp whoami
+gittensory-mcp logout --profile work
+```
+
+Use `--profile <name>` on `login`, `logout`, `whoami`, `status`, and `doctor`, or set `GITTENSORY_PROFILE`. `logout` only clears the selected local profile unless `--all` is passed. Profile output redacts session tokens and local config paths.
+
 ## Base-Agent Mode
 
 The agent commands are copilot-only. They rank, explain, preflight, and draft public-safe packets, but they do not edit code, open PRs, post comments, close, merge, or label from the local wrapper.
@@ -86,6 +106,7 @@ The same capabilities are exposed to MCP clients as:
 ## Environment
 
 - `GITTENSORY_API_URL`
+- `GITTENSORY_PROFILE`
 - `GITTENSORY_CONFIG_PATH` or `GITTENSORY_CONFIG_DIR`
 - `GITTENSORY_API_TOKEN`, `GITTENSORY_MCP_TOKEN`, or `GITTENSORY_TOKEN`
 - `GITHUB_TOKEN` for non-interactive login bootstrap
@@ -140,3 +161,13 @@ gittensory-mcp changelog
 ```
 
 `gittensory-mcp status` also reports the local package version, latest npm version when reachable, API health, auth state, and source-upload posture.
+
+## Offline decision-pack fallback
+
+Successful `decision-pack` and MCP `gittensory_get_decision_pack` calls store a bounded last-good local cache entry keyed by API version and login. If the API or network is temporarily unavailable, the wrapper can return that last-good guidance as `source: "local_cache"` with `stale: true`, `cachedAt`, and rerun guidance. Auth and permission failures do not use stale fallback data.
+
+The cache excludes source contents and local paths, is bounded, and can be removed with:
+
+```sh
+gittensory-mcp cache clear
+```

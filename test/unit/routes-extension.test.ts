@@ -23,19 +23,20 @@ describe("extension packet helper internals", () => {
     expect(blockers).toEqual([{ id: "blocker-1", detail: "No private blocker detail is currently cached." }]);
   });
 
-  it("sanitizes extension packet markdown before returning it", () => {
+  it("builds extension packet markdown from public-safe allowlisted text", () => {
     const markdown = __routesInternals.buildExtensionPublicSafePacket({
       repoFullName: "owner/repo",
       pullNumber: 12,
       contributor: "alice",
       reviewability: {
-        action: "review_now",
-        noiseSources: ["avoid payout language in public"],
-        maintainerNextSteps: ["remove wallet references"],
+        action: "needs_author",
+        noiseSources: ["Contributor repo-specific closed PR rate is 40%.", "avoid payout language in public"],
+        maintainerNextSteps: ["remove wallet references", "Contributor repo-specific closed PR rate is 40%."],
       },
     });
     expect(markdown).toContain("# Public-safe PR packet");
-    expect(markdown).not.toMatch(/wallet|payout|hotkey|reward estimate|estimated score|raw trust score/i);
+    expect(markdown).toContain("author input may be needed before deep review");
+    expect(markdown).not.toMatch(/closed PR rate|repo-specific|wallet|payout|hotkey|reward estimate|estimated score|raw trust score/i);
   });
 
   it("authenticates request identity from browser session cookie fallback", async () => {

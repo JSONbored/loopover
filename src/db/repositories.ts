@@ -5,6 +5,7 @@ import {
   aiUsageEvents,
   agentActions,
   agentContextSnapshots,
+  agentRecommendationOutcomes,
   agentRuns,
   auditEvents,
   authSessions,
@@ -57,6 +58,11 @@ import type {
   AgentCommandAnswerRecord,
   AgentCommandFeedbackRecord,
   AgentContextSnapshotRecord,
+  AgentRecommendationOutcomeConfidence,
+  AgentRecommendationOutcomeRecord,
+  AgentRecommendationOutcomeState,
+  AgentRecommendationOutcomeSummary,
+  AgentRecommendationOutcomeTargetType,
   AgentMode,
   AgentRunRecord,
   AgentRunStatus,
@@ -90,11 +96,18 @@ import type {
   ProductUsageDailyRollupRecord,
   ProductUsageDailyRollupStatus,
   ProductUsageEventRecord,
+  ProductUsageRetentionRollup,
   ProductUsageRollupRunResult,
   ProductUsageRollupStatus,
   ProductUsageOutcome,
+  ProductUsageRole,
+  ProductUsageRoleActivationFunnel,
+  ProductUsageRoleDimensionCount,
+  ProductUsageRoleRetention,
   ProductUsageSummary,
   ProductUsageSurface,
+  ProductUsageSurfaceActivationFunnel,
+  ProductUsageSurfaceRetention,
   PullRequestFileRecord,
   PullRequestDetailSyncStateRecord,
   PullRequestRecord,
@@ -182,6 +195,12 @@ export async function markInstallationDeleted(env: Env, installationId: number):
     .update(repositories)
     .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
     .where(eq(repositories.installationId, installationId));
+}
+
+export async function getInstallation(env: Env, installationId: number): Promise<InstallationRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(installations).where(eq(installations.id, installationId)).limit(1);
+  return row ? toInstallationRecord(row) : null;
 }
 
 export async function listInstallations(env: Env): Promise<InstallationRecord[]> {
@@ -967,6 +986,7 @@ export async function recordProductUsageEvent(
   event: {
     surface: ProductUsageSurface;
     eventName: string;
+    role?: ProductUsageRole | string | null | undefined;
     actor?: string | null | undefined;
     sessionId?: string | null | undefined;
     route?: string | null | undefined;
@@ -982,9 +1002,16 @@ export async function recordProductUsageEvent(
 ): Promise<ProductUsageEventRecord> {
   const db = getDb(env.DB);
   const actorRedactor = buildProductUsageActorRedactor(event.actor);
+  const sanitizedMetadata = sanitizeProductUsageMetadata(event.metadata, actorRedactor);
   const record: ProductUsageEventRecord = {
     id: crypto.randomUUID(),
     surface: normalizeProductUsageSurface(event.surface),
+    role: resolveProductUsageRole({
+      explicitRole: event.role,
+      surface: normalizeProductUsageSurface(event.surface),
+      eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
+      metadata: sanitizedMetadata,
+    }),
     eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
     route: boundedProductUsageField(event.route, 160),
     actorHash: await hashProductUsageIdentifier(env, "actor", event.actor),
@@ -995,12 +1022,13 @@ export async function recordProductUsageEvent(
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
     clientName: boundedProductUsageField(event.clientName, 80),
     clientVersion: boundedProductUsageField(event.clientVersion, 80),
-    metadata: sanitizeProductUsageMetadata(event.metadata, actorRedactor),
+    metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
   await db.insert(productUsageEvents).values({
     id: record.id,
     surface: record.surface,
+    role: record.role,
     eventName: record.eventName,
     route: record.route ?? null,
     actorHash: record.actorHash ?? null,
@@ -1460,6 +1488,76 @@ function maxIso(left: string | null | undefined, right: string | null | undefine
   if (!left) return right ?? null;
   if (!right) return left;
   return right > left ? right : left;
+}
+
+function outcomeStateBuckets(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["states"] {
+  const states: AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved", "closed", "rejected", "stale", "ignored"];
+  return states.flatMap((state) => {
+    const count = outcomes.filter((outcome) => outcome.outcomeState === state).length;
+    return count > 0 ? [{ state, count }] : [];
+  });
+}
+
+function recommendationOutcomeTotals(
+  outcomes: AgentRecommendationOutcomeRecord[],
+  maintainerLaneTotal: number,
+): AgentRecommendationOutcomeSummary["totals"] {
+  const accepted = outcomes.filter((outcome) => outcome.outcomeState === "accepted").length;
+  const rejected = outcomes.filter((outcome) => outcome.outcomeState === "rejected").length;
+  const merged = outcomes.filter((outcome) => outcome.outcomeState === "merged").length;
+  const improved = outcomes.filter((outcome) => outcome.outcomeState === "improved").length;
+  const closed = outcomes.filter((outcome) => outcome.outcomeState === "closed").length;
+  const stale = outcomes.filter((outcome) => outcome.outcomeState === "stale").length;
+  const ignored = outcomes.filter((outcome) => outcome.outcomeState === "ignored").length;
+  return {
+    total: outcomes.length,
+    accepted,
+    rejected,
+    ignored,
+    stale,
+    merged,
+    closed,
+    improved,
+    positive: accepted + merged + improved,
+    negative: closed + rejected + stale + ignored,
+    maintainerLaneTotal,
+  };
+}
+
+function summarizeRecommendationOutcomeRepos(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["repos"] {
+  const byRepo = new Map<string, AgentRecommendationOutcomeRecord[]>();
+  for (const outcome of outcomes) {
+    const repoFullName = outcome.outcomeRepoFullName ?? outcome.targetRepoFullName;
+    if (!repoFullName) continue;
+    const key = repoFullName.toLowerCase();
+    byRepo.set(key, [...(byRepo.get(key) ?? []), outcome]);
+  }
+  return [...byRepo.values()]
+    .map((repoOutcomes) => {
+      const firstRepo = repoOutcomes[0]!;
+      const nonMaintainer = repoOutcomes.filter((outcome) => !outcome.maintainerLane);
+      const totals = recommendationOutcomeTotals(nonMaintainer, repoOutcomes.length - nonMaintainer.length);
+      const signal: AgentRecommendationOutcomeSummary["repos"][number]["signal"] =
+        totals.positive > totals.negative ? "positive" : totals.negative > totals.positive ? "negative" : totals.total > 0 ? "mixed" : "neutral";
+      return {
+        repoFullName: firstRepo.outcomeRepoFullName ?? firstRepo.targetRepoFullName ?? "unknown/repo",
+        total: totals.total,
+        accepted: totals.accepted,
+        rejected: totals.rejected,
+        ignored: totals.ignored,
+        stale: totals.stale,
+        merged: totals.merged,
+        closed: totals.closed,
+        improved: totals.improved,
+        positive: totals.positive,
+        negative: totals.negative,
+        maintainerLaneTotal: totals.maintainerLaneTotal,
+        latestOutcomeAt: repoOutcomes.reduce((latest, outcome) => maxIso(latest, outcome.updatedAt ?? outcome.detectedAt), null as string | null),
+        signal,
+      };
+    })
+    .sort((left, right) => right.total - left.total || left.repoFullName.localeCompare(right.repoFullName))
+    .slice(0, 20);
 }
 
 function finiteNumber(value: unknown): number {
@@ -2333,6 +2431,121 @@ export async function listAgentContextSnapshots(env: Env, runId: string): Promis
   return rows.map(toAgentContextSnapshotRecord);
 }
 
+export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentRecommendationOutcomeRecord): Promise<AgentRecommendationOutcomeRecord> {
+  const now = outcome.updatedAt ?? nowIso();
+  const values = {
+    id: outcome.id ?? `outcome:${outcome.actionId}`,
+    actionId: outcome.actionId,
+    runId: outcome.runId,
+    actorLogin: boundedString(outcome.actorLogin, 100),
+    actionType: outcome.actionType,
+    surface: outcome.surface ?? null,
+    snapshotId: outcome.snapshotId ?? null,
+    targetRepoFullName: outcome.targetRepoFullName ? boundedString(outcome.targetRepoFullName, 200) : null,
+    targetPullNumber: outcome.targetPullNumber ?? null,
+    targetIssueNumber: outcome.targetIssueNumber ?? null,
+    outcomeState: outcome.outcomeState,
+    outcomeTargetType: outcome.outcomeTargetType,
+    outcomeRepoFullName: outcome.outcomeRepoFullName ? boundedString(outcome.outcomeRepoFullName, 200) : null,
+    outcomePullNumber: outcome.outcomePullNumber ?? null,
+    outcomeIssueNumber: outcome.outcomeIssueNumber ?? null,
+    maintainerLane: outcome.maintainerLane,
+    confidence: outcome.confidence,
+    reason: boundedString(outcome.reason, 500),
+    sourceUpdatedAt: outcome.sourceUpdatedAt ?? null,
+    detectedAt: outcome.detectedAt ?? now,
+    metadataJson: jsonString(outcome.metadata ?? {}),
+    createdAt: outcome.createdAt ?? now,
+    updatedAt: now,
+  };
+  await getDb(env.DB)
+    .insert(agentRecommendationOutcomes)
+    .values(values)
+    .onConflictDoUpdate({
+      target: agentRecommendationOutcomes.actionId,
+      set: {
+        actorLogin: values.actorLogin,
+        actionType: values.actionType,
+        surface: values.surface,
+        snapshotId: values.snapshotId,
+        targetRepoFullName: values.targetRepoFullName,
+        targetPullNumber: values.targetPullNumber,
+        targetIssueNumber: values.targetIssueNumber,
+        outcomeState: values.outcomeState,
+        outcomeTargetType: values.outcomeTargetType,
+        outcomeRepoFullName: values.outcomeRepoFullName,
+        outcomePullNumber: values.outcomePullNumber,
+        outcomeIssueNumber: values.outcomeIssueNumber,
+        maintainerLane: values.maintainerLane,
+        confidence: values.confidence,
+        reason: values.reason,
+        sourceUpdatedAt: values.sourceUpdatedAt,
+        detectedAt: values.detectedAt,
+        metadataJson: values.metadataJson,
+        updatedAt: values.updatedAt,
+      },
+    });
+  return (await getAgentRecommendationOutcome(env, outcome.actionId))!;
+}
+
+export async function getAgentRecommendationOutcome(env: Env, actionId: string): Promise<AgentRecommendationOutcomeRecord | null> {
+  const [row] = await getDb(env.DB).select().from(agentRecommendationOutcomes).where(eq(agentRecommendationOutcomes.actionId, actionId)).limit(1);
+  return row ? toAgentRecommendationOutcomeRecord(row) : null;
+}
+
+export async function listAgentRecommendationOutcomes(
+  env: Env,
+  options: { actorLogin?: string; windowDays?: number; now?: string; limit?: number } = {},
+): Promise<AgentRecommendationOutcomeRecord[]> {
+  const limit = clampInteger(options.limit ?? 500, 1, 5000);
+  const conditions = [];
+  if (options.actorLogin) conditions.push(eq(agentRecommendationOutcomes.actorLogin, options.actorLogin));
+  if (options.windowDays !== undefined) {
+    const windowDays = clampInteger(options.windowDays, 1, 365);
+    const now = options.now ?? nowIso();
+    conditions.push(gte(agentRecommendationOutcomes.updatedAt, new Date(Date.parse(now) - windowDays * 24 * 60 * 60 * 1000).toISOString()));
+  }
+  const rows = await getDb(env.DB)
+    .select()
+    .from(agentRecommendationOutcomes)
+    .where(conditions.length === 0 ? undefined : and(...conditions))
+    .orderBy(desc(agentRecommendationOutcomes.updatedAt), agentRecommendationOutcomes.actionId)
+    .limit(limit);
+  return rows.map(toAgentRecommendationOutcomeRecord);
+}
+
+export async function getAgentRecommendationOutcomeSummary(
+  env: Env,
+  actorLogin: string,
+  options: { windowDays?: number; now?: string } = {},
+): Promise<AgentRecommendationOutcomeSummary> {
+  const windowDays = clampInteger(options.windowDays ?? 90, 1, 365);
+  const generatedAt = options.now ?? nowIso();
+  const outcomes = await listAgentRecommendationOutcomes(env, { actorLogin, windowDays, now: generatedAt });
+  const nonMaintainer = outcomes.filter((outcome) => !outcome.maintainerLane);
+  const maintainer = outcomes.filter((outcome) => outcome.maintainerLane);
+  const states = outcomeStateBuckets(nonMaintainer);
+  const maintainerStates = outcomeStateBuckets(maintainer);
+  const repos = summarizeRecommendationOutcomeRepos(outcomes);
+  const totals = recommendationOutcomeTotals(nonMaintainer, maintainer.length);
+  return {
+    login: actorLogin,
+    generatedAt,
+    windowDays,
+    totals,
+    states,
+    repos,
+    maintainerLane: {
+      total: maintainer.length,
+      states: maintainerStates,
+    },
+    privateSummary:
+      outcomes.length === 0
+        ? `${actorLogin} has no evaluated recommendation outcomes in the last ${windowDays} day(s).`
+        : `${actorLogin} has ${nonMaintainer.length} contributor-lane recommendation outcome(s), ${totals.positive} positive and ${totals.negative} negative, plus ${maintainer.length} maintainer-lane outcome(s) kept separate.`,
+  };
+}
+
 export async function upsertInstallationHealth(env: Env, health: InstallationHealthRecord): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -2998,6 +3211,34 @@ function toAgentContextSnapshotRecord(row: typeof agentContextSnapshots.$inferSe
   };
 }
 
+function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutcomes.$inferSelect): AgentRecommendationOutcomeRecord {
+  return {
+    id: row.id,
+    actionId: row.actionId,
+    runId: row.runId,
+    actorLogin: row.actorLogin,
+    actionType: parseAgentActionType(row.actionType),
+    surface: row.surface ? parseAgentSurface(row.surface) : null,
+    snapshotId: row.snapshotId ?? null,
+    targetRepoFullName: row.targetRepoFullName,
+    targetPullNumber: row.targetPullNumber,
+    targetIssueNumber: row.targetIssueNumber,
+    outcomeState: parseAgentRecommendationOutcomeState(row.outcomeState),
+    outcomeTargetType: parseAgentRecommendationOutcomeTargetType(row.outcomeTargetType),
+    outcomeRepoFullName: row.outcomeRepoFullName,
+    outcomePullNumber: row.outcomePullNumber,
+    outcomeIssueNumber: row.outcomeIssueNumber,
+    maintainerLane: row.maintainerLane,
+    confidence: parseAgentRecommendationOutcomeConfidence(row.confidence),
+    reason: row.reason,
+    sourceUpdatedAt: row.sourceUpdatedAt,
+    detectedAt: row.detectedAt,
+    metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 function toInstallationHealthRecord(row: typeof installationHealth.$inferSelect): InstallationHealthRecord {
   return {
     installationId: row.installationId,
@@ -3056,6 +3297,7 @@ function toProductUsageEventRecord(row: typeof productUsageEvents.$inferSelect):
   return {
     id: row.id,
     surface: normalizeProductUsageSurface(row.surface),
+    role: normalizeProductUsageRole(row.role) ?? "unknown",
     eventName: row.eventName,
     route: row.route,
     actorHash: row.actorHash,
@@ -3091,6 +3333,10 @@ function toProductUsageDailyRollupRecord(row: typeof productUsageDailyRollups.$i
     byTool: parseJson<Array<{ key: string; count: number }>>(row.toolsJson, []),
     byRouteClass: parseJson<Array<{ key: string; count: number }>>(row.routeClassesJson, []),
     activation: parseJson<ProductUsageActivationFunnel>(row.activationJson, emptyProductUsageActivationFunnel()),
+    byRole: parseJson<ProductUsageRoleDimensionCount[]>(row.rolesJson, []),
+    activationByRole: parseJson<ProductUsageRoleActivationFunnel[]>(row.activationByRoleJson, []),
+    activationBySurface: parseJson<ProductUsageSurfaceActivationFunnel[]>(row.activationBySurfaceJson, []),
+    retention: parseJson<ProductUsageRetentionRollup[]>(row.retentionJson, []),
     generatedAt: row.generatedAt,
     updatedAt: row.updatedAt,
   };
@@ -3183,12 +3429,25 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
     .limit(PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT + 1);
   const capped = rows.length > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT || sourceEventCount > PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT;
   const events = rows.slice(0, PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
+  const retentionStartIso = `${addProductUsageUtcDays(day, -PRODUCT_USAGE_RETENTION_MAX_WINDOW_DAYS)}T00:00:00.000Z`;
+  const retentionWhere = and(gte(productUsageEvents.occurredAt, retentionStartIso), sql`${productUsageEvents.occurredAt} < ${startIso}`, sql`${productUsageEvents.actorHash} is not null`);
+  const [retentionSourceRow] = await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents).where(retentionWhere);
+  const retentionRows = await db
+    .select()
+    .from(productUsageEvents)
+    .where(retentionWhere)
+    .orderBy(desc(productUsageEvents.occurredAt))
+    .limit(PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT + 1);
+  const retentionCapped = retentionRows.length > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT || Number(retentionSourceRow?.count ?? 0) > PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT;
+  const retentionEvents = retentionRows.slice(0, PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT).map(toProductUsageEventRecord);
   const record = buildProductUsageDailyRollupRecord({
     day,
     generatedAt,
     sourceEventCount,
     capped,
     events,
+    retentionEvents,
+    retentionCapped,
   });
   await db
     .insert(productUsageDailyRollups)
@@ -3211,6 +3470,10 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
       toolsJson: jsonString(record.byTool),
       routeClassesJson: jsonString(record.byRouteClass),
       activationJson: jsonString(record.activation),
+      rolesJson: jsonString(record.byRole),
+      activationByRoleJson: jsonString(record.activationByRole),
+      activationBySurfaceJson: jsonString(record.activationBySurface),
+      retentionJson: jsonString(record.retention),
       generatedAt: record.generatedAt,
       updatedAt: record.updatedAt,
     })
@@ -3234,6 +3497,10 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
         toolsJson: jsonString(record.byTool),
         routeClassesJson: jsonString(record.byRouteClass),
         activationJson: jsonString(record.activation),
+        rolesJson: jsonString(record.byRole),
+        activationByRoleJson: jsonString(record.activationByRole),
+        activationBySurfaceJson: jsonString(record.activationBySurface),
+        retentionJson: jsonString(record.retention),
         generatedAt: record.generatedAt,
         updatedAt: record.updatedAt,
       },
@@ -3247,27 +3514,16 @@ function buildProductUsageDailyRollupRecord(args: {
   sourceEventCount: number;
   capped: boolean;
   events: ProductUsageEventRecord[];
+  retentionEvents: ProductUsageEventRecord[];
+  retentionCapped: boolean;
 }): ProductUsageDailyRollupRecord {
   const today = productUsageDayFromIso(args.generatedAt);
   const actorHashes = new Set(args.events.map((event) => event.actorHash).filter(isNonEmptyString));
   const sessionHashes = new Set(args.events.map((event) => event.sessionHash).filter(isNonEmptyString));
   const repoNames = new Set(args.events.map((event) => event.repoFullName).filter(isNonEmptyString));
-  const loginActors = productUsageActorSet(args.events, (event) => event.eventName === "auth_session_created");
-  const doctorPassActors = productUsageActorSet(args.events, isProductUsageDoctorPassEvent);
-  const firstUsefulActionActors = productUsageActorSet(args.events, isProductUsageUsefulActionEvent);
-  const githubInstalledRepos = productUsageRepoSet(args.events, (event) => event.eventName === "github_installation_created");
-  const githubFirstCommandRepos = productUsageRepoSet(args.events, isProductUsageGitHubCommandEvent);
-  const githubUsefulMaintainerRepos = productUsageRepoSet(args.events, isProductUsageUsefulMaintainerEvent);
-  const activation: ProductUsageActivationFunnel = {
-    loginActors: loginActors.size,
-    doctorPassActors: doctorPassActors.size,
-    firstUsefulActionActors: firstUsefulActionActors.size,
-    fullyActivatedActors: intersectionCount(loginActors, doctorPassActors, firstUsefulActionActors),
-    githubInstalledRepos: githubInstalledRepos.size,
-    githubFirstCommandRepos: githubFirstCommandRepos.size,
-    githubUsefulMaintainerRepos: githubUsefulMaintainerRepos.size,
-    githubActivatedRepos: intersectionCount(githubInstalledRepos, githubFirstCommandRepos, githubUsefulMaintainerRepos),
-  };
+  const roleBuckets = productUsageRoleBuckets(args.events);
+  const surfaceBuckets = productUsageSurfaceBuckets(args.events);
+  const activation = buildProductUsageActivationFunnel(args.events);
   return {
     day: args.day,
     status: args.capped ? "incomplete" : args.day === today ? "partial" : "complete",
@@ -3287,9 +3543,248 @@ function buildProductUsageDailyRollupRecord(args: {
     byTool: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "toolName"))),
     byRouteClass: countProductUsageDimensions(args.events.map((event) => productUsageRouteClass(event.route))),
     activation,
+    byRole: roleBuckets.map(({ role, events }) => ({
+      role,
+      count: events.length,
+      activeActors: new Set(events.map((event) => event.actorHash).filter(isNonEmptyString)).size,
+      activeRepos: new Set(events.map((event) => event.repoFullName).filter(isNonEmptyString)).size,
+    })),
+    activationByRole: roleBuckets.map(({ role, events }) => ({ role, ...buildProductUsageActivationFunnel(events) })),
+    activationBySurface: surfaceBuckets.map(({ surface, events }) => ({ surface, ...buildProductUsageActivationFunnel(events) })),
+    retention: buildProductUsageRetentionRollups(args.day, args.events, args.retentionEvents, args.retentionCapped),
     generatedAt: args.generatedAt,
     updatedAt: args.generatedAt,
   };
+}
+
+function buildProductUsageActivationFunnel(events: ProductUsageEventRecord[]): ProductUsageActivationFunnel {
+  const loginActors = productUsageActorSet(events, (event) => event.eventName === "auth_session_created");
+  const doctorPassActors = productUsageActorSet(events, isProductUsageDoctorPassEvent);
+  const firstUsefulActionActors = productUsageActorSet(events, isProductUsageUsefulActionEvent);
+  const githubInstalledRepos = productUsageRepoSet(events, (event) => event.eventName === "github_installation_created");
+  const githubFirstCommandRepos = productUsageRepoSet(events, isProductUsageGitHubCommandEvent);
+  const githubUsefulMaintainerRepos = productUsageRepoSet(events, isProductUsageUsefulMaintainerEvent);
+  return {
+    loginActors: loginActors.size,
+    doctorPassActors: doctorPassActors.size,
+    firstUsefulActionActors: firstUsefulActionActors.size,
+    fullyActivatedActors: intersectionCount(loginActors, doctorPassActors, firstUsefulActionActors),
+    githubInstalledRepos: githubInstalledRepos.size,
+    githubFirstCommandRepos: githubFirstCommandRepos.size,
+    githubUsefulMaintainerRepos: githubUsefulMaintainerRepos.size,
+    githubActivatedRepos: intersectionCount(githubInstalledRepos, githubFirstCommandRepos, githubUsefulMaintainerRepos),
+  };
+}
+
+function productUsageRoleBuckets(events: ProductUsageEventRecord[]): Array<{ role: ProductUsageRole; events: ProductUsageEventRecord[] }> {
+  const buckets = new Map<ProductUsageRole, ProductUsageEventRecord[]>();
+  const actorRoles = productUsageRolesByActor(events);
+  for (const event of events) {
+    for (const role of productUsageRolesForEvent(event, actorRoles)) {
+      const bucket = buckets.get(role);
+      if (bucket) bucket.push(event);
+      else buckets.set(role, [event]);
+    }
+  }
+  return [...buckets.entries()]
+    .map(([role, bucketEvents]) => ({ role, events: bucketEvents }))
+    .sort((a, b) => b.events.length - a.events.length || productUsageRoleSortValue(a.role) - productUsageRoleSortValue(b.role));
+}
+
+function productUsageSurfaceBuckets(events: ProductUsageEventRecord[]): Array<{ surface: ProductUsageSurface; events: ProductUsageEventRecord[] }> {
+  const buckets = new Map<ProductUsageSurface, ProductUsageEventRecord[]>();
+  for (const event of events) {
+    const surface = normalizeProductUsageSurface(event.surface);
+    const bucket = buckets.get(surface);
+    if (bucket) bucket.push(event);
+    else buckets.set(surface, [event]);
+  }
+  return [...buckets.entries()]
+    .map(([surface, bucketEvents]) => ({ surface, events: bucketEvents }))
+    .sort((a, b) => b.events.length - a.events.length || a.surface.localeCompare(b.surface));
+}
+
+function buildProductUsageRetentionRollups(day: string, currentEvents: ProductUsageEventRecord[], previousEvents: ProductUsageEventRecord[], capped: boolean): ProductUsageRetentionRollup[] {
+  return PRODUCT_USAGE_RETENTION_WINDOWS.map(({ window, days }) => {
+    const previousStartIso = `${addProductUsageUtcDays(day, -days)}T00:00:00.000Z`;
+    const windowPreviousEvents = previousEvents.filter((event) => event.occurredAt >= previousStartIso);
+    const currentActors = productUsageActorHashes(currentEvents);
+    const previousActors = productUsageActorHashes(windowPreviousEvents);
+    const retainedActors = intersectionCount(currentActors, previousActors);
+    return {
+      window,
+      capped,
+      activeActors: currentActors.size,
+      retainedActors,
+      retentionRate: productUsageRetentionRate(retainedActors, currentActors.size),
+      byRole: productUsageRetentionByRole(currentEvents, windowPreviousEvents),
+      bySurface: productUsageRetentionBySurface(currentEvents, windowPreviousEvents),
+    };
+  });
+}
+
+function productUsageRetentionByRole(currentEvents: ProductUsageEventRecord[], previousEvents: ProductUsageEventRecord[]): ProductUsageRoleRetention[] {
+  const previousActorRoles = productUsageRolesByActor(previousEvents);
+  return productUsageRoleBuckets(currentEvents).map(({ role, events }) => {
+    const currentActors = productUsageActorHashes(events);
+    const previousActors = productUsageActorHashes(previousEvents.filter((event) => productUsageRolesForEvent(event, previousActorRoles).includes(role)));
+    const retainedActors = intersectionCount(currentActors, previousActors);
+    return {
+      role,
+      activeActors: currentActors.size,
+      retainedActors,
+      retentionRate: productUsageRetentionRate(retainedActors, currentActors.size),
+    };
+  });
+}
+
+function productUsageRetentionBySurface(currentEvents: ProductUsageEventRecord[], previousEvents: ProductUsageEventRecord[]): ProductUsageSurfaceRetention[] {
+  return productUsageSurfaceBuckets(currentEvents).map(({ surface, events }) => {
+    const currentActors = productUsageActorHashes(events);
+    const previousActors = productUsageActorHashes(previousEvents.filter((event) => normalizeProductUsageSurface(event.surface) === surface));
+    const retainedActors = intersectionCount(currentActors, previousActors);
+    return {
+      surface,
+      activeActors: currentActors.size,
+      retainedActors,
+      retentionRate: productUsageRetentionRate(retainedActors, currentActors.size),
+    };
+  });
+}
+
+function productUsageActorHashes(events: ProductUsageEventRecord[]): Set<string> {
+  return new Set(events.map((event) => event.actorHash).filter(isNonEmptyString));
+}
+
+function productUsageRetentionRate(retainedActors: number, activeActors: number): number {
+  return activeActors > 0 ? Number((retainedActors / activeActors).toFixed(4)) : 0;
+}
+
+function productUsageRolesByActor(events: ProductUsageEventRecord[]): Map<string, ProductUsageRole[]> {
+  const rolesByActor = new Map<string, Set<ProductUsageRole>>();
+  for (const event of events) {
+    if (!event.actorHash) continue;
+    const roles = productUsageBaseRolesForEvent(event).filter((role) => role !== "unknown");
+    if (roles.length === 0) continue;
+    const bucket = rolesByActor.get(event.actorHash) ?? new Set<ProductUsageRole>();
+    for (const role of roles) bucket.add(role);
+    rolesByActor.set(event.actorHash, bucket);
+  }
+  return new Map(
+    [...rolesByActor.entries()].map(([actorHash, roles]) => [
+      actorHash,
+      [...roles].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b)),
+    ]),
+  );
+}
+
+function productUsageRolesForEvent(event: ProductUsageEventRecord, actorRoles: Map<string, ProductUsageRole[]> = new Map()): ProductUsageRole[] {
+  const baseRoles = productUsageBaseRolesForEvent(event);
+  if (baseRoles.length === 1 && baseRoles[0] === "unknown" && event.actorHash) return actorRoles.get(event.actorHash) ?? baseRoles;
+  return baseRoles;
+}
+
+function productUsageBaseRolesForEvent(event: ProductUsageEventRecord): ProductUsageRole[] {
+  const roles = new Set<ProductUsageRole>();
+  if (event.role && event.role !== "unknown") roles.add(event.role);
+  addProductUsageRolesFromValue(roles, event.metadata.role);
+  addProductUsageRolesFromValue(roles, event.metadata.roles);
+  addProductUsageRolesFromValue(roles, event.metadata.audience);
+  addProductUsageRolesFromValue(roles, event.metadata.actorRole);
+  addProductUsageRolesFromValue(roles, event.metadata.actorKind);
+  if (roles.size > 0) return [...roles].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b));
+
+  if (event.eventName === "github_installation_created") return ["owner"];
+  if (event.eventName === "extension_session_created" || event.eventName === "pull_context_viewed") return ["maintainer"];
+  if (event.surface === "mcp") return ["miner"];
+  if (
+    event.eventName === "local_branch_analysis_completed" ||
+    event.eventName === "agent_run_started" ||
+    event.eventName === "agent_plan_next_work_completed" ||
+    event.eventName === "agent_preflight_branch_completed" ||
+    event.eventName === "agent_pr_packet_completed" ||
+    event.eventName === "agent_blockers_completed"
+  ) {
+    return ["miner"];
+  }
+  if (event.eventName === "pr_public_surface_published") return ["contributor"];
+  return ["unknown"];
+}
+
+function addProductUsageRolesFromValue(roles: Set<ProductUsageRole>, value: JsonValue | undefined): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) addProductUsageRolesFromValue(roles, entry);
+    return;
+  }
+  if (typeof value !== "string") return;
+  const role = normalizeProductUsageRole(value);
+  if (role) roles.add(role);
+}
+
+function resolveProductUsageRole(args: {
+  explicitRole?: ProductUsageRole | string | null | undefined;
+  surface: ProductUsageSurface;
+  eventName: string;
+  metadata: Record<string, JsonValue>;
+}): ProductUsageRole {
+  if (typeof args.explicitRole === "string") {
+    const normalized = normalizeProductUsageRole(args.explicitRole);
+    if (normalized) return normalized;
+  }
+  const fromMetadata = new Set<ProductUsageRole>();
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.role);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.roles);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.audience);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.actorRole);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.actorKind);
+  if (fromMetadata.size > 0) return [...fromMetadata].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b))[0] ?? "unknown";
+  const [inferred] = productUsageBaseRolesForEvent({
+    id: "",
+    surface: args.surface,
+    role: "unknown",
+    eventName: args.eventName,
+    outcome: "success",
+    metadata: args.metadata,
+    occurredAt: nowIso(),
+  });
+  return inferred ?? "unknown";
+}
+
+function normalizeProductUsageRole(value: string): ProductUsageRole | null {
+  switch (value.trim().toLowerCase().replace(/[\s-]+/g, "_")) {
+    case "miner":
+    case "miners":
+      return "miner";
+    case "maintainer":
+    case "maintainers":
+    case "reviewer":
+      return "maintainer";
+    case "owner":
+    case "owners":
+    case "repo_owner":
+    case "repo_owners":
+    case "repository_owner":
+    case "repository_owners":
+      return "owner";
+    case "operator":
+    case "operators":
+      return "operator";
+    case "author":
+    case "contributor":
+    case "contributors":
+    case "outside_contributor":
+    case "outside_contributors":
+      return "contributor";
+    case "none":
+    case "unknown":
+      return "unknown";
+    default:
+      return null;
+  }
+}
+
+function productUsageRoleSortValue(role: ProductUsageRole): number {
+  return PRODUCT_USAGE_ROLE_ORDER.indexOf(role);
 }
 
 function productUsageActorSet(events: ProductUsageEventRecord[], predicate: (event: ProductUsageEventRecord) => boolean): Set<string> {
@@ -3410,8 +3905,15 @@ const PRODUCT_USAGE_METADATA_MAX_ARRAY_ITEMS = 20;
 const PRODUCT_USAGE_METADATA_MAX_KEY_CHARS = 64;
 const PRODUCT_USAGE_METADATA_MAX_STRING_CHARS = 200;
 const PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT = 5000;
+const PRODUCT_USAGE_RETENTION_EVENT_SCAN_LIMIT = 5000;
+const PRODUCT_USAGE_RETENTION_MAX_WINDOW_DAYS = 30;
+const PRODUCT_USAGE_RETENTION_WINDOWS: Array<{ window: ProductUsageRetentionRollup["window"]; days: number }> = [
+  { window: "previous_7_days", days: 7 },
+  { window: "previous_30_days", days: 30 },
+];
 const MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT = 5000;
 const PRODUCT_USAGE_ACTOR_REDACTION_MAX_CHARS = 256;
+const PRODUCT_USAGE_ROLE_ORDER: ProductUsageRole[] = ["miner", "maintainer", "owner", "operator", "contributor", "unknown"];
 const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
   "command_previewed",
   "pull_context_viewed",
@@ -3428,8 +3930,9 @@ const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
 const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"]);
 const PRODUCT_USAGE_OUTCOMES = new Set<ProductUsageOutcome>(["success", "denied", "error", "queued", "completed", "skipped"]);
 const PRODUCT_USAGE_SENSITIVE_KEY =
-  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd/i;
-const PRODUCT_USAGE_SENSITIVE_VALUE = /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey)\b/i;
+  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
+const PRODUCT_USAGE_SENSITIVE_VALUE =
+  /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
 const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
@@ -3540,6 +4043,21 @@ function parseAgentActionStatus(value: string): AgentActionStatus {
 function parseAgentSafetyClass(value: string): AgentSafetyClass {
   if (value === "public_safe" || value === "approval_required") return value;
   return "private";
+}
+
+function parseAgentRecommendationOutcomeState(value: string): AgentRecommendationOutcomeState {
+  if (value === "accepted" || value === "rejected" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
+  return "ignored";
+}
+
+function parseAgentRecommendationOutcomeTargetType(value: string): AgentRecommendationOutcomeTargetType {
+  if (value === "pull_request" || value === "issue" || value === "repository") return value;
+  return "none";
+}
+
+function parseAgentRecommendationOutcomeConfidence(value: string): AgentRecommendationOutcomeConfidence {
+  if (value === "high" || value === "low") return value;
+  return "medium";
 }
 
 function parseCommentMode(value: string): RepositorySettings["commentMode"] {

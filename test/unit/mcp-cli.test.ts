@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -96,7 +96,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("reports a current install without upgrade guidance", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ latestVersion: "0.3.0" });
+    const url = await startFixtureServer({ latestVersion: "0.4.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -115,16 +115,16 @@ describe("gittensory-mcp CLI", () => {
     expect(payload.apiCompatibility).toMatchObject({
       status: "compatible",
       source: "compatibility_endpoint",
-      minVersion: "0.2.0",
-      latestRecommendedVersion: "0.3.0",
+      minVersion: "0.4.0",
+      latestRecommendedVersion: "0.4.0",
       apiVersion: "0.1.0",
     });
   });
 
   it("orders prerelease npm versions correctly (release outranks prerelease of the same core)", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    // Local 0.3.0 (release) vs latest 0.3.0-rc.1 (prerelease) -> local is ahead, not stale.
-    const aheadUrl = await startFixtureServer({ latestVersion: "0.3.0-rc.1" });
+    // Local 0.4.0 (release) vs latest 0.4.0-rc.1 (prerelease) -> local is ahead, not stale.
+    const aheadUrl = await startFixtureServer({ latestVersion: "0.4.0-rc.1" });
     const ahead = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: aheadUrl,
@@ -136,8 +136,8 @@ describe("gittensory-mcp CLI", () => {
     expect(ahead.package).toMatchObject({ state: "ahead", updateAvailable: false });
     await new Promise<void>((resolve) => server?.close(() => resolve()));
 
-    // Local 0.3.0 vs a higher-core prerelease 0.4.0-rc.1 -> stale.
-    const staleUrl = await startFixtureServer({ latestVersion: "0.4.0-rc.1" });
+    // Local 0.4.0 vs a higher-core prerelease 0.5.0-rc.1 -> stale.
+    const staleUrl = await startFixtureServer({ latestVersion: "0.5.0-rc.1" });
     const stale = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: staleUrl,
@@ -218,7 +218,7 @@ describe("gittensory-mcp CLI", () => {
 
   it("falls back to legacy health compatibility when the endpoint is unavailable", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.2.0" });
+    const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.4.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -227,12 +227,12 @@ describe("gittensory-mcp CLI", () => {
         GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { apiCompatibility: { status: string; source: string; minVersion: string } };
-    expect(payload.apiCompatibility).toMatchObject({ status: "compatible", source: "health", minVersion: "0.2.0" });
+    expect(payload.apiCompatibility).toMatchObject({ status: "compatible", source: "health", minVersion: "0.4.0" });
   });
 
   it("uses API recommended package metadata when the npm registry is unavailable", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
-    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.4.0" });
+    const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: "0.5.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
         GITTENSORY_API_URL: url,
@@ -244,7 +244,7 @@ describe("gittensory-mcp CLI", () => {
     expect(payload.package).toMatchObject({
       state: "stale",
       latestStatus: "api",
-      latestVersion: "0.4.0",
+      latestVersion: "0.5.0",
       upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
     });
   });
@@ -302,6 +302,137 @@ describe("gittensory-mcp CLI", () => {
     expect(statusOutput).toContain("npm install -g @jsonbored/gittensory-mcp@latest");
   });
 
+  it("stores, switches, and reports named MCP profiles without mixing sessions", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    const firstLogin = JSON.parse(await runAsync(["login", "--profile", "JSONbored", "--github-token", "github-jsonbored", "--json"], env)) as { profile: string; login: string };
+    const secondLogin = JSON.parse(await runAsync(["login", "--profile", "Okto", "--github-token", "github-okto", "--json"], env)) as { profile: string; login: string };
+    const list = JSON.parse(await runAsync(["profile", "list", "--json"], env)) as { activeProfile: string; profiles: Array<{ name: string; login: string | null; authenticated: boolean }> };
+    const firstWhoami = JSON.parse(await runAsync(["whoami", "--profile", "jsonbored", "--json"], env)) as { profile: string; login: string };
+    const secondWhoami = JSON.parse(await runAsync(["whoami", "--profile", "okto", "--json"], env)) as { profile: string; login: string };
+    const switched = JSON.parse(await runAsync(["profile", "switch", "jsonbored", "--json"], env)) as { activeProfile: string };
+    const activeWhoami = JSON.parse(await runAsync(["whoami", "--json"], env)) as { profile: string; login: string };
+
+    expect(firstLogin).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
+    expect(secondLogin).toMatchObject({ profile: "okto", login: "oktofeesh1" });
+    expect(list.activeProfile).toBe("okto");
+    expect(list.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "jsonbored", login: "JSONbored", authenticated: true }),
+        expect.objectContaining({ name: "okto", login: "oktofeesh1", authenticated: true }),
+      ]),
+    );
+    expect(firstWhoami).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
+    expect(secondWhoami).toMatchObject({ profile: "okto", login: "oktofeesh1" });
+    expect(switched.activeProfile).toBe("jsonbored");
+    expect(activeWhoami).toMatchObject({ profile: "jsonbored", login: "JSONbored" });
+    expect(requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-jsonbored" }),
+        expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" }),
+      ]),
+    );
+    expect(JSON.stringify(list)).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|gittensory-cli-/);
+  });
+
+  it("keeps environment tokens ahead of active profile sessions", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    await runAsync(["login", "--profile", "jsonbored", "--github-token", "github-jsonbored", "--json"], env);
+    await runAsync(["profile", "switch", "jsonbored", "--json"], env);
+    const whoami = JSON.parse(await runAsync(["whoami", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: string; login: string };
+    const status = JSON.parse(await runAsync(["status", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: { tokenSource: string }; auth: { login: string } };
+
+    expect(whoami).toMatchObject({ profile: "jsonbored", login: "oktofeesh1" });
+    expect(status).toMatchObject({ auth: { login: "oktofeesh1" }, profile: { tokenSource: "environment" } });
+    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" })]));
+  });
+
+  it("removes the default profile without rehydrating its legacy session token", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const configPath = join(tempDir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          apiUrl: "https://api.example.test",
+          activeProfile: "default",
+          profiles: {
+            default: { session: { token: "default-session-token", login: "default-user", scopes: [] } },
+            beta: { session: { token: "beta-session-token", login: "beta-user", scopes: [] } },
+          },
+          session: { token: "default-session-token", login: "default-user", scopes: [] },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const removed = JSON.parse(await runAsync(["profile", "remove", "default", "--json"], { GITTENSORY_CONFIG_DIR: tempDir })) as { status: string; removedProfile: string; activeProfile: string };
+    const saved = JSON.parse(readFileSync(configPath, "utf8")) as { activeProfile: string; profiles?: Record<string, unknown>; session?: unknown };
+
+    expect(removed).toMatchObject({ status: "removed", removedProfile: "default", activeProfile: "beta" });
+    expect(saved.activeProfile).toBe("beta");
+    expect(saved.profiles).not.toHaveProperty("default");
+    expect(saved.profiles).toHaveProperty("beta");
+    expect(saved.session).toBeUndefined();
+    expect(JSON.stringify(saved)).not.toContain("default-session-token");
+    expect(JSON.stringify(saved)).toContain("beta-session-token");
+  });
+
+  it("logs out only the selected profile and reports missing profiles safely", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
+    const url = await startFixtureServer({
+      onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
+    });
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    await runAsync(["login", "--profile", "alpha", "--github-token", "github-jsonbored", "--json"], env);
+    await runAsync(["login", "--profile", "beta", "--github-token", "github-okto", "--json"], env);
+    const logout = JSON.parse(await runAsync(["logout", "--profile", "alpha", "--json"], env)) as { profile: string; status: string };
+    const list = JSON.parse(await runAsync(["profile", "list", "--json"], env)) as { profiles: Array<{ name: string; authenticated: boolean; login: string | null }> };
+    const betaWhoami = JSON.parse(await runAsync(["whoami", "--profile", "beta", "--json"], env)) as { profile: string; login: string };
+    const missingStatus = JSON.parse(await runAsync(["status", "--profile", "missing", "--json"], env)) as { auth: { status: string }; profile: { name: string; configured: boolean; authenticated: boolean } };
+    const doctor = JSON.parse(await runAsync(["doctor", "--profile", "missing", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env)) as { profile: { name: string; configured: boolean }; checks: Array<{ name: string; status: string; detail: string }> };
+
+    expect(logout).toMatchObject({ status: "logged_out", profile: "alpha" });
+    expect(list.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "alpha", authenticated: false, login: null }),
+        expect.objectContaining({ name: "beta", authenticated: true, login: "oktofeesh1" }),
+      ]),
+    );
+    expect(betaWhoami).toMatchObject({ profile: "beta", login: "oktofeesh1" });
+    expect(missingStatus).toMatchObject({ auth: { status: "unauthenticated" }, profile: { name: "missing", configured: false, authenticated: false } });
+    expect(doctor.profile).toMatchObject({ name: "missing", configured: false });
+    expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "auth", status: "fail" })]));
+    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/logout", authorization: "Bearer session-jsonbored" })]));
+    expect(JSON.stringify({ logout, list, missingStatus, doctor })).not.toMatch(/session-jsonbored|session-okto|github-jsonbored|github-okto|gittensory-cli-/);
+  });
+
   it("reports package status and prints the packaged changelog", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -314,12 +445,12 @@ describe("gittensory-mcp CLI", () => {
       }),
     ) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
 
-    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.3.0", latestStatus: "skipped" });
+    expect(status.package).toMatchObject({ name: "@jsonbored/gittensory-mcp", version: "0.4.0", latestStatus: "skipped" });
     expect(status.api.status).toBe("ok");
     expect(status.auth.login).toBe("JSONbored");
 
     const changelog = JSON.parse(run(["changelog", "--json"])) as { package: { version: string }; changelog: string };
-    expect(changelog.package.version).toBe("0.3.0");
+    expect(changelog.package.version).toBe("0.4.0");
     expect(changelog.changelog).toContain("# Changelog");
   });
 
@@ -337,7 +468,7 @@ describe("gittensory-mcp CLI", () => {
 
     const sessionRequest = requests.find((request) => request.url === "/v1/auth/session");
     expect(sessionRequest?.headers["x-gittensory-mcp-package"]).toBe("@jsonbored/gittensory-mcp");
-    expect(sessionRequest?.headers["x-gittensory-mcp-version"]).toBe("0.3.0");
+    expect(sessionRequest?.headers["x-gittensory-mcp-version"]).toBe("0.4.0");
     expect(sessionRequest?.headers["x-gittensory-mcp-client"]).toBe("gittensory-mcp-cli");
     const telemetryHeaders = JSON.stringify({
       package: sessionRequest?.headers["x-gittensory-mcp-package"],
@@ -346,6 +477,143 @@ describe("gittensory-mcp CLI", () => {
     });
     expect(telemetryHeaders).not.toContain("session-token");
     expect(telemetryHeaders).not.toContain(tempDir);
+  });
+
+  it("caches last-good decision packs and returns explicitly stale local fallback when the API is unavailable", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_API_TIMEOUT_MS: "100",
+    };
+
+    const online = JSON.parse(await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)) as { status: string; source: string };
+    expect(online).toMatchObject({ status: "ready", source: "snapshot" });
+
+    const cacheText = readDecisionPackCacheText(tempDir);
+    expect(cacheText).toMatch(/"authCacheKey":/);
+    expect(cacheText).not.toContain("session-token");
+    expect(cacheText).not.toMatch(/must stay local|wallet-value|hotkey-value|\/tmp\/source/i);
+
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = null;
+
+    const offline = JSON.parse(await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)) as {
+      source: string;
+      stale: boolean;
+      freshness: string;
+      cachedAt: string;
+      cache: { source: string; clearCommand: string; rerunGuidance: string };
+    };
+    expect(offline).toMatchObject({
+      source: "local_cache",
+      stale: true,
+      freshness: "stale",
+      cache: { source: "local_cache", clearCommand: "gittensory-mcp cache clear" },
+    });
+    expect(offline.cachedAt).toEqual(expect.any(String));
+    expect(offline.cache.rerunGuidance).toMatch(/Retry when Gittensory API access is restored/);
+
+    const repoDecision = JSON.parse(await runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)) as {
+      status: string;
+      source: string;
+      stale: boolean;
+      decision: { repoFullName: string; recommendation: string };
+    };
+    expect(repoDecision).toMatchObject({
+      status: "ready",
+      source: "local_cache",
+      stale: true,
+      decision: { repoFullName: "JSONbored/gittensory", recommendation: "pursue" },
+    });
+  });
+
+  it("ignores incompatible decision-pack cache entries and clears cache entries on request", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSORY_API_TIMEOUT_MS: "1000",
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    const cachePath = decisionPackCacheFile(tempDir);
+    const entry = JSON.parse(readFileSync(cachePath, "utf8"));
+    writeFileSync(cachePath, `${JSON.stringify({ ...entry, schemaVersion: 999 }, null, 2)}\n`, { mode: 0o600 });
+
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = null;
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/fetch failed|ECONNREFUSED|AbortError|aborted/i);
+
+    const cleared = JSON.parse(run(["cache", "clear", "--json"], env)) as { status: string; removed: number };
+    expect(cleared).toMatchObject({ status: "cleared", removed: 1 });
+    const cacheStatus = JSON.parse(run(["cache", "status", "--json"], env)) as { entries: number };
+    expect(cacheStatus.entries).toBe(0);
+  });
+
+  it("does not use stale decision-pack cache created by a different local token", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const fixtureOptions: { decisionPackStatus?: number } = {};
+    const url = await startFixtureServer(fixtureOptions);
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    fixtureOptions.decisionPackStatus = 429;
+
+    await expect(
+      runAsync(["decision-pack", "--login", "JSONbored", "--json"], {
+        ...env,
+        GITTENSORY_TOKEN: "different-session-token",
+      }),
+    ).rejects.toThrow(/Gittensory API 429/);
+  });
+
+  it("does not use stale decision-pack cache for authorization failures", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const fixtureOptions: { decisionPackStatus?: number } = {};
+    const url = await startFixtureServer(fixtureOptions);
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    fixtureOptions.decisionPackStatus = 403;
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
+  });
+
+  it("does not use stale decision-pack cache when local credentials are missing", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    const withoutToken = {
+      ...env,
+      GITTENSORY_API_TOKEN: "",
+      GITTENSORY_TOKEN: "",
+      GITTENSORY_MCP_TOKEN: "",
+    };
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], withoutToken)).rejects.toThrow(/Run `gittensory-mcp login`/);
+    await expect(runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], withoutToken)).rejects.toThrow(
+      /Run `gittensory-mcp login`/,
+    );
   });
 
   it("runs base-agent CLI commands against API fixtures", async () => {
@@ -363,6 +631,12 @@ describe("gittensory-mcp CLI", () => {
     };
     expect(plan.run).toMatchObject({ id: "run-1", status: "completed" });
     expect(plan.actions[0]).toMatchObject({ actionType: "choose_next_work" });
+
+    const planText = await runAsync(["agent", "plan", "--login", "JSONbored", "--repo", "JSONbored/gittensory"], env);
+    expect(planText).toContain("why now:");
+    expect(planText).toContain("impact:");
+    expect(planText).toContain("rerun:");
+    expect(planText).not.toMatch(/wallet|hotkey|raw trust|payout|farming|private reviewability|public score estimate/i);
 
     const statusPayload = JSON.parse(await runAsync(["agent", "status", "run-1", "--json"], env)) as { run: { id: string } };
     expect(statusPayload.run.id).toBe("run-1");
@@ -697,6 +971,19 @@ async function capturePacketValidation(tempDir: string, validationArgs: string[]
   return (requests[0] as { validation: Array<{ command: string; status: string; exitCode?: number; summary?: string }> }).validation;
 }
 
+function decisionPackCacheFile(configDir: string) {
+  const cacheDir = join(configDir, "cache", "decision-packs");
+  const files = readdirSync(cacheDir).filter((name) => name.endsWith(".json"));
+  expect(files).toHaveLength(1);
+  const file = files[0];
+  if (!file) throw new Error("expected one decision-pack cache file");
+  return join(cacheDir, file);
+}
+
+function readDecisionPackCacheText(configDir: string) {
+  return readFileSync(decisionPackCacheFile(configDir), "utf8");
+}
+
 async function startFixtureServer(
   options: {
     latestVersion?: string;
@@ -704,6 +991,7 @@ async function startFixtureServer(
     minMcpVersion?: string;
     compatibilityStatus?: number;
     npmStatus?: number;
+    decisionPackStatus?: number;
     packetMarkdown?: string;
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
@@ -718,7 +1006,7 @@ async function startFixtureServer(
         response.end(JSON.stringify({ error: "registry_error" }));
         return;
       }
-      response.end(JSON.stringify({ version: options.latestVersion ?? "0.3.0" }));
+      response.end(JSON.stringify({ version: options.latestVersion ?? "0.4.0" }));
       return;
     }
     if (request.url === "/v1/mcp/compatibility") {
@@ -727,8 +1015,8 @@ async function startFixtureServer(
         response.end(JSON.stringify({ error: "compatibility_unavailable" }));
         return;
       }
-      const minimumSupportedVersion = options.minMcpVersion ?? "0.2.0";
-      const latestRecommendedVersion = options.latestRecommendedMcpVersion ?? options.latestVersion ?? "0.3.0";
+      const minimumSupportedVersion = options.minMcpVersion ?? "0.4.0";
+      const latestRecommendedVersion = options.latestRecommendedMcpVersion ?? options.latestVersion ?? "0.4.0";
       response.end(
         JSON.stringify({
           status: "ok",
@@ -754,11 +1042,48 @@ async function startFixtureServer(
       response.end(JSON.stringify({ status: "ok", service: "gittensory-api", ...(options.minMcpVersion ? { minMcpVersion: options.minMcpVersion } : {}) }));
       return;
     }
+    if (request.url === "/v1/auth/github/session" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { githubToken?: string };
+      const sessions: Record<string, { token: string; login: string }> = {
+        "github-jsonbored": { token: "session-jsonbored", login: "JSONbored" },
+        "github-okto": { token: "session-okto", login: "oktofeesh1" },
+      };
+      const session = body.githubToken ? sessions[body.githubToken] : null;
+      if (!session) {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "github_session_create_failed" }));
+        return;
+      }
+      response.end(JSON.stringify({ status: "authenticated", token: session.token, login: session.login, expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
     if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-token") {
       response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
       return;
     }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-jsonbored") {
+      response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-okto") {
+      response.end(JSON.stringify({ status: "authenticated", login: "oktofeesh1", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/logout" && request.method === "POST") {
+      response.end(JSON.stringify({ status: "logged_out" }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/decision-pack" && request.method === "GET") {
+      if (options.decisionPackStatus && options.decisionPackStatus >= 400) {
+        response.statusCode = options.decisionPackStatus;
+        response.end(JSON.stringify({ error: "decision_pack_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify(decisionPackFixture()));
+      return;
+    }
     if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {
+      await readJsonRequest(request);
       response.end(JSON.stringify(agentFixture()));
       return;
     }
@@ -819,6 +1144,49 @@ function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Linked Con
   };
 }
 
+function decisionPackFixture() {
+  return {
+    status: "ready",
+    source: "snapshot",
+    login: "JSONbored",
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    stale: false,
+    freshness: "fresh",
+    rebuildEnqueued: false,
+    scoringModelSnapshotId: "scoring-1",
+    profile: {
+      login: "JSONbored",
+      github: { topLanguages: ["TypeScript"] },
+      source: { cache: "fixture" },
+      officialStats: { totalMergedPrs: 12, hotkey: "hotkey-value", wallet: "wallet-value" },
+      registeredRepoActivity: {},
+      trustSignals: {},
+    },
+    outcomeHistory: {},
+    roleContexts: [],
+    opportunities: [],
+    repoDecisions: [
+      {
+        repoFullName: "JSONbored/gittensory",
+        recommendation: "pursue",
+        nextActions: ["Pick one narrow change."],
+        changedFiles: [{ path: "src/cache.ts", content: "must stay local" }],
+        localPath: "/tmp/source/private.ts",
+      },
+    ],
+    topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "JSONbored/gittensory", priorityScore: 50 }],
+    cleanupFirst: [],
+    pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "pursue" }],
+    avoidRepos: [],
+    maintainerLaneRepos: [],
+    scoreBlockers: [],
+    dataQuality: { signalFidelity: { status: "complete" } },
+    summary: "fixture decision pack",
+    nextActions: ["Pick one narrow change."],
+    sourceContents: "must stay local",
+  };
+}
+
 function agentFixture() {
   return {
     run: {
@@ -840,7 +1208,23 @@ function agentFixture() {
         recommendation: "Pick narrow work and run branch preflight.",
         why: ["Fixture"],
         blockedBy: [],
+        rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
         publicSafeSummary: "Fixture public summary.",
+        explanationCard: {
+          summary: "Pursue now: this action is the current ranked next step.",
+          whyNow: "Current deterministic planning signals rank this action ahead of other available next steps.",
+          scoreabilityBlocker: "No hard scoreability blocker is visible in current signals.",
+          risk: "No major action-specific risk is visible in the current card.",
+          maintainerFriction: "Narrow, validated work is easier for maintainers to review.",
+          expectedImpact: "Advance toward one narrow, validated contribution path.",
+          blockerGroups: [],
+          rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          publicSafe: {
+            summary: "Fixture public summary.",
+            whyNow: "Fixture public summary.",
+            rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          },
+        },
         approvalRequired: true,
         safetyClass: "private",
         payload: {},

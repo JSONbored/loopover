@@ -5,6 +5,7 @@ import {
   countOpenPullRequests,
   countRecentMergedPullRequests,
   countRepoLabels,
+  getInstallation,
   getLatestRepoGithubTotalsSnapshot,
   getRepoSyncSegment,
   getRepoSyncState,
@@ -50,6 +51,7 @@ import type {
   RepoSyncSegmentRecord,
   RepoSyncStateRecord,
   RepositoryRecord,
+  RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
 import { createInstallationToken, getAppInstallation } from "./app";
@@ -646,6 +648,23 @@ export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
 export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target"] as const;
 
+type InstallationModeImpact = {
+  mode: "comment" | "label" | "check_run";
+  enabled: boolean;
+  affectedRepoCount: number;
+  requiredPermissions: Array<{ permission: string; requiredAccess: string; missing: boolean; optional: boolean }>;
+  summary: string;
+  action: string;
+};
+
+type InstallationEventDiagnostic = {
+  event: string;
+  missing: boolean;
+  optional: boolean;
+  summary: string;
+  action: string;
+};
+
 export function enrichInstallationHealth(health: InstallationHealthRecord) {
   const missingPermissions = new Set(health.missingPermissions);
   const missingEvents = new Set(health.missingEvents);
@@ -683,8 +702,142 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
   };
 }
 
+export async function buildInstallationRepairDiagnostics(env: Env, health: InstallationHealthRecord) {
+  const installedRepos = (await listRepositories(env)).filter((repo) => repo.installationId === health.installationId && repo.isInstalled);
+  const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
+  const commentRepoCount = installedSettings.filter(usesCommentMode).length;
+  const labelRepoCount = installedSettings.filter(usesLabelMode).length;
+  const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
+  const missingPermissions = new Set(health.missingPermissions);
+  const missingEvents = new Set(health.missingEvents);
+  const requiredPermissions = {
+    ...REQUIRED_INSTALLATION_PERMISSIONS,
+    ...(checkRunRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+  };
+  const optionalPermissions = checkRunRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
+  const modeImpacts: InstallationModeImpact[] = [
+    buildPermissionModeImpact({
+      mode: "comment",
+      enabled: commentRepoCount > 0,
+      affectedRepoCount: commentRepoCount,
+      permission: "issues",
+      requiredAccess: "write",
+      missing: missingPermissions.has("issues"),
+      summary: "PR comments use the GitHub Issues API, so comment mode requires Issues: write.",
+    }),
+    buildPermissionModeImpact({
+      mode: "label",
+      enabled: labelRepoCount > 0,
+      affectedRepoCount: labelRepoCount,
+      permission: "issues",
+      requiredAccess: "write",
+      missing: missingPermissions.has("issues"),
+      summary: "PR labels use the GitHub Issues API, so label mode requires Issues: write.",
+    }),
+    buildPermissionModeImpact({
+      mode: "check_run",
+      enabled: checkRunRepoCount > 0,
+      affectedRepoCount: checkRunRepoCount,
+      permission: "checks",
+      requiredAccess: "write",
+      missing: checkRunRepoCount > 0 && missingPermissions.has("checks"),
+      optional: checkRunRepoCount === 0,
+      summary:
+        checkRunRepoCount > 0
+          ? "Check run mode is enabled for at least one installed repo, so Checks: write is required."
+          : "Checks: write is optional unless check run mode is enabled for an installed repo.",
+    }),
+  ];
+  const eventDiagnostics: InstallationEventDiagnostic[] = REQUIRED_INSTALLATION_EVENTS.map((event) => ({
+    event,
+    missing: missingEvents.has(event),
+    optional: false,
+    summary: `Gittensory expects the ${event} webhook event for installation health and GitHub App automation.`,
+    action: missingEvents.has(event) ? `Subscribe to the ${event} webhook event, then approve or reinstall the app.` : "No change needed.",
+  }));
+  return {
+    generatedAt: nowIso(),
+    installation: enrichInstallationHealth(health),
+    installedRepos: installedRepos.map((repo, index) => ({
+      repoFullName: repo.fullName,
+      isRegistered: repo.isRegistered,
+      settings: summarizeRepairSettings(installedSettings[index] as RepositorySettings),
+    })),
+    requiredPermissions,
+    optionalPermissions,
+    requiredEvents: [...REQUIRED_INSTALLATION_EVENTS],
+    optionalEvents: [...OPTIONAL_VISIBLE_INSTALLATION_EVENTS],
+    modeImpacts,
+    eventDiagnostics,
+    repairSteps:
+      health.status === "healthy"
+        ? ["No repair needed."]
+        : [
+            "Update the GitHub App permissions and subscribed events listed in diagnostics.",
+            "Approve the changed permissions or reinstall the app on the target account.",
+            `Run POST /v1/installations/${health.installationId}/repair/refresh after GitHub applies the changes.`,
+            `Recheck GET /v1/installations/${health.installationId}/repair.`,
+          ],
+    refresh: {
+      method: "POST",
+      path: `/v1/installations/${health.installationId}/repair/refresh`,
+      lastCheckedAt: health.checkedAt,
+    },
+  };
+}
+
+function buildPermissionModeImpact(args: {
+  mode: InstallationModeImpact["mode"];
+  enabled: boolean;
+  affectedRepoCount: number;
+  permission: string;
+  requiredAccess: string;
+  missing: boolean;
+  summary: string;
+  optional?: boolean;
+}): InstallationModeImpact {
+  const optional = args.optional ?? false;
+  return {
+    mode: args.mode,
+    enabled: args.enabled,
+    affectedRepoCount: args.affectedRepoCount,
+    requiredPermissions: [{ permission: args.permission, requiredAccess: args.requiredAccess, missing: args.missing, optional }],
+    summary: args.summary,
+    action: args.missing ? `Set repository permission ${args.permission} to ${args.requiredAccess}, then approve or reinstall the app.` : "No change needed.",
+  };
+}
+
+function usesCommentMode(settings: RepositorySettings): boolean {
+  if (settings.commentMode === "off") return false;
+  return settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only";
+}
+
+function usesLabelMode(settings: RepositorySettings): boolean {
+  return settings.autoLabelEnabled && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "label_only");
+}
+
+function summarizeRepairSettings(settings: RepositorySettings) {
+  return {
+    publicSurface: settings.publicSurface,
+    commentMode: settings.commentMode,
+    checkRunMode: settings.checkRunMode,
+    autoLabelEnabled: settings.autoLabelEnabled,
+  };
+}
+
 export async function refreshInstallationHealth(env: Env) {
   const [installations, repositories] = await Promise.all([listInstallations(env), listRepositories(env)]);
+  return refreshInstallationHealthRecords(env, installations, repositories);
+}
+
+export async function refreshInstallationHealthForInstallation(env: Env, installationId: number) {
+  const [installation, repositories] = await Promise.all([getInstallation(env, installationId), listRepositories(env)]);
+  if (!installation) return null;
+  const refreshed = await refreshInstallationHealthRecords(env, [installation], repositories);
+  return refreshed.installations[0] ?? null;
+}
+
+async function refreshInstallationHealthRecords(env: Env, installations: InstallationRecord[], repositories: RepositoryRecord[]) {
   const health = [];
   for (const installation of installations) {
     const { installation: currentInstallation, errorSummary } = await refreshStoredInstallation(env, installation);

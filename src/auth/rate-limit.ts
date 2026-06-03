@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { DurableObject } from "cloudflare:workers";
 import { recordAuditEvent } from "../db/repositories";
-import { hashToken } from "./security";
+import { authenticateInternalToken, authenticatePrivateToken, extractBearerToken, hashToken } from "./security";
 
 export type RateLimitClass = "strict" | "normal" | "expensive";
 
@@ -104,6 +104,7 @@ export function routeClassForPath(path: string): RateLimitClass {
     path.includes("/scoring/preview") ||
     path.includes("/decision-pack") ||
     path.includes("/open-pr-monitor") ||
+    /^\/v1\/installations\/[^/]+\/repair\/refresh$/.test(path) ||
     path.includes("/upstream/") ||
     path.includes("/internal/jobs/generate-signal-snapshots") ||
     path.includes("/internal/jobs/build-contributor-decision-packs") ||
@@ -116,15 +117,35 @@ export function routeClassForPath(path: string): RateLimitClass {
 }
 
 async function rateLimitKey(c: Context<{ Bindings: Env }>, routeClass: RateLimitClass): Promise<string> {
-  const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown-ip";
   const pathGroup = c.req.path.replace(/\/\d+(?=\/|$)/g, "/:number").replace(/\/[^/]+\/[^/]+\/pulls\//, "/:owner/:repo/pulls/");
-  const identity = token ? `token:${await hashToken(token)}` : `ip:${await hashToken(ip)}`;
+  const identity = await rateLimitIdentity(c);
   return `${routeClass}:${pathGroup}:${identity}`;
 }
 
 async function actorHint(c: Context<{ Bindings: Env }>): Promise<string> {
-  const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!token) return "anonymous";
+  if (isPreAuthRateLimitPath(c.req.path)) return "anonymous";
+  const token = extractBearerToken(c.req.header("authorization"));
+  if (!token || !(await validateBearerForRateLimit(c, token))) return "anonymous";
   return `token:${(await hashToken(token)).slice(0, 16)}`;
+}
+
+async function rateLimitIdentity(c: Context<{ Bindings: Env }>): Promise<string> {
+  const ipIdentity = `ip:${await hashToken(clientIp(c))}`;
+  if (isPreAuthRateLimitPath(c.req.path)) return ipIdentity;
+
+  const token = extractBearerToken(c.req.header("authorization"));
+  if (!token || !(await validateBearerForRateLimit(c, token))) return ipIdentity;
+  return `token:${await hashToken(token)}`;
+}
+
+async function validateBearerForRateLimit(c: Context<{ Bindings: Env }>, token: string): Promise<boolean> {
+  return Boolean((await authenticatePrivateToken(c.env, token)) ?? (await authenticateInternalToken(c.env, token)));
+}
+
+function clientIp(c: Context<{ Bindings: Env }>): string {
+  return c.req.header("cf-connecting-ip")?.trim() || "unknown-ip";
+}
+
+function isPreAuthRateLimitPath(path: string): boolean {
+  return path === "/health" || path === "/v1/mcp/compatibility" || path === "/openapi.json" || path === "/mcp" || path.startsWith("/v1/auth/") || path === "/v1/github/webhook";
 }

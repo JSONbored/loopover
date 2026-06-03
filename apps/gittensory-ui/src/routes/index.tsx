@@ -11,6 +11,7 @@ import { PrQuietCompare } from "@/components/site/home/pr-quiet-compare";
 import { NpmInstall } from "@/components/site/npm-install";
 import { TrustStrip } from "@/components/site/trust-strip";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
+import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/lib/mcp-package";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -54,13 +55,16 @@ function Home() {
 }
 
 function Hero() {
+  const { data } = useMcpPackageMetadata();
+  const latestMcpVersion = getLatestMcpVersion(data);
+
   return (
     <section className="mx-auto w-full max-w-6xl px-4 pt-20 pb-12 sm:px-6 sm:pt-28">
       <div className="grid items-start gap-12 sm:grid-cols-[1.05fr_1fr] sm:gap-16">
         <div>
           <div className="flex items-center gap-2 text-token-xs text-muted-foreground">
             <span aria-hidden className="size-1 rounded-full bg-coral" />
-            v0.2 · deterministic base agent
+            MCP v{latestMcpVersion} · deterministic base agent
           </div>
           <h1 className="mt-5 text-token-3xl font-medium leading-token-tight tracking-tight text-foreground">
             Mine Gittensor like an engineer.
@@ -106,7 +110,9 @@ function Hero() {
 
 function MetaStrip() {
   const { status, lastCheckedAt, connection } = useApiStatus();
+  const { data } = useMcpPackageMetadata();
   const [now, setNow] = useState<number>(() => Date.now());
+  const latestMcpVersion = getLatestMcpVersion(data);
 
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -139,7 +145,7 @@ function MetaStrip() {
         })();
 
   const items = [
-    { k: "MCP package", v: "@jsonbored/gittensory-mcp 0.2.x" },
+    { k: "MCP package", v: `${MCP_PACKAGE_NAME} v${latestMcpVersion}` },
     { k: "API", v: apiLabel },
     { k: "Last checked", v: freshness },
     { k: "Upstream drift", v: "monitored" },
@@ -445,7 +451,7 @@ const CLIENT_TABS: Array<{
     audience: "Miners",
     filename: "terminal",
     lang: "bash",
-    snippet: `npm i -g @jsonbored/gittensory-mcp
+    snippet: `npm i -g @jsonbored/gittensory-mcp@latest
 gittensory-mcp login
 gittensory-mcp analyze-branch --login your-login --json`,
   },
@@ -457,7 +463,7 @@ gittensory-mcp analyze-branch --login your-login --json`,
     lang: "toml",
     snippet: `[mcp_servers.gittensory]
 command = "npx"
-args = ["-y", "@jsonbored/gittensory-mcp", "--stdio"]`,
+args = ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]`,
   },
   {
     id: "claude",
@@ -469,7 +475,7 @@ args = ["-y", "@jsonbored/gittensory-mcp", "--stdio"]`,
   "mcpServers": {
     "gittensory": {
       "command": "npx",
-      "args": ["-y", "@jsonbored/gittensory-mcp", "--stdio"]
+      "args": ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]
     }
   }
 }`,
@@ -484,7 +490,7 @@ args = ["-y", "@jsonbored/gittensory-mcp", "--stdio"]`,
   "mcpServers": {
     "gittensory": {
       "command": "npx",
-      "args": ["-y", "@jsonbored/gittensory-mcp", "--stdio"]
+      "args": ["-y", "@jsonbored/gittensory-mcp@latest", "--stdio"]
     }
   }
 }`,

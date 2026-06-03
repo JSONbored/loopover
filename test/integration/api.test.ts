@@ -31,10 +31,14 @@ import {
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
+
+const FORBIDDEN_PUBLIC_REPORT_TERMS =
+  /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i;
 
 describe("api routes", () => {
   // Freshness/readiness fixtures are dated relative to late May 2026; pin the clock so freshness SLO
@@ -67,8 +71,8 @@ describe("api routes", () => {
     await expect(health.json()).resolves.toMatchObject({
       status: "ok",
       service: "gittensory-api",
-      minMcpVersion: "0.2.0",
-      latestRecommendedMcpVersion: "0.3.0",
+      minMcpVersion: "0.4.0",
+      latestRecommendedMcpVersion: "0.4.0",
     });
 
     const compatibility = await app.request("/v1/mcp/compatibility", {}, env);
@@ -80,9 +84,9 @@ describe("api routes", () => {
       apiVersion: "0.1.0",
       mcp: {
         packageName: "@jsonbored/gittensory-mcp",
-        minimumSupportedVersion: "0.2.0",
-        latestRecommendedVersion: "0.3.0",
-        latestPackageVersion: "0.3.0",
+        minimumSupportedVersion: "0.4.0",
+        latestRecommendedVersion: "0.4.0",
+        latestPackageVersion: "0.4.0",
       },
       compatibilityWarnings: [],
       breakingChanges: [],
@@ -596,11 +600,17 @@ describe("api routes", () => {
       profile: { github: { topLanguages: string[] }; officialStats?: Record<string, unknown> | null };
       outcomeHistory: { totals: Record<string, unknown> };
       topActions: unknown[];
+      actionPortfolio: { bucketOrder: string[]; buckets: unknown[]; topActions: unknown[] };
     };
     expect(builtDecisionPayload.profile.github.topLanguages).toEqual(["TypeScript", "Python"]);
     expect(builtDecisionPayload.profile.officialStats).not.toHaveProperty("hotkey");
     expect(builtDecisionPayload.outcomeHistory.totals).toMatchObject({ pullRequests: 2, mergedPullRequests: 1, openPullRequests: 1 });
     expect(builtDecisionPayload.topActions.length).toBeGreaterThan(0);
+    expect(builtDecisionPayload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.any(Array),
+      topActions: expect.any(Array),
+    });
 
     const decisionPack = await app.request("/v1/contributors/oktofeesh1/decision-pack", { headers: apiHeaders(env) }, env);
     expect(decisionPack.status).toBe(200);
@@ -612,7 +622,19 @@ describe("api routes", () => {
       status: "ready",
       login: "oktofeesh1",
       repoFullName: "entrius/allways-ui",
-      decision: { repoFullName: "entrius/allways-ui", rewardUpside: expect.any(Object), roleContext: { role: "outside_contributor" } },
+      decision: {
+        repoFullName: "entrius/allways-ui",
+        rewardUpside: expect.any(Object),
+        roleContext: { role: "outside_contributor" },
+        tradeoffSummary: {
+          directPrFit: { level: expect.any(String), summary: expect.any(String) },
+          issueDiscoveryFit: { level: expect.any(String), summary: expect.any(String) },
+          maintainerBurden: { level: expect.any(String), summary: expect.any(String) },
+          queuePressure: { level: expect.any(String), summary: expect.any(String) },
+          policyConfidence: { level: expect.any(String), summary: expect.any(String) },
+          publicSummary: expect.any(String),
+        },
+      },
     });
 
     const agentPlan = await app.request(
@@ -626,12 +648,26 @@ describe("api routes", () => {
     );
     expect(agentPlan.status).toBe(200);
     const agentPlanPayload = (await agentPlan.json()) as {
-      run: { id: string; status: string; mode: string; surface: string };
-      actions: Array<{ actionType: string; publicSafeSummary: string; payload: Record<string, unknown> }>;
+      run: { id: string; status: string; mode: string; surface: string; payload: Record<string, unknown> };
+      actions: Array<{ actionType: string; publicSafeSummary: string; explanationCard?: { whyNow: string; rerunWhen: string; publicSafe: Record<string, string> }; payload: Record<string, unknown> }>;
+      contextSnapshots: Array<{ payload: Record<string, unknown> }>;
     };
     expect(agentPlanPayload.run).toMatchObject({ status: "completed", mode: "copilot", surface: "api" });
+    expect(agentPlanPayload.run.payload.actionPortfolio).toMatchObject({
+      bucketOrder: ["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"],
+      buckets: expect.any(Array),
+    });
+    expect(agentPlanPayload.contextSnapshots[0]?.payload.actionPortfolio).toMatchObject({
+      buckets: expect.arrayContaining([expect.objectContaining({ bucket: expect.any(String), actions: expect.any(Array) })]),
+    });
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
+    expect(agentPlanPayload.actions[0]?.explanationCard).toMatchObject({
+      whyNow: expect.any(String),
+      rerunWhen: expect.any(String),
+      publicSafe: expect.any(Object),
+    });
+    expect(JSON.stringify(agentPlanPayload.actions[0]?.explanationCard?.publicSafe)).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score|private reviewability|public score estimate|scoreability/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
     expect(agentPlanPayload.actions[0]?.payload.recommendationEvidence).toMatchObject({
       confidence: expect.stringMatching(/^(high|medium|low)$/),
@@ -1165,6 +1201,113 @@ describe("api routes", () => {
     }
   });
 
+  it("serves installation repair diagnostics and refreshes installation health", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const repoPayload = { name: "gittensory", full_name: "JSONbored/gittensory", private: true, default_branch: "main", owner: { login: "JSONbored" } };
+    await upsertInstallation(env, {
+      installation: {
+        id: 777,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read" },
+        events: ["issues", "pull_request", "repository"],
+      },
+      repositories: [repoPayload],
+    });
+    await upsertRepositoryFromGitHub(env, repoPayload, 777);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: true,
+      checkRunMode: "off",
+    });
+    await upsertInstallationHealth(env, {
+      installationId: 777,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["issues"],
+      missingEvents: ["issue_comment"],
+      permissions: { metadata: "read", pull_requests: "read" },
+      events: ["issues", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    const repair = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
+    expect(repair.status).toBe(200);
+    const repairBody = (await repair.json()) as {
+      installation: { status: string; missingPermissions: string[]; missingEvents: string[] };
+      requiredPermissions: Record<string, string>;
+      optionalPermissions: Record<string, string>;
+      modeImpacts: Array<{ mode: string; enabled: boolean; affectedRepoCount: number; requiredPermissions: Array<{ permission: string; missing: boolean; optional: boolean }> }>;
+      eventDiagnostics: Array<{ event: string; missing: boolean }>;
+      refresh: { method: string; path: string };
+    };
+    expect(repairBody).toMatchObject({
+      installation: { status: "needs_attention", missingPermissions: ["issues"], missingEvents: ["issue_comment"] },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      optionalPermissions: { checks: "write" },
+      refresh: { method: "POST", path: "/v1/installations/777/repair/refresh" },
+    });
+    expect(repairBody.requiredPermissions).not.toHaveProperty("checks");
+    expect(repairBody.modeImpacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: false, optional: true })] }),
+      ]),
+    );
+    expect(repairBody.eventDiagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ event: "issue_comment", missing: true })]));
+    expect(JSON.stringify(repairBody)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|github_pat|private key/i);
+
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", checkRunMode: "enabled" });
+    await upsertInstallationHealth(env, {
+      installationId: 777,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["checks"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-05-28T00:01:00.000Z",
+    });
+    const repairWithChecks = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
+    const repairWithChecksBody = (await repairWithChecks.json()) as typeof repairBody;
+    expect(repairWithChecksBody.requiredPermissions).toMatchObject({ checks: "write" });
+    expect(repairWithChecksBody.optionalPermissions).toEqual({});
+    expect(repairWithChecksBody.modeImpacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mode: "check_run", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: true, optional: false })] })]),
+    );
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/777")) {
+        return Response.json({
+          id: 777,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+          events: ["issues", "issue_comment", "pull_request", "repository"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const refreshed = await app.request("/v1/installations/777/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env);
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({
+      refreshed: true,
+      installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+    });
+  });
+
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other", PRODUCT_USAGE_HASH_SALT: "usage-adoption-test-salt" });
@@ -1199,6 +1342,7 @@ describe("api routes", () => {
       roleCards: expect.arrayContaining([expect.objectContaining({ role: "operator", status: "active" })]),
       publicSafe: true,
     });
+    expect((await app.request("/v1/app/roles", {}, env)).status).toBe(401);
 
     const emptyEnv = createTestEnv();
     const emptyOverview = await app.request("/v1/app/overview", { headers: apiHeaders(emptyEnv) }, emptyEnv);
@@ -1239,6 +1383,7 @@ describe("api routes", () => {
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
     const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(forbiddenMiner.status).toBe(403);
+    expect((await app.request("/v1/app/maintainer-dashboard", {}, env)).status).toBe(401);
 
     const unknownEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token: unknownToken } = await createSessionForGitHubUser(unknownEnv, { login: "new-user", id: 2468 });
@@ -1257,6 +1402,7 @@ describe("api routes", () => {
     expect(unknownOverview.status).toBe(200);
     await expect(unknownOverview.json()).resolves.toMatchObject({ roleSummary: { roles: [], onboarding: { status: "needs_setup" } } });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/maintainer-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/commands/usefulness", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect(
       (
@@ -1351,6 +1497,14 @@ describe("api routes", () => {
     const ownerWeeklyReportBody = await ownerWeeklyReport.json();
     expect(ownerWeeklyReportBody).toMatchObject({ variant: "public", publicSafe: true });
     expect(ownerWeeklyReportBody).not.toHaveProperty("operatorDetails");
+    const ownerWeeklyReportMarkdown = await app.request("/v1/app/analytics/weekly-value-report?format=markdown", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerWeeklyReportMarkdown.status).toBe(200);
+    expect(ownerWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
+    const ownerWeeklyReportMarkdownText = await ownerWeeklyReportMarkdown.text();
+    expect(ownerWeeklyReportMarkdownText).toContain("# Weekly Gittensory value report");
+    expect(ownerWeeklyReportMarkdownText).toContain("## Maintainer trust");
+    expect(ownerWeeklyReportMarkdownText).not.toContain("## Operator detail");
+    expect(ownerWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
     expect((await app.request("/v1/app/analytics/weekly-value-report?variant=operator", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     const ownerExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: ownerHeaders }, ownerEnv);
     expect(ownerExtensionSession.status).toBe(201);
@@ -1362,6 +1516,48 @@ describe("api routes", () => {
       ownerEnv,
     );
     expect(ownerExtensionMissingPull.status).toBe(400);
+    const ownerRepoPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "repo-owner/owned-repo" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerRepoPreview.status).toBe(200);
+    const ownerGenericPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ command: "plan-next-work" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerGenericPreview.status).toBe(200);
+    const forbiddenVictimPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "victim-org/secret-repo" }),
+      },
+      ownerEnv,
+    );
+    expect(forbiddenVictimPreview.status).toBe(403);
+    await expect(forbiddenVictimPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    const { token: operatorToken } = await createSessionForGitHubUser(ownerEnv, { login: "jsonbored", id: 1 });
+    const operatorVictimPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: { cookie: `gittensory_session=${operatorToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "victim-org/secret-repo" }),
+      },
+      ownerEnv,
+    );
+    expect(operatorVictimPreview.status).toBe(200);
 
     const minerNeedsRefresh = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: apiHeaders(env) }, env);
     expect(minerNeedsRefresh.status).toBe(200);
@@ -1644,7 +1840,7 @@ describe("api routes", () => {
     const commands = await app.request("/v1/app/commands", { headers: apiHeaders(env) }, env);
     expect(commands.status).toBe(200);
     await expect(commands.json()).resolves.toMatchObject({
-      commands: expect.arrayContaining([expect.objectContaining({ id: "public-summary" })]),
+      commands: expect.arrayContaining([expect.objectContaining({ id: "help" }), expect.objectContaining({ id: "public-summary" })]),
     });
 
     const publicPreview = await app.request(
@@ -1657,22 +1853,168 @@ describe("api routes", () => {
       env,
     );
     expect(publicPreview.status).toBe(200);
-    await expect(publicPreview.json()).resolves.toMatchObject({
-      preview: { boundary: "public", body: expect.stringContaining("entrius/allways-ui#12") },
+    const publicPreviewBody = await publicPreview.json();
+    expect(publicPreviewBody).toMatchObject({
+      preview: { boundary: "public", body: expect.stringContaining("entrius/allways-ui#12"), decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false } },
     });
 
-    const privatePreview = await app.request(
+    const commandResponsePreview = await app.request(
       "/v1/app/commands/preview",
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", login: "oktofeesh1" }),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, login: "oktofeesh1" }),
       },
       env,
     );
-    expect(privatePreview.status).toBe(200);
-    await expect(privatePreview.json()).resolves.toMatchObject({
-      preview: { boundary: "private-api", endpoint: "/v1/agent/preflight-branch" },
+    expect(commandResponsePreview.status).toBe(200);
+    const commandResponsePreviewBody = (await commandResponsePreview.json()) as { preview: { body: string } };
+    expect(commandResponsePreviewBody).toMatchObject({
+      preview: {
+        boundary: "public",
+        endpoint: "GitHub issue comment",
+        decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false },
+        sanitizer: { passed: true, forbiddenTerms: [] },
+        body: expect.stringContaining("### Gittensory preflight"),
+      },
+    });
+    expect(commandResponsePreviewBody.preview.body).toContain("Scope: entrius/allways-ui#12");
+    expect(commandResponsePreviewBody.preview.body).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|scoreability|public score estimate/i);
+
+    const nonMinerPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "miner-context", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { minerStatus: "not_found" } }),
+      },
+      env,
+    );
+    expect(nonMinerPreview.status).toBe(200);
+    await expect(nonMinerPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", willComment: false, skipReason: "pr_author_not_confirmed_miner" }, body: expect.stringContaining("not a confirmed Gittensor miner") },
+    });
+
+    const missingPermissionPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { missingPermissions: ["issues"] } }),
+      },
+      env,
+    );
+    expect(missingPermissionPreview.status).toBe(200);
+    await expect(missingPermissionPreview.json()).resolves.toMatchObject({
+      preview: {
+        decision: { status: "missing_permission", willComment: false, skipReason: "missing_permission" },
+        missingPermissions: ["issues"],
+        permissionDiagnostics: [expect.objectContaining({ permission: "issues", requiredAccess: "write", ok: false })],
+        warnings: [expect.stringMatching(/Issues: write/i)],
+      },
+    });
+
+    const permissionMapPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { permissions: { metadata: "read", pull_requests: "read" } } }),
+      },
+      env,
+    );
+    expect(permissionMapPreview.status).toBe(200);
+    await expect(permissionMapPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "missing_permission", skipReason: "missing_permission" }, missingPermissions: ["issues"] },
+    });
+
+    const checksWarningPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { missingPermissions: ["checks"] } }),
+      },
+      env,
+    );
+    expect(checksWarningPreview.status).toBe(200);
+    await expect(checksWarningPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true, willCheckRun: false }, missingPermissions: ["checks"], warnings: [expect.stringMatching(/checks: write/i)] },
+    });
+
+    const unavailableMinerPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "miner-context", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { minerStatus: "unavailable" } }),
+      },
+      env,
+    );
+    expect(unavailableMinerPreview.status).toBe(200);
+    await expect(unavailableMinerPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", skipReason: "miner_detection_unavailable" }, body: expect.stringContaining("detection is unavailable") },
+    });
+
+    const wrongActorPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "next-action", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { authorLogin: "sample-author", commenterLogin: "other-user" } }),
+      },
+      env,
+    );
+    expect(wrongActorPreview.status).toBe(200);
+    await expect(wrongActorPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", skipReason: "not_maintainer_or_pr_author" }, body: expect.stringContaining("neither a maintainer nor the pull request author") },
+    });
+
+    const helpPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "help", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { authorLogin: "sample-author", commenterLogin: "sample-author" } }),
+      },
+      env,
+    );
+    expect(helpPreview.status).toBe(200);
+    await expect(helpPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("### Gittensory command help") },
+    });
+
+    const maintainerCommandPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          command: "queue-summary",
+          repoFullName: "entrius/allways-ui",
+          pullNumber: 12,
+          sample: { authorAssociation: "OWNER", minerStatus: "not_found" },
+        }),
+      },
+      env,
+    );
+    expect(maintainerCommandPreview.status).toBe(200);
+    await expect(maintainerCommandPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("### Gittensory maintainer queue summary") },
+    });
+
+    const maintainerMinerContextPreview = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "miner-context", repoFullName: "entrius/allways-ui", pullNumber: 12, sample: { commenterAssociation: "OWNER", minerStatus: "not_found" } }),
+      },
+      env,
+    );
+    expect(maintainerMinerContextPreview.status).toBe(200);
+    await expect(maintainerMinerContextPreview.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("Official miner context is unavailable") },
     });
 
     const privatePreviewWithoutTarget = await app.request(
@@ -1680,13 +2022,27 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({ command: "preflight" }),
+        body: JSON.stringify({ command: "plan-next-work" }),
       },
       env,
     );
     expect(privatePreviewWithoutTarget.status).toBe(200);
     await expect(privatePreviewWithoutTarget.json()).resolves.toMatchObject({
-      preview: { body: expect.stringContaining("selected target") },
+      preview: { boundary: "private-api", body: expect.stringContaining("selected target"), decision: { status: "private_api", willComment: false } },
+    });
+
+    const privatePreviewWithLogin = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "plan-next-work", repoFullName: "entrius/allways-ui", login: "oktofeesh1" }),
+      },
+      env,
+    );
+    expect(privatePreviewWithLogin.status).toBe(200);
+    await expect(privatePreviewWithLogin.json()).resolves.toMatchObject({
+      preview: { target: "entrius/allways-ui", body: expect.stringContaining("as oktofeesh1") },
     });
 
     const previewWithoutRepo = await app.request(
@@ -1699,6 +2055,37 @@ describe("api routes", () => {
       env,
     );
     expect(previewWithoutRepo.status).toBe(200);
+    await expect(previewWithoutRepo.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", willComment: false, skipReason: "missing_target" }, body: expect.stringContaining("require a repository and pull request number") },
+    });
+
+    const publicPreviewWithoutTarget = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "help", sample: { authorLogin: "sample-author", commenterLogin: "sample-author" } }),
+      },
+      env,
+    );
+    expect(publicPreviewWithoutTarget.status).toBe(200);
+    await expect(publicPreviewWithoutTarget.json()).resolves.toMatchObject({
+      preview: { decision: { status: "skipped", willComment: false, skipReason: "missing_target" }, body: expect.stringContaining("require a repository and pull request number") },
+    });
+
+    const publicPreviewWithoutPull = await app.request(
+      "/v1/app/commands/preview",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ command: "help", repoFullName: "entrius/allways-ui", sample: { authorLogin: "sample-author", commenterLogin: "sample-author" } }),
+      },
+      env,
+    );
+    expect(publicPreviewWithoutPull.status).toBe(200);
+    await expect(publicPreviewWithoutPull.json()).resolves.toMatchObject({
+      preview: { target: "entrius/allways-ui", decision: { status: "skipped", willComment: false, skipReason: "missing_target" } },
+    });
 
     const telemetryDownPreviewEnv = withProductUsageInsertFailure(createTestEnv());
     const telemetryDownPreview = await app.request(
@@ -1864,7 +2251,7 @@ describe("api routes", () => {
         headers: {
           ...apiHeaders(env),
           "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
-          "x-gittensory-mcp-version": "0.3.0",
+          "x-gittensory-mcp-version": "0.4.0",
           "x-gittensory-mcp-client": "gittensory-mcp-cli",
         },
         body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }),
@@ -1942,6 +2329,77 @@ describe("api routes", () => {
     expect(invalidZeroExtensionContext.status).toBe(400);
     const invalidMissingOwnerExtensionContext = await app.request("/v1/extension/pull-context?repo=allways-ui&pullNumber=12", { headers: { authorization: `Bearer ${extensionSessionBody.token}` } }, env);
     expect(invalidMissingOwnerExtensionContext.status).toBe(400);
+
+    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
+      number: 14,
+      title: "Maintainer queue cleanup",
+      state: "open",
+      html_url: "https://github.com/entrius/allways-ui/pull/14",
+      user: { login: "repo-maintainer" },
+      author_association: "OWNER",
+      head: { sha: "owner123", ref: "maintainer-cleanup" },
+      base: { ref: "test" },
+      labels: [{ name: "feature" }],
+      body: "Fixes #8",
+    });
+    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
+      number: 15,
+      title: "Closed cleanup attempt",
+      state: "closed",
+      html_url: "https://github.com/entrius/allways-ui/pull/15",
+      user: { login: "outside-contributor" },
+      author_association: "NONE",
+      head: { sha: "closed123", ref: "closed-cleanup" },
+      base: { ref: "test" },
+      labels: [{ name: "feature" }],
+      body: "Fixes #8",
+    });
+    await upsertPullRequestFromGitHub(env, "entrius/allways-ui", {
+      number: 16,
+      title: "Broad unlinked rewrite",
+      state: "open",
+      html_url: "https://github.com/entrius/allways-ui/pull/16",
+      user: { login: "outside-contributor" },
+      author_association: "NONE",
+      head: { sha: "watch123", ref: "broad-rewrite" },
+      base: { ref: "test" },
+      labels: [{ name: "feature" }],
+      body: "Large rewrite without linked issue context.",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "entrius/allways-ui",
+      pullNumber: 16,
+      path: "src/broad-rewrite.ts",
+      additions: 900,
+      deletions: 10,
+      changes: 910,
+      payload: {},
+    });
+    await upsertCheckSummary(env, {
+      id: "entrius/allways-ui#watch123#test",
+      repoFullName: "entrius/allways-ui",
+      pullNumber: 16,
+      headSha: "watch123",
+      name: "test",
+      status: "completed",
+      conclusion: "failure",
+      payload: {},
+    });
+
+    for (const [pullNumber, expectedPacketText] of [
+      [14, "Public status: maintainer follow-up recommended."],
+      [15, "Public status: triage may be needed before review."],
+      [16, "Public status: keep monitoring the public PR context."],
+    ] as const) {
+      const variantContext = await app.request(
+        `/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=${pullNumber}`,
+        { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
+        env,
+      );
+      expect(variantContext.status).toBe(200);
+      const variantPayload = (await variantContext.json()) as { actions: Array<{ id: string; markdown?: string }> };
+      expect(variantPayload.actions.find((action) => action.id === "copy_public_safe_packet")?.markdown).toContain(expectedPacketText);
+    }
 
     const extensionContext = await app.request(
       "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=12",
@@ -2047,14 +2505,14 @@ describe("api routes", () => {
       sessionId: "current-mcp-session",
       outcome: "success",
       clientName: "gittensory-mcp",
-      clientVersion: "0.3.0",
+      clientVersion: "0.4.0",
       metadata: {
         protocolVersion: "2025-03-26",
       },
       occurredAt: "2026-05-28T00:00:00.000Z",
     });
 
-    const productUsageEvents = await listProductUsageEvents(env, { limit: 20 });
+    const productUsageEvents = await listProductUsageEvents(env, { limit: 40 });
     expect(productUsageEvents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ surface: "control_panel", eventName: "command_previewed", outcome: "success" }),
@@ -2078,10 +2536,47 @@ describe("api routes", () => {
 
     const dailyRollups = await app.request("/v1/app/analytics/daily-rollups?limit=3", { headers: apiHeaders(env) }, env);
     expect(dailyRollups.status).toBe(200);
-    await expect(dailyRollups.json()).resolves.toMatchObject({
+    const dailyRollupsBody = (await dailyRollups.json()) as {
+      status: { status: string; latestRollupDay?: string };
+      rollups: Array<{
+        day: string;
+        activation: Record<string, number>;
+        byRole: Array<{ role: string; count: number; activeActors: number; activeRepos: number }>;
+        activationByRole: Array<Record<string, number | string>>;
+        activationBySurface: Array<Record<string, number | string>>;
+        retention: Array<{
+          window: string;
+          activeActors: number;
+          retainedActors: number;
+          retentionRate: number;
+          capped: boolean;
+          byRole: Array<Record<string, number | string>>;
+          bySurface: Array<Record<string, number | string>>;
+        }>;
+      }>;
+    };
+    expect(dailyRollupsBody).toMatchObject({
       status: expect.objectContaining({ status: "partial", latestRollupDay: "2026-05-28" }),
       rollups: [expect.objectContaining({ day: "2026-05-28", activation: expect.any(Object) })],
     });
+    const [dailyRollup] = dailyRollupsBody.rollups;
+    expect(dailyRollup).toBeDefined();
+    if (!dailyRollup) throw new Error("expected daily usage rollup");
+    expect(dailyRollup.byRole).toEqual(expect.arrayContaining([expect.objectContaining({ role: "miner", count: expect.any(Number), activeActors: expect.any(Number), activeRepos: expect.any(Number) })]));
+    expect(dailyRollup.activationByRole).toEqual(expect.arrayContaining([expect.objectContaining({ role: "miner", doctorPassActors: expect.any(Number), firstUsefulActionActors: expect.any(Number) })]));
+    expect(dailyRollup.activationBySurface).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surface: "mcp", doctorPassActors: expect.any(Number) }),
+        expect.objectContaining({ surface: "browser_extension", firstUsefulActionActors: expect.any(Number) }),
+      ]),
+    );
+    expect(dailyRollup.retention).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ window: "previous_7_days", activeActors: expect.any(Number), retainedActors: expect.any(Number), retentionRate: expect.any(Number), capped: false, byRole: expect.any(Array), bySurface: expect.any(Array) }),
+        expect.objectContaining({ window: "previous_30_days", activeActors: expect.any(Number), retainedActors: expect.any(Number), retentionRate: expect.any(Number), capped: false, byRole: expect.any(Array), bySurface: expect.any(Array) }),
+      ]),
+    );
+    expect(JSON.stringify(dailyRollupsBody)).not.toMatch(/oktofeesh1|operator@example.com|mcp-user|old-mcp-user|current-mcp-user|mcp-session|old-mcp-session|current-mcp-session|gittensory_session|\/Users|github_pat|ghp_|private-repo|wallet|hotkey|raw trust/i);
     const fallbackLimitRollups = await app.request("/v1/app/analytics/daily-rollups?limit=invalid", { headers: apiHeaders(env) }, env);
     expect(fallbackLimitRollups.status).toBe(200);
     await expect(fallbackLimitRollups.json()).resolves.toMatchObject({
@@ -2100,7 +2595,7 @@ describe("api routes", () => {
     const usageOperatorBody = (await usageOperator.json()) as {
       metrics: Array<{ label: string; value: string }>;
       usageSummary: { totalEvents: number };
-      usageRollups: Array<{ day: string }>;
+      usageRollups: Array<{ day: string; byRole: unknown[]; activationBySurface: unknown[]; retention: unknown[] }>;
       usageRollupStatus: { status: string };
       mcpCompatibilityAdoption: {
         totalEvents: number;
@@ -2128,7 +2623,7 @@ describe("api routes", () => {
       ]),
     );
     expect(usageOperatorBody.usageSummary.totalEvents).toBe(productUsageEvents.length);
-    expect(usageOperatorBody.usageRollups).toEqual([expect.objectContaining({ day: "2026-05-28" })]);
+    expect(usageOperatorBody.usageRollups).toEqual([expect.objectContaining({ day: "2026-05-28", byRole: expect.any(Array), activationBySurface: expect.any(Array), retention: expect.any(Array) })]);
     expect(usageOperatorBody.usageRollupStatus.status).toBe("partial");
     expect(usageOperatorBody.mcpCompatibilityAdoption).toMatchObject({
       totalEvents: 4,
@@ -2138,7 +2633,7 @@ describe("api routes", () => {
       byClientVersion: expect.arrayContaining([
         { key: "0.1.0", count: 1 },
         { key: "0.2.1", count: 1 },
-        { key: "0.3.0", count: 2 },
+        { key: "0.4.0", count: 2 },
       ]),
       byProtocolVersion: expect.arrayContaining([
         { key: "2024-11-05", count: 1 },
@@ -2156,8 +2651,8 @@ describe("api routes", () => {
     const mcpCompatibilityBody = await mcpCompatibility.json();
     expect(mcpCompatibilityBody).toMatchObject({
       adoption: expect.objectContaining({
-        minimumSupportedVersion: "0.2.0",
-        latestRecommendedVersion: "0.3.0",
+        minimumSupportedVersion: "0.4.0",
+        latestRecommendedVersion: "0.4.0",
         staleEvents: 1,
         incompatibleEvents: 1,
         totalEvents: 4,
@@ -2205,6 +2700,14 @@ describe("api routes", () => {
       period: expect.objectContaining({ days: 7 }),
       operatorDetails: expect.any(Object),
     });
+    const operatorWeeklyReportMarkdown = await app.request("/v1/app/analytics/weekly-value-report?variant=operator&format=markdown", { headers: apiHeaders(env) }, env);
+    expect(operatorWeeklyReportMarkdown.status).toBe(200);
+    expect(operatorWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
+    const operatorWeeklyReportMarkdownText = await operatorWeeklyReportMarkdown.text();
+    expect(operatorWeeklyReportMarkdownText).toContain("## Adoption metrics");
+    expect(operatorWeeklyReportMarkdownText).toContain("## Operator detail");
+    expect(operatorWeeklyReportMarkdownText).toContain("- Product events:");
+    expect(operatorWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {
@@ -2263,6 +2766,12 @@ describe("api routes", () => {
 
     const invalidCommandPreview = await app.request("/v1/app/commands/preview", { method: "POST", headers: apiHeaders(env), body: "{" }, env);
     expect(invalidCommandPreview.status).toBe(400);
+
+    const invalidQueueJson = await app.request("/v1/internal/queue-intelligence", { method: "POST", headers: internalHeaders, body: "{" }, env);
+    expect(invalidQueueJson.status).toBe(400);
+    const invalidQueueShape = await app.request("/v1/internal/queue-intelligence", { method: "POST", headers: internalHeaders, body: "{}" }, env);
+    expect(invalidQueueShape.status).toBe(400);
+    await expect(invalidQueueShape.json()).resolves.toMatchObject({ error: "invalid_request", detail: "pullRequests array required" });
 
     const invalidDigestJson = await app.request("/v1/app/digest/subscriptions", { method: "POST", headers: { cookie: `gittensory_session=${noIdToken}` }, body: "{" }, env);
     expect(invalidDigestJson.status).toBe(400);
@@ -2347,6 +2856,95 @@ describe("api routes", () => {
     expect(githubCalls).toEqual([]);
     const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");
     expect(mutatingCalls).toEqual([]);
+  });
+
+  it("command response preview never mutates GitHub state", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await seedSignalData(env);
+    const calls: Array<{ method: string; url: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ method: (init?.method ?? "GET").toUpperCase(), url: input.toString() });
+      return new Response("not found", { status: 404 });
+    });
+    const response = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ command: "preflight", repoFullName: "entrius/allways-ui", pullNumber: 12, login: "oktofeesh1" }) },
+      env,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      preview: { decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false } },
+    });
+    const githubCalls = calls.filter((call) => /github\.com/.test(call.url));
+    expect(githubCalls).toEqual([]);
+    const mutatingCalls = calls.filter((call) => call.method !== "GET" && call.method !== "HEAD");
+    expect(mutatingCalls).toEqual([]);
+  });
+
+  it("blocks command previews for sibling repos that only share an installation", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: {
+        id: 7001,
+        account: { login: "target-org", id: 7001, type: "Organization" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issue_comment", "pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "allowed", full_name: "target-org/allowed", private: true, default_branch: "main", owner: { login: "target-org" } },
+      7001,
+    );
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "secret", full_name: "target-org/secret", private: true, default_branch: "main", owner: { login: "target-org" } },
+      7001,
+    );
+    await upsertPullRequestFromGitHub(env, "target-org/allowed", {
+      number: 1,
+      title: "Allowed maintainer evidence",
+      state: "open",
+      html_url: "https://github.com/target-org/allowed/pull/1",
+      user: { login: "collab" },
+      author_association: "MEMBER",
+      labels: [],
+      body: "Maintainer evidence for one repository only.",
+    });
+    await upsertPullRequestFromGitHub(env, "target-org/secret", {
+      number: 99,
+      title: "SECRET roadmap PR title",
+      state: "open",
+      html_url: "https://github.com/target-org/secret/pull/99",
+      user: { login: "other-user" },
+      author_association: "NONE",
+      labels: [{ name: "confidential-roadmap" }],
+      body: "SECRET-LAUNCH-CODE: fixes #321; do not disclose.",
+    });
+    const { token } = await createSessionForGitHubUser(env, { login: "collab", id: 7002 });
+    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+
+    const allowedPreview = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers, body: JSON.stringify({ command: "plan-next-work", repoFullName: "target-org/allowed", pullNumber: 1 }) },
+      env,
+    );
+    expect(allowedPreview.status).toBe(200);
+
+    const siblingPreview = await app.request(
+      "/v1/app/commands/preview",
+      { method: "POST", headers, body: JSON.stringify({ command: "plan-next-work", repoFullName: "target-org/secret", pullNumber: 99 }) },
+      env,
+    );
+    expect(siblingPreview.status).toBe(403);
+    const body = await siblingPreview.text();
+    expect(body).toContain("forbidden_repo");
+    expect(body).not.toContain("SECRET roadmap PR title");
+    expect(body).not.toContain("SECRET-LAUNCH-CODE");
+    expect(body).not.toContain("confidential-roadmap");
   });
 
   it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {
@@ -3513,25 +4111,68 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.3.0" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.4.0" }),
         expect.objectContaining({
           surface: "mcp",
           eventName: "mcp_tool_called",
           outcome: "success",
           clientName: "gittensory-mcp-cli",
-          clientVersion: "0.3.0",
+          clientVersion: "0.4.0",
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",
             protocolVersion: "2025-03-26",
             compatibilityStatus: "current",
-            minimumSupportedVersion: "0.2.0",
-            latestRecommendedVersion: "0.3.0",
+            minimumSupportedVersion: "0.4.0",
+            latestRecommendedVersion: "0.4.0",
           }),
         }),
       ]),
     );
     expect(JSON.stringify(mcpUsageEvents)).not.toMatch(/oktofeesh1|\/Users|github_pat|ghp_|source code|wallet|hotkey|raw trust/i);
   }, 15_000);
+
+  it("gates the MCP contributor profile and redacts miner financial fields", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other" });
+    stubConfirmedMinerFetch();
+
+    const profileCall = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "profile", method: "tools/call", params: { name: "gittensory_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
+      },
+      env,
+    );
+    expect(profileCall.status).toBe(200);
+    const profilePayload = (await mcpJson(profileCall)) as {
+      result: { structuredContent: { login: string; gittensor?: Record<string, unknown> }; content: Array<{ text: string }> };
+    };
+    expect(profilePayload.result.structuredContent.login).toBe("oktofeesh1");
+    const gittensor = profilePayload.result.structuredContent.gittensor ?? {};
+    expect(gittensor).toHaveProperty("credibility");
+    expect(gittensor).not.toHaveProperty("hotkey");
+    expect(gittensor).not.toHaveProperty("alphaPerDay");
+    expect(gittensor).not.toHaveProperty("taoPerDay");
+    expect(gittensor).not.toHaveProperty("usdPerDay");
+    expect(profilePayload.result.content[0]?.text ?? "").not.toMatch(/alphaPerDay|taoPerDay|usdPerDay|hotkey/i);
+
+    const { token } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
+    const forbiddenProfile = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, accept: "application/json, text/event-stream", "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-profile", method: "tools/call", params: { name: "gittensory_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
+      },
+      env,
+    );
+    expect(forbiddenProfile.status).toBe(200);
+    const forbiddenPayload = await mcpJson(forbiddenProfile);
+    expect(JSON.stringify(forbiddenPayload)).toMatch(/Forbidden|error|isError/i);
+    expect(JSON.stringify(forbiddenPayload)).not.toMatch(/alphaPerDay|taoPerDay|usdPerDay/i);
+  });
 
   it("covers registration-readiness policy variants for repo-owner launch planning", async () => {
     const app = createApp();
@@ -3561,6 +4202,41 @@ describe("api routes", () => {
       labelPolicy: { autoLabelEnabled: false, label: "gittensor-miner", createMissingLabel: false },
       warnings: expect.arrayContaining(["GitHub App public surface is disabled; maintainers will not get comment/label assistance."]),
     });
+
+    await upsertRepoFocusManifest(env, "entrius/allways-ui", {
+      blockedPaths: ["dist/"],
+      linkedIssuePolicy: "optional",
+      issueDiscoveryPolicy: "discouraged",
+      maintainerNotes: [
+        "Private reviewability note with wallet, hotkey, raw trust, and farming details.",
+      ],
+    });
+    const policyReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(policyReadiness.status).toBe(200);
+    const policyPayload = (await policyReadiness.json()) as {
+      policyReadiness: { publicWarnings: unknown[] };
+      warnings: string[];
+    };
+    expect(policyPayload).toMatchObject({
+      policyReadiness: {
+        previewOnly: true,
+        present: true,
+        ownerContext: {
+          privateNoteCount: 1,
+          blockedPathCount: 1,
+        },
+        publicWarnings: expect.arrayContaining([
+          expect.objectContaining({ code: "blocked_work_without_wanted_scope" }),
+          expect.objectContaining({ code: "linked_issue_policy_mismatch" }),
+          expect.objectContaining({ code: "validation_expectations_missing" }),
+        ]),
+      },
+      warnings: expect.arrayContaining([
+        expect.stringContaining("Blocked work lacks a positive lane"),
+      ]),
+    });
+    expect(JSON.stringify(policyPayload.policyReadiness.publicWarnings)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+    expect(JSON.stringify(policyPayload.policyReadiness)).not.toMatch(/wallet|hotkey|raw trust|private[-\s]?reviewability|farming/i);
 
     await persistRegistrySnapshot(
       env,
@@ -4031,7 +4707,7 @@ function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
     "content-type": "application/json",
     "mcp-protocol-version": "2025-03-26",
     "x-gittensory-mcp-package": "@jsonbored/gittensory-mcp",
-    "x-gittensory-mcp-version": "0.3.0",
+    "x-gittensory-mcp-version": "0.4.0",
     "x-gittensory-mcp-client": "gittensory-mcp-cli",
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
   };
@@ -4065,6 +4741,22 @@ function apiHeaders(env: Env): Record<string, string> {
     authorization: `Bearer ${env.GITTENSORY_API_TOKEN}`,
     "content-type": "application/json",
   };
+}
+
+async function generatePrivateKeyPem(): Promise<string> {
+  const key = (await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
+  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
+  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
 
 function upstreamContractFetch() {
@@ -4167,6 +4859,36 @@ function stubOktofeeshFetch(): void {
     if (url.includes("/users/oktofeesh1/repos")) {
       return Response.json([{ language: "TypeScript" }, { language: "Python" }, { language: "TypeScript" }]);
     }
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function stubConfirmedMinerFetch(): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url === "https://api.gittensor.io/miners") {
+      return Response.json([
+        {
+          uid: 7,
+          hotkey: "5FHotkeySecretValue",
+          githubUsername: "oktofeesh1",
+          githubId: "12345",
+          totalPrs: 4,
+          totalMergedPrs: 3,
+          isEligible: true,
+          credibility: 1,
+          eligibleRepoCount: 1,
+          alphaPerDay: 72.5,
+          taoPerDay: 0.3,
+          usdPerDay: 92.4,
+        },
+      ]);
+    }
+    if (url === "https://api.gittensor.io/miners/12345") return Response.json({ repositories: [] });
+    if (url === "https://api.gittensor.io/miners/12345/prs") return Response.json([]);
+    if (url === "https://mirror.gittensor.io/api/v1/miners/12345/issues") return Response.json({ issues: [] });
+    if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 42, followers: 7 });
+    if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
     return new Response("not found", { status: 404 });
   });
 }

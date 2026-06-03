@@ -1,6 +1,6 @@
 {
   "name": "@jsonbored/gittensory-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Local stdio MCP wrapper for the Gittensory Gittensor base-agent.",
@@ -38,8 +38,8 @@
     "build": "node --check bin/gittensory-mcp.js && node --check lib/local-branch.js && node --check scripts/gittensor-score-preview.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.26.0",
-    "zod": "^3.25.76"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=22.0.0"

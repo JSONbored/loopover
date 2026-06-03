@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { RateLimiter } from "../../src/auth/rate-limit";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { persistSignalSnapshot } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertInstallation } from "../../src/db/repositories";
 import { handleMcpRequest } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -162,6 +163,10 @@ describe("api route guards and error branches", () => {
     expect(victimDecisionPack.status).toBe(403);
     await expect(victimDecisionPack.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
 
+    const victimProfile = await app.request("/v1/contributors/victim/profile", { headers: sessionHeaders }, env);
+    expect(victimProfile.status).toBe(403);
+    await expect(victimProfile.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
     const ownOpenPrMonitor = await app.request("/v1/contributors/attacker/open-pr-monitor", { headers: sessionHeaders }, env);
     expect(ownOpenPrMonitor.status).toBe(200);
     await expect(ownOpenPrMonitor.json()).resolves.toMatchObject({ login: "attacker", pullRequests: expect.any(Array) });
@@ -306,6 +311,33 @@ describe("api route guards and error branches", () => {
     expect(allowedRate.headers.get("x-ratelimit-reset")).toBe("2026-05-25T00:01:00.000Z");
   });
 
+  it("does not reset auth route limits for rotating bearer tokens", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    env.RATE_LIMITER = statefulRateLimiter(env) as unknown as DurableObjectNamespace;
+
+    let response = new Response(null, { status: 500 });
+    for (let index = 0; index < 11; index += 1) {
+      response = await app.request(
+        "/v1/auth/github/session",
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer random-token-${index}`,
+            "cf-connecting-ip": "203.0.113.10",
+            "content-type": "application/json",
+          },
+          body: "{}",
+        },
+        env,
+      );
+    }
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-ratelimit-remaining")).toBe("0");
+    await expect(response.json()).resolves.toMatchObject({ error: "rate_limited", routeClass: "strict" });
+  });
+
   it("keeps auth route failures generic for non-Error provider failures", async () => {
     const app = createApp();
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" });
@@ -375,6 +407,37 @@ describe("api route guards and error branches", () => {
     ).toBe(401);
   });
 
+  it("does not globally refresh installations for a missing repair refresh target", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: {
+        id: 101,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "issue_comment", "pull_request", "repository"],
+      },
+    });
+    await upsertInstallation(env, {
+      installation: {
+        id: 102,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "issue_comment", "pull_request", "repository"],
+      },
+    });
+    const fetchSpy = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const response = await app.request("/v1/installations/999/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: "installation_not_found" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("covers private route errors, internal guards, and manual job runners", async () => {
     const app = createApp();
     const queued: unknown[] = [];
@@ -400,6 +463,10 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/repos/nope/missing", { headers: apiHeaders(env) }, env)).status).toBe(404);
     expect((await app.request("/v1/installations/not-a-number/health", { headers: apiHeaders(env) }, env)).status).toBe(400);
     expect((await app.request("/v1/installations/999/health", { headers: apiHeaders(env) }, env)).status).toBe(404);
+    expect((await app.request("/v1/installations/not-a-number/repair", { headers: apiHeaders(env) }, env)).status).toBe(400);
+    expect((await app.request("/v1/installations/999/repair", { headers: apiHeaders(env) }, env)).status).toBe(404);
+    expect((await app.request("/v1/installations/not-a-number/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env)).status).toBe(400);
+    expect((await app.request("/v1/installations/999/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env)).status).toBe(404);
     const emptyReadiness = await app.request("/v1/readiness", { headers: apiHeaders(env) }, env);
     expect(emptyReadiness.status).toBe(200);
     await expect(emptyReadiness.json()).resolves.toMatchObject({ registry: null, scoringModel: null, readyForPublicReview: false });
@@ -982,6 +1049,41 @@ function allowRateLimiter() {
           });
         },
       };
+    },
+  };
+}
+
+function statefulRateLimiter(env: Env) {
+  const states = new Map<string, ReturnType<typeof memoryDurableObjectState>>();
+  return {
+    idFromName(name: string) {
+      return name;
+    },
+    get(id: string) {
+      let state = states.get(id);
+      if (!state) {
+        state = memoryDurableObjectState();
+        states.set(id, state);
+      }
+      return {
+        async fetch(input: string, init?: RequestInit) {
+          return new RateLimiter(state as unknown as DurableObjectState, env).fetch(new Request(input, init));
+        },
+      };
+    },
+  };
+}
+
+function memoryDurableObjectState() {
+  const storage = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string) {
+        return storage.get(key);
+      },
+      async put(key: string, value: unknown) {
+        storage.set(key, value);
+      },
     },
   };
 }

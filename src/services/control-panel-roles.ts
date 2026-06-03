@@ -251,7 +251,7 @@ function isMaintainerAssociation(value: string | null | undefined): boolean {
   return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR";
 }
 
-function sanitizeRoleText(value: string): string {
+export function sanitizeRoleText(value: string): string {
   const redacted = value
     .replace(/(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g, "<redacted-path>")
     .replace(/\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
@@ -259,3 +259,5 @@ function sanitizeRoleText(value: string): string {
   if (/\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|payout|reward estimate|farming|private reviewability|public score estimate)\b/i.test(redacted)) return "<redacted>";
   return redacted.slice(0, 200);
 }
+
+export const __controlPanelRolesInternals = { sanitizeRoleText };

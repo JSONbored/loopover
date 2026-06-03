@@ -1074,8 +1074,12 @@ async function backfillRecentMergedSegment(
     totals?.mergedPullRequestsTotal,
     async (payloads) => {
       const merged = payloads.filter((pr) => Boolean(pr.merged_at));
+      // Hydrate each merged PR's changed files (like the monolithic backfill path) so
+      // recent_merged_pull_requests.changedFiles is populated instead of always empty.
+      const warnings: string[] = [];
       await mapWithConcurrency(merged, 8, async (pr) => {
-        await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repo.fullName, pr, []));
+        const changedFiles = await fetchPullRequestFiles(env, repo.fullName, pr.number, token, warnings).catch(() => []);
+        await upsertRecentMergedPullRequest(env, toRecentMergedPullRequest(repo.fullName, pr, changedFiles));
       });
       return merged.length;
     },

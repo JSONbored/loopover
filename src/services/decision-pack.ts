@@ -1023,6 +1023,7 @@ function emptyRecommendationOutcomeFeedback(login: string): AgentRecommendationO
     totals: {
       total: 0,
       accepted: 0,
+      rejected: 0,
       ignored: 0,
       stale: 0,
       merged: 0,

@@ -29,6 +29,7 @@ export type ScorePreviewInput = {
   observedDraftPrCount?: number | undefined;
   observedBlockedPrCount?: number | undefined;
   observedMaintainerPrCount?: number | undefined;
+  duplicateRiskCount?: number | undefined;
   expectedOpenPrCountAfterMerge?: number | undefined;
   projectedCredibility?: number | undefined;
   scenarioNotes?: string[] | undefined;
@@ -94,7 +95,9 @@ export type ScoreGateBlocker = {
     | "linked_issue_invalid"
     | "linked_issue_unvalidated"
     | "branch_ineligible"
-    | "branch_eligibility_missing";
+    | "branch_eligibility_missing"
+    | "duplicate_risk"
+    | "stale_work";
   severity: "blocker" | "reducer" | "context";
   detail: string;
 };
@@ -571,6 +574,24 @@ function blockedByFor(input: ScorePreviewInput, repo: RepositoryRecord | null, c
             code: "linked_issue_unvalidated" as const,
             severity: "context" as const,
             detail: core.linkedIssueMultiplier.reason,
+          },
+        ]
+      : []),
+    ...(nonNegative(input.observedStalePrCount) > 0
+      ? [
+          {
+            code: "stale_work" as const,
+            severity: "reducer" as const,
+            detail: `${nonNegative(input.observedStalePrCount)} stale open PR(s) detected; consider closing stale work before opening new contributions.`,
+          },
+        ]
+      : []),
+    ...(nonNegative(input.duplicateRiskCount) > 0
+      ? [
+          {
+            code: "duplicate_risk" as const,
+            severity: "reducer" as const,
+            detail: `${nonNegative(input.duplicateRiskCount)} duplicate-risk issue(s) or PR(s) detected; verify there is no conflicting work before proceeding.`,
           },
         ]
       : []),

@@ -591,6 +591,87 @@ export class GittensoryMcp {
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
     );
 
+    // ── Miner planning prompts ───────────────────────────────────────────
+    server.registerPrompt(
+      "gittensory_select_contribution_issue",
+      {
+        title: "Select contribution issue",
+        description: "Identify the best open issue for a contributor to work on based on lane fit, issue quality, and queue signals. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+      },
+      ({ owner, repo, login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_issue_quality and gittensory_explain_repo_decision for ${login} on ${owner}/${repo} to identify which open issues are the best fit. Rank candidates by actionability, lane alignment, and queue pressure. Present a short ranked list with a brief rationale for each. Do not create issues, file comments, or take any GitHub action — this is a planning aid for the contributor to decide from.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_draft_contribution_pr_packet",
+      {
+        title: "Draft contribution PR packet",
+        description: "Draft a public-safe PR submission packet for a planned contribution without uploading source code. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+      },
+      ({ owner, repo, login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_get_decision_pack for ${login} to prepare a public-safe PR packet for work on ${owner}/${repo}. The packet should include lane fit, recommended next steps, and any preflight considerations the contributor should address before opening the PR. Do not open a PR, post any comment, or take any GitHub action — present the packet for the contributor to review and submit manually.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_preflight_contribution_branch",
+      {
+        title: "Preflight contribution branch",
+        description: "Assess branch readiness before opening a PR using cached lane and preflight signals. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+      },
+      ({ owner, repo, login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_explain_repo_decision for ${login} on ${owner}/${repo} to assess whether the planned branch is ready to be submitted as a PR. Check lane fit, duplicate risk, linked issue coverage, and any signals that suggest the branch needs more work. Present a preflight summary the contributor can act on before opening the PR. Do not open a PR, push any branch, or take any GitHub action.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_plan_cleanup_first",
+      {
+        title: "Plan cleanup-first work",
+        description: "Identify open PRs to address before starting new work to reduce queue pressure and improve lane fit. Advisory only — no GitHub writes.",
+        argsSchema: { login: z.string().min(1) },
+      },
+      ({ login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_monitor_open_prs and gittensory_get_decision_pack for ${login} to identify which open PRs to address before starting new contribution work. Surface PRs with failing checks, pending review comments, stale queue pressure, or duplicate risk. Recommend an ordered cleanup list with a brief rationale for each item. Do not close PRs, post comments, or take any GitHub action — present the plan for the contributor to execute manually.`,
+            },
+          },
+        ],
+      }),
+    );
+
     return server;
   }
 

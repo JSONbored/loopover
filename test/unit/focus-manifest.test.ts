@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFocusManifestGuidance,
+  deriveContributionLanes,
   isFocusManifestPublicSafe,
   matchesManifestPath,
   parseFocusManifest,
@@ -230,6 +231,146 @@ describe("buildFocusManifestGuidance", () => {
   });
 });
 
+describe("deriveContributionLanes", () => {
+  it("returns neutral lanes with no constraints when no manifest is present", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest(null));
+    expect(lanes.present).toBe(false);
+    expect(lanes.directPrLane).toBe("neutral");
+    expect(lanes.issueDiscoveryLane).toBe("neutral");
+    expect(lanes.preferredEntryPaths).toEqual([]);
+    expect(lanes.discouragedEntryPaths).toEqual([]);
+    expect(lanes.validationExpectations).toEqual([]);
+    expect(lanes.issueEntryGuidance).toEqual([]);
+    expect(lanes.prEntryGuidance).toEqual([]);
+    expect(lanes.summary).toMatch(/not constrained/i);
+  });
+
+  it("marks direct-PR as preferred when wanted paths are declared", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/", "lib/"] }));
+    expect(lanes.present).toBe(true);
+    expect(lanes.directPrLane).toBe("preferred");
+    expect(lanes.issueDiscoveryLane).toBe("neutral");
+    expect(lanes.preferredEntryPaths).toEqual(["src/", "lib/"]);
+    expect(lanes.prEntryGuidance.join(" ")).toMatch(/src\//);
+    expect(lanes.summary).toMatch(/wanted areas are preferred/i);
+  });
+
+  it("marks issue-discovery as preferred and direct-PR as discouraged when issueDiscoveryPolicy is encouraged", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ issueDiscoveryPolicy: "encouraged" }));
+    expect(lanes.directPrLane).toBe("discouraged");
+    expect(lanes.issueDiscoveryLane).toBe("preferred");
+    expect(lanes.issueEntryGuidance.join(" ")).toMatch(/welcomed|search for gaps/i);
+    expect(lanes.summary).toMatch(/issue.discovery is the preferred/i);
+  });
+
+  it("marks issue-discovery as discouraged when issueDiscoveryPolicy is discouraged", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], issueDiscoveryPolicy: "discouraged" }));
+    expect(lanes.issueDiscoveryLane).toBe("discouraged");
+    expect(lanes.directPrLane).toBe("preferred");
+    expect(lanes.issueEntryGuidance.join(" ")).toMatch(/prefer direct fixes|discourages/i);
+    expect(lanes.summary).toMatch(/wanted areas are the preferred/i);
+  });
+
+  it("surfaces validation expectations from testExpectations and linkedIssuePolicy", () => {
+    const lanes = deriveContributionLanes(
+      parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "required", testExpectations: ["unit tests for new branches", "npm run test:ci"] }),
+    );
+    expect(lanes.validationExpectations).toContain("Link a tracked issue before opening a PR.");
+    expect(lanes.validationExpectations).toContain("unit tests for new branches");
+    expect(lanes.validationExpectations).toContain("npm run test:ci");
+  });
+
+  it("produces preferred validation hint for linkedIssuePolicy:preferred", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "preferred" }));
+    expect(lanes.validationExpectations).toContain("Link a tracked issue if one exists.");
+    expect(lanes.issueEntryGuidance).toContain("Link an existing issue to your PR when one is available.");
+  });
+
+  it("includes required link requirement in both validation expectations and issue entry guidance", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "required" }));
+    expect(lanes.validationExpectations).toContain("Link a tracked issue before opening a PR.");
+    expect(lanes.issueEntryGuidance).toContain("Issues must be linked to a PR before it is opened.");
+  });
+
+  it("includes blocked paths in discouragedEntryPaths and PR entry guidance", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], blockedPaths: ["migrations/", "infra/secrets.tf"] }));
+    expect(lanes.discouragedEntryPaths).toEqual(["migrations/", "infra/secrets.tf"]);
+    expect(lanes.prEntryGuidance.join(" ")).toMatch(/migrations\/.*infra\/secrets\.tf|infra\/secrets\.tf.*migrations\//);
+  });
+
+  it("includes preferred labels in PR entry guidance", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], preferredLabels: ["bug", "good first issue"] }));
+    expect(lanes.prEntryGuidance.join(" ")).toMatch(/bug|good first issue/);
+  });
+
+  it("includes maintainer public notes in PR entry guidance", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"], publicNotes: ["Prefer small, focused PRs."] }));
+    expect(lanes.prEntryGuidance).toContain("Prefer small, focused PRs.");
+  });
+
+  it("excludes maintainerNotes from all output fields", () => {
+    const lanes = deriveContributionLanes(
+      parseFocusManifest({ wantedPaths: ["src/"], maintainerNotes: ["Internal: ping @owner before touching the queue processor."] }),
+    );
+    const serialized = JSON.stringify(lanes);
+    expect(serialized).not.toMatch(/ping @owner/);
+    expect(serialized).not.toMatch(/Internal:/);
+  });
+
+  it("filters public notes containing forbidden language before including them in prEntryGuidance", () => {
+    const lanes = deriveContributionLanes(
+      parseFocusManifest({ wantedPaths: ["src/"], publicNotes: ["Maximize your reward payout", "Keep PRs focused."] }),
+    );
+    expect(lanes.prEntryGuidance).not.toContain("Maximize your reward payout");
+    expect(lanes.prEntryGuidance).toContain("Keep PRs focused.");
+  });
+
+  it("filters testExpectations containing forbidden language before including them in validationExpectations", () => {
+    const lanes = deriveContributionLanes(
+      parseFocusManifest({ wantedPaths: ["src/"], testExpectations: ["Submit your wallet seed phrase", "npm run test:ci"] }),
+    );
+    expect(lanes.validationExpectations).not.toContain("Submit your wallet seed phrase");
+    expect(lanes.validationExpectations).toContain("npm run test:ci");
+  });
+
+  it("preserves source from the manifest", () => {
+    const lanes = deriveContributionLanes(parseFocusManifest({ wantedPaths: ["src/"] }, "repo_file"));
+    expect(lanes.source).toBe("repo_file");
+  });
+
+  it("passes a comprehensive manifest fixture end-to-end with all fields populated", () => {
+    const manifest = parseFocusManifest({
+      source: "repo_file",
+      wantedPaths: ["src/", "packages/*/lib"],
+      blockedPaths: ["migrations/"],
+      preferredLabels: ["bug", "good first issue"],
+      linkedIssuePolicy: "required",
+      testExpectations: ["unit tests for new branches"],
+      issueDiscoveryPolicy: "discouraged",
+      maintainerNotes: ["Internal: ping @owner"],
+      publicNotes: ["Prefer small, focused PRs."],
+    });
+    const lanes = deriveContributionLanes(manifest);
+
+    expect(lanes.present).toBe(true);
+    expect(lanes.source).toBe("repo_file");
+    expect(lanes.directPrLane).toBe("preferred");
+    expect(lanes.issueDiscoveryLane).toBe("discouraged");
+    expect(lanes.preferredEntryPaths).toContain("src/");
+    expect(lanes.discouragedEntryPaths).toContain("migrations/");
+    expect(lanes.validationExpectations).toContain("Link a tracked issue before opening a PR.");
+    expect(lanes.validationExpectations).toContain("unit tests for new branches");
+    expect(lanes.issueEntryGuidance.join(" ")).toMatch(/discourages/i);
+    expect(lanes.prEntryGuidance.join(" ")).toMatch(/bug|good first issue/i);
+    expect(lanes.prEntryGuidance).toContain("Prefer small, focused PRs.");
+    expect(lanes.summary).toMatch(/wanted areas/i);
+
+    const serialized = JSON.stringify(lanes);
+    expect(serialized).not.toMatch(/ping @owner/);
+    expect(serialized).not.toMatch(/\b(wallet|hotkey|coldkey|raw trust|trust score|payout|reward|farming|private reviewability)\b/i);
+  });
+});
+
 describe("public-safe invariant", () => {
   it("rejects forbidden compensation/secret language", () => {
     expect(isFocusManifestPublicSafe("Keep PRs focused")).toBe(true);
@@ -282,6 +423,56 @@ describe("public-safe invariant", () => {
       const manifest: FocusManifest = parseFocusManifest(raw);
       const guidance = buildFocusManifestGuidance({ manifest, changedPaths });
       expect(guidance.publicNextSteps.every(isFocusManifestPublicSafe)).toBe(true);
+    }
+  });
+
+  it("never emits forbidden language in derived contribution lanes across random manifests", () => {
+    const stringPool = [
+      "",
+      "src/",
+      "migrations/",
+      "Keep PRs focused.",
+      "Prefer small, focused PRs.",
+      "Maximize your reward payout",
+      "Internal: ping @owner",
+      "estimate your reward",
+      "paste your hotkey",
+      "Submit your wallet seed phrase",
+      "npm run test:ci",
+      "packages/*/lib/*.ts",
+    ];
+    const linkedIssuePolicies = ["required", "preferred", "optional"] as const;
+    const issueDiscoveryPolicies = ["encouraged", "neutral", "discouraged"] as const;
+
+    let seed = 0x8f3d4a1b;
+    const next = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+    const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T;
+    const sample = (max: number): string[] =>
+      Array.from({ length: Math.floor(next() * (max + 1)) }, () => pick(stringPool));
+
+    for (let iteration = 0; iteration < 400; iteration += 1) {
+      const raw = {
+        wantedPaths: sample(4),
+        blockedPaths: sample(4),
+        preferredLabels: sample(4),
+        linkedIssuePolicy: pick(linkedIssuePolicies),
+        issueDiscoveryPolicy: pick(issueDiscoveryPolicies),
+        testExpectations: sample(3),
+        maintainerNotes: sample(4),
+        publicNotes: sample(4),
+      };
+      const manifest = parseFocusManifest(raw);
+      const lanes = deriveContributionLanes(manifest);
+      const allText = [
+        ...lanes.validationExpectations,
+        ...lanes.issueEntryGuidance,
+        ...lanes.prEntryGuidance,
+        lanes.summary,
+      ];
+      expect(allText.every(isFocusManifestPublicSafe)).toBe(true);
     }
   });
 });

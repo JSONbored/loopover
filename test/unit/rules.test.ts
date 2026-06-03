@@ -193,6 +193,66 @@ describe("advisory rules", () => {
     expect(formatCheckRunOutput({ ...uncachedPr, findings: [] }).text).toContain("No detailed findings are published");
   });
 
+  it("formatCheckRunOutput respects detailLevel — minimal always omits findings text", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 50,
+      title: "PR with findings",
+      state: "open",
+      authorLogin: "contributor",
+      authorAssociation: "NONE",
+      labels: [],
+      linkedIssues: [],
+    };
+    const advisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true, otherOpenPullRequests: [] });
+    expect(advisory.findings.length).toBeGreaterThan(0);
+
+    const minimal = formatCheckRunOutput(advisory, "minimal");
+    expect(minimal.text).toContain("No detailed findings are published");
+
+    const standard = formatCheckRunOutput(advisory, "standard");
+    expect(standard.text).not.toContain("No detailed findings are published");
+    expect(standard.text).toMatch(/⚠️|ℹ️/);
+
+    const deep = formatCheckRunOutput(advisory, "deep");
+    expect(deep.text).not.toContain("No detailed findings are published");
+    expect(deep.text).toMatch(/⚠️|ℹ️/);
+  });
+
+  it("formatCheckRunOutput sanitizes forbidden terms at every detail level", () => {
+    const poisonedAdvisory = buildPullRequestAdvisory(repo, null);
+    const poisoned = {
+      ...poisonedAdvisory,
+      findings: [
+        {
+          code: "test_finding",
+          title: "reward wallet hotkey trust score reviewability",
+          severity: "warning" as const,
+          detail: "private detail",
+          publicText: "reward and farming content near wallet hotkey",
+          action: "Check your scoreability and reviewability",
+        },
+      ],
+    };
+    for (const level of ["minimal", "standard", "deep"] as const) {
+      const out = formatCheckRunOutput(poisoned, level);
+      expect(out.title).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|scoreability|farming/i);
+      expect(out.summary).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|scoreability|farming/i);
+      expect(out.text).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|scoreability|farming/i);
+    }
+  });
+
+  it("classifies critical-severity findings as action_required", () => {
+    const advisory = buildPullRequestAdvisory(null, null);
+    const withCritical = {
+      ...advisory,
+      findings: [{ code: "critical_test", title: "Critical finding", severity: "critical" as const, detail: "Something broke." }],
+    };
+    const output = formatCheckRunOutput(withCritical, "standard");
+    expect(output.title).toBe("Gittensory context posted");
+    expect(output.text).toMatch(/ℹ️|⚠️|Critical finding/);
+  });
+
   it("separates issue-discovery-only issues from clean split-lane issue advisories", () => {
     const issue: IssueRecord = {
       repoFullName: repo.fullName,

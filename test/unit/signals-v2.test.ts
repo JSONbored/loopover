@@ -760,19 +760,31 @@ describe("v2 signal builders", () => {
     });
     // acme/widgets is an issue-discovery lane (valid_solved); acme/tools is direct-PR (solved).
     const repositories = [mkRepo("acme/widgets", 1), mkRepo("acme/tools", 0)];
-    const allIssues = [mkIssue("acme/widgets", 7, 100), mkIssue("acme/tools", 8, 101)];
-    const prs = [mkSolvingPr("acme/widgets", 100, 7), mkSolvingPr("acme/tools", 101, 8)];
+    const poisonedIssue: IssueRecord = {
+      ...mkIssue("acme/widgets", 9, 102),
+      state: "open",
+      title: "Open self-linked report",
+    };
+    const poisonedPr: PullRequestRecord = {
+      ...mkSolvingPr("acme/widgets", 102, 999),
+      linkedIssues: [],
+      body: "Previously merged work",
+    };
+    const allIssues = [mkIssue("acme/widgets", 7, 100), mkIssue("acme/tools", 8, 101), poisonedIssue];
+    const prs = [mkSolvingPr("acme/widgets", 100, 7), mkSolvingPr("acme/tools", 101, 8), poisonedPr];
     const profile = buildContributorProfile("cachedev", { login: "cachedev", topLanguages: ["TypeScript"], source: "github" }, prs, allIssues);
     const history = buildContributorOutcomeHistory({ login: "cachedev", profile, repositories, pullRequests: prs, issues: allIssues, repoStats: [] });
 
     const discovery = history.repoOutcomes.find((entry) => entry.repoFullName === "acme/widgets");
     const direct = history.repoOutcomes.find((entry) => entry.repoFullName === "acme/tools");
     // Without the cache fallback these were hardcoded to 0 even though the contributor's own
-    // merged PRs solved their issues.
-    expect(discovery).toMatchObject({ solvedIssues: 1, validSolvedIssues: 1 });
+    // merged PRs solved their issues. Open issues with only contributor-controlled issue-body
+    // PR text must not inflate the cached solved evidence.
+    expect(discovery).toMatchObject({ solvedIssues: 1, validSolvedIssues: 1, openIssues: 1 });
     expect(direct).toMatchObject({ solvedIssues: 1, validSolvedIssues: 0 });
     expect(history.totals.solvedIssues).toBe(2);
     expect(history.totals.validSolvedIssues).toBe(1);
+    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName === "acme/widgets")?.cached).toMatchObject({ solvedIssues: 1, validSolvedIssues: 1, openIssues: 1 });
     expect(discovery?.strengths.join(" ")).toMatch(/valid solved issue-discovery report/);
   });
 

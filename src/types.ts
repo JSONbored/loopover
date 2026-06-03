@@ -684,7 +684,7 @@ export type AgentContextSnapshotRecord = {
   createdAt?: string | null | undefined;
 };
 
-export type AgentRecommendationOutcomeState = "accepted" | "ignored" | "stale" | "merged" | "closed" | "improved";
+export type AgentRecommendationOutcomeState = "accepted" | "rejected" | "ignored" | "stale" | "merged" | "closed" | "improved";
 export type AgentRecommendationOutcomeTargetType = "pull_request" | "issue" | "repository" | "none";
 export type AgentRecommendationOutcomeConfidence = "high" | "medium" | "low";
 
@@ -694,6 +694,8 @@ export type AgentRecommendationOutcomeRecord = {
   runId: string;
   actorLogin: string;
   actionType: AgentActionType;
+  surface?: AgentSurface | null | undefined;
+  snapshotId?: string | null | undefined;
   targetRepoFullName?: string | null | undefined;
   targetPullNumber?: number | null | undefined;
   targetIssueNumber?: number | null | undefined;
@@ -721,6 +723,7 @@ export type AgentRecommendationOutcomeRepoSummary = {
   repoFullName: string;
   total: number;
   accepted: number;
+  rejected: number;
   ignored: number;
   stale: number;
   merged: number;
@@ -740,6 +743,7 @@ export type AgentRecommendationOutcomeSummary = {
   totals: {
     total: number;
     accepted: number;
+    rejected: number;
     ignored: number;
     stale: number;
     merged: number;
@@ -1070,6 +1074,7 @@ export type ProductUsageRole = "miner" | "maintainer" | "owner" | "operator" | "
 export type ProductUsageEventRecord = {
   id: string;
   surface: ProductUsageSurface;
+  role: ProductUsageRole;
   eventName: string;
   route?: string | null | undefined;
   actorHash?: string | null | undefined;

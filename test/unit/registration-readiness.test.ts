@@ -8,6 +8,7 @@ import {
   buildMaintainerCutReadiness,
   buildQueueHealth,
 } from "../../src/signals/engine";
+import { parseFocusManifest } from "../../src/signals/focus-manifest";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../../src/signals/registration-readiness";
 import type { IssueRecord, PullRequestRecord, RepoLabelRecord, RegistryRepoConfig, RepositoryRecord, RepositorySettings } from "../../src/types";
 
@@ -186,6 +187,33 @@ describe("buildRegistrationReadiness", () => {
     const repo = repoFor("octo/ready", configFor({ repo: "octo/ready" }));
     const report = buildRegistrationReadiness({ repoFullName: repo.fullName, repo, settings: settingsFor(repo.fullName), installation: healthyInstall, ...signalsFor(repo, [], [], [label("bug")]) });
     expect(JSON.stringify(report)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+  });
+
+  it("threads focus-manifest policy warnings into owner readiness", () => {
+    const repo = repoFor("octo/policy", configFor({ repo: "octo/policy" }));
+    const report = buildRegistrationReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settingsFor(repo.fullName, { requireLinkedIssue: false }),
+      installation: healthyInstall,
+      ...signalsFor(repo, [], [], [label("bug")]),
+      focusManifest: parseFocusManifest({
+        wantedPaths: ["src/"],
+        linkedIssuePolicy: "optional",
+        testExpectations: ["Run npm run test:ci."],
+      }),
+    });
+
+    expect(report.policyReadiness?.publicWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "direct_pr_policy_unclear" }),
+      ]),
+    );
+    expect(report.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Direct PR entry policy is loose"),
+      ]),
+    );
   });
 });
 

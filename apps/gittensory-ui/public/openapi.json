@@ -3408,6 +3408,190 @@
               "warnings"
             ]
           },
+          "policyReadiness": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "repoFullName": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "focus_manifest_policy"
+                ]
+              },
+              "previewOnly": {
+                "type": "boolean"
+              },
+              "present": {
+                "type": "boolean"
+              },
+              "publicWarnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "contribution_flow",
+                        "direct_pr_policy",
+                        "issue_discovery",
+                        "validation",
+                        "maintainer_burden"
+                      ]
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "warning",
+                        "critical"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "category",
+                    "severity",
+                    "title",
+                    "detail",
+                    "action"
+                  ]
+                }
+              },
+              "ownerContext": {
+                "type": "object",
+                "properties": {
+                  "manifestPresent": {
+                    "type": "boolean"
+                  },
+                  "manifestSource": {
+                    "type": "string",
+                    "enum": [
+                      "repo_file",
+                      "api_record",
+                      "none"
+                    ]
+                  },
+                  "privateNoteCount": {
+                    "type": "number"
+                  },
+                  "manifestWarningCount": {
+                    "type": "number"
+                  },
+                  "wantedPathCount": {
+                    "type": "number"
+                  },
+                  "blockedPathCount": {
+                    "type": "number"
+                  },
+                  "validationExpectationCount": {
+                    "type": "number"
+                  },
+                  "queueLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
+                    ]
+                  },
+                  "contributorIntakeLevel": {
+                    "type": "string",
+                    "enum": [
+                      "healthy",
+                      "watch",
+                      "strained",
+                      "blocked"
+                    ]
+                  },
+                  "configLevel": {
+                    "type": "string",
+                    "enum": [
+                      "excellent",
+                      "good",
+                      "needs_attention",
+                      "fragile"
+                    ]
+                  },
+                  "issuePolicy": {
+                    "type": "string"
+                  },
+                  "issueDiscoveryPolicy": {
+                    "type": "string",
+                    "enum": [
+                      "encouraged",
+                      "neutral",
+                      "discouraged"
+                    ]
+                  }
+                },
+                "required": [
+                  "manifestPresent",
+                  "manifestSource",
+                  "privateNoteCount",
+                  "manifestWarningCount",
+                  "wantedPathCount",
+                  "blockedPathCount",
+                  "validationExpectationCount",
+                  "queueLevel",
+                  "contributorIntakeLevel",
+                  "configLevel",
+                  "issuePolicy",
+                  "issueDiscoveryPolicy"
+                ]
+              },
+              "droppedPublicWarnings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "unsafe_public_text"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "reason"
+                  ]
+                }
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repoFullName",
+              "source",
+              "previewOnly",
+              "present",
+              "publicWarnings",
+              "ownerContext",
+              "droppedPublicWarnings",
+              "summary"
+            ]
+          },
           "blockers": {
             "type": "array",
             "items": {
@@ -3442,6 +3626,7 @@
           "contributorIntakeHealth",
           "docsCompleteness",
           "githubApp",
+          "policyReadiness",
           "blockers",
           "warnings",
           "dataQuality"

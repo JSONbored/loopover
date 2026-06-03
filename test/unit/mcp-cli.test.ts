@@ -366,6 +366,38 @@ describe("gittensory-mcp CLI", () => {
     expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: "/v1/auth/session", authorization: "Bearer session-okto" })]));
   });
 
+  it("removes the default profile without rehydrating its legacy session token", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const configPath = join(tempDir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          apiUrl: "https://api.example.test",
+          activeProfile: "default",
+          profiles: {
+            default: { session: { token: "default-session-token", login: "default-user", scopes: [] } },
+            beta: { session: { token: "beta-session-token", login: "beta-user", scopes: [] } },
+          },
+          session: { token: "default-session-token", login: "default-user", scopes: [] },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const removed = JSON.parse(await runAsync(["profile", "remove", "default", "--json"], { GITTENSORY_CONFIG_DIR: tempDir })) as { status: string; removedProfile: string; activeProfile: string };
+    const saved = JSON.parse(readFileSync(configPath, "utf8")) as { activeProfile: string; profiles?: Record<string, unknown>; session?: unknown };
+
+    expect(removed).toMatchObject({ status: "removed", removedProfile: "default", activeProfile: "beta" });
+    expect(saved.activeProfile).toBe("beta");
+    expect(saved.profiles).not.toHaveProperty("default");
+    expect(saved.profiles).toHaveProperty("beta");
+    expect(saved.session).toBeUndefined();
+    expect(JSON.stringify(saved)).not.toContain("default-session-token");
+    expect(JSON.stringify(saved)).toContain("beta-session-token");
+  });
+
   it("logs out only the selected profile and reports missing profiles safely", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];

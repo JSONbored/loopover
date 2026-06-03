@@ -1270,7 +1270,8 @@ function removeProfile(currentConfig, profileName) {
   delete profiles[profileName];
   const remaining = Object.keys(profiles);
   const activeProfile = currentConfig.activeProfile === profileName ? (profiles[defaultProfileName] ? defaultProfileName : remaining[0] ?? defaultProfileName) : currentConfig.activeProfile;
-  return normalizeConfig({ ...currentConfig, activeProfile, profiles });
+  const session = profileName === defaultProfileName ? undefined : currentConfig.session;
+  return normalizeConfig({ ...currentConfig, activeProfile, profiles, session });
 }
 
 function hasPersistedConfigState(currentConfig) {

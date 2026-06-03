@@ -78,6 +78,8 @@ const PUBLIC_BLOCKER_TEXT: Record<ScoreGateBlocker["code"], string> = {
   linked_issue_unvalidated: "Linked issue context is not yet validated.",
   branch_ineligible: "Branch is not eligible for linked-issue assumptions.",
   branch_eligibility_missing: "Branch eligibility metadata needs a refresh.",
+  duplicate_risk: "Potential duplicate work detected; verify there is no conflicting issue or PR before proceeding.",
+  stale_work: "Stale open work detected; consider closing stale PRs before opening new contributions.",
 };
 
 const PUBLIC_STATUS_SUMMARY: Record<ScorePreviewResult["scoreabilityStatus"], string> = {

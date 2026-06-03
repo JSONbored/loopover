@@ -185,6 +185,7 @@ import type {
   JobMessage,
   JsonValue,
   ProductUsageOutcome,
+  ProductUsageRole,
   ProductUsageSurface,
   PullRequestRecord,
   RepoSyncSegmentRecord,
@@ -200,6 +201,7 @@ async function recordRouteProductUsage(
   event: {
     surface: ProductUsageSurface;
     eventName: string;
+    role?: ProductUsageRole | string | null | undefined;
     outcome?: ProductUsageOutcome;
     identity?: AuthIdentity | null | undefined;
     actor?: string | null | undefined;
@@ -216,6 +218,7 @@ async function recordRouteProductUsage(
   await recordProductUsageEvent(c.env, {
     surface: event.surface,
     eventName: event.eventName,
+    role: event.role,
     route: c.req.path,
     actor: event.actor ?? event.identity?.actor,
     sessionId: event.sessionId ?? (event.identity?.kind === "session" ? event.identity.session.id : undefined),
@@ -652,6 +655,7 @@ export function createApp() {
     await recordRouteProductUsage(c, {
       surface: "browser_extension",
       eventName: "extension_session_created",
+      role: "maintainer",
       identity,
       sessionId: session.id,
       outcome: "success",

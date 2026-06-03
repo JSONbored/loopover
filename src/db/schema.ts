@@ -835,6 +835,7 @@ export const productUsageEvents = sqliteTable(
   {
     id: text("id").primaryKey(),
     surface: text("surface").notNull(),
+    role: text("role").notNull().default("unknown"),
     eventName: text("event_name").notNull(),
     route: text("route"),
     actorHash: text("actor_hash"),
@@ -850,6 +851,7 @@ export const productUsageEvents = sqliteTable(
   },
   (table) => ({
     surfaceOccurred: index("product_usage_events_surface_occurred_idx").on(table.surface, table.occurredAt),
+    roleOccurred: index("product_usage_events_role_occurred_idx").on(table.role, table.occurredAt),
     eventOccurred: index("product_usage_events_event_occurred_idx").on(table.eventName, table.occurredAt),
     actorOccurred: index("product_usage_events_actor_occurred_idx").on(table.actorHash, table.occurredAt),
     repoOccurred: index("product_usage_events_repo_occurred_idx").on(table.repoFullName, table.occurredAt),

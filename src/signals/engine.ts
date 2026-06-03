@@ -1808,12 +1808,17 @@ function normalizeRecentMergedOutcome(
   const association = typeof record.payload.author_association === "string" ? (record.payload.author_association as string) : undefined;
   const fileRecords = filesByNumber.get(record.number) ?? [];
   const reviewRecords = reviewsByNumber.get(record.number) ?? [];
+  // Conservative fallback: when author_association is absent or unrecognised, treat as maintainer
+  // lane so the record is excluded from outside-contributor statistics rather than silently
+  // inflating the outside-contributor merge rate with unclassifiable data.
+  const knownOutsider = association === "NONE" || association === "CONTRIBUTOR" || association === "FIRST_TIME_CONTRIBUTOR" || association === "FIRST_TIMER";
+  const maintainerLane = isMaintainerAssociation(association) || !knownOutsider;
   return {
     number: record.number,
     bucket: "merged",
     decided: true,
     merged: true,
-    maintainerLane: isMaintainerAssociation(association),
+    maintainerLane,
     linked: record.linkedIssues.length > 0,
     labels: [...new Set(record.labels)].sort(),
     filePaths: [...new Set([...fileRecords.map((file) => file.path), ...record.changedFiles])].sort(),
@@ -1857,69 +1862,6 @@ export function buildRepoOutcomePatterns(args: {
   const lane = buildLaneAdvice(args.repo, args.repoFullName).lane;
   const primaryLanguage = args.syncState?.primaryLanguage ?? null;
 
-  const knownPrNumbers = new Set(
-    args.pullRequests.filter((pr) => pr.repoFullName.toLowerCase() === repoKey).map((pr) => pr.number),
-  );
-  const analyzed: RepoOutcomePullRequest[] = [
-    ...args.pullRequests
-      .filter((pr) => pr.repoFullName.toLowerCase() === repoKey)
-      .map((pr): RepoOutcomePullRequest => {
-        const mergedDetail = mergedDetailByNumber.get(pr.number);
-        // Reconcile: a "closed" PR that has a merged record with a timestamp was actually merged and mislabelled.
-        const merged = Boolean(pr.mergedAt) || pr.state === "merged" || Boolean(mergedDetail?.mergedAt);
-        const closedUnmerged = !merged && pr.state === "closed";
-        const open = !merged && !closedUnmerged;
-        const stale = open && daysSince(pr.updatedAt ?? pr.createdAt) >= REPO_OUTCOME_STALE_OPEN_DAYS;
-        const bucket: RepoOutcomeBucket = merged ? "merged" : closedUnmerged ? "closed_unmerged" : stale ? "open_stale" : "open_active";
-        const fileRecords = filesByNumber.get(pr.number) ?? [];
-        const filePaths = [...new Set([...fileRecords.map((file) => file.path), ...(mergedDetail?.changedFiles ?? [])])].sort();
-        const reviewRecords = reviewsByNumber.get(pr.number) ?? [];
-        return {
-          number: pr.number,
-          bucket,
-          decided: merged || closedUnmerged,
-          merged,
-          maintainerLane: isMaintainerAssociation(pr.authorAssociation),
-          linked: pr.linkedIssues.length > 0 || (mergedDetail?.linkedIssues.length ?? 0) > 0,
-          labels: [...new Set([...pr.labels, ...(mergedDetail?.labels ?? [])])].sort(),
-          filePaths,
-          changedLineCount: fileRecords.reduce((sum, file) => sum + file.additions + file.deletions, 0),
-          authorRole: pr.authorAssociation === "CONTRIBUTOR" ? "returning_contributor" : "first_time_or_external",
-          hasReview: reviewRecords.length > 0,
-          changesRequested: reviewRecords.some((review) => review.state === "CHANGES_REQUESTED"),
-        };
-      }),
-    // Include merged PRs that exist only in recent_merged_pull_requests (absent from pull_requests).
-    // Derive maintainer lane and author role from payload.author_association when present so that
-    // owner/member/collaborator merges are not counted in the outside-contributor merge rate.
-    // Conservative fallback: when author_association is absent or unrecognised, treat as maintainer
-    // lane so the record is excluded from outside-contributor statistics rather than silently
-    // inflating the outside-contributor merge rate with unclassifiable data.
-    ...(args.recentMergedPullRequests ?? [])
-      .filter((record) => record.repoFullName.toLowerCase() === repoKey && !knownPrNumbers.has(record.number))
-      .map((record): RepoOutcomePullRequest => {
-        const payloadAssociation = typeof record.payload["author_association"] === "string" ? record.payload["author_association"] : undefined;
-        const knownOutsider = payloadAssociation === "NONE" || payloadAssociation === "CONTRIBUTOR" || payloadAssociation === "FIRST_TIME_CONTRIBUTOR" || payloadAssociation === "FIRST_TIMER";
-        const isMaintainer = isMaintainerAssociation(payloadAssociation);
-        // When association is unknown we cannot safely classify the lane — conservative fallback
-        // keeps the record out of the outside-contributor decided set.
-        const maintainerLane = isMaintainer || !knownOutsider;
-        return {
-          number: record.number,
-          bucket: "merged",
-          decided: true,
-          merged: true,
-          maintainerLane,
-          linked: record.linkedIssues.length > 0,
-          labels: [...record.labels].sort(),
-          filePaths: [...record.changedFiles].sort(),
-          changedLineCount: 0,
-          authorRole: payloadAssociation === "CONTRIBUTOR" ? "returning_contributor" : "first_time_or_external",
-          hasReview: false,
-          changesRequested: false,
-        };
-      }),
-  ];
   const seenNumbers = new Set<number>();
   const analyzedFromPullRequests: RepoOutcomePullRequest[] = args.pullRequests
     .filter((pr) => pr.repoFullName.toLowerCase() === repoKey)
@@ -2092,12 +2034,12 @@ export function buildRepoOutcomePatterns(args: {
   }
   // evidenceCompleteness tracks detail-sync progress for pull_requests records only — merged-only records from
   // recent_merged_pull_requests are never eligible for detail sync and must not dilute the denominator.
-  const syncEligible = analyzed.filter((pr) => knownPrNumbers.has(pr.number));
+  const syncEligible = analyzed.filter((pr) => seenNumbers.has(pr.number));
   const withFileDetail = syncEligible.filter((pr) => Boolean(detailByNumber.get(pr.number)?.filesSyncedAt)).length;
   const withReviewDetail = syncEligible.filter((pr) => Boolean(detailByNumber.get(pr.number)?.reviewsSyncedAt)).length;
   const withCheckDetail = syncEligible.filter((pr) => Boolean(detailByNumber.get(pr.number)?.checksSyncedAt)).length;
   const fullyDecidedWithDetail = decided.filter((pr) => {
-    if (!knownPrNumbers.has(pr.number)) return false;
+    if (!seenNumbers.has(pr.number)) return false;
     const state = detailByNumber.get(pr.number);
     return Boolean(state?.filesSyncedAt && state?.reviewsSyncedAt && state?.checksSyncedAt);
   }).length;

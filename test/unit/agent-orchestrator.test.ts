@@ -12,7 +12,7 @@ import {
   type AgentRunBundle,
 } from "../../src/services/agent-orchestrator";
 import { buildAgentActionExplanationCard } from "../../src/services/agent-action-explanation-card";
-import { CONTRIBUTOR_DECISION_PACK_SIGNAL, type ContributorDecisionPack } from "../../src/services/decision-pack";
+import { CONTRIBUTOR_DECISION_PACK_SIGNAL, type ContributorDecisionPack, type RepoOutcomeSummary } from "../../src/services/decision-pack";
 import { buildPublicAgentCommandComment, parseGittensoryMentionCommand } from "../../src/github/commands";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -1007,6 +1007,136 @@ describe("agent orchestrator", () => {
     expect(blockers.actions[0]).toMatchObject({ actionType: "explain_score_blockers", targetRepoFullName: "entrius/allways-ui" });
     expect(JSON.stringify(preflight.actions)).toContain("linked_issue_bounty_historical");
     expect(JSON.stringify(preflight.actions)).toContain("Source upload disabled");
+  });
+
+  it("incorporates aggregate outcome quality into recommendation confidence and evidence", () => {
+    const run = __agentOrchestratorInternals.buildRunRecord({
+      objective: "outcome quality confidence",
+      actorLogin: "oktofeesh1",
+      surface: "mcp",
+      status: "running",
+      payload: {},
+    });
+
+    const strongPatterns: RepoOutcomeSummary = {
+      summary: "High merge rate.",
+      outsideContributorMergeRate: 0.75,
+      sampleSize: 10,
+      successPatterns: [{ title: "Focused file changes", detail: "Focused file changes merge well.", confidence: "high" }],
+      riskPatterns: [],
+    };
+    const highRiskPatterns: RepoOutcomeSummary = {
+      summary: "Low merge rate.",
+      outsideContributorMergeRate: 0.20,
+      sampleSize: 10,
+      successPatterns: [],
+      riskPatterns: [{ title: "High closure rate", detail: "Low-quality label mix correlates with closures.", confidence: "high" }],
+    };
+    const weakPatterns: RepoOutcomeSummary = {
+      summary: "Moderate merge rate.",
+      outsideContributorMergeRate: 0.45,
+      sampleSize: 10,
+      successPatterns: [],
+      riskPatterns: [],
+    };
+    const sparsePatterns: RepoOutcomeSummary = {
+      summary: "Sparse data.",
+      outsideContributorMergeRate: 0.20,
+      sampleSize: 3,
+      successPatterns: [],
+      riskPatterns: [],
+    };
+
+    // Fresh, complete-fidelity pack with official stats for a clean baseline
+    const goodPack = decisionPackFixture({
+      freshness: "fresh",
+      rebuildEnqueued: false,
+      dataQuality: {
+        signalFidelity: {
+          status: "complete",
+          repoCount: 1,
+          completeRepos: 1,
+          degradedRepos: 0,
+          blockedRepos: 0,
+          partialRepos: [],
+          cappedRepos: [],
+          staleRepos: [],
+          rateLimitedRepos: [],
+        },
+      } as unknown as ContributorDecisionPack["dataQuality"],
+    } as unknown as Partial<ContributorDecisionPack>);
+
+    const fakeOutcome = { repoFullName: "owner/repo" } as ContributorDecisionPack["repoDecisions"][number]["outcome"];
+
+    const strongDecision = repoDecision({ repoFullName: "owner/strong", outcome: fakeOutcome, repoOutcomePatterns: strongPatterns });
+    const highRiskDecision = repoDecision({ repoFullName: "owner/high-risk", outcome: fakeOutcome, repoOutcomePatterns: highRiskPatterns });
+    const weakDecision = repoDecision({ repoFullName: "owner/weak", outcome: fakeOutcome, repoOutcomePatterns: weakPatterns });
+    const sparseDecision = repoDecision({ repoFullName: "owner/sparse", outcome: fakeOutcome, repoOutcomePatterns: sparsePatterns });
+    const absentDecision = repoDecision({ repoFullName: "owner/absent", outcome: fakeOutcome });
+
+    const strongAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/strong", "pursue", 80), strongDecision, 0, goodPack);
+    const highRiskAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/high-risk", "pursue", 80), highRiskDecision, 1, goodPack);
+    const weakAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/weak", "pursue", 80), weakDecision, 2, goodPack);
+    const sparseAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/sparse", "pursue", 80), sparseDecision, 3, goodPack);
+    const absentAction = __agentOrchestratorInternals.actionFromDecisionAction(run, action("open_new_direct_pr", "owner/absent", "pursue", 80), absentDecision, 4, goodPack);
+
+    // Strong outcome quality (≥60% merge, adequate sample) → confidence stays high
+    expect(strongAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "high",
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "aggregate_outcome_quality", freshness: "fresh", source: "cached_repo_patterns" }),
+      ]),
+    });
+    expect((strongAction.payload.recommendationEvidence as { warnings?: string[] }).warnings ?? []).not.toContain(
+      expect.stringMatching(/closure risk/i),
+    );
+
+    // High-risk outcome quality (≤30% merge, adequate sample) → confidence lowered to "low"
+    expect(highRiskAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "low",
+      warnings: expect.arrayContaining([expect.stringMatching(/high closure risk/i)]),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "aggregate_outcome_quality", freshness: "fresh", source: "cached_repo_patterns" }),
+      ]),
+    });
+
+    // Weak outcome quality (30–60% merge, adequate sample) → confidence lowered to "medium"
+    expect(weakAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "medium",
+      warnings: expect.arrayContaining([expect.stringMatching(/moderate closure risk/i)]),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "aggregate_outcome_quality", freshness: "fresh", source: "cached_repo_patterns" }),
+      ]),
+    });
+
+    // Sparse outcome quality (< min sample) → confidence unchanged, assumption added, source degraded
+    expect(sparseAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "high",
+      assumptions: expect.arrayContaining([expect.stringMatching(/limited sample size/i)]),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "aggregate_outcome_quality", freshness: "degraded", source: "cached_repo_patterns" }),
+      ]),
+    });
+
+    // Absent outcome patterns → assumption added, source is missing
+    expect(absentAction.payload.recommendationEvidence).toMatchObject({
+      confidence: "high",
+      assumptions: expect.arrayContaining([expect.stringMatching(/no aggregate repo outcome quality/i)]),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ name: "aggregate_outcome_quality", freshness: "missing", source: null }),
+      ]),
+    });
+
+    // Public sanitizer: private aggregate quality must not appear in public-facing card text
+    expect(JSON.stringify(highRiskAction.explanationCard?.publicSafe)).not.toMatch(/merge rate|closure risk|aggregate outcome/i);
+    expect(JSON.stringify(highRiskAction.payload.recommendationEvidence)).not.toMatch(/wallet|hotkey|raw trust score/i);
+
+    // aggregateOutcomeQuality helper covers all signal branches directly
+    expect(__agentOrchestratorInternals.aggregateOutcomeQuality(undefined).signal).toBe("absent");
+    expect(__agentOrchestratorInternals.aggregateOutcomeQuality(sparsePatterns).signal).toBe("sparse");
+    expect(__agentOrchestratorInternals.aggregateOutcomeQuality(strongPatterns).signal).toBe("strong");
+    expect(__agentOrchestratorInternals.aggregateOutcomeQuality(highRiskPatterns).signal).toBe("high_risk");
+    expect(__agentOrchestratorInternals.aggregateOutcomeQuality(weakPatterns).signal).toBe("weak");
   });
 });
 

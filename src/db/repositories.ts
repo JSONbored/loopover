@@ -986,6 +986,7 @@ export async function recordProductUsageEvent(
   event: {
     surface: ProductUsageSurface;
     eventName: string;
+    role?: ProductUsageRole | string | null | undefined;
     actor?: string | null | undefined;
     sessionId?: string | null | undefined;
     route?: string | null | undefined;
@@ -1001,9 +1002,16 @@ export async function recordProductUsageEvent(
 ): Promise<ProductUsageEventRecord> {
   const db = getDb(env.DB);
   const actorRedactor = buildProductUsageActorRedactor(event.actor);
+  const sanitizedMetadata = sanitizeProductUsageMetadata(event.metadata, actorRedactor);
   const record: ProductUsageEventRecord = {
     id: crypto.randomUUID(),
     surface: normalizeProductUsageSurface(event.surface),
+    role: resolveProductUsageRole({
+      explicitRole: event.role,
+      surface: normalizeProductUsageSurface(event.surface),
+      eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
+      metadata: sanitizedMetadata,
+    }),
     eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
     route: boundedProductUsageField(event.route, 160),
     actorHash: await hashProductUsageIdentifier(env, "actor", event.actor),
@@ -1014,12 +1022,13 @@ export async function recordProductUsageEvent(
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
     clientName: boundedProductUsageField(event.clientName, 80),
     clientVersion: boundedProductUsageField(event.clientVersion, 80),
-    metadata: sanitizeProductUsageMetadata(event.metadata, actorRedactor),
+    metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
   await db.insert(productUsageEvents).values({
     id: record.id,
     surface: record.surface,
+    role: record.role,
     eventName: record.eventName,
     route: record.route ?? null,
     actorHash: record.actorHash ?? null,
@@ -1482,7 +1491,7 @@ function maxIso(left: string | null | undefined, right: string | null | undefine
 }
 
 function outcomeStateBuckets(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["states"] {
-  const states: AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved", "closed", "stale", "ignored"];
+  const states: AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved", "closed", "rejected", "stale", "ignored"];
   return states.flatMap((state) => {
     const count = outcomes.filter((outcome) => outcome.outcomeState === state).length;
     return count > 0 ? [{ state, count }] : [];
@@ -1494,6 +1503,7 @@ function recommendationOutcomeTotals(
   maintainerLaneTotal: number,
 ): AgentRecommendationOutcomeSummary["totals"] {
   const accepted = outcomes.filter((outcome) => outcome.outcomeState === "accepted").length;
+  const rejected = outcomes.filter((outcome) => outcome.outcomeState === "rejected").length;
   const merged = outcomes.filter((outcome) => outcome.outcomeState === "merged").length;
   const improved = outcomes.filter((outcome) => outcome.outcomeState === "improved").length;
   const closed = outcomes.filter((outcome) => outcome.outcomeState === "closed").length;
@@ -1502,13 +1512,14 @@ function recommendationOutcomeTotals(
   return {
     total: outcomes.length,
     accepted,
+    rejected,
     ignored,
     stale,
     merged,
     closed,
     improved,
     positive: accepted + merged + improved,
-    negative: closed + stale + ignored,
+    negative: closed + rejected + stale + ignored,
     maintainerLaneTotal,
   };
 }
@@ -1532,6 +1543,7 @@ function summarizeRecommendationOutcomeRepos(outcomes: AgentRecommendationOutcom
         repoFullName: firstRepo.outcomeRepoFullName ?? firstRepo.targetRepoFullName ?? "unknown/repo",
         total: totals.total,
         accepted: totals.accepted,
+        rejected: totals.rejected,
         ignored: totals.ignored,
         stale: totals.stale,
         merged: totals.merged,
@@ -2427,6 +2439,8 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
     runId: outcome.runId,
     actorLogin: boundedString(outcome.actorLogin, 100),
     actionType: outcome.actionType,
+    surface: outcome.surface ?? null,
+    snapshotId: outcome.snapshotId ?? null,
     targetRepoFullName: outcome.targetRepoFullName ? boundedString(outcome.targetRepoFullName, 200) : null,
     targetPullNumber: outcome.targetPullNumber ?? null,
     targetIssueNumber: outcome.targetIssueNumber ?? null,
@@ -2452,6 +2466,8 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
       set: {
         actorLogin: values.actorLogin,
         actionType: values.actionType,
+        surface: values.surface,
+        snapshotId: values.snapshotId,
         targetRepoFullName: values.targetRepoFullName,
         targetPullNumber: values.targetPullNumber,
         targetIssueNumber: values.targetIssueNumber,
@@ -3202,6 +3218,8 @@ function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutco
     runId: row.runId,
     actorLogin: row.actorLogin,
     actionType: parseAgentActionType(row.actionType),
+    surface: row.surface ? parseAgentSurface(row.surface) : null,
+    snapshotId: row.snapshotId ?? null,
     targetRepoFullName: row.targetRepoFullName,
     targetPullNumber: row.targetPullNumber,
     targetIssueNumber: row.targetIssueNumber,
@@ -3279,6 +3297,7 @@ function toProductUsageEventRecord(row: typeof productUsageEvents.$inferSelect):
   return {
     id: row.id,
     surface: normalizeProductUsageSurface(row.surface),
+    role: normalizeProductUsageRole(row.role) ?? "unknown",
     eventName: row.eventName,
     route: row.route,
     actorHash: row.actorHash,
@@ -3667,6 +3686,7 @@ function productUsageRolesForEvent(event: ProductUsageEventRecord, actorRoles: M
 
 function productUsageBaseRolesForEvent(event: ProductUsageEventRecord): ProductUsageRole[] {
   const roles = new Set<ProductUsageRole>();
+  if (event.role && event.role !== "unknown") roles.add(event.role);
   addProductUsageRolesFromValue(roles, event.metadata.role);
   addProductUsageRolesFromValue(roles, event.metadata.roles);
   addProductUsageRolesFromValue(roles, event.metadata.audience);
@@ -3699,6 +3719,35 @@ function addProductUsageRolesFromValue(roles: Set<ProductUsageRole>, value: Json
   if (typeof value !== "string") return;
   const role = normalizeProductUsageRole(value);
   if (role) roles.add(role);
+}
+
+function resolveProductUsageRole(args: {
+  explicitRole?: ProductUsageRole | string | null | undefined;
+  surface: ProductUsageSurface;
+  eventName: string;
+  metadata: Record<string, JsonValue>;
+}): ProductUsageRole {
+  if (typeof args.explicitRole === "string") {
+    const normalized = normalizeProductUsageRole(args.explicitRole);
+    if (normalized) return normalized;
+  }
+  const fromMetadata = new Set<ProductUsageRole>();
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.role);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.roles);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.audience);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.actorRole);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.actorKind);
+  if (fromMetadata.size > 0) return [...fromMetadata].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b))[0] ?? "unknown";
+  const [inferred] = productUsageBaseRolesForEvent({
+    id: "",
+    surface: args.surface,
+    role: "unknown",
+    eventName: args.eventName,
+    outcome: "success",
+    metadata: args.metadata,
+    occurredAt: nowIso(),
+  });
+  return inferred ?? "unknown";
 }
 
 function normalizeProductUsageRole(value: string): ProductUsageRole | null {
@@ -3881,8 +3930,9 @@ const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
 const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"]);
 const PRODUCT_USAGE_OUTCOMES = new Set<ProductUsageOutcome>(["success", "denied", "error", "queued", "completed", "skipped"]);
 const PRODUCT_USAGE_SENSITIVE_KEY =
-  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd/i;
-const PRODUCT_USAGE_SENSITIVE_VALUE = /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey)\b/i;
+  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
+const PRODUCT_USAGE_SENSITIVE_VALUE =
+  /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
 const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
@@ -3996,7 +4046,7 @@ function parseAgentSafetyClass(value: string): AgentSafetyClass {
 }
 
 function parseAgentRecommendationOutcomeState(value: string): AgentRecommendationOutcomeState {
-  if (value === "accepted" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
+  if (value === "accepted" || value === "rejected" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
   return "ignored";
 }
 

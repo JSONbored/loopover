@@ -1,5 +1,6 @@
 import {
   listAgentActions,
+  listAgentContextSnapshots,
   listAgentRunsForActor,
   listContributorIssues,
   listContributorPullRequests,
@@ -40,9 +41,14 @@ export async function evaluateRecommendationOutcomes(
     listContributorIssues(env, login),
   ]);
   const completedRuns = runs.filter((run) => run.status === "completed");
-  const actionGroups = await Promise.all(completedRuns.map(async (run) => ({ run, actions: await listAgentActions(env, run.id) })));
-  const classifications = actionGroups.flatMap(({ run, actions }) =>
-    actions.map((action) => classifyRecommendationOutcome({ run, action, pullRequests, issues, evaluatedAt, staleAfterMs, ignoredAfterMs })),
+  const actionGroups = await Promise.all(
+    completedRuns.map(async (run) => {
+      const [actions, snapshots] = await Promise.all([listAgentActions(env, run.id), listAgentContextSnapshots(env, run.id)]);
+      return { run, actions, snapshotId: snapshots[0]?.id ?? null };
+    }),
+  );
+  const classifications = actionGroups.flatMap(({ run, actions, snapshotId }) =>
+    actions.map((action) => classifyRecommendationOutcome({ run, action, pullRequests, issues, evaluatedAt, staleAfterMs, ignoredAfterMs, snapshotId })),
   );
   const classified = classifications.filter((outcome): outcome is AgentRecommendationOutcomeRecord => outcome !== null);
   const outcomes = [];
@@ -63,6 +69,7 @@ export function classifyRecommendationOutcome(args: {
   evaluatedAt: string;
   staleAfterMs: number;
   ignoredAfterMs: number;
+  snapshotId?: string | null | undefined;
 }): AgentRecommendationOutcomeRecord | null {
   const actionAt = timestamp(args.action.createdAt ?? args.run.updatedAt ?? args.run.createdAt);
   const evaluatedAt = timestamp(args.evaluatedAt);
@@ -82,6 +89,7 @@ export function classifyRecommendationOutcome(args: {
       actionAt,
       actionAgeMs,
       staleAfterMs: args.staleAfterMs,
+      snapshotId: args.snapshotId ?? null,
     });
   }
 
@@ -98,6 +106,7 @@ export function classifyRecommendationOutcome(args: {
       actionAt,
       actionAgeMs,
       staleAfterMs: args.staleAfterMs,
+      snapshotId: args.snapshotId ?? null,
     });
   }
 
@@ -112,6 +121,7 @@ export function classifyRecommendationOutcome(args: {
       actionAt,
       actionAgeMs,
       staleAfterMs: args.staleAfterMs,
+      snapshotId: args.snapshotId ?? null,
     });
   }
 
@@ -126,11 +136,13 @@ export function classifyRecommendationOutcome(args: {
       actionAt,
       actionAgeMs,
       staleAfterMs: args.staleAfterMs,
+      snapshotId: args.snapshotId ?? null,
     });
   }
 
   if (actionAgeMs < args.ignoredAfterMs) return null;
   return baseOutcome(args.run, args.action, {
+    snapshotId: args.snapshotId ?? null,
     outcomeState: "ignored",
     outcomeTargetType: targetRepoFullName ? "repository" : "none",
     outcomeRepoFullName: targetRepoFullName ?? null,
@@ -153,10 +165,12 @@ function outcomeFromPullRequest(args: {
   actionAt: number;
   actionAgeMs: number;
   staleAfterMs: number;
+  snapshotId?: string | null | undefined;
 }): AgentRecommendationOutcomeRecord {
   const state = pullRequestOutcomeState(args.pr, args.action, args.actionAt, args.actionAgeMs, args.staleAfterMs);
   const maintainerLane = isMaintainerLane(args.run.actorLogin, args.pr.repoFullName, args.pr.authorAssociation);
   return baseOutcome(args.run, args.action, {
+    snapshotId: args.snapshotId ?? null,
     outcomeState: state,
     outcomeTargetType: "pull_request",
     outcomeRepoFullName: args.pr.repoFullName,
@@ -184,10 +198,12 @@ function outcomeFromIssue(args: {
   actionAt: number;
   actionAgeMs: number;
   staleAfterMs: number;
+  snapshotId?: string | null | undefined;
 }): AgentRecommendationOutcomeRecord {
   const state = issueOutcomeState(args.issue, args.actionAt, args.actionAgeMs, args.staleAfterMs);
   const maintainerLane = isMaintainerLane(args.run.actorLogin, args.issue.repoFullName, args.issue.authorAssociation);
   return baseOutcome(args.run, args.action, {
+    snapshotId: args.snapshotId ?? null,
     outcomeState: state,
     outcomeTargetType: "issue",
     outcomeRepoFullName: args.issue.repoFullName,
@@ -208,6 +224,7 @@ function baseOutcome(
   run: AgentRunRecord,
   action: AgentActionRecord,
   outcome: {
+    snapshotId?: string | null | undefined;
     outcomeState: AgentRecommendationOutcomeState;
     outcomeTargetType: AgentRecommendationOutcomeTargetType;
     outcomeRepoFullName?: string | null | undefined;
@@ -226,6 +243,8 @@ function baseOutcome(
     runId: run.id,
     actorLogin: run.actorLogin,
     actionType: action.actionType,
+    surface: run.surface,
+    snapshotId: outcome.snapshotId ?? null,
     targetRepoFullName: action.targetRepoFullName,
     targetPullNumber: action.targetPullNumber,
     targetIssueNumber: action.targetIssueNumber,
@@ -262,6 +281,7 @@ function pullRequestOutcomeState(
   if (pr.state === "closed" && updatedAt >= actionAt) return "closed";
   const positiveOpenSignal = pr.reviewDecision === "APPROVED" || pr.mergeableState === "clean";
   if (action.targetPullNumber && positiveOpenSignal && updatedAt >= actionAt) return "improved";
+  if (action.targetPullNumber && pr.reviewDecision === "CHANGES_REQUESTED" && updatedAt >= actionAt) return "rejected";
   if (createdAt >= actionAt || updatedAt > actionAt) return "accepted";
   if (actionAgeMs >= staleAfterMs) return "stale";
   return "ignored";
@@ -280,6 +300,7 @@ function pullRequestOutcomeReason(state: AgentRecommendationOutcomeState, pr: Pu
   if (state === "merged") return `${pr.repoFullName}#${pr.number} merged after the recommendation snapshot.`;
   if (state === "closed") return `${pr.repoFullName}#${pr.number} closed without a merge after the recommendation snapshot.`;
   if (state === "improved") return `${pr.repoFullName}#${pr.number} remains open but now has approval or clean mergeability evidence.`;
+  if (state === "rejected") return `${pr.repoFullName}#${pr.number} received a changes-requested review decision after the recommendation snapshot.`;
   if (state === "accepted") return `${pr.repoFullName}#${pr.number} shows later cached activity matching the recommendation.`;
   if (state === "stale") return `${pr.repoFullName}#${pr.number} remains open with no later activity past the stale-outcome window.`;
   return `${pr.repoFullName}#${pr.number} is visible but has no later positive or terminal outcome yet.`;

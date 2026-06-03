@@ -11,6 +11,7 @@ import type {
   PullRequestRecord,
   PullRequestReviewRecord,
   RecentMergedPullRequestRecord,
+  RegistryRepoConfig,
   RegistrySnapshot,
   RepoLabelRecord,
   RepoSyncStateRecord,
@@ -1795,6 +1796,34 @@ type RepoOutcomePullRequest = {
   changesRequested: boolean;
 };
 
+// Normalize a recent_merged_pull_requests record into a decided/merged outcome PR.
+// These records live in a separate table from `pull_requests` and carry no
+// `authorAssociation` column, so maintainer-lane / author-role are derived from the
+// stored GitHub payload's `author_association` when present (else outside/external).
+function normalizeRecentMergedOutcome(
+  record: RecentMergedPullRequestRecord,
+  filesByNumber: Map<number, PullRequestFileRecord[]>,
+  reviewsByNumber: Map<number, PullRequestReviewRecord[]>,
+): RepoOutcomePullRequest {
+  const association = typeof record.payload.author_association === "string" ? (record.payload.author_association as string) : undefined;
+  const fileRecords = filesByNumber.get(record.number) ?? [];
+  const reviewRecords = reviewsByNumber.get(record.number) ?? [];
+  return {
+    number: record.number,
+    bucket: "merged",
+    decided: true,
+    merged: true,
+    maintainerLane: isMaintainerAssociation(association),
+    linked: record.linkedIssues.length > 0,
+    labels: [...new Set(record.labels)].sort(),
+    filePaths: [...new Set([...fileRecords.map((file) => file.path), ...record.changedFiles])].sort(),
+    changedLineCount: fileRecords.reduce((sum, file) => sum + file.additions + file.deletions, 0),
+    authorRole: association === "CONTRIBUTOR" ? "returning_contributor" : "first_time_or_external",
+    hasReview: reviewRecords.length > 0,
+    changesRequested: reviewRecords.some((review) => review.state === "CHANGES_REQUESTED"),
+  };
+}
+
 export function buildRepoOutcomePatterns(args: {
   repo: RepositoryRecord | null;
   repoFullName: string;
@@ -1828,11 +1857,16 @@ export function buildRepoOutcomePatterns(args: {
   const lane = buildLaneAdvice(args.repo, args.repoFullName).lane;
   const primaryLanguage = args.syncState?.primaryLanguage ?? null;
 
-  const analyzed: RepoOutcomePullRequest[] = args.pullRequests
+  const seenNumbers = new Set<number>();
+  const analyzedFromPullRequests: RepoOutcomePullRequest[] = args.pullRequests
     .filter((pr) => pr.repoFullName.toLowerCase() === repoKey)
     .map((pr) => {
+      seenNumbers.add(pr.number);
       const mergedDetail = mergedDetailByNumber.get(pr.number);
-      const merged = Boolean(pr.mergedAt) || pr.state === "merged";
+      // A PR with a recent_merged_pull_requests record (carrying a mergedAt) actually merged,
+      // even when the open-PR reconciliation only saw it disappear and flipped it to closed
+      // without a mergedAt of its own.
+      const merged = Boolean(pr.mergedAt) || pr.state === "merged" || Boolean(mergedDetail?.mergedAt);
       const closedUnmerged = !merged && pr.state === "closed";
       const open = !merged && !closedUnmerged;
       const stale = open && daysSince(pr.updatedAt ?? pr.createdAt) >= REPO_OUTCOME_STALE_OPEN_DAYS;
@@ -1855,6 +1889,12 @@ export function buildRepoOutcomePatterns(args: {
         changesRequested: reviewRecords.some((review) => review.state === "CHANGES_REQUESTED"),
       };
     });
+  // Merged PRs that live only in recent_merged_pull_requests (the open-PR backfill never
+  // upserts them into pull_requests) must still be counted in the outcome analysis.
+  const mergedOnly: RepoOutcomePullRequest[] = (args.recentMergedPullRequests ?? [])
+    .filter((record) => record.repoFullName.toLowerCase() === repoKey && Boolean(record.mergedAt) && !seenNumbers.has(record.number))
+    .map((record) => normalizeRecentMergedOutcome(record, filesByNumber, reviewsByNumber));
+  const analyzed: RepoOutcomePullRequest[] = [...analyzedFromPullRequests, ...mergedOnly];
 
   const decided = analyzed.filter((pr) => pr.decided);
   const maintainer = analyzed.filter((pr) => pr.maintainerLane);
@@ -3019,6 +3059,33 @@ export function buildCollisionEdges(report: CollisionReport): CollisionEdgeRecor
   });
 }
 
+// All comparable RegistryRepoConfig fields, rendered to a stable string for diffing.
+// Mirrors REGISTRY_DRIFT_COMPARABLE_FIELDS in upstream/ruleset.ts so the live change
+// report and the drift comparator cannot diverge as config fields are added — every
+// scoring-relevant field (fixed_base_score, default_label_multiplier, eligibility_mode)
+// is covered, not just the emission/lane subset.
+const REGISTRY_CHANGE_FIELDS: Array<{ label: string; render: (config: RegistryRepoConfig) => string }> = [
+  { label: "emission_share", render: (config) => String(config.emissionShare) },
+  { label: "issue_discovery_share", render: (config) => String(config.issueDiscoveryShare) },
+  { label: "maintainer_cut", render: (config) => String(config.maintainerCut) },
+  { label: "fixed_base_score", render: (config) => (config.fixedBaseScore ?? null) === null ? "none" : String(config.fixedBaseScore) },
+  { label: "default_label_multiplier", render: (config) => (config.defaultLabelMultiplier ?? null) === null ? "none" : String(config.defaultLabelMultiplier) },
+  { label: "eligibility_mode", render: (config) => config.eligibilityMode ?? "default" },
+  /* v8 ignore next -- Boolean defaulting protects older registry snapshots without trusted_label_pipeline. */
+  { label: "trusted_label_pipeline", render: (config) => String(config.trustedLabelPipeline ?? false) },
+  { label: "label_multipliers", render: (config) => JSON.stringify(config.labelMultipliers) },
+];
+
+function registryConfigChanges(previous: RegistryRepoConfig, current: RegistryRepoConfig): string[] {
+  return REGISTRY_CHANGE_FIELDS.flatMap((field) => {
+    const before = field.render(previous);
+    const after = field.render(current);
+    if (before === after) return [];
+    // labelMultipliers is an object diff; report the fact of change, not the JSON blob.
+    return [field.label === "label_multipliers" ? "label_multipliers changed" : `${field.label} ${before} -> ${after}`];
+  });
+}
+
 export function buildRegistryChangeReport(snapshots: RegistrySnapshot[]): RegistryChangeReport {
   const [current, previous] = snapshots;
   if (!current) {
@@ -3048,14 +3115,7 @@ export function buildRegistryChangeReport(snapshots: RegistrySnapshot[]): Regist
     .flatMap(([repoFullName, repo]) => {
       const old = previousByRepo.get(repoFullName);
       if (!old) return [];
-      const changes = [
-        ...(repo.emissionShare !== old.emissionShare ? [`emission_share ${old.emissionShare} -> ${repo.emissionShare}`] : []),
-        ...(repo.issueDiscoveryShare !== old.issueDiscoveryShare ? [`issue_discovery_share ${old.issueDiscoveryShare} -> ${repo.issueDiscoveryShare}`] : []),
-        ...(repo.maintainerCut !== old.maintainerCut ? [`maintainer_cut ${old.maintainerCut} -> ${repo.maintainerCut}`] : []),
-        ...(JSON.stringify(repo.labelMultipliers) !== JSON.stringify(old.labelMultipliers) ? ["label_multipliers changed"] : []),
-        /* v8 ignore next -- Boolean defaulting protects older registry snapshots without trusted_label_pipeline. */
-        ...(repo.trustedLabelPipeline !== old.trustedLabelPipeline ? [`trusted_label_pipeline ${old.trustedLabelPipeline ?? false} -> ${repo.trustedLabelPipeline ?? false}`] : []),
-      ];
+      const changes = registryConfigChanges(old, repo);
       return changes.length > 0 ? [{ repoFullName, changes }] : [];
     })
     .sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));

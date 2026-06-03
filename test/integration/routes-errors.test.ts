@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { RateLimiter } from "../../src/auth/rate-limit";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { persistSignalSnapshot } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertInstallation } from "../../src/db/repositories";
 import { handleMcpRequest } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -405,6 +405,37 @@ describe("api route guards and error branches", () => {
         }, env)
       ).status,
     ).toBe(401);
+  });
+
+  it("does not globally refresh installations for a missing repair refresh target", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: {
+        id: 101,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "issue_comment", "pull_request", "repository"],
+      },
+    });
+    await upsertInstallation(env, {
+      installation: {
+        id: 102,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "issue_comment", "pull_request", "repository"],
+      },
+    });
+    const fetchSpy = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const response = await app.request("/v1/installations/999/repair/refresh", { method: "POST", headers: apiHeaders(env) }, env);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: "installation_not_found" });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("covers private route errors, internal guards, and manual job runners", async () => {

@@ -31,6 +31,7 @@ import {
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
@@ -4220,6 +4221,41 @@ describe("api routes", () => {
       labelPolicy: { autoLabelEnabled: false, label: "gittensor-miner", createMissingLabel: false },
       warnings: expect.arrayContaining(["GitHub App public surface is disabled; maintainers will not get comment/label assistance."]),
     });
+
+    await upsertRepoFocusManifest(env, "entrius/allways-ui", {
+      blockedPaths: ["dist/"],
+      linkedIssuePolicy: "optional",
+      issueDiscoveryPolicy: "discouraged",
+      maintainerNotes: [
+        "Private reviewability note with wallet, hotkey, raw trust, and farming details.",
+      ],
+    });
+    const policyReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(policyReadiness.status).toBe(200);
+    const policyPayload = (await policyReadiness.json()) as {
+      policyReadiness: { publicWarnings: unknown[] };
+      warnings: string[];
+    };
+    expect(policyPayload).toMatchObject({
+      policyReadiness: {
+        previewOnly: true,
+        present: true,
+        ownerContext: {
+          privateNoteCount: 1,
+          blockedPathCount: 1,
+        },
+        publicWarnings: expect.arrayContaining([
+          expect.objectContaining({ code: "blocked_work_without_wanted_scope" }),
+          expect.objectContaining({ code: "linked_issue_policy_mismatch" }),
+          expect.objectContaining({ code: "validation_expectations_missing" }),
+        ]),
+      },
+      warnings: expect.arrayContaining([
+        expect.stringContaining("Blocked work lacks a positive lane"),
+      ]),
+    });
+    expect(JSON.stringify(policyPayload.policyReadiness.publicWarnings)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+    expect(JSON.stringify(policyPayload.policyReadiness)).not.toMatch(/wallet|hotkey|raw trust|private[-\s]?reviewability|farming/i);
 
     await persistRegistrySnapshot(
       env,

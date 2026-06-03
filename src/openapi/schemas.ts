@@ -1728,6 +1728,45 @@ export const RegistrationReadinessSchema = z
       behavior: z.string(),
       warnings: z.array(z.string()),
     }),
+    policyReadiness: z
+      .object({
+        repoFullName: z.string(),
+        source: z.enum(["focus_manifest_policy"]),
+        previewOnly: z.boolean(),
+        present: z.boolean(),
+        publicWarnings: z.array(
+          z.object({
+            code: z.string(),
+            category: z.enum(["contribution_flow", "direct_pr_policy", "issue_discovery", "validation", "maintainer_burden"]),
+            severity: z.enum(["info", "warning", "critical"]),
+            title: z.string(),
+            detail: z.string(),
+            action: z.string(),
+          }),
+        ),
+        ownerContext: z.object({
+          manifestPresent: z.boolean(),
+          manifestSource: z.enum(["repo_file", "api_record", "none"]),
+          privateNoteCount: z.number(),
+          manifestWarningCount: z.number(),
+          wantedPathCount: z.number(),
+          blockedPathCount: z.number(),
+          validationExpectationCount: z.number(),
+          queueLevel: z.enum(["low", "medium", "high", "critical"]),
+          contributorIntakeLevel: z.enum(["healthy", "watch", "strained", "blocked"]),
+          configLevel: z.enum(["excellent", "good", "needs_attention", "fragile"]),
+          issuePolicy: z.string(),
+          issueDiscoveryPolicy: z.enum(["encouraged", "neutral", "discouraged"]),
+        }),
+        droppedPublicWarnings: z.array(
+          z.object({
+            code: z.string(),
+            reason: z.enum(["unsafe_public_text"]),
+          }),
+        ),
+        summary: z.string(),
+      })
+      .nullable(),
     blockers: z.array(z.string()),
     warnings: z.array(z.string()),
     dataQuality: z.record(z.string(), z.unknown()),

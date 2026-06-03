@@ -197,6 +197,12 @@ export async function markInstallationDeleted(env: Env, installationId: number):
     .where(eq(repositories.installationId, installationId));
 }
 
+export async function getInstallation(env: Env, installationId: number): Promise<InstallationRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(installations).where(eq(installations.id, installationId)).limit(1);
+  return row ? toInstallationRecord(row) : null;
+}
+
 export async function listInstallations(env: Env): Promise<InstallationRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(installations).orderBy(desc(installations.updatedAt)).limit(100);

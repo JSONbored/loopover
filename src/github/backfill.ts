@@ -5,6 +5,7 @@ import {
   countOpenPullRequests,
   countRecentMergedPullRequests,
   countRepoLabels,
+  getInstallation,
   getLatestRepoGithubTotalsSnapshot,
   getRepoSyncSegment,
   getRepoSyncState,
@@ -826,6 +827,17 @@ function summarizeRepairSettings(settings: RepositorySettings) {
 
 export async function refreshInstallationHealth(env: Env) {
   const [installations, repositories] = await Promise.all([listInstallations(env), listRepositories(env)]);
+  return refreshInstallationHealthRecords(env, installations, repositories);
+}
+
+export async function refreshInstallationHealthForInstallation(env: Env, installationId: number) {
+  const [installation, repositories] = await Promise.all([getInstallation(env, installationId), listRepositories(env)]);
+  if (!installation) return null;
+  const refreshed = await refreshInstallationHealthRecords(env, [installation], repositories);
+  return refreshed.installations[0] ?? null;
+}
+
+async function refreshInstallationHealthRecords(env: Env, installations: InstallationRecord[], repositories: RepositoryRecord[]) {
   const health = [];
   for (const installation of installations) {
     const { installation: currentInstallation, errorSummary } = await refreshStoredInstallation(env, installation);

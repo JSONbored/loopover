@@ -591,6 +591,128 @@ export class GittensoryMcp {
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
     );
 
+    // ── Maintainer workflow prompts ──────────────────────────────────────
+    server.registerPrompt(
+      "gittensory_triage_maintainer_queue",
+      {
+        title: "Triage maintainer PR queue",
+        description: "Summarize the open PR queue for a repo and surface what needs maintainer attention first. Advisory only — no GitHub writes.",
+        argsSchema: ownerRepoShape,
+      },
+      ({ owner, repo }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_get_burden_forecast for ${owner}/${repo} to summarize the open PR queue state. Surface which PRs need immediate attention (failing checks, stalled reviews, or high queue pressure) and which are safe to defer. Present findings as a short triage list. Do not post to GitHub or take autonomous action — all follow-up requires explicit human approval.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_prepare_pr_review",
+      {
+        title: "Prepare PR review context",
+        description: "Prepare a maintainer review checklist for a pull request using cached signals. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, pullNumber: z.string().min(1) },
+      },
+      ({ owner, repo, pullNumber }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context for ${owner}/${repo} and gittensory_preflight_pr to assess PR #${pullNumber}. Prepare a concise review checklist covering: lane fit, duplicate risk, linked issue coverage, and any signals that suggest the PR needs more work before merge. Do not comment on the PR or make any changes — present the checklist for maintainer review only.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_draft_public_contributor_guidance",
+      {
+        title: "Draft public contributor guidance",
+        description: "Draft low-noise public guidance for contributors based on the repo intake policy and queue state. Advisory only — no GitHub writes.",
+        argsSchema: ownerRepoShape,
+      },
+      ({ owner, repo }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_get_burden_forecast for ${owner}/${repo} to draft short, public-safe contributor guidance. The guidance should explain the current intake posture (open or cautious), preferred work areas, and any queue considerations contributors should know. Keep language neutral and actionable. Do not mention internal metrics, trust calculations, or any private review context. Do not post anything — the draft requires human review and approval before publication.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    // ── Repo-owner workflow prompts ──────────────────────────────────────
+    server.registerPrompt(
+      "gittensory_assess_intake_readiness",
+      {
+        title: "Assess contributor intake readiness",
+        description: "Assess whether a repo is ready for outside contributor intake and surface any blockers. Advisory only — no GitHub writes.",
+        argsSchema: ownerRepoShape,
+      },
+      ({ owner, repo }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_get_issue_quality for ${owner}/${repo} to assess contributor intake readiness. Identify whether the repo has sufficient open issues for contributors to work on, whether the queue is too burdened to accept new outside work, and what the maintainer should address first. Do not open issues or modify any repo settings — present findings as a readiness summary for the owner to act on.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_review_focus_manifest",
+      {
+        title: "Review repo focus manifest",
+        description: "Review the repo focus manifest and suggest improvements for contributor guidance clarity. Advisory only — no GitHub writes.",
+        argsSchema: ownerRepoShape,
+      },
+      ({ owner, repo }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context for ${owner}/${repo} to review the current focus manifest configuration. Identify gaps — missing wanted paths, absent preferred labels, unclear issue or PR entry policy — and suggest concrete improvements. Explain how each suggested change would improve contributor guidance clarity. Do not modify the manifest or post to GitHub — present suggestions for the owner to apply manually.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_plan_contributor_onboarding",
+      {
+        title: "Plan contributor onboarding",
+        description: "Plan the onboarding experience for outside contributors using cached repo signals. Advisory only — no GitHub writes.",
+        argsSchema: ownerRepoShape,
+      },
+      ({ owner, repo }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_get_issue_quality for ${owner}/${repo} to plan an onboarding path for new outside contributors. Identify good-first-issue candidates, recommend a contribution lane (direct PR or issue-discovery), and outline what a contributor needs to know before opening their first PR. Do not create issues, post comments, or take any automated action — present the onboarding plan for the owner to review and publish manually.`,
+            },
+          },
+        ],
+      }),
+    );
+
     return server;
   }
 

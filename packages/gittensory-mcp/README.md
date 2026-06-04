@@ -35,6 +35,7 @@ gittensory-mcp whoami
 gittensory-mcp status
 gittensory-mcp changelog
 gittensory-mcp doctor
+gittensory-mcp doctor --exit-code
 gittensory-mcp profile list
 gittensory-mcp profile create work
 gittensory-mcp profile switch work
@@ -122,6 +123,8 @@ gittensory-mcp logout --profile work
 ```
 
 Use `--profile <name>` on `login`, `logout`, `whoami`, `status`, and `doctor`, or set `GITTENSORY_PROFILE`. `logout` only clears the selected local profile unless `--all` is passed. Profile output redacts session tokens and local config paths.
+
+By default `gittensory-mcp doctor` always exits 0. Pass `--exit-code` to make it exit non-zero when a diagnostic check fails (`status: "needs_attention"`), so it can gate a CI step or pre-commit hook. Warnings still exit 0.
 
 ## Base-Agent Mode
 

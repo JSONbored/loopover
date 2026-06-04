@@ -184,8 +184,8 @@ const agentRunIdShape = {
 };
 
 if (cliArgs[0] && cliArgs[0] !== "--stdio") {
-  await runCli(cliArgs);
-  process.exit(0);
+  const exitCode = await runCli(cliArgs);
+  process.exit(typeof exitCode === "number" ? exitCode : 0);
 }
 
 const server = new McpServer({
@@ -1392,7 +1392,7 @@ function printHelp() {
   gittensory-mcp status [--profile name] [--json]
   gittensory-mcp profile list|create|switch|remove [name] [--json]
   gittensory-mcp changelog [--json]
-  gittensory-mcp doctor [--profile name] [--cwd path] [--json]
+  gittensory-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
   gittensory-mcp cache status|clear [--json]
   gittensory-mcp init-client --print codex|claude|cursor|mcp [--json]
   gittensory-mcp decision-pack --login <github-login> [--json]
@@ -1796,6 +1796,9 @@ async function doctor(options) {
       if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
     }
   }
+  // Opt-in: let `doctor` gate CI/pre-commit by exiting non-zero when a check fails. The default
+  // stays exit 0 so existing scripts that ignore the exit code keep working.
+  return options.exitCode && payload.status === "needs_attention" ? 1 : 0;
 }
 
 function initClient(options) {

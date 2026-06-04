@@ -85,7 +85,8 @@ export function buildIssueAdvisory(repo: RepositoryRecord | null, issue: IssueRe
   return advisory("issue", targetKey, repoFullName, findings, "Issue advisory generated.", undefined, issue?.number);
 }
 
-const CHECK_RUN_FORBIDDEN_TERMS = /\b(reward|payout|farming|estimated score|raw trust score|wallet|hotkey|coldkey|reviewability|scoreability|private signal)\b/gi;
+const CHECK_RUN_FORBIDDEN_TERMS =
+  /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|reviewability|scoreability|private\s+signals?)\b/gi;
 
 function sanitizeForCheckRun(text: string): string {
   return text.replace(CHECK_RUN_FORBIDDEN_TERMS, "[context]").replace(/\s+/g, " ").trim();
@@ -102,26 +103,17 @@ export function formatCheckRunOutput(
     return { title, summary, text: "No detailed findings are published in check runs." };
   }
 
-  const publicLines = advisoryResult.findings.map((f) => {
+  const publicLines = advisoryResult.findings.flatMap((f) => {
+    if (!f.publicText) return [];
     const label = f.severity === "warning" ? "⚠️" : "ℹ️";
-    const text = f.publicText ? sanitizeForCheckRun(f.publicText) : sanitizeForCheckRun(f.title);
-    return `${label} ${text}`;
+    return [`${label} ${sanitizeForCheckRun(f.publicText)}`];
   });
 
-  if (detailLevel === "standard") {
-    return { title, summary, text: publicLines.join("\n") };
+  if (publicLines.length === 0) {
+    return { title, summary, text: "No detailed findings are published in check runs." };
   }
 
-  // deep: include action hints for findings that carry publicText
-  const deepLines = advisoryResult.findings.flatMap((f) => {
-    const label = f.severity === "warning" ? "⚠️" : "ℹ️";
-    const text = f.publicText ? sanitizeForCheckRun(f.publicText) : sanitizeForCheckRun(f.title);
-    const lines = [`${label} ${text}`];
-    if (f.publicText && f.action) lines.push(`  → ${sanitizeForCheckRun(f.action)}`);
-    return lines;
-  });
-
-  return { title, summary, text: deepLines.join("\n") };
+  return { title, summary, text: publicLines.join("\n") };
 }
 
 function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): void {

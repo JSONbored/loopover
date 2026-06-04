@@ -628,6 +628,30 @@ export const RepoSettingsPreviewSchema = z
   })
   .openapi("RepoSettingsPreview");
 
+export const SkippedPrAuditExportSchema = z
+  .object({
+    generatedAt: z.string(),
+    limit: z.number().int().min(1).max(100),
+    hasMore: z.boolean(),
+    filters: z.object({
+      repoFullName: z.string().nullable(),
+      reason: z
+        .enum(["surface_off", "missing_author", "bot_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"])
+        .nullable(),
+      since: z.string().nullable(),
+    }),
+    items: z.array(
+      z.object({
+        repoFullName: z.string(),
+        pullNumber: z.number().int().positive(),
+        reason: z.string(),
+        timestamp: z.string(),
+        remediation: z.string(),
+      }),
+    ),
+  })
+  .openapi("SkippedPrAuditExport");
+
 export const CommandPreviewResponseSchema = z
   .object({
     generatedAt: z.string(),

@@ -966,6 +966,50 @@ describe("queue processors", () => {
     expect(skipped.results.map((event) => event.detail)).toEqual(expect.arrayContaining(["bot_author", "maintainer_author"]));
   });
 
+  it("audits disabled public-surface skips without miner lookup", async () => {
+    const env = createTestEnv();
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+    });
+    const calls = { fetch: 0 };
+    vi.stubGlobal("fetch", async () => {
+      calls.fetch += 1;
+      return new Response("unexpected fetch", { status: 500 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "surface-off-skip",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+        pull_request: { number: 23, title: "Quiet repo work", state: "open", user: { login: "oktofeesh1" }, labels: [], body: "" },
+      },
+    });
+
+    expect(calls.fetch).toBe(0);
+    const skipped = await env.DB.prepare("select actor, target_key, detail, metadata_json from audit_events where event_type = ?").bind("github_app.pr_visibility_skipped").all<{
+      actor: string;
+      target_key: string;
+      detail: string;
+      metadata_json: string;
+    }>();
+    expect(skipped.results).toEqual([
+      expect.objectContaining({
+        actor: "oktofeesh1",
+        target_key: "JSONbored/gittensory#23",
+        detail: "surface_off",
+      }),
+    ]);
+    expect(JSON.stringify(skipped.results)).not.toMatch(/wallet|hotkey|raw trust|installation-token/i);
+  });
+
   it("records webhook processing when public comment publishing fails after miner confirmation", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

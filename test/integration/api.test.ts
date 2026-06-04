@@ -3912,6 +3912,19 @@ describe("api routes", () => {
         },
       ],
       [
+        "gittensory_draft_pr_body",
+        {
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          branchName: "fix-cache-reconnect",
+          body: "Fixes #7",
+          changedFiles: [
+            { path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" },
+            { path: "test/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+          ],
+        },
+      ],
+      [
         "gittensory_compare_local_variants",
         {
           variants: [

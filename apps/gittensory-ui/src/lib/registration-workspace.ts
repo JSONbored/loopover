@@ -1,10 +1,12 @@
+import { isFocusManifestPublicSafe } from "../../../../src/signals/focus-manifest";
 import { splitRepoFullName } from "./maintainer-settings-preview";
 
 export type WorkspaceFreshness = "complete" | "degraded" | "stale" | "unknown";
 export type WorkspaceLaneStatus = "ready" | "warn" | "blocked" | "info";
 
-const FORBIDDEN_PUBLIC_LANGUAGE =
-  /wallet|hotkey|coldkey|raw trust score|payout|\breward\b|reward estimate|farming|private reviewability|public score estimate|mnemonic|seed phrase|private key/i;
+function normalizePublicWorkspaceText(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
 
 export type RegistrationWorkspaceDataQuality = {
   status?: string | undefined;
@@ -30,7 +32,12 @@ export type RegistrationReadinessPayload = {
     note: string;
     warnings: string[];
   };
-  queueHealth: { level: string; burdenScore: number; reviewablePullRequests: number; summary: string };
+  queueHealth: {
+    level: string;
+    burdenScore: number;
+    reviewablePullRequests: number;
+    summary: string;
+  };
   contributorIntakeHealth: Record<string, unknown>;
   githubApp: {
     installed: boolean;
@@ -137,26 +144,26 @@ export type RegistrationWorkspaceView = {
 };
 
 export function isRegistrationWorkspacePublicSafe(text: string): boolean {
-  return !FORBIDDEN_PUBLIC_LANGUAGE.test(text);
+  const normalized = normalizePublicWorkspaceText(text);
+  return normalized.length > 0 && isFocusManifestPublicSafe(normalized);
 }
 
 export function sanitizeRegistrationWorkspaceText(text: string): string | null {
-  const trimmed = text.trim();
-  if (!trimmed || !isRegistrationWorkspacePublicSafe(trimmed)) return null;
-  return trimmed;
+  const normalized = normalizePublicWorkspaceText(text);
+  if (!normalized || !isFocusManifestPublicSafe(normalized)) return null;
+  return normalized;
 }
 
 export function resolveRegistrationWorkspaceFreshness(
   readinessQuality?: RegistrationWorkspaceDataQuality,
   configQuality?: RegistrationWorkspaceDataQuality,
 ): { status: WorkspaceFreshness; warnings: string[] } {
-  const warnings = [
-    ...(readinessQuality?.warnings ?? []),
-    ...(configQuality?.warnings ?? []),
-  ]
+  const warnings = [...(readinessQuality?.warnings ?? []), ...(configQuality?.warnings ?? [])]
     .map((entry) => sanitizeRegistrationWorkspaceText(entry))
     .filter((entry): entry is string => Boolean(entry));
-  const statuses = [readinessQuality?.status, configQuality?.status].filter((entry): entry is string => Boolean(entry));
+  const statuses = [readinessQuality?.status, configQuality?.status].filter(
+    (entry): entry is string => Boolean(entry),
+  );
   if (statuses.includes("blocked")) return { status: "stale", warnings };
   if (readinessQuality?.partial || configQuality?.partial || statuses.includes("degraded")) {
     return { status: "degraded", warnings };
@@ -169,7 +176,10 @@ export function buildRegistrationWorkspaceView(
   readiness: RegistrationReadinessPayload,
   config: GittensorConfigRecommendationPayload | null,
 ): RegistrationWorkspaceView {
-  const freshness = resolveRegistrationWorkspaceFreshness(readiness.dataQuality, config?.dataQuality);
+  const freshness = resolveRegistrationWorkspaceFreshness(
+    readiness.dataQuality,
+    config?.dataQuality,
+  );
   const directPrStatus: WorkspaceLaneStatus = readiness.directPrReadiness.ready
     ? "ready"
     : readiness.blockers.length > 0
@@ -184,7 +194,11 @@ export function buildRegistrationWorkspaceView(
 
   const maintainerCut = readiness.maintainerCutReadiness;
   const maintainerReady = maintainerCut.ready === true;
-  const maintainerEconomicsStatus: WorkspaceLaneStatus = maintainerReady ? "ready" : readiness.ready ? "warn" : "blocked";
+  const maintainerEconomicsStatus: WorkspaceLaneStatus = maintainerReady
+    ? "ready"
+    : readiness.ready
+      ? "warn"
+      : "blocked";
 
   const labelPolicy = readiness.labelPolicy;
   const intake = readiness.contributorIntakeHealth;
@@ -273,7 +287,9 @@ export function buildRegistrationWorkspaceView(
             ? "Trusted label pipeline is verified."
             : "Trusted label pipeline is not verified yet.",
           ...(Array.isArray(labelPolicy.missingOrUnusedRegistryLabels)
-            ? (labelPolicy.missingOrUnusedRegistryLabels as string[]).map((label) => `Missing or unused label: ${label}`)
+            ? (labelPolicy.missingOrUnusedRegistryLabels as string[]).map(
+                (label) => `Missing or unused label: ${label}`,
+              )
             : []),
         ]),
       },
@@ -285,7 +301,9 @@ export function buildRegistrationWorkspaceView(
         bullets: sanitizeBulletList([
           `Coverage gate: ${readiness.testCoverageHealth.status}.`,
           `Check runs: ${readiness.testCoverageHealth.checkRunMode}.`,
-          ...(readiness.testCoverageHealth.requiredGate ?? []).map((gate) => `Required gate: ${gate}`),
+          ...(readiness.testCoverageHealth.requiredGate ?? []).map(
+            (gate) => `Required gate: ${gate}`,
+          ),
           ...readiness.testCoverageHealth.warnings,
         ]),
       },
@@ -327,7 +345,10 @@ export function buildRegistrationOwnerWorkflow(
   readiness: RegistrationReadinessPayload,
   config: GittensorConfigRecommendationPayload | null,
 ): RegistrationOwnerWorkflow {
-  const freshness = resolveRegistrationWorkspaceFreshness(readiness.dataQuality, config?.dataQuality);
+  const freshness = resolveRegistrationWorkspaceFreshness(
+    readiness.dataQuality,
+    config?.dataQuality,
+  );
   const intakeLevel = stringField(readiness.contributorIntakeHealth, "level") ?? "unknown";
   const labelPolicy = readiness.labelPolicy;
   const docs = readiness.docsCompleteness ?? { status: "unknown", requiredDocs: [], note: "" };
@@ -353,7 +374,8 @@ export function buildRegistrationOwnerWorkflow(
       title: "Direct PR lane",
       state: readiness.blockers.length > 0 ? "not_ready" : "needs_cleanup",
       summary: "Direct-PR intake is not ready for the recommended registration mode.",
-      remediation: "Stabilize config quality and contributor intake before promoting direct-PR traffic.",
+      remediation:
+        "Stabilize config quality and contributor intake before promoting direct-PR traffic.",
       remediationKind: "action",
     });
   }
@@ -363,7 +385,8 @@ export function buildRegistrationOwnerWorkflow(
       title: "Label policy",
       state: "needs_cleanup",
       summary: "Trusted label pipeline is not verified for registry labels.",
-      remediation: "Create or verify configured registry labels and enable the trusted label pipeline in repo settings.",
+      remediation:
+        "Create or verify configured registry labels and enable the trusted label pipeline in repo settings.",
       remediationKind: "action",
     });
   }
@@ -376,7 +399,8 @@ export function buildRegistrationOwnerWorkflow(
         title: "Signal freshness",
         state: freshness.status === "stale" ? "not_ready" : "needs_cleanup",
         summary: warning,
-        remediation: "Wait for repository intelligence to refresh or run a maintainer backfill before acting on readiness.",
+        remediation:
+          "Wait for repository intelligence to refresh or run a maintainer backfill before acting on readiness.",
         remediationKind: "manual",
       });
     }
@@ -387,7 +411,8 @@ export function buildRegistrationOwnerWorkflow(
       title: "Validation gate",
       state: "needs_cleanup",
       summary: readiness.testCoverageHealth.note,
-      remediation: "Document expected CI commands in the repo and verify check-run settings before widening intake.",
+      remediation:
+        "Document expected CI commands in the repo and verify check-run settings before widening intake.",
       remediationKind: "action",
     });
   }
@@ -412,7 +437,8 @@ export function buildRegistrationOwnerWorkflow(
       title: "PR queue pressure",
       state: "not_ready",
       summary: readiness.queueHealth.summary,
-      remediation: "Reduce open PR queue pressure or narrow accepted lanes before inviting more contributors.",
+      remediation:
+        "Reduce open PR queue pressure or narrow accepted lanes before inviting more contributors.",
       remediationKind: "action",
     });
   } else if (queueLevel === "medium") {
@@ -454,8 +480,11 @@ export function buildRegistrationOwnerWorkflow(
       id: "intake-health",
       title: "Contributor intake",
       state: intakeLevel === "blocked" ? "not_ready" : "needs_cleanup",
-      summary: stringField(readiness.contributorIntakeHealth, "summary") ?? `Contributor intake is ${intakeLevel}.`,
-      remediation: "Stabilize triage capacity and duplicate-risk intake before inviting more issue reports or direct PRs.",
+      summary:
+        stringField(readiness.contributorIntakeHealth, "summary") ??
+        `Contributor intake is ${intakeLevel}.`,
+      remediation:
+        "Stabilize triage capacity and duplicate-risk intake before inviting more issue reports or direct PRs.",
       remediationKind: "action",
     });
   }
@@ -498,10 +527,30 @@ export function buildRegistrationOwnerWorkflow(
   }
 
   const buckets: OwnerWorkflowBucket[] = [
-    buildWorkflowBucket("policy", "Policy & lanes", policyItems, "Focus manifest, lane posture, and label policy."),
-    buildWorkflowBucket("data_quality", "Data quality", dataQualityItems, "Signal freshness and validation gates."),
-    buildWorkflowBucket("queue_health", "Queue health", queueItems, "Open PR pressure and reviewable queue burden."),
-    buildWorkflowBucket("docs_onboarding", "Docs & onboarding", docsItems, "Contributor-facing documentation readiness."),
+    buildWorkflowBucket(
+      "policy",
+      "Policy & lanes",
+      policyItems,
+      "Focus manifest, lane posture, and label policy.",
+    ),
+    buildWorkflowBucket(
+      "data_quality",
+      "Data quality",
+      dataQualityItems,
+      "Signal freshness and validation gates.",
+    ),
+    buildWorkflowBucket(
+      "queue_health",
+      "Queue health",
+      queueItems,
+      "Open PR pressure and reviewable queue burden.",
+    ),
+    buildWorkflowBucket(
+      "docs_onboarding",
+      "Docs & onboarding",
+      docsItems,
+      "Contributor-facing documentation readiness.",
+    ),
     buildWorkflowBucket(
       "maintainer_capacity",
       "Maintainer capacity",
@@ -527,7 +576,9 @@ export function buildRegistrationOwnerWorkflow(
   };
 }
 
-export function collectRegistrationOwnerWorkflowPublicText(workflow: RegistrationOwnerWorkflow): string[] {
+export function collectRegistrationOwnerWorkflowPublicText(
+  workflow: RegistrationOwnerWorkflow,
+): string[] {
   return [
     workflow.overallHeadline,
     ...workflow.nextSteps,
@@ -560,7 +611,9 @@ export function collectRegistrationWorkspacePublicText(view: RegistrationWorkspa
 export { splitRepoFullName };
 
 function sanitizeBulletList(entries: string[]): string[] {
-  return entries.map((entry) => sanitizeRegistrationWorkspaceText(entry)).filter((entry): entry is string => Boolean(entry));
+  return entries
+    .map((entry) => sanitizeRegistrationWorkspaceText(entry))
+    .filter((entry): entry is string => Boolean(entry));
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | null {
@@ -595,7 +648,8 @@ function buildWorkflowBucket(
   items: OwnerWorkflowItem[],
   summary: string,
 ): OwnerWorkflowBucket {
-  const state = items.length === 0 ? "accepted" : aggregateWorkflowState(items.map((item) => item.state));
+  const state =
+    items.length === 0 ? "accepted" : aggregateWorkflowState(items.map((item) => item.state));
   return { id, title, state, summary, items };
 }
 
@@ -623,11 +677,15 @@ function workflowHeadline(state: OwnerWorkflowState, ready: boolean): string {
 
 function classifyBlockerBucket(blocker: string): OwnerWorkflowBucketId {
   const lower = blocker.toLowerCase();
-  if (lower.includes("config quality") || lower.includes("focus") || lower.includes("label")) return "policy";
+  if (lower.includes("config quality") || lower.includes("focus") || lower.includes("label"))
+    return "policy";
   if (lower.includes("doc") || lower.includes("contributing")) return "docs_onboarding";
-  if (lower.includes("queue") || lower.includes("pull request") || lower.includes("pr ")) return "queue_health";
-  if (lower.includes("install") || lower.includes("github app") || lower.includes("intake")) return "maintainer_capacity";
-  if (lower.includes("drift") || lower.includes("forecast") || lower.includes("coverage")) return "data_quality";
+  if (lower.includes("queue") || lower.includes("pull request") || lower.includes("pr "))
+    return "queue_health";
+  if (lower.includes("install") || lower.includes("github app") || lower.includes("intake"))
+    return "maintainer_capacity";
+  if (lower.includes("drift") || lower.includes("forecast") || lower.includes("coverage"))
+    return "data_quality";
   return "maintainer_capacity";
 }
 
@@ -649,6 +707,7 @@ function remediationForBlocker(blocker: string): string {
 
 function remediationKindForBlocker(blocker: string): OwnerWorkflowRemediationKind {
   const lower = blocker.toLowerCase();
-  if (lower.includes("not crawled") || lower.includes("manual") || lower.includes("install")) return "manual";
+  if (lower.includes("not crawled") || lower.includes("manual") || lower.includes("install"))
+    return "manual";
   return "action";
 }

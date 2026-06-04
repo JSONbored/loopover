@@ -14,7 +14,7 @@ import {
 } from "../../apps/gittensory-ui/src/lib/registration-workspace";
 
 const FORBIDDEN =
-  /wallet|hotkey|raw trust score|payout|\breward\b|reward estimate|farming|private reviewability|public score estimate/i;
+  /wallet|hotkey|raw trust score|payout|reward|farming|private reviewability|reviewability|public score estimate/i;
 
 function readyFixture(overrides: Partial<RegistrationReadinessPayload> = {}): RegistrationReadinessPayload {
   return {

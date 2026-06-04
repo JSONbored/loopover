@@ -92,7 +92,9 @@ export function OwnerPanel() {
       </section>
 
       <StateBoundary
-        isLoading={Boolean(repoPath) && (readiness.status === "loading" || config.status === "loading")}
+        isLoading={
+          Boolean(repoPath) && (readiness.status === "loading" || config.status === "loading")
+        }
         isError={Boolean(repoPath) && readiness.status === "error" && config.status === "error"}
         isEmpty={Boolean(repoPath) && readiness.status === "ready" && !workspace}
         onRetry={refresh}
@@ -102,10 +104,15 @@ export function OwnerPanel() {
         emptyDescription="Registration readiness appears after repository intelligence has been generated for this repo."
       >
         {workspace ? (
-          <RegistrationWorkspace workspace={workspace} generatedLabel={formatGeneratedAt(workspace.generatedAt)} />
+          <RegistrationWorkspace
+            workspace={workspace}
+            generatedLabel={formatGeneratedAt(workspace.generatedAt)}
+          />
         ) : null}
         {repoPath && readiness.status === "error" ? (
-          <p className="text-token-2xs text-muted-foreground">Readiness failed ({readiness.error}).</p>
+          <p className="text-token-2xs text-muted-foreground">
+            Readiness failed ({readiness.error}).
+          </p>
         ) : null}
       </StateBoundary>
     </div>
@@ -135,7 +142,9 @@ function RegistrationWorkspace({
               <BoundaryBadge boundary="private-api" />
             </div>
             <p className="text-token-xs text-muted-foreground">{workspace.summary.headline}</p>
-            <p className="font-mono text-token-2xs text-muted-foreground">Generated {generatedLabel}</p>
+            <p className="font-mono text-token-2xs text-muted-foreground">
+              Generated {generatedLabel}
+            </p>
           </div>
         </div>
         <p className="mt-3 rounded-token border border-mint/20 bg-mint/5 px-3 py-2 text-token-xs text-muted-foreground">
@@ -194,12 +203,15 @@ function RegistrationWorkspace({
           <div>
             <h3 className="font-display text-token-md font-semibold">Suggested Gittensor config</h3>
             <p className="mt-1 text-token-xs text-muted-foreground">
-              Tradeoffs below separate maintainer economics from contributor lanes. Apply via PR when ready.
+              Tradeoffs below separate maintainer economics from contributor lanes. Apply via PR
+              when ready.
             </p>
           </div>
           {workspace.config.tradeoffs.length > 0 ? (
             <div>
-              <h4 className="text-token-xs font-medium uppercase tracking-wider text-muted-foreground">Tradeoffs</h4>
+              <h4 className="text-token-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Tradeoffs
+              </h4>
               <ul className="mt-2 list-disc space-y-1 pl-5 text-token-xs text-muted-foreground">
                 {workspace.config.tradeoffs.map((entry) => (
                   <li key={entry}>{entry}</li>
@@ -207,7 +219,10 @@ function RegistrationWorkspace({
               </ul>
             </div>
           ) : null}
-          <DiffBlock removed={workspace.config.currentLines} added={workspace.config.recommendedLines} />
+          <DiffBlock
+            removed={workspace.config.currentLines}
+            added={workspace.config.recommendedLines}
+          />
         </section>
       ) : null}
     </div>
@@ -240,7 +255,9 @@ function WorkspaceSectionCard({
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-token border-hairline bg-muted/20 px-3 py-2">
-      <dt className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dt className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+        {label}
+      </dt>
       <dd className="mt-1 font-mono text-token-xs">{value}</dd>
     </div>
   );

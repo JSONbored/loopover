@@ -11,10 +11,12 @@ const checkOnly = process.argv.includes("--check");
 const spec = buildOpenApiSpec();
 spec.servers = [{ url: "https://gittensory-api.aethereal.dev", description: "Production" }];
 
-const next = `${JSON.stringify(spec, null, 2)}\n`;
+const current = await readFile(target, "utf8").catch(() => "");
+const currentSpec = parseCurrentSpec(current);
+const orderedSpec = currentSpec ? preserveExistingObjectOrder(spec, currentSpec) : spec;
+const next = `${JSON.stringify(orderedSpec, null, 2)}\n`;
 
 if (checkOnly) {
-  const current = await readFile(target, "utf8").catch(() => "");
   if (current !== next) {
     console.error("apps/gittensory-ui/public/openapi.json is stale; run npm run ui:openapi.");
     process.exit(1);
@@ -23,4 +25,31 @@ if (checkOnly) {
 } else {
   await writeFile(target, next);
   console.log("wrote apps/gittensory-ui/public/openapi.json");
+}
+
+function parseCurrentSpec(currentText: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(currentText) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function preserveExistingObjectOrder<T>(next: T, current: unknown): T {
+  if (Array.isArray(next)) return next.map((item, index) => preserveExistingObjectOrder(item, Array.isArray(current) ? current[index] : undefined)) as T;
+  if (!isPlainObject(next)) return next;
+
+  const currentObject = isPlainObject(current) ? current : {};
+  const ordered: Record<string, unknown> = {};
+  for (const key of Object.keys(currentObject)) {
+    if (key in next) ordered[key] = preserveExistingObjectOrder(next[key], currentObject[key]);
+  }
+  for (const key of Object.keys(next)) {
+    if (!(key in ordered)) ordered[key] = preserveExistingObjectOrder(next[key], currentObject[key]);
+  }
+  return ordered as T;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

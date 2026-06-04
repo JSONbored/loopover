@@ -3480,89 +3480,6 @@
                   ]
                 }
               },
-              "ownerContext": {
-                "type": "object",
-                "properties": {
-                  "manifestPresent": {
-                    "type": "boolean"
-                  },
-                  "manifestSource": {
-                    "type": "string",
-                    "enum": [
-                      "repo_file",
-                      "api_record",
-                      "none"
-                    ]
-                  },
-                  "privateNoteCount": {
-                    "type": "number"
-                  },
-                  "manifestWarningCount": {
-                    "type": "number"
-                  },
-                  "wantedPathCount": {
-                    "type": "number"
-                  },
-                  "blockedPathCount": {
-                    "type": "number"
-                  },
-                  "validationExpectationCount": {
-                    "type": "number"
-                  },
-                  "queueLevel": {
-                    "type": "string",
-                    "enum": [
-                      "low",
-                      "medium",
-                      "high",
-                      "critical"
-                    ]
-                  },
-                  "contributorIntakeLevel": {
-                    "type": "string",
-                    "enum": [
-                      "healthy",
-                      "watch",
-                      "strained",
-                      "blocked"
-                    ]
-                  },
-                  "configLevel": {
-                    "type": "string",
-                    "enum": [
-                      "excellent",
-                      "good",
-                      "needs_attention",
-                      "fragile"
-                    ]
-                  },
-                  "issuePolicy": {
-                    "type": "string"
-                  },
-                  "issueDiscoveryPolicy": {
-                    "type": "string",
-                    "enum": [
-                      "encouraged",
-                      "neutral",
-                      "discouraged"
-                    ]
-                  }
-                },
-                "required": [
-                  "manifestPresent",
-                  "manifestSource",
-                  "privateNoteCount",
-                  "manifestWarningCount",
-                  "wantedPathCount",
-                  "blockedPathCount",
-                  "validationExpectationCount",
-                  "queueLevel",
-                  "contributorIntakeLevel",
-                  "configLevel",
-                  "issuePolicy",
-                  "issueDiscoveryPolicy"
-                ]
-              },
               "droppedPublicWarnings": {
                 "type": "array",
                 "items": {
@@ -3594,7 +3511,6 @@
               "previewOnly",
               "present",
               "publicWarnings",
-              "ownerContext",
               "droppedPublicWarnings",
               "summary"
             ]

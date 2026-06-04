@@ -1355,6 +1355,32 @@ describe("api routes", () => {
     });
   });
 
+  it("counts cached open PRs across all in-scope repos, not just the first 12 fetched", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    // Two registered repos carry cached open-PR counts in sync state but have NO open PR records.
+    // The old metric summed PRs fetched per repo (so these contributed 0); the global count reports 8.
+    for (const [name, openPrs] of [["alpha", 5] as const, ["beta", 3] as const]) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `entrius/${name}`, private: false, owner: { login: "entrius" }, default_branch: "main" });
+      await upsertRepoSyncState(env, {
+        repoFullName: `entrius/${name}`,
+        status: "success",
+        sourceKind: "github",
+        primaryLanguage: "TypeScript",
+        defaultBranch: "main",
+        isPrivate: false,
+        openIssuesCount: 0,
+        openPullRequestsCount: openPrs,
+        recentMergedPullRequestsCount: 0,
+        warnings: [],
+      });
+    }
+    const res = await app.request("/v1/app/maintainer-dashboard", { headers: apiHeaders(env) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
+    expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(8);
+  });
+
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other", PRODUCT_USAGE_HASH_SALT: "usage-adoption-test-salt" });

@@ -324,12 +324,12 @@ const explainRepoDecisionOutputSchema = {
 
 const registryChangesOutputSchema = {
   generatedAt: z.string().optional(),
-  previous: z.unknown().optional(),
-  current: z.unknown().optional(),
-  added: z.unknown().optional(),
-  removed: z.unknown().optional(),
-  changed: z.unknown().optional(),
-  warnings: z.unknown().optional(),
+  currentSnapshotId: z.string().optional(),
+  previousSnapshotId: z.string().optional(),
+  addedRepos: z.unknown().optional(),
+  removedRepos: z.unknown().optional(),
+  changedRepos: z.unknown().optional(),
+  summary: z.string().optional(),
 };
 
 const upstreamDriftOutputSchema = {

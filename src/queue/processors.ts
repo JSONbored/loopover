@@ -701,7 +701,6 @@ async function maybePublishPrPublicSurface(
     minerStatus: "not_checked",
   });
   if (prelim.skipped) {
-    if (prelim.skipReason === "surface_off") return;
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
     return;
   }

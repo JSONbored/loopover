@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, not, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
@@ -1401,6 +1401,74 @@ export async function hasRecentAuditEvent(env: Env, actor: string, eventType: st
   return rows.length > 0;
 }
 
+export type PrVisibilitySkipAuditEvent = {
+  repoFullName: string;
+  pullNumber: number;
+  reason: string;
+  outcome: AuditEventRecord["outcome"];
+  createdAt: string;
+};
+
+export type PrVisibilitySkipAuditPage = {
+  limit: number;
+  hasMore: boolean;
+  items: PrVisibilitySkipAuditEvent[];
+};
+
+export async function listPrVisibilitySkipAuditEvents(
+  env: Env,
+  options: {
+    limit?: number | undefined;
+    repoFullNames?: string[] | undefined;
+    reason?: string | undefined;
+    sinceIso?: string | undefined;
+  } = {},
+): Promise<PrVisibilitySkipAuditPage> {
+  const limit = clampInteger(options.limit ?? 50, 1, 100);
+  const scopedRepoNames = options.repoFullNames === undefined ? undefined : uniqueRepoNames(options.repoFullNames.map((name) => name.trim()).filter(Boolean));
+  if (scopedRepoNames !== undefined && scopedRepoNames.length === 0) return { limit, hasMore: false, items: [] };
+
+  const conditions: SQL[] = [eq(auditEvents.eventType, "github_app.pr_visibility_skipped")];
+  if (options.reason) conditions.push(eq(auditEvents.detail, options.reason));
+  if (options.sinceIso) conditions.push(gte(auditEvents.createdAt, options.sinceIso));
+  if (scopedRepoNames !== undefined) {
+    const repoFilters = scopedRepoNames.map((repoFullName) => {
+      const prefix = `${repoFullName.toLowerCase()}#`;
+      const upperBound = `${repoFullName.toLowerCase()}$`;
+      return sql`lower(${auditEvents.targetKey}) >= ${prefix} and lower(${auditEvents.targetKey}) < ${upperBound}`;
+    });
+    const repoFilter = or(...repoFilters);
+    if (repoFilter) conditions.push(repoFilter);
+  }
+
+  const rowLimit = Math.min(500, limit * 5 + 20);
+  const rows = await getDb(env.DB)
+    .select({
+      targetKey: auditEvents.targetKey,
+      detail: auditEvents.detail,
+      outcome: auditEvents.outcome,
+      createdAt: auditEvents.createdAt,
+    })
+    .from(auditEvents)
+    .where(and(...conditions))
+    .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+    .limit(rowLimit);
+  const items = rows.flatMap((row) => {
+    const target = parsePullRequestTargetKey(row.targetKey);
+    if (!target) return [];
+    return [
+      {
+        repoFullName: target.repoFullName,
+        pullNumber: target.pullNumber,
+        reason: row.detail ?? "skipped",
+        outcome: row.outcome as AuditEventRecord["outcome"],
+        createdAt: row.createdAt,
+      },
+    ];
+  });
+  return { limit, hasMore: items.length > limit, items: items.slice(0, limit) };
+}
+
 export async function getFreshOfficialMinerDetection(env: Env, login: string, now = nowIso()): Promise<OfficialGittensorMinerDetection | null> {
   const [row] = await getDb(env.DB).select().from(officialMinerDetections).where(and(eq(officialMinerDetections.login, login.toLowerCase()), gte(officialMinerDetections.expiresAt, now))).limit(1);
   return row ? toOfficialMinerDetection(row) : null;
@@ -1488,6 +1556,28 @@ async function hashCommandFeedbackActor(repoFullName: string, actorLogin: string
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function uniqueRepoNames(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}
+
+function parsePullRequestTargetKey(targetKey: string | null | undefined): { repoFullName: string; pullNumber: number } | null {
+  if (!targetKey) return null;
+  const delimiter = targetKey.lastIndexOf("#");
+  if (delimiter <= 0 || delimiter === targetKey.length - 1) return null;
+  const repoFullName = targetKey.slice(0, delimiter);
+  const pullNumber = Number(targetKey.slice(delimiter + 1));
+  if (!repoFullName.includes("/") || !Number.isInteger(pullNumber) || pullNumber <= 0) return null;
+  return { repoFullName, pullNumber };
 }
 
 function maxIso(left: string | null | undefined, right: string | null | undefined): string | null {
@@ -2059,7 +2149,9 @@ export async function upsertRecentMergedPullRequest(env: Env, pr: RecentMergedPu
         mergedAt: pr.mergedAt,
         labelsJson: jsonString(pr.labels),
         linkedIssuesJson: jsonString(pr.linkedIssues),
-        changedFilesJson: jsonString(pr.changedFiles),
+        // Keep a previously-hydrated file list instead of clobbering it with an empty
+        // one (e.g. a files-less upsert or a failed file fetch).
+        changedFilesJson: pr.changedFiles.length > 0 ? jsonString(pr.changedFiles) : sql`${recentMergedPullRequests.changedFilesJson}`,
         payloadJson: jsonString(pr.payload),
         updatedAt: nowIso(),
       },

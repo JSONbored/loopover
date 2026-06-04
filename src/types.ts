@@ -1074,6 +1074,7 @@ export type ProductUsageRole = "miner" | "maintainer" | "owner" | "operator" | "
 export type ProductUsageEventRecord = {
   id: string;
   surface: ProductUsageSurface;
+  role: ProductUsageRole;
   eventName: string;
   route?: string | null | undefined;
   actorHash?: string | null | undefined;

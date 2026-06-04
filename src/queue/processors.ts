@@ -824,9 +824,11 @@ async function recordGithubProductUsage(
     metadata?: Record<string, unknown>;
   },
 ): Promise<void> {
+  const actorRole = typeof event.metadata?.actorKind === "string" ? event.metadata.actorKind : typeof event.metadata?.role === "string" ? event.metadata.role : undefined;
   await recordProductUsageEvent(env, {
     surface: "github_app",
     eventName,
+    role: actorRole,
     actor: event.actor,
     repoFullName: event.repoFullName,
     targetKey: event.targetKey,

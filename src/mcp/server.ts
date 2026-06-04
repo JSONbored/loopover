@@ -324,12 +324,12 @@ const explainRepoDecisionOutputSchema = {
 
 const registryChangesOutputSchema = {
   generatedAt: z.string().optional(),
-  previous: z.unknown().optional(),
-  current: z.unknown().optional(),
-  added: z.unknown().optional(),
-  removed: z.unknown().optional(),
-  changed: z.unknown().optional(),
-  warnings: z.unknown().optional(),
+  currentSnapshotId: z.string().optional(),
+  previousSnapshotId: z.string().optional(),
+  addedRepos: z.unknown().optional(),
+  removedRepos: z.unknown().optional(),
+  changedRepos: z.unknown().optional(),
+  summary: z.string().optional(),
 };
 
 const upstreamDriftOutputSchema = {
@@ -363,6 +363,7 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
     const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
     await recordProductUsageEvent(c.env, {
       surface: "mcp",
+      role: "miner",
       eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
       route: "/mcp",
       actor: identity.actor,
@@ -377,6 +378,7 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   } catch (error) {
     await recordProductUsageEvent(c.env, {
       surface: "mcp",
+      role: "miner",
       eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
       route: "/mcp",
       actor: identity.actor,

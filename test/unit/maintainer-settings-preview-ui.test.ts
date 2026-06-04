@@ -27,6 +27,8 @@ describe("maintainer settings preview UI helpers", () => {
       repo: "gittensory",
     });
     expect(splitRepoFullName("missing")).toBeNull();
+    expect(splitRepoFullName("/missing-owner")).toBeNull();
+    expect(splitRepoFullName("missing-repo/")).toBeNull();
     expect(splitRepoFullName("too/many/parts")).toBeNull();
   });
 
@@ -37,6 +39,8 @@ describe("maintainer settings preview UI helpers", () => {
       "area/frontend",
     ]);
     expect(parseLinkedIssues("#7, 12 12 invalid 0 -1")).toEqual([7, 12]);
+    expect(parsePreviewLabels("")).toEqual([]);
+    expect(parseLinkedIssues("")).toEqual([]);
   });
 
   it("builds scenario-specific sample PR requests without private fields", () => {

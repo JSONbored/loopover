@@ -1246,7 +1246,11 @@ export function buildContributorOpportunities(
     const rankable = qualityByIssue
       ? availableIssues.filter((issue) => qualityByIssue.get(issue.number)?.status !== "do_not_use")
       : availableIssues;
-    for (const issue of rankable.slice(0, 5)) {
+    // Score every eligible issue, then keep this repo's best 5 by score -- the cap must select the
+    // strongest-fit issues (mirroring the issue-quality report's score-descending order), not the
+    // arbitrary first 5 in DB order.
+    const repoOpportunities: ContributorOpportunity[] = [];
+    for (const issue of rankable) {
       const quality = qualityByIssue?.get(issue.number);
       const bounty = bountyByIssue.get(bountyIssueKey(repo.fullName, issue.number)) ?? null;
       const bountyLifecycle = bounty ? classifyBountyLifecycle(bounty, issue) : null;
@@ -1277,7 +1281,7 @@ export function buildContributorOpportunities(
       );
       const baseFit = score >= 70 ? "good" : score >= 40 ? "caution" : "hold";
       const downgradeToCaution = (bountyPenalty > 0 || quality?.status === "needs_proof") && baseFit === "good";
-      opportunities.push({
+      repoOpportunities.push({
         repoFullName: repo.fullName,
         issueNumber: issue.number,
         title: issue.title,
@@ -1302,6 +1306,8 @@ export function buildContributorOpportunities(
         ],
       });
     }
+    repoOpportunities.sort((left, right) => right.score - left.score || (left.issueNumber ?? 0) - (right.issueNumber ?? 0));
+    opportunities.push(...repoOpportunities.slice(0, 5));
   }
 
   /* v8 ignore next -- Repo-name tie ordering is deterministic presentation fallback after scored opportunity ranking. */

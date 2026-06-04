@@ -176,15 +176,23 @@ describe("GitHub check runs", () => {
       severity: "warning",
       title: "Gittensory advisory available",
       summary: "1 advisory finding generated.",
-      findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning", detail: "No closing reference." }],
+      findings: [
+        {
+          code: "missing_linked_issue",
+          title: "No linked issue detected",
+          severity: "warning",
+          detail: "No closing reference.",
+          publicText: "Public PR context is available for maintainer review.",
+        },
+      ],
       generatedAt: "2026-05-22T00:00:00.000Z",
     };
 
     const result = await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory, "standard");
 
     expect(result).toMatchObject({ kind: "published", id: 77 });
-    expect(capturedBody.output?.text).toMatch(/⚠️/);
-    expect(capturedBody.output?.text).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|farming/i);
+    expect(capturedBody.output?.text).toMatch(/⚠️ Public PR context is available/);
+    expect(capturedBody.output?.text).not.toMatch(/No linked issue|reward|wallet|hotkey|trust score|reviewability|farming/i);
   });
 
   it("returns permission_missing for message-based 422 permission errors", async () => {

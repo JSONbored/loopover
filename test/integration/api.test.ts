@@ -686,6 +686,17 @@ describe("api routes", () => {
       buckets: expect.arrayContaining([expect.objectContaining({ bucket: expect.any(String), actions: expect.any(Array) })]),
     });
     expect(agentPlanPayload.actions.length).toBeGreaterThan(0);
+    for (const action of agentPlanPayload.actions) {
+      expect(action.payload.recommendationSnapshotId).toEqual(expect.any(String));
+      expect(action.payload.recommendationSnapshot).toMatchObject({
+        kind: "recommendation_snapshot",
+        version: 1,
+        snapshotId: action.payload.recommendationSnapshotId,
+        contextSnapshotId: expect.any(String),
+        actionId: expect.any(String),
+        publicSafe: true,
+      });
+    }
     expect(agentPlanPayload.actions[0]?.publicSafeSummary).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score/i);
     expect(agentPlanPayload.actions[0]?.explanationCard).toMatchObject({
       whyNow: expect.any(String),
@@ -694,6 +705,8 @@ describe("api routes", () => {
     });
     expect(JSON.stringify(agentPlanPayload.actions[0]?.explanationCard?.publicSafe)).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score|private reviewability|public score estimate|scoreability/i);
     expect(agentPlanPayload.actions[0]?.payload).toHaveProperty("decision");
+    expect(agentPlanPayload.actions[0]?.payload.recommendationSnapshot).toMatchObject({ target: { repoFullName: "entrius/allways-ui" } });
+    expect(JSON.stringify(agentPlanPayload.actions[0]?.payload.recommendationSnapshot)).not.toMatch(/wallet|hotkey|raw trust score|private reviewability|private scoreability|reward estimate|recommendationEvidence/i);
     expect(agentPlanPayload.actions[0]?.payload.recommendationEvidence).toMatchObject({
       confidence: expect.stringMatching(/^(high|medium|low)$/),
       sourceSummary: expect.any(String),

@@ -2857,8 +2857,15 @@ async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
     upstreamRegistryDriftWarnings: registryHyperparameterDriftWarningsForRepo(upstreamReports, fullName),
     focusManifest,
   });
-  return { ...report, dataQuality: intelligence.dataQuality };
+  const { policyReadiness } = report;
+  const publicPolicyReadiness = policyReadiness === null ? null : stripOwnerPolicyContext(policyReadiness);
+  return { ...report, policyReadiness: publicPolicyReadiness, dataQuality: intelligence.dataQuality };
   /* v8 ignore stop */
+}
+
+function stripOwnerPolicyContext<T extends { ownerContext: unknown }>(policyReadiness: T): Omit<T, "ownerContext"> {
+  const { ownerContext: _ownerContext, ...publicPolicyReadiness } = policyReadiness;
+  return publicPolicyReadiness;
 }
 
 async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {

@@ -482,11 +482,29 @@ describe("api routes", () => {
       env,
     );
     expect(minerPreview.status).toBe(200);
-    const minerPreviewBody = (await minerPreview.json()) as { decision: { willComment: boolean; skipped: boolean }; previewComment: string | null; settings: { publicSurface: string } };
+    const minerPreviewBody = (await minerPreview.json()) as {
+      decision: { willComment: boolean; skipped: boolean };
+      previewComment: string | null;
+      settings: { publicSurface: string };
+      installPreview: {
+        status: string;
+        permissions: { required: string[]; status: string };
+        checklist: Array<{ id: string; status: string; summary: string; action: string }>;
+      };
+    };
     expect(minerPreviewBody.decision.skipped).toBe(false);
     expect(minerPreviewBody.decision.willComment).toBe(true);
     expect(minerPreviewBody.previewComment).toContain("Gittensory contribution context");
     expect(minerPreviewBody.previewComment).not.toMatch(/wallet|hotkey|trust score|scoreability|payout/i);
+    expect(minerPreviewBody.installPreview).toMatchObject({
+      status: "ready",
+      permissions: { required: expect.arrayContaining(["issues: write"]) },
+      checklist: expect.arrayContaining([
+        expect.objectContaining({ id: "permissions", status: "ready" }),
+        expect.objectContaining({ id: "sanitizer-boundaries", status: "ready" }),
+        expect.objectContaining({ id: "manual-controls", status: "ready" }),
+      ]),
+    });
 
     const invalidPreview = await app.request(
       "/v1/repos/entrius/allways-ui/settings-preview",
@@ -499,6 +517,7 @@ describe("api routes", () => {
     expect(unknownRepoPreview.status).toBe(200);
     await expect(unknownRepoPreview.json()).resolves.toMatchObject({
       installation: null,
+      installPreview: { status: "blocked", permissions: { status: "blocked" } },
       sample: { authorLogin: "sample-contributor", minerStatus: "confirmed" },
     });
 

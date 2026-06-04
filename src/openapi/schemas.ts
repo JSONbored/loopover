@@ -593,6 +593,36 @@ export const RepoSettingsPreviewSchema = z
         detailLevel: z.enum(["minimal", "standard", "deep"]),
       })
       .nullable(),
+    installPreview: z.object({
+      status: z.enum(["ready", "needs_attention", "blocked"]),
+      summary: z.string(),
+      readScope: z.array(z.string()),
+      computedContext: z.array(z.string()),
+      previewBehavior: z.array(z.string()),
+      permissions: z.object({
+        status: z.enum(["ready", "needs_attention", "blocked"]),
+        required: z.array(z.string()),
+        missing: z.array(z.string()),
+        missingEvents: z.array(z.string()),
+        summary: z.string(),
+      }),
+      publicOutputs: z.array(z.string()),
+      privateOnlyContext: z.array(z.string()),
+      commandAuthorization: z.array(z.string()),
+      auditBehavior: z.array(z.string()),
+      sanitizerBoundaries: z.array(z.string()),
+      manualControls: z.array(z.string()),
+      checklist: z.array(
+        z.object({
+          id: z.string(),
+          category: z.enum(["permissions", "public_outputs", "private_context", "command_authorization", "audit", "sanitizer", "manual_control"]),
+          status: z.enum(["ready", "needs_attention", "blocked"]),
+          label: z.string(),
+          summary: z.string(),
+          action: z.string(),
+        }),
+      ),
+    }),
     warnings: z.array(z.string()),
     summary: z.string(),
   })

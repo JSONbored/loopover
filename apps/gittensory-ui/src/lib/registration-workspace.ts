@@ -1,4 +1,4 @@
-import { splitRepoFullName } from "@/lib/maintainer-settings-preview";
+import { splitRepoFullName } from "./maintainer-settings-preview";
 
 export type WorkspaceFreshness = "complete" | "degraded" | "stale" | "unknown";
 export type WorkspaceLaneStatus = "ready" | "warn" | "blocked" | "info";
@@ -47,7 +47,43 @@ export type RegistrationReadinessPayload = {
   } | null;
   blockers: string[];
   warnings: string[];
+  docsCompleteness?: { status: string; requiredDocs: string[]; note: string } | undefined;
   dataQuality?: RegistrationWorkspaceDataQuality | undefined;
+};
+
+export type OwnerWorkflowState = "accepted" | "needs_cleanup" | "not_ready";
+
+export type OwnerWorkflowRemediationKind = "action" | "manual";
+
+export type OwnerWorkflowBucketId =
+  | "policy"
+  | "data_quality"
+  | "queue_health"
+  | "docs_onboarding"
+  | "maintainer_capacity";
+
+export type OwnerWorkflowItem = {
+  id: string;
+  title: string;
+  state: OwnerWorkflowState;
+  summary: string;
+  remediation: string;
+  remediationKind: OwnerWorkflowRemediationKind;
+};
+
+export type OwnerWorkflowBucket = {
+  id: OwnerWorkflowBucketId;
+  title: string;
+  state: OwnerWorkflowState;
+  summary: string;
+  items: OwnerWorkflowItem[];
+};
+
+export type RegistrationOwnerWorkflow = {
+  overallState: OwnerWorkflowState;
+  overallHeadline: string;
+  buckets: OwnerWorkflowBucket[];
+  nextSteps: string[];
 };
 
 export type GittensorConfigRecommendationPayload = {
@@ -90,6 +126,7 @@ export type RegistrationWorkspaceView = {
   };
   operations: RegistrationWorkspaceSection[];
   policyWarnings: Array<{ title: string; detail: string; action: string; severity: string }>;
+  workflow: RegistrationOwnerWorkflow;
   config: {
     tradeoffs: string[];
     reasons: string[];
@@ -271,6 +308,7 @@ export function buildRegistrationWorkspaceView(
         severity: warning.severity,
       }))
       .filter((warning) => warning.detail.length > 0),
+    workflow: buildRegistrationOwnerWorkflow(readiness, config),
     config: config
       ? {
           tradeoffs: sanitizeBulletList(config.tradeoffs),
@@ -283,10 +321,227 @@ export function buildRegistrationWorkspaceView(
   };
 }
 
+export function buildRegistrationOwnerWorkflow(
+  readiness: RegistrationReadinessPayload,
+  config: GittensorConfigRecommendationPayload | null,
+): RegistrationOwnerWorkflow {
+  const freshness = resolveRegistrationWorkspaceFreshness(readiness.dataQuality, config?.dataQuality);
+  const intakeLevel = stringField(readiness.contributorIntakeHealth, "level") ?? "unknown";
+  const labelPolicy = readiness.labelPolicy;
+  const docs = readiness.docsCompleteness ?? { status: "unknown", requiredDocs: [], note: "" };
+
+  const policyItems: OwnerWorkflowItem[] = [];
+  for (const warning of readiness.policyReadiness?.publicWarnings ?? []) {
+    const title = sanitizeRegistrationWorkspaceText(warning.title);
+    const detail = sanitizeRegistrationWorkspaceText(warning.detail);
+    const action = sanitizeRegistrationWorkspaceText(warning.action);
+    if (!title || !detail) continue;
+    policyItems.push({
+      id: `policy-warning-${policyItems.length}`,
+      title,
+      state: warning.severity === "critical" ? "not_ready" : "needs_cleanup",
+      summary: detail,
+      remediation: action ?? "Review focus manifest and repository settings for consistency.",
+      remediationKind: action ? "action" : "manual",
+    });
+  }
+  if (!readiness.directPrReadiness.ready) {
+    policyItems.push({
+      id: "direct-pr-lane",
+      title: "Direct PR lane",
+      state: readiness.blockers.length > 0 ? "not_ready" : "needs_cleanup",
+      summary: "Direct-PR intake is not ready for the recommended registration mode.",
+      remediation: "Stabilize config quality and contributor intake before promoting direct-PR traffic.",
+      remediationKind: "action",
+    });
+  }
+  if (labelPolicy.trustedPipelineReady !== true) {
+    policyItems.push({
+      id: "label-trust",
+      title: "Label policy",
+      state: "needs_cleanup",
+      summary: "Trusted label pipeline is not verified for registry labels.",
+      remediation: "Create or verify configured registry labels and enable the trusted label pipeline in repo settings.",
+      remediationKind: "action",
+    });
+  }
+
+  const dataQualityItems: OwnerWorkflowItem[] = [];
+  if (freshness.status === "stale" || freshness.status === "degraded") {
+    for (const warning of freshness.warnings) {
+      dataQualityItems.push({
+        id: `data-warning-${dataQualityItems.length}`,
+        title: "Signal freshness",
+        state: freshness.status === "stale" ? "not_ready" : "needs_cleanup",
+        summary: warning,
+        remediation: "Wait for repository intelligence to refresh or run a maintainer backfill before acting on readiness.",
+        remediationKind: "manual",
+      });
+    }
+  }
+  if (readiness.testCoverageHealth.status !== "gate_ready") {
+    dataQualityItems.push({
+      id: "test-gate",
+      title: "Validation gate",
+      state: "needs_cleanup",
+      summary: readiness.testCoverageHealth.note,
+      remediation: "Document expected CI commands in the repo and verify check-run settings before widening intake.",
+      remediationKind: "action",
+    });
+  }
+  for (const warning of readiness.testCoverageHealth.warnings) {
+    const safe = sanitizeRegistrationWorkspaceText(warning);
+    if (!safe) continue;
+    dataQualityItems.push({
+      id: `test-warning-${dataQualityItems.length}`,
+      title: "Test policy warning",
+      state: "needs_cleanup",
+      summary: safe,
+      remediation: "Address validation warnings before inviting more contributor traffic.",
+      remediationKind: "action",
+    });
+  }
+
+  const queueItems: OwnerWorkflowItem[] = [];
+  const queueLevel = readiness.queueHealth.level;
+  if (queueLevel === "high" || queueLevel === "critical") {
+    queueItems.push({
+      id: "queue-pressure",
+      title: "PR queue pressure",
+      state: "not_ready",
+      summary: readiness.queueHealth.summary,
+      remediation: "Reduce open PR queue pressure or narrow accepted lanes before inviting more contributors.",
+      remediationKind: "action",
+    });
+  } else if (queueLevel === "medium") {
+    queueItems.push({
+      id: "queue-pressure",
+      title: "PR queue pressure",
+      state: "needs_cleanup",
+      summary: readiness.queueHealth.summary,
+      remediation: "Review open PRs and triage burden before expanding contributor intake.",
+      remediationKind: "action",
+    });
+  }
+
+  const docsItems: OwnerWorkflowItem[] = [];
+  if (docs.status === "repo_docs_not_crawled") {
+    docsItems.push({
+      id: "docs-crawl",
+      title: "Onboarding docs",
+      state: "needs_cleanup",
+      summary: docs.note,
+      remediation:
+        "Manually verify CONTRIBUTING.md, README onboarding steps, and issue templates in GitHub; remote doc crawling is not enabled in this signal yet.",
+      remediationKind: "manual",
+    });
+  } else if (docs.requiredDocs.length > 0) {
+    docsItems.push({
+      id: "docs-required",
+      title: "Required docs",
+      state: "accepted",
+      summary: `Expected docs: ${docs.requiredDocs.join(", ")}.`,
+      remediation: "Keep onboarding docs aligned with the recommended registration mode.",
+      remediationKind: "action",
+    });
+  }
+
+  const capacityItems: OwnerWorkflowItem[] = [];
+  if (intakeLevel === "blocked" || intakeLevel === "strained") {
+    capacityItems.push({
+      id: "intake-health",
+      title: "Contributor intake",
+      state: intakeLevel === "blocked" ? "not_ready" : "needs_cleanup",
+      summary: stringField(readiness.contributorIntakeHealth, "summary") ?? `Contributor intake is ${intakeLevel}.`,
+      remediation: "Stabilize triage capacity and duplicate-risk intake before inviting more issue reports or direct PRs.",
+      remediationKind: "action",
+    });
+  }
+  const maintainerCut = readiness.maintainerCutReadiness;
+  if (maintainerCut.ready !== true) {
+    capacityItems.push({
+      id: "maintainer-cut",
+      title: "Maintainer cut readiness",
+      state: readiness.ready ? "needs_cleanup" : "not_ready",
+      summary: stringField(maintainerCut, "summary") ?? "Maintainer-cut posture needs review.",
+      remediation:
+        typeof maintainerCut.recommendedAction === "string"
+          ? `Follow maintainer-cut guidance: ${maintainerCut.recommendedAction.replace(/_/g, " ")}.`
+          : "Resolve queue and config blockers before changing maintainer_cut.",
+      remediationKind: "action",
+    });
+  }
+  for (const blocker of readiness.blockers) {
+    const safe = sanitizeRegistrationWorkspaceText(blocker);
+    if (!safe) continue;
+    const bucket = classifyBlockerBucket(safe);
+    const target =
+      bucket === "policy"
+        ? policyItems
+        : bucket === "data_quality"
+          ? dataQualityItems
+          : bucket === "queue_health"
+            ? queueItems
+            : bucket === "docs_onboarding"
+              ? docsItems
+              : capacityItems;
+    target.push({
+      id: `blocker-${target.length}`,
+      title: "Registration blocker",
+      state: "not_ready",
+      summary: safe,
+      remediation: remediationForBlocker(safe),
+      remediationKind: remediationKindForBlocker(safe),
+    });
+  }
+
+  const buckets: OwnerWorkflowBucket[] = [
+    buildWorkflowBucket("policy", "Policy & lanes", policyItems, "Focus manifest, lane posture, and label policy."),
+    buildWorkflowBucket("data_quality", "Data quality", dataQualityItems, "Signal freshness and validation gates."),
+    buildWorkflowBucket("queue_health", "Queue health", queueItems, "Open PR pressure and reviewable queue burden."),
+    buildWorkflowBucket("docs_onboarding", "Docs & onboarding", docsItems, "Contributor-facing documentation readiness."),
+    buildWorkflowBucket(
+      "maintainer_capacity",
+      "Maintainer capacity",
+      capacityItems,
+      "Intake health, maintainer-cut posture, and GitHub App assistance.",
+    ),
+  ];
+
+  const overallState = aggregateWorkflowState(buckets.map((bucket) => bucket.state));
+  const nextSteps = buckets
+    .flatMap((bucket) => bucket.items)
+    .filter((item) => item.state !== "accepted")
+    .sort((left, right) => workflowRank(left.state) - workflowRank(right.state))
+    .map((item) => item.remediation)
+    .filter((entry, index, all) => all.indexOf(entry) === index)
+    .slice(0, 5);
+
+  return {
+    overallState,
+    overallHeadline: workflowHeadline(overallState, readiness.ready),
+    buckets,
+    nextSteps,
+  };
+}
+
+export function collectRegistrationOwnerWorkflowPublicText(workflow: RegistrationOwnerWorkflow): string[] {
+  return [
+    workflow.overallHeadline,
+    ...workflow.nextSteps,
+    ...workflow.buckets.flatMap((bucket) => [
+      bucket.title,
+      bucket.summary,
+      ...bucket.items.flatMap((item) => [item.title, item.summary, item.remediation]),
+    ]),
+  ];
+}
+
 export function collectRegistrationWorkspacePublicText(view: RegistrationWorkspaceView): string[] {
   const chunks = [
     view.advisoryBanner,
     view.summary.headline,
+    ...collectRegistrationOwnerWorkflowPublicText(view.workflow),
     ...view.freshness.warnings,
     ...view.lanes.directPr.bullets,
     ...view.lanes.issueDiscovery.bullets,
@@ -330,4 +585,68 @@ function formatValue(value: unknown): string {
     return String(value);
   }
   return JSON.stringify(value);
+}
+
+function buildWorkflowBucket(
+  id: OwnerWorkflowBucketId,
+  title: string,
+  items: OwnerWorkflowItem[],
+  summary: string,
+): OwnerWorkflowBucket {
+  const state = items.length === 0 ? "accepted" : aggregateWorkflowState(items.map((item) => item.state));
+  return { id, title, state, summary, items };
+}
+
+function aggregateWorkflowState(states: OwnerWorkflowState[]): OwnerWorkflowState {
+  if (states.includes("not_ready")) return "not_ready";
+  if (states.includes("needs_cleanup")) return "needs_cleanup";
+  return "accepted";
+}
+
+function workflowRank(state: OwnerWorkflowState): number {
+  if (state === "not_ready") return 0;
+  if (state === "needs_cleanup") return 1;
+  return 2;
+}
+
+function workflowHeadline(state: OwnerWorkflowState, ready: boolean): string {
+  if (state === "accepted" && ready) {
+    return "Accepted — contributor intake posture matches the recommended registration mode.";
+  }
+  if (state === "not_ready") {
+    return "Not ready — resolve blockers in the workflow buckets before inviting more contributors.";
+  }
+  return "Needs cleanup — some areas are acceptable but require maintainer follow-up before scaling intake.";
+}
+
+function classifyBlockerBucket(blocker: string): OwnerWorkflowBucketId {
+  const lower = blocker.toLowerCase();
+  if (lower.includes("config quality") || lower.includes("focus") || lower.includes("label")) return "policy";
+  if (lower.includes("doc") || lower.includes("contributing")) return "docs_onboarding";
+  if (lower.includes("queue") || lower.includes("pull request") || lower.includes("pr ")) return "queue_health";
+  if (lower.includes("install") || lower.includes("github app") || lower.includes("intake")) return "maintainer_capacity";
+  if (lower.includes("drift") || lower.includes("forecast") || lower.includes("coverage")) return "data_quality";
+  return "maintainer_capacity";
+}
+
+function remediationForBlocker(blocker: string): string {
+  const bucket = classifyBlockerBucket(blocker);
+  switch (bucket) {
+    case "policy":
+      return "Fix registry config, focus manifest, or label policy issues referenced in the blocker.";
+    case "data_quality":
+      return "Refresh repository intelligence or update validation fixtures before re-checking readiness.";
+    case "queue_health":
+      return "Reduce queue pressure and close or triage stale pull requests before expanding intake.";
+    case "docs_onboarding":
+      return "Update onboarding docs and templates in the repository (manual GitHub edit required).";
+    case "maintainer_capacity":
+      return "Address installation health, intake strain, or maintainer-cut blockers before promoting the repo.";
+  }
+}
+
+function remediationKindForBlocker(blocker: string): OwnerWorkflowRemediationKind {
+  const lower = blocker.toLowerCase();
+  if (lower.includes("not crawled") || lower.includes("manual") || lower.includes("install")) return "manual";
+  return "action";
 }

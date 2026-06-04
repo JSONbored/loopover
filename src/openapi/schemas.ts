@@ -1768,20 +1768,7 @@ export const RegistrationReadinessSchema = z
             action: z.string(),
           }),
         ),
-        ownerContext: z.object({
-          manifestPresent: z.boolean(),
-          manifestSource: z.enum(["repo_file", "api_record", "none"]),
-          privateNoteCount: z.number(),
-          manifestWarningCount: z.number(),
-          wantedPathCount: z.number(),
-          blockedPathCount: z.number(),
-          validationExpectationCount: z.number(),
-          queueLevel: z.enum(["low", "medium", "high", "critical"]),
-          contributorIntakeLevel: z.enum(["healthy", "watch", "strained", "blocked"]),
-          configLevel: z.enum(["excellent", "good", "needs_attention", "fragile"]),
-          issuePolicy: z.string(),
-          issueDiscoveryPolicy: z.enum(["encouraged", "neutral", "discouraged"]),
-        }),
+        // Owner-only focus-manifest metadata is intentionally excluded from this broad route.
         droppedPublicWarnings: z.array(
           z.object({
             code: z.string(),

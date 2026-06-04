@@ -2554,6 +2554,7 @@ export async function persistAgentContextSnapshot(env: Env, snapshot: AgentConte
     repoSignalSnapshotIdsJson: jsonString(snapshot.repoSignalSnapshotIds),
     scoringModelId: snapshot.scoringModelId ?? null,
     freshnessWarningsJson: jsonString(snapshot.freshnessWarnings),
+    provenanceJson: snapshot.provenance ? jsonString(snapshot.provenance) : null,
     payloadJson: jsonString(snapshot.payload),
     createdAt: snapshot.createdAt ?? nowIso(),
   });
@@ -3349,6 +3350,7 @@ function toAgentContextSnapshotRecord(row: typeof agentContextSnapshots.$inferSe
     repoSignalSnapshotIds: parseJson<string[]>(row.repoSignalSnapshotIdsJson, []),
     scoringModelId: row.scoringModelId,
     freshnessWarnings: parseJson<string[]>(row.freshnessWarningsJson, []),
+    provenance: parseJson<AgentContextSnapshotRecord["provenance"]>(row.provenanceJson, null),
     payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
     createdAt: row.createdAt,
   };

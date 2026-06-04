@@ -687,6 +687,51 @@ export type AgentActionRecord = {
   createdAt?: string | null | undefined;
 };
 
+export type AgentContextSnapshotProvenanceFreshness = "fresh" | "stale" | "rebuilding" | "missing" | "degraded" | "possibly_stale" | "unknown";
+export type AgentContextSnapshotProvenanceConfidence = "high" | "medium" | "low";
+
+export type AgentContextSnapshotProvenanceSource = {
+  name: string;
+  source: string | null;
+  generatedAt: string | null;
+  freshness: AgentContextSnapshotProvenanceFreshness;
+  summary: string;
+};
+
+export type AgentContextSnapshotPublicProvenance = {
+  sourceSummary: string;
+  confidence: AgentContextSnapshotProvenanceConfidence;
+  freshness: AgentContextSnapshotProvenanceFreshness;
+  sources: AgentContextSnapshotProvenanceSource[];
+  evidenceGaps: string[];
+  warnings: string[];
+  assumptions: string[];
+  sourceUpload: {
+    mode: "disabled" | "not_applicable";
+    storesRawContents: false;
+  };
+};
+
+export type AgentContextSnapshotAuthenticatedProvenance = {
+  actorLogin: string | null;
+  decisionPackSource: string | null;
+  decisionPackGeneratedAt: string | null;
+  scoringModelId: string | null;
+  selectedRepos: string[];
+  signalFidelityStatus: string | null;
+  userSuppliedScenarios: boolean;
+  userSuppliedScenarioCount: number;
+  evidenceGraphVersion: number | null;
+  openPrMonitorGeneratedAt: string | null;
+  localRepoFullName: string | null;
+  localBranchName: string | null;
+};
+
+export type AgentContextSnapshotProvenance = {
+  publicSafe: AgentContextSnapshotPublicProvenance;
+  authenticated: AgentContextSnapshotAuthenticatedProvenance;
+};
+
 export type AgentContextSnapshotRecord = {
   id: string;
   runId: string;
@@ -694,6 +739,7 @@ export type AgentContextSnapshotRecord = {
   repoSignalSnapshotIds: string[];
   scoringModelId?: string | null | undefined;
   freshnessWarnings: string[];
+  provenance?: AgentContextSnapshotProvenance | null | undefined;
   payload: Record<string, JsonValue>;
   createdAt?: string | null | undefined;
 };

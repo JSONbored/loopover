@@ -9266,6 +9266,202 @@
               "type": "string"
             }
           },
+          "provenance": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "publicSafe": {
+                "type": "object",
+                "properties": {
+                  "sourceSummary": {
+                    "type": "string"
+                  },
+                  "confidence": {
+                    "type": "string",
+                    "enum": [
+                      "high",
+                      "medium",
+                      "low"
+                    ]
+                  },
+                  "freshness": {
+                    "type": "string",
+                    "enum": [
+                      "fresh",
+                      "stale",
+                      "rebuilding",
+                      "missing",
+                      "degraded",
+                      "possibly_stale",
+                      "unknown"
+                    ]
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "generatedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "freshness": {
+                          "type": "string",
+                          "enum": [
+                            "fresh",
+                            "stale",
+                            "rebuilding",
+                            "missing",
+                            "degraded",
+                            "possibly_stale",
+                            "unknown"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "source",
+                        "generatedAt",
+                        "freshness",
+                        "summary"
+                      ]
+                    }
+                  },
+                  "evidenceGaps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "warnings": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "assumptions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sourceUpload": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "disabled",
+                          "not_applicable"
+                        ]
+                      },
+                      "storesRawContents": {
+                        "type": "boolean",
+                        "enum": [
+                          false
+                        ]
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "storesRawContents"
+                    ]
+                  }
+                },
+                "required": [
+                  "sourceSummary",
+                  "confidence",
+                  "freshness",
+                  "sources",
+                  "evidenceGaps",
+                  "warnings",
+                  "assumptions",
+                  "sourceUpload"
+                ]
+              },
+              "authenticated": {
+                "type": "object",
+                "properties": {
+                  "actorLogin": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "decisionPackSource": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "decisionPackGeneratedAt": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "scoringModelId": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "selectedRepos": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "signalFidelityStatus": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "userSuppliedScenarios": {
+                    "type": "boolean"
+                  },
+                  "userSuppliedScenarioCount": {
+                    "type": "number"
+                  },
+                  "evidenceGraphVersion": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "openPrMonitorGeneratedAt": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "localRepoFullName": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "localBranchName": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "actorLogin",
+                  "decisionPackSource",
+                  "decisionPackGeneratedAt",
+                  "scoringModelId",
+                  "selectedRepos",
+                  "signalFidelityStatus",
+                  "userSuppliedScenarios",
+                  "userSuppliedScenarioCount",
+                  "evidenceGraphVersion",
+                  "openPrMonitorGeneratedAt",
+                  "localRepoFullName",
+                  "localBranchName"
+                ]
+              }
+            },
+            "required": [
+              "publicSafe",
+              "authenticated"
+            ]
+          },
           "payload": {
             "type": "object",
             "additionalProperties": {

@@ -189,6 +189,8 @@ describe("Workers AI summaries", () => {
     const publicRequest = (run.mock.calls as unknown as Array<[string, AiRunRequest]>)[0]?.[1];
     const publicPrompt = publicRequest?.messages.find((message) => message.role === "user")?.content ?? "";
     expect(publicPrompt).not.toMatch(PUBLIC_FORBIDDEN_TEXT);
+    expect(publicPrompt).toContain("Public-safe provenance from decision metadata.");
+    expect(publicPrompt).not.toMatch(/authenticated|selectedRepos|private-scoring-ai|private-org\/secret-repo/i);
 
     const privateRun = vi.fn(async () => ({ response: "Private summary with authenticated context." }));
     await expect(
@@ -447,6 +449,40 @@ function bundleFixture(): AgentRunBundle {
         scoringModelId: "scoring-ai",
         repoSignalSnapshotIds: [],
         freshnessWarnings: ["fresh enough"],
+        provenance: {
+          publicSafe: {
+            sourceSummary: "Public-safe provenance from decision metadata.",
+            confidence: "medium",
+            freshness: "fresh",
+            sources: [
+              {
+                name: "contributor_decision_pack",
+                source: "snapshot",
+                generatedAt: "2026-05-28T00:00:00.000Z",
+                freshness: "fresh",
+                summary: "Contributor decision pack metadata used for this snapshot.",
+              },
+            ],
+            evidenceGaps: [],
+            warnings: [],
+            assumptions: ["Only metadata evidence is included."],
+            sourceUpload: { mode: "not_applicable", storesRawContents: false },
+          },
+          authenticated: {
+            actorLogin: "oktofeesh1",
+            decisionPackSource: "snapshot",
+            decisionPackGeneratedAt: "2026-05-28T00:00:00.000Z",
+            scoringModelId: "private-scoring-ai",
+            selectedRepos: ["private-org/secret-repo"],
+            signalFidelityStatus: "complete",
+            userSuppliedScenarios: false,
+            userSuppliedScenarioCount: 0,
+            evidenceGraphVersion: 1,
+            openPrMonitorGeneratedAt: null,
+            localRepoFullName: null,
+            localBranchName: null,
+          },
+        },
         payload: {},
         createdAt: "2026-05-28T00:00:00.000Z",
       },

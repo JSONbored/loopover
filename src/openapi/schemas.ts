@@ -2220,6 +2220,46 @@ export const AgentContextSnapshotSchema = z
     repoSignalSnapshotIds: z.array(z.string()),
     scoringModelId: z.string().nullable().optional(),
     freshnessWarnings: z.array(z.string()),
+    provenance: z
+      .object({
+        publicSafe: z.object({
+          sourceSummary: z.string(),
+          confidence: z.enum(["high", "medium", "low"]),
+          freshness: z.enum(["fresh", "stale", "rebuilding", "missing", "degraded", "possibly_stale", "unknown"]),
+          sources: z.array(
+            z.object({
+              name: z.string(),
+              source: z.string().nullable(),
+              generatedAt: z.string().nullable(),
+              freshness: z.enum(["fresh", "stale", "rebuilding", "missing", "degraded", "possibly_stale", "unknown"]),
+              summary: z.string(),
+            }),
+          ),
+          evidenceGaps: z.array(z.string()),
+          warnings: z.array(z.string()),
+          assumptions: z.array(z.string()),
+          sourceUpload: z.object({
+            mode: z.enum(["disabled", "not_applicable"]),
+            storesRawContents: z.literal(false),
+          }),
+        }),
+        authenticated: z.object({
+          actorLogin: z.string().nullable(),
+          decisionPackSource: z.string().nullable(),
+          decisionPackGeneratedAt: z.string().nullable(),
+          scoringModelId: z.string().nullable(),
+          selectedRepos: z.array(z.string()),
+          signalFidelityStatus: z.string().nullable(),
+          userSuppliedScenarios: z.boolean(),
+          userSuppliedScenarioCount: z.number(),
+          evidenceGraphVersion: z.number().nullable(),
+          openPrMonitorGeneratedAt: z.string().nullable(),
+          localRepoFullName: z.string().nullable(),
+          localBranchName: z.string().nullable(),
+        }),
+      })
+      .nullable()
+      .optional(),
     payload: z.record(z.string(), z.unknown()),
     createdAt: z.string().nullable().optional(),
   })

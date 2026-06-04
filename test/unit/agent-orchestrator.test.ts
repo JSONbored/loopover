@@ -12,11 +12,12 @@ import {
   type AgentRunBundle,
 } from "../../src/services/agent-orchestrator";
 import { buildAgentActionExplanationCard } from "../../src/services/agent-action-explanation-card";
+import { publicAgentContextSnapshotProvenance } from "../../src/services/agent-snapshot-provenance";
 import { CONTRIBUTOR_DECISION_PACK_SIGNAL, type ContributorDecisionPack, type RepoOutcomeSummary } from "../../src/services/decision-pack";
 import { buildPublicAgentCommandComment, parseGittensoryMentionCommand } from "../../src/github/commands";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
-import type { AgentRunRecord, JsonValue } from "../../src/types";
+import type { AgentContextSnapshotRecord, AgentRunRecord, JsonValue } from "../../src/types";
 import { nowIso } from "../../src/utils/json";
 import { createTestEnv } from "../helpers/d1";
 
@@ -147,7 +148,35 @@ describe("agent orchestrator", () => {
     expect(bundle.contextSnapshots[0]).toMatchObject({
       scoringModelId: "scoring-1",
       freshnessWarnings: expect.arrayContaining(["we-promise/sure: partial signal coverage", "we-promise/sure: stale signal coverage"]),
+      provenance: {
+        publicSafe: {
+          confidence: "low",
+          freshness: "stale",
+          sourceUpload: { mode: "not_applicable", storesRawContents: false },
+          sources: expect.arrayContaining([
+            expect.objectContaining({ name: "contributor_decision_pack", freshness: "fresh" }),
+            expect.objectContaining({ name: "repo_decision", freshness: "stale" }),
+            expect.objectContaining({ name: "repo_outcome_history", freshness: "missing" }),
+          ]),
+          evidenceGaps: expect.arrayContaining([expect.stringMatching(/repo_outcome_history|Repo-specific contributor outcomes missing/i)]),
+        },
+        authenticated: {
+          actorLogin: "oktofeesh1",
+          selectedRepos: ["we-promise/sure"],
+          scoringModelId: "scoring-1",
+        },
+      },
     });
+    const publicProvenance = publicAgentContextSnapshotProvenance(bundle.contextSnapshots[0]!);
+    expect(JSON.stringify(publicProvenance)).not.toMatch(/authenticated|actorLogin|selectedRepos|wallet|hotkey|reward|scoreability|private reviewability|ranking|priority/i);
+    const sparseSnapshot: AgentContextSnapshotRecord = {
+      id: "ctx-no-provenance",
+      runId: "run-no-provenance",
+      repoSignalSnapshotIds: [],
+      freshnessWarnings: [],
+      payload: {},
+    };
+    expect(publicAgentContextSnapshotProvenance(sparseSnapshot)).toBeNull();
   });
 
   it("threads scoped counterfactual reasons into decision context snapshots", () => {
@@ -682,6 +711,11 @@ describe("agent orchestrator", () => {
     );
     expect(snapshot.payload.evidenceGraph).toMatchObject({ selectedRepos: [expect.objectContaining({ repoFullName: readyDecision.repoFullName })] });
     expect(snapshot.payload.openPrMonitor).toBeNull();
+    expect(snapshot.provenance?.publicSafe).toMatchObject({
+      freshness: "rebuilding",
+      sourceUpload: { mode: "not_applicable", storesRawContents: false },
+      warnings: expect.arrayContaining(["decision pack is stale (age 90s); background rebuild enqueued"]),
+    });
 
     const staleSnapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-2", decisionPackFixture({
       generatedAt,
@@ -690,6 +724,72 @@ describe("agent orchestrator", () => {
     }), []);
     expect(staleSnapshot.freshnessWarnings[0]).toBe("decision pack is stale; rebuild not enqueued");
     expect(staleSnapshot.payload.openPrMonitor).toEqual(approvedPack.openPrMonitor);
+    expect(staleSnapshot.provenance?.publicSafe).toMatchObject({
+      freshness: "stale",
+      evidenceGaps: expect.arrayContaining([expect.stringMatching(/No repo decision matched/i)]),
+    });
+
+    const freshDecision = repoDecision({ repoFullName: "owner/fresh", outcome: { repoFullName: "owner/fresh" } as any });
+    const freshSnapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-3", decisionPackFixture({
+      generatedAt,
+      freshness: "fresh",
+      dataQuality: {
+        signalFidelity: {
+          status: "complete",
+          repoCount: 1,
+          completeRepos: 1,
+          degradedRepos: 0,
+          blockedRepos: 0,
+          partialRepos: [],
+          cappedRepos: [],
+          staleRepos: [],
+          rateLimitedRepos: [],
+        },
+      },
+      repoDecisions: [freshDecision],
+      topActions: [],
+    }), [freshDecision]);
+    expect(freshSnapshot.provenance?.publicSafe).toMatchObject({
+      confidence: "high",
+      freshness: "fresh",
+      sources: expect.arrayContaining([expect.objectContaining({ name: "repo_outcome_history", freshness: "fresh" })]),
+    });
+
+    const missingOfficialDecisions = [
+      repoDecision({ repoFullName: "owner/missing-a", outcome: { repoFullName: "owner/missing-a" } as any }),
+      repoDecision({ repoFullName: "owner/missing-b", outcome: { repoFullName: "owner/missing-b" } as any }),
+    ];
+    const basePack = decisionPackFixture({ generatedAt });
+    const missingOfficialSnapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-4", decisionPackFixture({
+      generatedAt,
+      freshness: "fresh",
+      profile: { ...basePack.profile, source: "github_cache", officialStats: null },
+      repoDecisions: missingOfficialDecisions,
+      topActions: [],
+    }), missingOfficialDecisions);
+    expect(missingOfficialSnapshot.provenance?.publicSafe).toMatchObject({
+      confidence: "medium",
+      evidenceGaps: expect.arrayContaining([expect.stringMatching(/official contributor stats evidence is missing/i)]),
+      sources: expect.arrayContaining([expect.objectContaining({ name: "official_contributor_stats", freshness: "missing" })]),
+    });
+    expect(missingOfficialSnapshot.provenance?.publicSafe.sources.filter((source) => source.name === "contributor_decision_pack")).toHaveLength(1);
+
+    const emptyPortfolioSnapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-5", decisionPackFixture({
+      generatedAt,
+      actionPortfolio: {
+        generatedAt,
+        bucketOrder: ["cleanup"],
+        buckets: [{ bucket: "cleanup", label: "Cleanup", summary: "Only another repo.", actions: [{ repoFullName: "owner/other" }] }],
+        topActions: [{ repoFullName: "owner/other" }],
+        counts: { cleanup: 1 },
+        summary: "Portfolio has one unrelated action.",
+      } as any,
+      repoDecisions: [freshDecision],
+      topActions: [],
+    }), [freshDecision]);
+    expect(emptyPortfolioSnapshot.payload.actionPortfolio).toMatchObject({
+      summary: "No portfolio actions are currently available for the selected repo scope.",
+    });
   });
 
   it("builds deterministic explanation-card fallbacks and public-safe text", () => {
@@ -1047,6 +1147,18 @@ describe("agent orchestrator", () => {
     expect(blockers.actions[0]).toMatchObject({ actionType: "explain_score_blockers", targetRepoFullName: "entrius/allways-ui" });
     expect(JSON.stringify(preflight.actions)).toContain("linked_issue_bounty_historical");
     expect(JSON.stringify(preflight.actions)).toContain("Source upload disabled");
+    expect(preflight.contextSnapshots[0]?.provenance).toMatchObject({
+      publicSafe: {
+        sourceUpload: { mode: "disabled", storesRawContents: false },
+        sources: expect.arrayContaining([expect.objectContaining({ name: "local_branch_metadata", source: "metadata_only" })]),
+      },
+      authenticated: {
+        actorLogin: "oktofeesh1",
+        localRepoFullName: "entrius/allways-ui",
+        localBranchName: "fix-cache-7",
+      },
+    });
+    expect(JSON.stringify(publicAgentContextSnapshotProvenance(preflight.contextSnapshots[0]!))).not.toMatch(/source code|diff|function |wallet|hotkey|reward|scoreability|private reviewability|ranking/i);
   });
 
   it("incorporates aggregate outcome quality into recommendation confidence and evidence", () => {

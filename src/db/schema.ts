@@ -466,6 +466,7 @@ export const agentContextSnapshots = sqliteTable(
     repoSignalSnapshotIdsJson: text("repo_signal_snapshot_ids_json").notNull().default("[]"),
     scoringModelId: text("scoring_model_id"),
     freshnessWarningsJson: text("freshness_warnings_json").notNull().default("[]"),
+    provenanceJson: text("provenance_json"),
     payloadJson: text("payload_json").notNull().default("{}"),
     createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
   },

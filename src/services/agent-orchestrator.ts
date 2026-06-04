@@ -36,6 +36,9 @@ import type {
   AgentActionStatus,
   AgentActionType,
   AgentContextSnapshotRecord,
+  AgentContextSnapshotProvenance,
+  AgentContextSnapshotProvenanceFreshness,
+  AgentContextSnapshotProvenanceSource,
   AgentRunRecord,
   AgentRunStatus,
   AgentSafetyClass,
@@ -304,6 +307,7 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
     scoringModelId: analysis.scorePreview.scoringModelSnapshotId,
     repoSignalSnapshotIds: [],
     freshnessWarnings: [...analysis.baseFreshness.warnings, ...(analysis.dataQuality?.warnings ?? [])],
+    provenance: contextSnapshotProvenanceFromLocalBranch(analysis),
     payload: {
       repoFullName: analysis.repoFullName,
       baseFreshness: analysis.baseFreshness as unknown as JsonValue,
@@ -910,6 +914,182 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function contextSnapshotProvenanceFromPack(pack: ContributorDecisionPack, decisions: RepoDecision[], freshnessWarnings: string[]): AgentContextSnapshotProvenance {
+  const evidence = decisions.map((decision) => decisionPackEvidence(pack, decision, "Decision snapshot provenance from the contributor decision pack."));
+  const evidenceSources =
+    evidence.length > 0
+      ? evidence.flatMap((item) => item.sources).map(snapshotSourceFromEvidenceSource)
+      : [
+          snapshotProvenanceSource("contributor_decision_pack", pack.source, pack.generatedAt, pack.freshness, "Contributor decision pack metadata used for this snapshot."),
+          snapshotProvenanceSource("repo_decision", null, pack.generatedAt, "missing", "No repo decision matched the requested scope."),
+        ];
+  const sourceGaps = evidence.flatMap((item) =>
+    item.sources
+      .filter((source) => source.freshness === "missing" || source.freshness === "unknown")
+      .map((source) => `${source.name}: ${publicSummaryForEvidenceSource(source)}`),
+  );
+  const selectedRepos = decisions.map((decision) => decision.repoFullName);
+  const userSuppliedScenarioCount = evidence.reduce((total, item) => total + item.userSuppliedScenarioCount, 0);
+  return {
+    publicSafe: {
+      sourceSummary:
+        selectedRepos.length > 0
+          ? `Snapshot provenance for ${selectedRepos.length} selected repo decision(s).`
+          : "Snapshot provenance has no selected repo decision for the requested scope.",
+      confidence: aggregateConfidence(evidence.map((item) => item.confidence)),
+      freshness: aggregateFreshness([pack.freshness, ...evidence.map((item) => item.freshness)]),
+      sources: uniqueProvenanceSources(evidenceSources),
+      evidenceGaps: publicProvenanceStrings([
+        ...sourceGaps,
+        ...(selectedRepos.length === 0 ? ["No repo decision matched the requested scope; snapshot provenance records the missing evidence explicitly."] : []),
+        ...evidence.flatMap((item) => [...item.assumptions, ...item.warnings]).filter(isEvidenceGap),
+      ]).slice(0, 12),
+      warnings: publicProvenanceStrings([...freshnessWarnings, ...evidence.flatMap((item) => item.warnings)]).slice(0, 12),
+      assumptions: publicProvenanceStrings(evidence.flatMap((item) => item.assumptions)).slice(0, 12),
+      sourceUpload: { mode: "not_applicable", storesRawContents: false },
+    },
+    authenticated: {
+      actorLogin: pack.login,
+      decisionPackSource: pack.source,
+      decisionPackGeneratedAt: pack.generatedAt,
+      scoringModelId: pack.scoringModelSnapshotId,
+      selectedRepos,
+      signalFidelityStatus: pack.dataQuality.signalFidelity.status,
+      userSuppliedScenarios: userSuppliedScenarioCount > 0,
+      userSuppliedScenarioCount,
+      evidenceGraphVersion: pack.evidenceGraph?.version ?? null,
+      openPrMonitorGeneratedAt: pack.openPrMonitor?.generatedAt ?? null,
+      localRepoFullName: null,
+      localBranchName: null,
+    },
+  };
+}
+
+function contextSnapshotProvenanceFromLocalBranch(analysis: LocalBranchActionAnalysis): AgentContextSnapshotProvenance {
+  const evidence = localBranchEvidence(analysis, "Local branch snapshot provenance from structured metadata.");
+  return {
+    publicSafe: {
+      sourceSummary: "Snapshot provenance for local branch metadata analysis.",
+      confidence: evidence.confidence,
+      freshness: evidence.freshness,
+      sources: uniqueProvenanceSources([
+        snapshotProvenanceSource("local_branch_metadata", "metadata_only", analysis.generatedAt, evidence.freshness, "Structured local branch metadata used; source upload disabled."),
+        snapshotProvenanceSource("base_branch_freshness", "local_git_metadata", analysis.generatedAt, localFreshnessStatus(analysis.baseFreshness.status), "Base/head freshness metadata used for this snapshot."),
+        snapshotProvenanceSource(
+          "github_branch_status",
+          analysis.githubBranchStatus.source,
+          analysis.generatedAt,
+          analysis.githubBranchStatus.status === "unknown" ? "unknown" : "fresh",
+          "Cached GitHub branch status metadata used when available.",
+        ),
+        snapshotProvenanceSource(
+          "branch_eligibility",
+          analysis.branchEligibility.source,
+          analysis.generatedAt,
+          analysis.branchEligibility.evidence === "missing" ? "missing" : analysis.branchEligibility.stale ? "stale" : "fresh",
+          "Branch eligibility metadata used when available.",
+        ),
+      ]),
+      evidenceGaps: publicProvenanceStrings([
+        ...evidence.assumptions.filter(isEvidenceGap),
+        ...evidence.warnings.filter(isEvidenceGap),
+      ]).slice(0, 12),
+      warnings: publicProvenanceStrings(evidence.warnings).slice(0, 12),
+      assumptions: publicProvenanceStrings(evidence.assumptions).slice(0, 12),
+      sourceUpload: { mode: "disabled", storesRawContents: false },
+    },
+    authenticated: {
+      actorLogin: analysis.login,
+      decisionPackSource: null,
+      decisionPackGeneratedAt: null,
+      scoringModelId: analysis.scorePreview.scoringModelSnapshotId,
+      selectedRepos: [analysis.repoFullName],
+      signalFidelityStatus: analysis.dataQuality?.status ?? null,
+      userSuppliedScenarios: evidence.userSuppliedScenarios,
+      userSuppliedScenarioCount: evidence.userSuppliedScenarioCount,
+      evidenceGraphVersion: null,
+      openPrMonitorGeneratedAt: null,
+      localRepoFullName: analysis.repoFullName,
+      localBranchName: analysis.branchName ?? null,
+    },
+  };
+}
+
+function aggregateConfidence(values: RecommendationConfidence[]): RecommendationConfidence {
+  if (values.length === 0) return "medium";
+  return values.reduce((confidence, value) => lowerConfidence(confidence, value), "high" as RecommendationConfidence);
+}
+
+function aggregateFreshness(values: Array<RecommendationFreshness | AgentContextSnapshotProvenanceFreshness>): AgentContextSnapshotProvenanceFreshness {
+  const rank: Record<AgentContextSnapshotProvenanceFreshness, number> = {
+    fresh: 0,
+    unknown: 1,
+    possibly_stale: 2,
+    degraded: 3,
+    rebuilding: 4,
+    stale: 5,
+    missing: 6,
+  };
+  return values.reduce(
+    (freshness, value) => (rank[value] > rank[freshness] ? value : freshness),
+    "fresh" as AgentContextSnapshotProvenanceFreshness,
+  );
+}
+
+function snapshotSourceFromEvidenceSource(source: RecommendationEvidenceSource): AgentContextSnapshotProvenanceSource {
+  return snapshotProvenanceSource(source.name, source.source, source.generatedAt, source.freshness, publicSummaryForEvidenceSource(source));
+}
+
+function snapshotProvenanceSource(
+  name: string,
+  source: string | null,
+  generatedAt: string | null,
+  freshness: AgentContextSnapshotProvenanceFreshness,
+  summary: string,
+): AgentContextSnapshotProvenanceSource {
+  return {
+    name,
+    source,
+    generatedAt,
+    freshness,
+    summary: publicProvenanceText(summary),
+  };
+}
+
+function publicSummaryForEvidenceSource(source: RecommendationEvidenceSource): string {
+  return `${source.name.replace(/_/g, " ")} evidence is ${source.freshness}.`;
+}
+
+function uniqueProvenanceSources(sources: AgentContextSnapshotProvenanceSource[]): AgentContextSnapshotProvenanceSource[] {
+  const seen = new Set<string>();
+  const unique: AgentContextSnapshotProvenanceSource[] = [];
+  for (const source of sources) {
+    const key = [source.name, source.source, source.generatedAt, source.freshness].join(":");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(source);
+  }
+  return unique.slice(0, 12);
+}
+
+function publicProvenanceStrings(values: string[]): string[] {
+  return uniqueStrings(values.map(publicProvenanceText));
+}
+
+function publicProvenanceText(value: string): string {
+  return value
+    .replace(
+      /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw trust scores?|trust scores?|scoreability|private reviewability|private scoreability|public score estimates?|estimated scores?|score estimates?|rewards?|reward estimates?|payouts?|farming|private rankings?|rankings?)\b/gi,
+      "restricted context",
+    )
+    .replace(/\bpriority\s+\d+\.?/gi, "decision metadata")
+    .trim();
+}
+
+function isEvidenceGap(value: string): boolean {
+  return /\b(missing|unavailable|unknown|blocked|absent|limited|sparse|no .*available)\b/i.test(value);
+}
+
 function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, decisions: RepoDecision[]): AgentContextSnapshotRecord {
   const fidelity = pack.dataQuality.signalFidelity;
   const ageSeconds = pack.snapshotAgeSeconds ?? null;
@@ -934,6 +1114,7 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
     repoSignalSnapshotIds: [],
     scoringModelId: pack.scoringModelSnapshotId,
     freshnessWarnings: warnings,
+    provenance: contextSnapshotProvenanceFromPack(pack, decisions, warnings),
     payload: {
       login: pack.login,
       source: pack.source,

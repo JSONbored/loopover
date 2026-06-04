@@ -2,6 +2,7 @@ import { recordAiUsageEvent, recordAuditEvent, sumAiEstimatedNeuronsSince } from
 import { sanitizePublicComment } from "../queue-intelligence";
 import type { JsonValue } from "../types";
 import type { AgentRunBundle } from "./agent-orchestrator";
+import { publicAgentContextSnapshotProvenance } from "./agent-snapshot-provenance";
 
 const PR_INTELLIGENCE_MARKER = "<!-- gittensory-pr-intelligence -->";
 
@@ -125,6 +126,9 @@ function compactAgentSignalBundle(bundle: AgentRunBundle, visibility: AiSummaryV
       };
     }),
     freshnessWarnings: bundle.contextSnapshots.flatMap((snapshot) => snapshot.freshnessWarnings).slice(0, 8),
+    snapshotProvenance: publicMode
+      ? bundle.contextSnapshots.map(publicAgentContextSnapshotProvenance).filter((provenance): provenance is NonNullable<typeof provenance> => Boolean(provenance)).slice(0, 3)
+      : bundle.contextSnapshots.map((snapshot) => snapshot.provenance).filter((provenance): provenance is NonNullable<typeof provenance> => Boolean(provenance)).slice(0, 3),
   } as Record<string, JsonValue>;
 }
 

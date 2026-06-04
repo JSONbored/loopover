@@ -1808,12 +1808,17 @@ function normalizeRecentMergedOutcome(
   const association = typeof record.payload.author_association === "string" ? (record.payload.author_association as string) : undefined;
   const fileRecords = filesByNumber.get(record.number) ?? [];
   const reviewRecords = reviewsByNumber.get(record.number) ?? [];
+  // Conservative fallback: when author_association is absent or unrecognised, treat as maintainer
+  // lane so the record is excluded from outside-contributor statistics rather than silently
+  // inflating the outside-contributor merge rate with unclassifiable data.
+  const knownOutsider = association === "NONE" || association === "CONTRIBUTOR" || association === "FIRST_TIME_CONTRIBUTOR" || association === "FIRST_TIMER";
+  const maintainerLane = isMaintainerAssociation(association) || !knownOutsider;
   return {
     number: record.number,
     bucket: "merged",
     decided: true,
     merged: true,
-    maintainerLane: isMaintainerAssociation(association),
+    maintainerLane,
     linked: record.linkedIssues.length > 0,
     labels: [...new Set(record.labels)].sort(),
     filePaths: [...new Set([...fileRecords.map((file) => file.path), ...record.changedFiles])].sort(),
@@ -2027,18 +2032,22 @@ export function buildRepoOutcomePatterns(args: {
   for (const state of args.detailSyncStates ?? []) {
     if (state.repoFullName.toLowerCase() === repoKey) detailByNumber.set(state.pullNumber, state);
   }
-  const withFileDetail = analyzed.filter((pr) => Boolean(detailByNumber.get(pr.number)?.filesSyncedAt)).length;
-  const withReviewDetail = analyzed.filter((pr) => Boolean(detailByNumber.get(pr.number)?.reviewsSyncedAt)).length;
-  const withCheckDetail = analyzed.filter((pr) => Boolean(detailByNumber.get(pr.number)?.checksSyncedAt)).length;
+  // evidenceCompleteness tracks detail-sync progress for pull_requests records only — merged-only records from
+  // recent_merged_pull_requests are never eligible for detail sync and must not dilute the denominator.
+  const syncEligible = analyzed.filter((pr) => seenNumbers.has(pr.number));
+  const withFileDetail = syncEligible.filter((pr) => Boolean(detailByNumber.get(pr.number)?.filesSyncedAt)).length;
+  const withReviewDetail = syncEligible.filter((pr) => Boolean(detailByNumber.get(pr.number)?.reviewsSyncedAt)).length;
+  const withCheckDetail = syncEligible.filter((pr) => Boolean(detailByNumber.get(pr.number)?.checksSyncedAt)).length;
   const fullyDecidedWithDetail = decided.filter((pr) => {
+    if (!seenNumbers.has(pr.number)) return false;
     const state = detailByNumber.get(pr.number);
     return Boolean(state?.filesSyncedAt && state?.reviewsSyncedAt && state?.checksSyncedAt);
   }).length;
-  const filesCompletenessRatio = rate(withFileDetail, analyzed.length);
-  const reviewsCompletenessRatio = rate(withReviewDetail, analyzed.length);
-  const checksCompletenessRatio = rate(withCheckDetail, analyzed.length);
+  const filesCompletenessRatio = rate(withFileDetail, syncEligible.length);
+  const reviewsCompletenessRatio = rate(withReviewDetail, syncEligible.length);
+  const checksCompletenessRatio = rate(withCheckDetail, syncEligible.length);
   const completenessStatus: RepoOutcomeEvidenceCompleteness["status"] =
-    analyzed.length === 0 || (withFileDetail === 0 && withReviewDetail === 0 && withCheckDetail === 0)
+    syncEligible.length === 0 || (withFileDetail === 0 && withReviewDetail === 0 && withCheckDetail === 0)
       ? "missing"
       : filesCompletenessRatio >= 0.85 && reviewsCompletenessRatio >= 0.85 && checksCompletenessRatio >= 0.85
         ? "complete"

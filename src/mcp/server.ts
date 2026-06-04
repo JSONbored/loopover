@@ -252,6 +252,104 @@ const variantsShape = {
   variants: z.array(z.object(scorePreviewShape)).min(1).max(10),
 };
 
+// ── MCP tool output schemas ────────────────────────────────────────────────
+// Structured-output metadata for machine-readable tools so modern MCP clients
+// can discover and validate Gittensory responses. Schemas declare documented
+// top-level fields; complex/nullable/variant fields use a permissive type so
+// validation never rejects a real response (the SDK strips unknown keys). All
+// fields are optional because several tools return either a result payload or a
+// `{ status: "not_found" | ... }` / refresh envelope.
+const repoContextOutputSchema = {
+  repoFullName: z.string().optional(),
+  repo: z.unknown().optional(),
+  lane: z.unknown().optional(),
+  queueHealth: z.unknown().optional(),
+  collisions: z.unknown().optional(),
+  configQuality: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+
+const freshnessResponseOutputSchema = {
+  status: z.string().optional(),
+  repoFullName: z.string().optional(),
+  source: z.string().optional(),
+  freshness: z.string().optional(),
+  generatedAt: z.string().optional(),
+  report: z.unknown().optional(),
+};
+
+const contributorProfileOutputSchema = {
+  login: z.string().optional(),
+  github: z.unknown().optional(),
+  source: z.unknown().optional(),
+  repoStats: z.unknown().optional(),
+  trustSignals: z.unknown().optional(),
+};
+
+const decisionPackOutputSchema = {
+  status: z.string().optional(),
+  login: z.string().optional(),
+  source: z.string().optional(),
+  freshness: z.string().optional(),
+  generatedAt: z.string().optional(),
+  rebuildEnqueued: z.boolean().optional(),
+  summary: z.string().optional(),
+  repoDecisions: z.unknown().optional(),
+  topActions: z.unknown().optional(),
+};
+
+const openPrMonitorOutputSchema = {
+  login: z.string().optional(),
+  generatedAt: z.string().optional(),
+  openPrCount: z.number().optional(),
+  registeredRepoCount: z.number().optional(),
+  cleanupFirst: z.boolean().optional(),
+  summary: z.string().optional(),
+  guidance: z.unknown().optional(),
+  pendingScenarios: z.unknown().optional(),
+  pullRequests: z.unknown().optional(),
+};
+
+const explainRepoDecisionOutputSchema = {
+  status: z.string().optional(),
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  source: z.string().optional(),
+  freshness: z.string().optional(),
+  rebuildEnqueued: z.boolean().optional(),
+  decision: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+
+const registryChangesOutputSchema = {
+  generatedAt: z.string().optional(),
+  previous: z.unknown().optional(),
+  current: z.unknown().optional(),
+  added: z.unknown().optional(),
+  removed: z.unknown().optional(),
+  changed: z.unknown().optional(),
+  warnings: z.unknown().optional(),
+};
+
+const upstreamDriftOutputSchema = {
+  generatedAt: z.string().optional(),
+  status: z.string().optional(),
+  latestCommitSha: z.string().nullable().optional(),
+  latestRulesetId: z.string().nullable().optional(),
+  highestSeverity: z.string().nullable().optional(),
+  affectedAreas: z.unknown().optional(),
+  openReportCount: z.number().optional(),
+  reports: z.unknown().optional(),
+};
+
+const localStatusOutputSchema = {
+  apiAvailable: z.boolean().optional(),
+  sourceUploadDefault: z.boolean().optional(),
+  supportedEndpoint: z.string().optional(),
+  supportedTools: z.unknown().optional(),
+};
+
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
   const identity = await authenticateMcpRequest(c);
@@ -265,6 +363,7 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
     const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
     await recordProductUsageEvent(c.env, {
       surface: "mcp",
+      role: "miner",
       eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
       route: "/mcp",
       actor: identity.actor,
@@ -279,6 +378,7 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   } catch (error) {
     await recordProductUsageEvent(c.env, {
       surface: "mcp",
+      role: "miner",
       eventName: typeof usageMetadata.toolName === "string" ? "mcp_tool_called" : "mcp_request",
       route: "/mcp",
       actor: identity.actor,
@@ -324,6 +424,7 @@ export class GittensoryMcp {
       {
         description: "Return Gittensory repo context: registration, lane, queue health, collisions, and config quality.",
         inputSchema: ownerRepoShape,
+        outputSchema: repoContextOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoContext(input)),
     );
@@ -333,6 +434,7 @@ export class GittensoryMcp {
       {
         description: "Return the cached or freshly-computed maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
         inputSchema: ownerRepoShape,
+        outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getBurdenForecast(input)),
     );
@@ -342,6 +444,7 @@ export class GittensoryMcp {
       {
         description: "Return cached or freshly-computed per-repo accepted/rejected PR outcome patterns: what maintainers actually merge or close, separated from maintainer-lane activity, with a freshness marker and explicit evidence-completeness.",
         inputSchema: ownerRepoShape,
+        outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoOutcomePatterns(input)),
     );
@@ -351,6 +454,7 @@ export class GittensoryMcp {
       {
         description: "Return an evidence-backed Gittensory contributor profile for a GitHub login.",
         inputSchema: loginShape,
+        outputSchema: contributorProfileOutputSchema,
       },
       async (input) => this.toolResult(await this.getContributorProfile(input.login)),
     );
@@ -360,6 +464,7 @@ export class GittensoryMcp {
       {
         description: "Return the canonical private contributor decision pack for a GitHub login.",
         inputSchema: loginShape,
+        outputSchema: decisionPackOutputSchema,
       },
       async (input) => this.toolResult(await this.getDecisionPack(input.login)),
     );
@@ -370,6 +475,7 @@ export class GittensoryMcp {
         description:
           "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
         inputSchema: loginShape,
+        outputSchema: openPrMonitorOutputSchema,
       },
       async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
     );
@@ -379,6 +485,7 @@ export class GittensoryMcp {
       {
         description: "Return the contributor/repo decision from the canonical decision pack.",
         inputSchema: loginRepoShape,
+        outputSchema: explainRepoDecisionOutputSchema,
       },
       async (input) => this.toolResult(await this.explainRepoDecision(input)),
     );
@@ -406,6 +513,7 @@ export class GittensoryMcp {
       {
         description: "Return the diff between the latest cached Gittensor registry snapshots.",
         inputSchema: {},
+        outputSchema: registryChangesOutputSchema,
       },
       async () => this.toolResult(await this.getRegistryChanges()),
     );
@@ -415,6 +523,7 @@ export class GittensoryMcp {
       {
         description: "Return private upstream Gittensor ruleset drift status, including stale/drift warnings for MCP planning.",
         inputSchema: {},
+        outputSchema: upstreamDriftOutputSchema,
       },
       async () => this.toolResult(await this.getUpstreamDrift()),
     );
@@ -424,6 +533,7 @@ export class GittensoryMcp {
       {
         description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
         inputSchema: ownerRepoShape,
+        outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getIssueQuality(input)),
     );
@@ -469,6 +579,7 @@ export class GittensoryMcp {
       {
         description: "Return Gittensory local-MCP contract status and privacy defaults.",
         inputSchema: {},
+        outputSchema: localStatusOutputSchema,
       },
       async () =>
         this.toolResult({
@@ -707,6 +818,87 @@ export class GittensoryMcp {
             content: {
               type: "text",
               text: `Use gittensory_get_repo_context and gittensory_get_issue_quality for ${owner}/${repo} to plan an onboarding path for new outside contributors. Identify good-first-issue candidates, recommend a contribution lane (direct PR or issue-discovery), and outline what a contributor needs to know before opening their first PR. Do not create issues, post comments, or take any automated action — present the onboarding plan for the owner to review and publish manually.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    // ── Miner planning prompts ───────────────────────────────────────────
+    server.registerPrompt(
+      "gittensory_select_contribution_issue",
+      {
+        title: "Select contribution issue",
+        description: "Identify the best open issue for a contributor to work on based on lane fit, issue quality, and queue signals. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+      },
+      ({ owner, repo, login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_issue_quality and gittensory_explain_repo_decision for ${login} on ${owner}/${repo} to identify which open issues are the best fit. Rank candidates by actionability, lane alignment, and queue pressure. Present a short ranked list with a brief rationale for each. Do not create issues, file comments, or take any GitHub action — this is a planning aid for the contributor to decide from.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_draft_contribution_pr_packet",
+      {
+        title: "Draft contribution PR packet",
+        description: "Draft a public-safe PR submission packet for a planned contribution without uploading source code. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+      },
+      ({ owner, repo, login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_get_decision_pack for ${login} to prepare a public-safe PR packet for work on ${owner}/${repo}. The packet should include lane fit, recommended next steps, and any preflight considerations the contributor should address before opening the PR. Do not open a PR, post any comment, or take any GitHub action — present the packet for the contributor to review and submit manually.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_preflight_contribution_branch",
+      {
+        title: "Preflight contribution branch",
+        description: "Assess branch readiness before opening a PR using cached lane and preflight signals. Advisory only — no GitHub writes.",
+        argsSchema: { ...ownerRepoShape, login: z.string().min(1) },
+      },
+      ({ owner, repo, login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_get_repo_context and gittensory_explain_repo_decision for ${login} on ${owner}/${repo} to assess whether the planned branch is ready to be submitted as a PR. Check lane fit, duplicate risk, linked issue coverage, and any signals that suggest the branch needs more work. Present a preflight summary the contributor can act on before opening the PR. Do not open a PR, push any branch, or take any GitHub action.`,
+            },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "gittensory_plan_cleanup_first",
+      {
+        title: "Plan cleanup-first work",
+        description: "Identify open PRs to address before starting new work to reduce queue pressure and improve lane fit. Advisory only — no GitHub writes.",
+        argsSchema: { login: z.string().min(1) },
+      },
+      ({ login }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Use gittensory_monitor_open_prs and gittensory_get_decision_pack for ${login} to identify which open PRs to address before starting new contribution work. Surface PRs with failing checks, pending review comments, stale queue pressure, or duplicate risk. Recommend an ordered cleanup list with a brief rationale for each item. Do not close PRs, post comments, or take any GitHub action — present the plan for the contributor to execute manually.`,
             },
           },
         ],

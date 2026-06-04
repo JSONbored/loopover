@@ -1,4 +1,9 @@
-import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
+import type { CommandAuthorizationRole, IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
+import {
+  evaluateCommandAuthorization,
+  summarizeCommandAuthorizationPolicy,
+  type CommandAuthorizationDecision,
+} from "../settings/command-authorization";
 import { nowIso } from "../utils/json";
 import {
   buildCollisionReport,
@@ -112,6 +117,9 @@ export type PublicSurfaceSample = {
   body?: string | null | undefined;
   labels?: string[] | undefined;
   linkedIssues?: number[] | undefined;
+  commandName?: string | undefined;
+  commenterLogin?: string | null | undefined;
+  commenterAssociation?: string | null | undefined;
 };
 
 export type InstallationHealthSummary = {
@@ -120,6 +128,39 @@ export type InstallationHealthSummary = {
   missingPermissions: string[];
   missingEvents: string[];
   permissionRemediation: Array<{ permission: string; requiredAccess: string; currentAccess: string; ok: boolean; action: string }>;
+};
+
+export type RepoInstallPreviewStatus = "ready" | "needs_attention" | "blocked";
+
+export type RepoInstallPreviewChecklistItem = {
+  id: string;
+  category: "permissions" | "public_outputs" | "private_context" | "command_authorization" | "audit" | "sanitizer" | "manual_control";
+  status: RepoInstallPreviewStatus;
+  label: string;
+  summary: string;
+  action: string;
+};
+
+export type RepoInstallPreview = {
+  status: RepoInstallPreviewStatus;
+  summary: string;
+  readScope: string[];
+  computedContext: string[];
+  previewBehavior: string[];
+  permissions: {
+    status: RepoInstallPreviewStatus;
+    required: string[];
+    missing: string[];
+    missingEvents: string[];
+    summary: string;
+  };
+  publicOutputs: string[];
+  privateOnlyContext: string[];
+  commandAuthorization: string[];
+  auditBehavior: string[];
+  sanitizerBoundaries: string[];
+  manualControls: string[];
+  checklist: RepoInstallPreviewChecklistItem[];
 };
 
 export type RepoSettingsPreview = {
@@ -136,6 +177,16 @@ export type RepoSettingsPreview = {
     createMissingLabel: boolean;
     includeMaintainerAuthors: boolean;
     requireLinkedIssue: boolean;
+    commandAuthorization: {
+      defaultAllowed: CommandAuthorizationRole[];
+      commandOverrides: Array<{ command: string; allowedRoles: CommandAuthorizationRole[] }>;
+    };
+  };
+  commandAuthorizationPreview: {
+    commandName: string;
+    commenterLogin: string;
+    commenterAssociation: string;
+    decision: CommandAuthorizationDecision;
   };
   installation: InstallationHealthSummary | null;
   sample: {
@@ -151,6 +202,7 @@ export type RepoSettingsPreview = {
   previewComment: string | null;
   appliedLabel: string | null;
   checkRun: { willCreate: boolean; title: string; detailLevel: RepositorySettings["checkRunDetailLevel"] } | null;
+  installPreview: RepoInstallPreview;
   warnings: string[];
   summary: string;
 };
@@ -192,6 +244,29 @@ export function buildRepoSettingsPreview(args: {
     : null;
 
   const warnings = buildWarnings(settings, decision, args.installation);
+  const commandName = args.sample.commandName?.trim() || "preflight";
+  const commenterLogin = args.sample.commenterLogin?.trim() || sample.authorLogin;
+  const commenterAssociation = args.sample.commenterAssociation || sample.authorAssociation;
+  const commandAuthorizationPreview = {
+    commandName,
+    commenterLogin,
+    commenterAssociation,
+    decision: evaluateCommandAuthorization({
+      policy: settings.commandAuthorization,
+      commandName,
+      commenterLogin,
+      commenterAssociation,
+      pullRequestAuthorLogin: sample.authorLogin,
+      minerStatus: sample.minerStatus,
+    }),
+  };
+  const installPreview = buildRepoInstallPreview({
+    repo,
+    settings,
+    installation: args.installation,
+    decision,
+    appliedLabel: decision.willLabel ? settings.gittensorLabel : null,
+  });
 
   return {
     repoFullName,
@@ -207,13 +282,16 @@ export function buildRepoSettingsPreview(args: {
       createMissingLabel: settings.createMissingLabel,
       includeMaintainerAuthors: settings.includeMaintainerAuthors,
       requireLinkedIssue: settings.requireLinkedIssue,
+      commandAuthorization: summarizeCommandAuthorizationPolicy(settings.commandAuthorization),
     },
+    commandAuthorizationPreview,
     installation: args.installation,
     sample,
     decision,
     previewComment,
     appliedLabel: decision.willLabel ? settings.gittensorLabel : null,
     checkRun: decision.willCheckRun ? { willCreate: true, title: "Gittensory context posted", detailLevel: settings.checkRunDetailLevel } : null,
+    installPreview,
     warnings,
     summary: decision.skipped
       ? `Sample PR would be skipped: ${decision.summary}`
@@ -241,6 +319,175 @@ function buildWarnings(settings: RepositorySettings, decision: PublicSurfaceDeci
     warnings.push(`Installation status is ${installation.status}; review the installation health endpoint for remediation steps.`);
   }
   return warnings;
+}
+
+function buildRepoInstallPreview(args: {
+  repo: RepositoryRecord | null;
+  settings: RepositorySettings;
+  installation: InstallationHealthSummary | null;
+  decision: PublicSurfaceDecision;
+  appliedLabel: string | null;
+}): RepoInstallPreview {
+  const required = requiredInstallPermissions(args.settings, args.decision);
+  const missing = activeMissingPermissions(args.settings, args.decision, args.installation);
+  const missingEvents = args.installation?.missingEvents ?? [];
+  const permissionStatus: RepoInstallPreviewStatus = !args.installation || args.installation.status === "broken" ? "blocked" : missing.length > 0 || missingEvents.length > 0 || args.installation.status === "needs_attention" ? "needs_attention" : "ready";
+  const publicOutputStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" ? "needs_attention" : "ready";
+  const commandAuthorizationStatus: RepoInstallPreviewStatus = !args.installation ? "blocked" : new Set(args.installation.missingPermissions).has("issues") ? "needs_attention" : "ready";
+  const manualControlStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" ? "needs_attention" : "ready";
+  const checklist: RepoInstallPreviewChecklistItem[] = [
+    {
+      id: "permissions",
+      category: "permissions",
+      status: permissionStatus,
+      label: "Permissions and events",
+      summary: permissionSummary(args.installation, missing, missingEvents),
+      action: permissionStatus === "ready" ? "No permission change is needed for this previewed behavior." : "Refresh installation health, then approve the missing permission or webhook event before enabling public output.",
+    },
+    {
+      id: "public-outputs",
+      category: "public_outputs",
+      status: publicOutputStatus,
+      label: "Public outputs",
+      summary: publicOutputSummary(args.decision),
+      action: publicOutputStatus === "ready" ? "Review the rendered public preview before enabling this repo." : "Review all-PR mode carefully; confirmed-miner-only output is quieter for first enablement.",
+    },
+    {
+      id: "private-context",
+      category: "private_context",
+      status: "ready",
+      label: "Private-only context",
+      summary: "Decision packs, blocker detail, maintainer packet evidence, and scoring evidence stay on authenticated API or MCP surfaces.",
+      action: "Keep private evidence out of public issue bodies, PR bodies, comments, and copied snippets.",
+    },
+    {
+      id: "command-authorization",
+      category: "command_authorization",
+      status: commandAuthorizationStatus,
+      label: "Command authorization",
+      summary: "Public command responses require a maintainer or confirmed PR author; maintainer queue commands require owner, member, or collaborator context.",
+      action: commandAuthorizationStatus === "ready" ? "Use command previews to confirm actor and permission behavior before relying on repo commands." : "Restore Issues: write before enabling public command responses.",
+    },
+    {
+      id: "audit-behavior",
+      category: "audit",
+      status: "ready",
+      label: "Audit behavior",
+      summary: "This preview is read-only; live webhook skips, command handling, auth, and usage paths are recorded through audit or product-usage logs.",
+      action: "Use preview output for review; use live audit records for production behavior after enablement.",
+    },
+    {
+      id: "sanitizer-boundaries",
+      category: "sanitizer",
+      status: "ready",
+      label: "Sanitizer boundaries",
+      summary: "Public comments and copied snippets are sanitized before they leave the Worker.",
+      action: "Private evidence remains authenticated-only and should not be copied into public surfaces.",
+    },
+    {
+      id: "manual-controls",
+      category: "manual_control",
+      status: manualControlStatus,
+      label: "Manual controls",
+      summary: "Public surface mode, comments, labels, check runs, maintainer-author inclusion, and linked-issue requirements remain repo-controlled settings.",
+      action: manualControlStatus === "ready" ? "Enable only the specific public surface you want after previewing it." : "Switch away from all-PR mode unless broad public output is intentional.",
+    },
+  ];
+  const status = checklist.some((item) => item.status === "blocked") ? "blocked" : checklist.some((item) => item.status === "needs_attention") ? "needs_attention" : "ready";
+
+  return {
+    status,
+    summary:
+      status === "ready"
+        ? "Install preview is ready for maintainer review before enabling repo commands."
+        : status === "blocked"
+          ? "Install preview has a blocking setup gap before repo commands should be enabled."
+          : "Install preview is usable, but one or more setup details need maintainer attention.",
+    readScope: [
+      "Cached repository metadata, issues, pull requests, labels, linked issues, repo settings, and installation health.",
+      args.repo?.isInstalled ? "GitHub App installation metadata for the selected repository." : "No GitHub App installation metadata is linked to this repository yet.",
+    ],
+    computedContext: [
+      "Public surface decision for comment, label, check-run, or skip behavior.",
+      "Queue, collision, contributor profile, and preflight context for the sample public preview.",
+    ],
+    previewBehavior: [
+      "The dry-run preview does not create GitHub comments, labels, check runs, or installation changes.",
+      "A public comment body is rendered only when current settings would comment for the sample PR.",
+    ],
+    permissions: {
+      status: permissionStatus,
+      required,
+      missing,
+      missingEvents,
+      summary: permissionSummary(args.installation, missing, missingEvents),
+    },
+    publicOutputs: publicOutputsFor(args.decision, args.appliedLabel),
+    privateOnlyContext: [
+      "Decision packs, blocker details, maintainer packet evidence, and scoring evidence stay authenticated-only.",
+      "This preview uses cached metadata and the supplied sample PR fields; it does not upload repository source.",
+    ],
+    commandAuthorization: [
+      "Maintainer-only commands require owner, member, or collaborator context.",
+      "Contributor-invoked public commands require the commenter to be the confirmed PR author.",
+      "Private API commands require authenticated control-panel access and do not post public GitHub output.",
+    ],
+    auditBehavior: [
+      "This preview is read-only and does not mutate GitHub.",
+      "Live webhook skips, command handling, miner-detection fallbacks, auth, and usage paths are audit or product-usage logged.",
+    ],
+    sanitizerBoundaries: [
+      "Public GitHub comments and copied snippets are sanitized before posting.",
+      "Credential/key material, compensation estimates, trust metrics, score-prediction claims, private review evidence, private scoring evidence, and gaming language stay out of public output.",
+      "Private evidence is not copied into public comments, issue bodies, PR bodies, or extension public panels.",
+    ],
+    manualControls: [
+      "Public surface mode, comment mode, label name, check-run mode, maintainer-author inclusion, and linked-issue requirements remain repo settings.",
+      "Maintainers preview first, then enable the specific public output they want.",
+    ],
+    checklist,
+  };
+}
+
+function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {
+  const permissions = new Set(["metadata: read", "pull_requests: read"]);
+  if (decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings)) permissions.add("issues: write");
+  if (decision.willCheckRun || settings.checkRunMode === "enabled") permissions.add("checks: write");
+  return [...permissions];
+}
+
+function activeMissingPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision, installation: InstallationHealthSummary | null): string[] {
+  if (!installation) return [];
+  const missing = new Set(installation.missingPermissions);
+  const active: string[] = [];
+  if ((decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings)) && missing.has("issues")) active.push("issues");
+  if ((decision.willCheckRun || settings.checkRunMode === "enabled") && missing.has("checks")) active.push("checks");
+  return active;
+}
+
+function permissionSummary(installation: InstallationHealthSummary | null, missing: string[], missingEvents: string[]): string {
+  if (!installation) return "No installation health is cached for this repository.";
+  if (installation.status === "broken") return "Installation health is broken and needs recovery before enablement.";
+  if (missing.length > 0 || missingEvents.length > 0) {
+    return `Installation needs attention: ${[missing.length > 0 ? `missing permission(s) ${missing.join(", ")}` : "", missingEvents.length > 0 ? `missing webhook event(s) ${missingEvents.join(", ")}` : ""].filter(Boolean).join("; ")}.`;
+  }
+  if (installation.status === "needs_attention") return "Installation health needs attention; review remediation before enabling public output.";
+  return "Required permissions and webhook events are ready for the previewed behavior.";
+}
+
+function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string | null): string[] {
+  if (decision.skipped) return [`No public output for this sample: ${decision.summary}`];
+  const outputs = [
+    ...(decision.willComment ? ["One sanitized sticky PR comment."] : []),
+    ...(decision.willLabel ? [`Configured label "${appliedLabel ?? "gittensor"}".`] : []),
+    ...(decision.willCheckRun ? ["Minimal GitHub check run."] : []),
+  ];
+  return outputs.length > 0 ? outputs : ["No public comment, label, or check run for this sample."];
+}
+
+function publicOutputSummary(decision: PublicSurfaceDecision): string {
+  if (decision.skipped) return `Current sample is skipped: ${decision.summary}`;
+  return decision.actions.includes("none") ? "The sample qualifies, but no public output action is enabled." : `Current sample would create: ${decision.actions.join(", ")}.`;
 }
 
 function buildSamplePreviewComment(args: {

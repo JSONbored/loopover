@@ -22,7 +22,7 @@ import {
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { getOrCreateScoringModelSnapshot } from "../scoring/model";
-import { loadContributorDecisionPackForServing, repoDecisionFromPack, type ActionPortfolio, type ActionPortfolioBucketName, type ContributorDecisionPack, type DecisionAction, type RepoDecision } from "./decision-pack";
+import { loadContributorDecisionPackForServing, repoDecisionFromPack, type ActionPortfolio, type ActionPortfolioBucketName, type ContributorDecisionPack, type DecisionAction, type RepoDecision, type RepoOutcomeSummary } from "./decision-pack";
 import { loadOrComputeIssueQualityResponse } from "./issue-quality";
 import { summarizeAgentBundleWithAi } from "./ai-summaries";
 import { buildContributorFit, buildContributorOutcomeHistory, buildContributorProfile, buildContributorScoringProfile } from "../signals/engine";
@@ -30,6 +30,7 @@ import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { withAgentActionExplanationCard } from "./agent-action-explanation-card";
+import { attachRecommendationSnapshots } from "./recommendation-snapshots";
 import type {
   AgentActionRecord,
   AgentActionStatus,
@@ -262,10 +263,11 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
     kind === "explain_blockers"
       ? buildBlockerActions(run, pack, decisions, { allowFallback: allowCrossRepoFallback })
       : buildDecisionActions(run, pack, scopedDecisionActions);
-  const contexts = [contextSnapshotFromPack(run.id, pack, decisions)];
-  const selectedActionPortfolio = contexts[0]?.payload.actionPortfolio ?? null;
-  await replaceAgentActions(env, run.id, actions);
-  await persistAgentContextSnapshot(env, contexts[0]!);
+  const context = contextSnapshotFromPack(run.id, pack, decisions);
+  const actionsWithSnapshots = attachRecommendationSnapshots(actions, context);
+  const selectedActionPortfolio = context.payload.actionPortfolio ?? null;
+  await replaceAgentActions(env, run.id, actionsWithSnapshots);
+  await persistAgentContextSnapshot(env, context);
   const dataQualityStatus = isStale ? "degraded" : pack.dataQuality.signalFidelity.status;
   await updateAgentRun(env, run.id, {
     status: "completed",
@@ -310,7 +312,8 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
       dataQuality: (analysis.dataQuality ?? null) as unknown as JsonValue,
     },
   };
-  await replaceAgentActions(env, run.id, actions);
+  const actionsWithSnapshots = attachRecommendationSnapshots(actions, context);
+  await replaceAgentActions(env, run.id, actionsWithSnapshots);
   await persistAgentContextSnapshot(env, context);
   await updateAgentRun(env, run.id, {
     status: "completed",
@@ -630,6 +633,7 @@ function decisionPackEvidence(pack: ContributorDecisionPack, decision: RepoDecis
   const missingOfficialStats = !pack.profile.officialStats || pack.profile.source !== "gittensor_api";
   const missingRepoOutcome = !decision.outcome && !decision.roleContext.maintainerLane;
   const freshness = pack.freshness !== "fresh" ? pack.freshness : repoQuality.freshness;
+  const outcomeQuality = aggregateOutcomeQuality(decision.repoOutcomePatterns);
   const warnings = uniqueStrings([
     ...(pack.freshness === "rebuilding" ? ["Decision pack is stale; a background rebuild was enqueued."] : []),
     ...(pack.freshness === "stale" ? ["Decision pack is stale and no rebuild was enqueued."] : []),
@@ -637,11 +641,13 @@ function decisionPackEvidence(pack: ContributorDecisionPack, decision: RepoDecis
     ...repoQuality.warnings,
     ...(missingOfficialStats ? ["Official Gittensor contributor stats were unavailable; confidence is reduced."] : []),
     ...(missingRepoOutcome ? ["No repo-specific official outcome row was available; confidence is reduced."] : []),
+    ...(outcomeQuality.warning ? [outcomeQuality.warning] : []),
   ]);
   const assumptions = uniqueStrings([
     ...(missingOfficialStats ? ["Contributor-level official stats are missing, so cached GitHub and registry data carry more weight."] : []),
     ...(missingRepoOutcome ? ["Repo-specific prior outcomes are missing, so queue, lane, and role heuristics carry more weight."] : []),
     ...(userSuppliedScenarioCount > 0 ? ["Pending-PR scenario projections include user-supplied assumptions."] : []),
+    ...(outcomeQuality.assumption ? [outcomeQuality.assumption] : []),
   ]);
   return {
     confidence: confidenceForDecisionPack(pack, decision, repoQuality, userSuppliedScenarioCount),
@@ -663,6 +669,13 @@ function decisionPackEvidence(pack: ContributorDecisionPack, decision: RepoDecis
         pack.generatedAt,
         decision.outcome ? "fresh" : "missing",
         decision.outcome ? "Repo-specific contributor outcomes present." : "Repo-specific contributor outcomes missing.",
+      ),
+      evidenceSource(
+        "aggregate_outcome_quality",
+        decision.repoOutcomePatterns ? "cached_repo_patterns" : null,
+        pack.generatedAt,
+        outcomeQuality.freshness,
+        outcomeQuality.sourceSummary,
       ),
       ...(pack.openPrMonitor
         ? [evidenceSource("open_pr_monitor", "cached_github_data", pack.openPrMonitor.generatedAt, pack.freshness === "fresh" ? "fresh" : pack.freshness, pack.openPrMonitor.summary)]
@@ -741,6 +754,77 @@ function defaultRecommendationEvidence(actionType: AgentActionType): Recommendat
   };
 }
 
+const OUTCOME_QUALITY_MIN_SAMPLE = 5;
+const OUTCOME_QUALITY_STRONG_MERGE_RATE = 0.6;
+const OUTCOME_QUALITY_HIGH_RISK_RATE = 0.3;
+
+type AggregateOutcomeQuality = {
+  signal: "strong" | "weak" | "high_risk" | "sparse" | "absent";
+  mergeRate: number | null;
+  sampleSize: number;
+  warning: string | null;
+  assumption: string | null;
+  sourceSummary: string;
+  freshness: RecommendationFreshness;
+};
+
+function aggregateOutcomeQuality(patterns: RepoOutcomeSummary | undefined): AggregateOutcomeQuality {
+  if (!patterns) {
+    return {
+      signal: "absent",
+      mergeRate: null,
+      sampleSize: 0,
+      warning: null,
+      assumption: "No aggregate repo outcome quality data is available; heuristic signals carry more weight.",
+      sourceSummary: "No aggregate repo outcome quality data available.",
+      freshness: "missing",
+    };
+  }
+  const { outsideContributorMergeRate: mergeRate, sampleSize } = patterns;
+  if (sampleSize < OUTCOME_QUALITY_MIN_SAMPLE) {
+    return {
+      signal: "sparse",
+      mergeRate,
+      sampleSize,
+      warning: null,
+      assumption: `Aggregate repo outcome quality has limited sample size (${sampleSize} decided PR(s)); signals carry reduced weight.`,
+      sourceSummary: `Sparse aggregate outcome data (${sampleSize} decided PR(s)); confidence impact is limited.`,
+      freshness: "degraded",
+    };
+  }
+  if (mergeRate >= OUTCOME_QUALITY_STRONG_MERGE_RATE) {
+    return {
+      signal: "strong",
+      mergeRate,
+      sampleSize,
+      warning: null,
+      assumption: null,
+      sourceSummary: `Aggregate outside-contributor merge rate is strong across ${sampleSize} decided PR(s).`,
+      freshness: "fresh",
+    };
+  }
+  if (mergeRate <= OUTCOME_QUALITY_HIGH_RISK_RATE) {
+    return {
+      signal: "high_risk",
+      mergeRate,
+      sampleSize,
+      warning: `Aggregate repo outcome quality shows high closure risk across ${sampleSize} decided PR(s); review risk patterns before opening work.`,
+      assumption: null,
+      sourceSummary: `Aggregate outside-contributor merge rate is low across ${sampleSize} decided PR(s); high closure risk.`,
+      freshness: "fresh",
+    };
+  }
+  return {
+    signal: "weak",
+    mergeRate,
+    sampleSize,
+    warning: `Aggregate repo outcome quality shows moderate closure risk across ${sampleSize} decided PR(s).`,
+    assumption: null,
+    sourceSummary: `Aggregate outside-contributor merge rate is moderate across ${sampleSize} decided PR(s).`,
+    freshness: "fresh",
+  };
+}
+
 function confidenceForDecisionPack(
   pack: ContributorDecisionPack,
   decision: RepoDecision,
@@ -757,6 +841,9 @@ function confidenceForDecisionPack(
   if (!pack.profile.officialStats || pack.profile.source !== "gittensor_api") confidence = lowerConfidence(confidence, "medium");
   if (!decision.outcome && !decision.roleContext.maintainerLane) confidence = lowerConfidence(confidence, "medium");
   if (userSuppliedScenarioCount > 0) confidence = lowerConfidence(confidence, "medium");
+  const outcomeQuality = aggregateOutcomeQuality(decision.repoOutcomePatterns);
+  if (outcomeQuality.signal === "high_risk") confidence = lowerConfidence(confidence, "low");
+  else if (outcomeQuality.signal === "weak") confidence = lowerConfidence(confidence, "medium");
   return confidence;
 }
 
@@ -852,6 +939,7 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       source: pack.source,
       selectedRepos: decisions.map((decision) => decision.repoFullName),
       actionPortfolio: scopedActionPortfolio(pack.actionPortfolio, decisions) as unknown as JsonValue,
+      counterfactualReasons: scopedCounterfactualReasons(decisions) as unknown as JsonValue,
       evidenceGraph: (pack.evidenceGraph
         ? {
             version: pack.evidenceGraph.version,
@@ -865,6 +953,16 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       openPrMonitor: (pack.openPrMonitor ?? null) as unknown as JsonValue,
     },
   };
+}
+
+function scopedCounterfactualReasons(decisions: RepoDecision[]): Array<{ repoFullName: string; recommendation: RepoDecision["recommendation"]; rejectedAlternatives: NonNullable<RepoDecision["counterfactualReasons"]> }> {
+  return decisions
+    .map((decision) => ({
+      repoFullName: decision.repoFullName,
+      recommendation: decision.recommendation,
+      rejectedAlternatives: (decision.counterfactualReasons ?? []).slice(0, 5),
+    }))
+    .filter((entry) => entry.rejectedAlternatives.length > 0);
 }
 
 function scopedActionPortfolio(portfolio: ActionPortfolio | undefined, decisions: RepoDecision[]): ActionPortfolio | null {
@@ -973,6 +1071,7 @@ export const __agentOrchestratorInternals = {
   actionFromRepoDecision,
   actionRecord,
   contextSnapshotFromPack,
+  scopedCounterfactualReasons,
   scopedActionPortfolio,
   buildRunRecord,
   mapDecisionAction,
@@ -983,4 +1082,5 @@ export const __agentOrchestratorInternals = {
   sanitizePublicSummary,
   jsonPayload,
   sameRepo,
+  aggregateOutcomeQuality,
 };

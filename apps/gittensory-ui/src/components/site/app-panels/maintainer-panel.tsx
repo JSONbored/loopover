@@ -4,6 +4,7 @@ import {
   Bot,
   CheckCircle2,
   CircleSlash,
+  ListChecks,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -61,6 +62,44 @@ type MaintainerDashboard = {
   settingsPreview: { removed: string[]; added: string[] };
 };
 
+type TrustChecklistStatus = "ready" | "needs_attention" | "blocked";
+
+type InstallPreview = {
+  status: TrustChecklistStatus;
+  summary: string;
+  readScope: string[];
+  computedContext: string[];
+  previewBehavior: string[];
+  permissions: {
+    status: TrustChecklistStatus;
+    required: string[];
+    missing: string[];
+    missingEvents: string[];
+    summary: string;
+  };
+  publicOutputs: string[];
+  privateOnlyContext: string[];
+  commandAuthorization: string[];
+  auditBehavior: string[];
+  sanitizerBoundaries: string[];
+  manualControls: string[];
+  checklist: Array<{
+    id: string;
+    category:
+      | "permissions"
+      | "public_outputs"
+      | "private_context"
+      | "command_authorization"
+      | "audit"
+      | "sanitizer"
+      | "manual_control";
+    status: TrustChecklistStatus;
+    label: string;
+    summary: string;
+    action: string;
+  }>;
+};
+
 type SettingsPreviewResponse = {
   repoFullName: string;
   generatedAt: string;
@@ -98,6 +137,7 @@ type SettingsPreviewResponse = {
   previewComment: string | null;
   appliedLabel: string | null;
   checkRun: { willCreate: boolean; title: string; detailLevel: string } | null;
+  installPreview: InstallPreview;
   warnings: string[];
   summary: string;
 };
@@ -522,6 +562,8 @@ function PreviewResult({
         <ActionState active={preview.decision.willCheckRun} label="check run" />
       </div>
 
+      <TrustChecklist installPreview={preview.installPreview} />
+
       {preview.warnings.length > 0 && (
         <div className="rounded-token border border-warning/30 bg-warning/[0.04] p-3">
           <div className="mb-2 flex items-center gap-2 text-token-xs font-medium text-warning">
@@ -572,6 +614,143 @@ function PreviewResult({
       </div>
     </div>
   );
+}
+
+const TRUST_STATUS_PILL: Record<TrustChecklistStatus, Status> = {
+  ready: "ready",
+  needs_attention: "warn",
+  blocked: "blocked",
+};
+
+const TRUST_STATUS_LABEL: Record<TrustChecklistStatus, string> = {
+  ready: "ready",
+  needs_attention: "attention",
+  blocked: "blocked",
+};
+
+function TrustChecklist({ installPreview }: { installPreview: InstallPreview }) {
+  const attentionItems = installPreview.checklist.filter((item) => item.status !== "ready");
+  const detailGroups = [
+    {
+      title: "Scope",
+      items: [
+        ...installPreview.readScope,
+        ...installPreview.computedContext,
+        ...installPreview.previewBehavior,
+      ],
+    },
+    {
+      title: "Public boundary",
+      items: [
+        ...installPreview.publicOutputs,
+        ...installPreview.privateOnlyContext,
+        ...installPreview.sanitizerBoundaries,
+      ],
+    },
+    {
+      title: "Controls",
+      items: [
+        ...installPreview.commandAuthorization,
+        ...installPreview.auditBehavior,
+        ...installPreview.manualControls,
+      ],
+    },
+  ];
+
+  return (
+    <div className="rounded-token border-hairline bg-card/60 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            <ListChecks className="size-3.5 text-mint" />
+            Maintainer trust checklist
+          </div>
+          <p className="mt-1 text-token-xs text-foreground/85">{installPreview.summary}</p>
+        </div>
+        <StatusPill status={TRUST_STATUS_PILL[installPreview.status]}>
+          {TRUST_STATUS_LABEL[installPreview.status]}
+        </StatusPill>
+      </div>
+
+      <div className="mt-3 overflow-hidden rounded-token border-hairline bg-background/35">
+        {installPreview.checklist.map((item) => (
+          <div
+            key={item.id}
+            className={cn(
+              "grid gap-2 border-b-hairline p-3 last:border-b-0 sm:grid-cols-[minmax(12rem,0.38fr)_1fr_auto] sm:items-start",
+              item.status === "blocked"
+                ? "bg-danger/[0.03]"
+                : item.status === "needs_attention"
+                  ? "bg-warning/[0.03]"
+                  : "bg-transparent",
+            )}
+          >
+            <div className="flex min-w-0 items-center gap-2 text-token-xs font-medium text-foreground">
+              <TrustStatusIcon status={item.status} />
+              <span className="min-w-0">{item.label}</span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-token-xs text-muted-foreground">{item.summary}</p>
+            </div>
+            <StatusPill status={TRUST_STATUS_PILL[item.status]} className="w-fit shrink-0">
+              {TRUST_STATUS_LABEL[item.status]}
+            </StatusPill>
+          </div>
+        ))}
+      </div>
+
+      {attentionItems.length > 0 ? (
+        <div className="mt-3 rounded-token border border-warning/30 bg-warning/[0.04] p-3 text-token-xs text-warning/90">
+          <div className="font-medium text-warning">Review before enabling</div>
+          <ul className="mt-1 space-y-1">
+            {attentionItems.map((item) => (
+              <li key={item.id}>
+                <span className="text-warning">{item.label}:</span>{" "}
+                <span className="text-foreground/85">{item.action}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <details className="mt-3 rounded-token border-hairline bg-background/30">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground marker:hidden">
+          <span>Preview scope and controls</span>
+          <StatusPill status="info">details</StatusPill>
+        </summary>
+        <div className="grid gap-3 border-t-hairline p-3 md:grid-cols-3">
+          {detailGroups.map((group) => (
+            <TrustDetailList key={group.title} title={group.title} items={group.items} />
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function TrustDetailList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="min-w-0">
+      <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+        {title}
+      </div>
+      <ul className="mt-2 space-y-1.5 text-token-xs text-foreground/85">
+        {items.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-[0.45em] size-1 shrink-0 rounded-full bg-mint" />
+            <span className="min-w-0">{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function TrustStatusIcon({ status }: { status: TrustChecklistStatus }) {
+  if (status === "blocked") return <CircleSlash className="size-3.5 shrink-0 text-danger" />;
+  if (status === "needs_attention")
+    return <AlertTriangle className="size-3.5 shrink-0 text-warning" />;
+  return <CheckCircle2 className="size-3.5 shrink-0 text-success" />;
 }
 
 function ActionState({ active, label }: { active: boolean; label: string }) {

@@ -77,7 +77,7 @@ const GROUPS: NavGroup[] = [
         to: "/app/analytics",
         label: "Analytics",
         icon: BarChart3,
-        roles: ["operator", "maintainer"],
+        roles: ["operator"],
       },
       { to: "/app/operator", label: "Operator", icon: Wrench, roles: ["operator"] },
     ],

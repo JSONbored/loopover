@@ -282,6 +282,25 @@ describe("v2 signal builders", () => {
     expect(report.changedRepos[0]?.changes).toContain("emission_share 0.01 -> 0.02");
   });
 
+  it("reports changes to fixed base score, default label multiplier, and eligibility mode", () => {
+    // Only fixedBaseScore changes; every other compared field is identical. The base
+    // score override is the highest-impact registry change, so it must be surfaced.
+    const previous = snapshot("old", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, fixedBaseScore: 2 }]);
+    const current = snapshot("new", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, fixedBaseScore: 50 }]);
+    const report = buildRegistryChangeReport([current, previous]);
+    expect(report.changedRepos).toHaveLength(1);
+    expect(report.changedRepos[0]?.changes).toContain("fixed_base_score 2 -> 50");
+    expect(report.summary).toContain("1 changed");
+
+    // eligibility_mode and default_label_multiplier are tracked too.
+    const beforeMode = snapshot("old2", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, eligibilityMode: "branch_required", defaultLabelMultiplier: 1 }]);
+    const afterMode = snapshot("new2", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, eligibilityMode: "any_branch", defaultLabelMultiplier: 1.2 }]);
+    const modeReport = buildRegistryChangeReport([afterMode, beforeMode]);
+    expect(modeReport.changedRepos[0]?.changes).toEqual(
+      expect.arrayContaining(["eligibility_mode branch_required -> any_branch", "default_label_multiplier 1 -> 1.2"]),
+    );
+  });
+
   it("builds repo-level maintainer packets with fallback actions", () => {
     const packet = buildMaintainerPacket(repo, [], [], repo.fullName);
     const busyPacket = buildMaintainerPacket(repo, issues, pullRequests, repo.fullName);
@@ -719,6 +738,47 @@ describe("v2 signal builders", () => {
     expect(history.reconciliation).toMatchObject({ officialAuthoritative: false, source: "github_cache" });
     expect(history.reconciliation?.findings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "official_source_unavailable" })]));
     expect(history.reconciliation?.repos[0]?.discrepancyReasons).toEqual(expect.arrayContaining([expect.stringContaining("Official source unavailable")]));
+  });
+
+  it("derives cache-only totals consistently and login-scoped (pullRequests = merged + open + closed)", () => {
+    const widgetRepo: RepositoryRecord = {
+      fullName: "acme/widgets",
+      owner: "acme",
+      name: "widgets",
+      isInstalled: true,
+      isRegistered: true,
+      isPrivate: false,
+      defaultBranch: "main",
+      registryConfig: { repo: "acme/widgets", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, trustedLabelPipeline: false, maintainerCut: 0, raw: {} },
+    };
+    const mk = (number: number, state: string, extra: Partial<PullRequestRecord> = {}): PullRequestRecord => ({
+      repoFullName: "acme/widgets",
+      number,
+      title: `PR ${number}`,
+      state,
+      authorLogin: "dev",
+      authorAssociation: "NONE",
+      labels: [],
+      linkedIssues: [],
+      body: "",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+      ...extra,
+    });
+    const prs = [mk(1, "merged", { mergedAt: "2026-05-01T00:00:00.000Z" }), mk(2, "open"), mk(3, "closed")];
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, prs, []);
+    // repoStats includes a DIFFERENT login that must not leak into this contributor's totals.
+    const repoStats: ContributorRepoStatRecord[] = [
+      { login: "dev", repoFullName: "acme/widgets", pullRequests: 3, mergedPullRequests: 1, openPullRequests: 1, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+      { login: "stranger", repoFullName: "acme/tools", pullRequests: 5, mergedPullRequests: 0, openPullRequests: 5, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+    ];
+    const history = buildContributorOutcomeHistory({ login: "dev", profile, repositories: [widgetRepo], pullRequests: prs, issues: [], repoStats });
+
+    const t = history.totals;
+    // Invariant, login-scoping, and bounded rate were all broken by the mixed-source fallbacks.
+    expect(t.pullRequests).toBe(t.mergedPullRequests + t.openPullRequests + t.closedPullRequests);
+    expect(t.issues).toBe(t.openIssues + t.closedIssues);
+    expect(t.closedPullRequestRate).toBeLessThanOrEqual(1);
+    expect(t.openPullRequests).toBe(1); // the stranger's 5 open PRs are excluded
   });
 
   it("derives solved and valid-solved issue-discovery counts from cache when official data is absent", () => {
@@ -1518,7 +1578,18 @@ describe("v2 signal builders", () => {
   });
 });
 
-function snapshot(id: string, repositories: Array<{ repo: string; emissionShare: number; issueDiscoveryShare: number; labelMultipliers: Record<string, number> }>): RegistrySnapshot {
+function snapshot(
+  id: string,
+  repositories: Array<{
+    repo: string;
+    emissionShare: number;
+    issueDiscoveryShare: number;
+    labelMultipliers: Record<string, number>;
+    fixedBaseScore?: number | null;
+    defaultLabelMultiplier?: number | null;
+    eligibilityMode?: string | null;
+  }>,
+): RegistrySnapshot {
   return {
     id,
     generatedAt: "2026-05-23T00:00:00.000Z",

@@ -937,6 +937,8 @@ describe("gittensory-mcp CLI", () => {
     const json = JSON.parse(run(["init-client", "--print", "claude", "--json"])) as Record<string, unknown>;
     expect(json).not.toHaveProperty("agentProfile");
     expect(json).not.toHaveProperty("instructions");
+  });
+
   it("reports the package version via version, --version, and -v", () => {
     const expected = "@jsonbored/gittensory-mcp/0.4.0";
     for (const flag of ["version", "--version", "-v"]) {

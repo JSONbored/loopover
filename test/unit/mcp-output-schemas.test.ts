@@ -2,6 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
+import { normalizeRegistryPayload } from "../../src/registry/normalize";
+import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 
 // Tools that ship an MCP-native output schema so modern clients can validate/render responses.
@@ -19,8 +21,8 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_local_status",
 ];
 
-async function connectTestClient() {
-  const mcpServer = new GittensoryMcp(createTestEnv()).createServer();
+async function connectTestClient(env: Env = createTestEnv()) {
+  const mcpServer = new GittensoryMcp(env).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "gittensory-output-schema-test", version: "0.1.0" }, { capabilities: {} });
@@ -60,6 +62,11 @@ describe("MCP output schema discovery", () => {
     const localStatus = byName.get("gittensory_local_status");
     const localStatusProps = Object.keys((localStatus?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(localStatusProps).toEqual(expect.arrayContaining(["apiAvailable", "supportedEndpoint"]));
+
+    const registryChanges = byName.get("gittensory_get_registry_changes");
+    const registryChangesProps = Object.keys((registryChanges?.outputSchema?.properties ?? {}) as Record<string, unknown>);
+    expect(registryChangesProps).toEqual(expect.arrayContaining(["currentSnapshotId", "previousSnapshotId", "addedRepos", "removedRepos", "changedRepos", "summary"]));
+    expect(registryChangesProps).not.toEqual(expect.arrayContaining(["previous", "current", "added", "removed", "changed", "warnings"]));
   });
 
   it("preserves the full tool inventory while adding output schemas", async () => {
@@ -96,10 +103,22 @@ describe("MCP tool calls return schema-valid structured content", () => {
   });
 
   it("gittensory_get_registry_changes returns validated structured content", async () => {
-    const { client } = await connectTestClient();
+    const env = createTestEnv();
+    await seedRegistryChangeSnapshots(env);
+    const { client } = await connectTestClient(env);
     const result = await client.callTool({ name: "gittensory_get_registry_changes", arguments: {} });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toBeDefined();
+    expect(result.structuredContent).toMatchObject({
+      addedRepos: ["owner/added"],
+      removedRepos: ["owner/removed"],
+      currentSnapshotId: expect.any(String),
+      previousSnapshotId: expect.any(String),
+      summary: "1 added, 1 removed, 1 changed repo(s) between the latest registry snapshots.",
+    });
+    expect((result.structuredContent as Record<string, unknown>).changedRepos).toEqual([
+      { repoFullName: "owner/changed", changes: ["emission_share 0.01 -> 0.02"] },
+    ]);
   });
 
   it("gittensory_get_repo_context returns validated structured content", async () => {
@@ -139,3 +158,30 @@ describe("MCP output schemas do not declare private financial fields", () => {
     }
   });
 });
+
+async function seedRegistryChangeSnapshots(env: Env) {
+  await persistRegistrySnapshot(
+    env,
+    normalizeRegistryPayload(
+      {
+        "owner/removed": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+        "owner/changed": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+        "owner/stable": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+      },
+      { kind: "raw-github", url: "fixture://old-registry" },
+      "2026-05-24T00:00:00.000Z",
+    ),
+  );
+  await persistRegistrySnapshot(
+    env,
+    normalizeRegistryPayload(
+      {
+        "owner/added": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+        "owner/changed": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+        "owner/stable": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
+      },
+      { kind: "raw-github", url: "fixture://current-registry" },
+      "2026-05-25T00:00:00.000Z",
+    ),
+  );
+}

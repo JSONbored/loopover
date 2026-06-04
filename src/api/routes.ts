@@ -137,6 +137,7 @@ import {
   LATEST_RECOMMENDED_MCP_VERSION,
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
+import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
 import {
   buildWeeklyValueReport,
   formatWeeklyValueReportMarkdown,
@@ -840,87 +841,7 @@ export function createApp() {
   app.get("/v1/app/operator-dashboard", async (c) => {
     const forbidden = await requireAppRole(c, ["operator"]);
     if (forbidden) return forbidden;
-    const usageSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [
-      repositories,
-      installations,
-      health,
-      registry,
-      scoring,
-      upstreamDrift,
-      activeSessions,
-      digestSubscriptions,
-      rateLimits,
-      usageSummary,
-      usageRollups,
-      usageRollupStatus,
-      mcpCompatibilityAdoption,
-      commandUsefulness,
-    ] = await Promise.all([
-      listRepositories(c.env),
-      listInstallations(c.env),
-      listInstallationHealth(c.env),
-      getLatestRegistrySnapshot(c.env),
-      getLatestScoringModelSnapshot(c.env),
-      loadUpstreamStatus(c.env),
-      countActiveAuthSessions(c.env),
-      countActiveDigestSubscriptions(c.env),
-      listLatestGitHubRateLimitObservations(c.env, 20),
-      summarizeProductUsageEvents(c.env, usageSince),
-      listProductUsageDailyRollups(c.env, { limit: 14 }),
-      getProductUsageRollupStatus(c.env),
-      summarizeMcpCompatibilityAdoption(c.env, usageSince),
-      getCommandUsefulnessSummary(c.env),
-    ]);
-    const weeklyValueReport = buildWeeklyValueReport({
-      generatedAt: nowIso(),
-      variant: "operator",
-      days: 7,
-      repositories,
-      installations,
-      health,
-      registry,
-      scoring,
-      upstreamDrift,
-      usageSummary,
-      usageRollups,
-      usageRollupStatus,
-      activeSessions,
-      digestSubscriptions,
-    });
-    const installedRepos = repositories.filter((repo) => repo.isInstalled).length;
-    const registeredRepos = repositories.filter((repo) => repo.isRegistered).length;
-    return c.json({
-      generatedAt: nowIso(),
-      metrics: [
-        { label: "Active sessions", value: String(activeSessions), delta: "browser + CLI/MCP" },
-        { label: "Installations", value: String(installations.length), delta: `${installedRepos} installed repos` },
-        { label: "Registered repos", value: String(registeredRepos), delta: registry ? `${registry.repoCount} in latest registry` : "registry missing" },
-        { label: "Digest subscriptions", value: String(digestSubscriptions), delta: "store-only" },
-        { label: "Product events", value: String(usageSummary.totalEvents), delta: "last 7 days" },
-        { label: "Active users", value: String(usageSummary.activeActors), delta: "hashed, last 7 days" },
-        { label: "Activation rollups", value: usageRollupStatus.status, delta: usageRollupStatus.latestRollupDay ?? "not generated" },
-        { label: "MCP stale clients", value: String(mcpCompatibilityAdoption.staleEvents + mcpCompatibilityAdoption.incompatibleEvents), delta: `${mcpCompatibilityAdoption.totalEvents} MCP event(s)` },
-        { label: "Command usefulness", value: `${commandUsefulness.totals.usefulCount}/${commandUsefulness.totals.feedbackCount}`, delta: usefulnessDelta(commandUsefulness.totals.usefulnessRate) },
-        { label: "Install issues", value: String(health.filter((record) => record.status !== "healthy").length), delta: "current health cache" },
-        { label: "Rate-limit events", value: String(rateLimits.length), delta: "latest observations" },
-      ],
-      noiseReduction: [
-        { label: "Healthy installations", value: health.filter((record) => record.status === "healthy").length, spark: sparklineFromCounts(health.filter((record) => record.status === "healthy").length, Math.max(health.length, 1)) },
-        { label: "Registered coverage", value: registeredRepos, spark: sparklineFromCounts(registeredRepos, Math.max(repositories.length, 1)) },
-        { label: "Installed coverage", value: installedRepos, spark: sparklineFromCounts(installedRepos, Math.max(repositories.length, 1)) },
-      ],
-      weeklyReport: weeklyValueReport.summary,
-      weeklyValueReport,
-      usageSummary,
-      usageRollups,
-      usageRollupStatus,
-      mcpCompatibilityAdoption,
-      commandUsefulness,
-      registry,
-      scoringModel: scoring,
-      upstreamDrift,
-    });
+    return c.json(await buildOperatorDashboardPayload(c.env));
   });
 
   app.get("/v1/app/notification-model", async (c) => {
@@ -1139,8 +1060,10 @@ export function createApp() {
     const pullNumber = Number(c.req.query("pullNumber") ?? "");
     if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
     const fullName = `${owner}/${repoName}`;
-    const [repo, pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
-      getRepository(c.env, fullName),
+    const repo = await getRepository(c.env, fullName);
+    const repoForbidden = await requireExtensionPullContextRepoAccess(c, identity, fullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [pullRequest, issues, pullRequests, files, reviews, checks, recentMergedPullRequests] = await Promise.all([
       getPullRequest(c.env, fullName, pullNumber),
       listIssues(c.env, fullName),
       listPullRequests(c.env, fullName),
@@ -2665,10 +2588,6 @@ function sampleMinerSnapshot(login: string) {
   };
 }
 
-function usefulnessDelta(rate: number | null): string {
-  return rate === null ? "no feedback yet" : `${Math.round(rate * 100)}% useful over 30 days`;
-}
-
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
@@ -3391,6 +3310,24 @@ async function requireCommandPreviewRepoAccess(
   /* v8 ignore next -- The broad route role guard already authenticates protected preview requests. */
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind !== "session" || !repoFullName) return null;
+  return requireSessionRepoAccess(c, identity, repoFullName, repo);
+}
+
+async function requireExtensionPullContextRepoAccess(
+  c: ProtectedRouteContext,
+  identity: Extract<AuthIdentity, { kind: "session" }>,
+  repoFullName: string,
+  repo: RepositoryRecord | null,
+): Promise<Response | null> {
+  return requireSessionRepoAccess(c, identity, repoFullName, repo);
+}
+
+async function requireSessionRepoAccess(
+  c: ProtectedRouteContext,
+  identity: Extract<AuthIdentity, { kind: "session" }>,
+  repoFullName: string,
+  repo: RepositoryRecord | null,
+): Promise<Response | null> {
   const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
   if (summary.roles.includes("operator")) return null;
   const scope = await loadControlPanelAccessScope(c.env, identity.actor);

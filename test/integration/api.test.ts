@@ -1549,6 +1549,13 @@ describe("api routes", () => {
       ownerEnv,
     );
     expect(ownerExtensionMissingPull.status).toBe(400);
+    const forbiddenVictimExtensionContext = await app.request(
+      "/v1/extension/pull-context?owner=victim-org&repo=secret-repo&pullNumber=42",
+      { headers: { authorization: `Bearer ${ownerExtensionSessionBody.token}` } },
+      ownerEnv,
+    );
+    expect(forbiddenVictimExtensionContext.status).toBe(403);
+    await expect(forbiddenVictimExtensionContext.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const ownerRepoPreview = await app.request(
       "/v1/app/commands/preview",
       {

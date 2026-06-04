@@ -30,6 +30,7 @@ import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { withAgentActionExplanationCard } from "./agent-action-explanation-card";
+import { attachRecommendationSnapshots } from "./recommendation-snapshots";
 import type {
   AgentActionRecord,
   AgentActionStatus,
@@ -262,10 +263,11 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
     kind === "explain_blockers"
       ? buildBlockerActions(run, pack, decisions, { allowFallback: allowCrossRepoFallback })
       : buildDecisionActions(run, pack, scopedDecisionActions);
-  const contexts = [contextSnapshotFromPack(run.id, pack, decisions)];
-  const selectedActionPortfolio = contexts[0]?.payload.actionPortfolio ?? null;
-  await replaceAgentActions(env, run.id, actions);
-  await persistAgentContextSnapshot(env, contexts[0]!);
+  const context = contextSnapshotFromPack(run.id, pack, decisions);
+  const actionsWithSnapshots = attachRecommendationSnapshots(actions, context);
+  const selectedActionPortfolio = context.payload.actionPortfolio ?? null;
+  await replaceAgentActions(env, run.id, actionsWithSnapshots);
+  await persistAgentContextSnapshot(env, context);
   const dataQualityStatus = isStale ? "degraded" : pack.dataQuality.signalFidelity.status;
   await updateAgentRun(env, run.id, {
     status: "completed",
@@ -310,7 +312,8 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
       dataQuality: (analysis.dataQuality ?? null) as unknown as JsonValue,
     },
   };
-  await replaceAgentActions(env, run.id, actions);
+  const actionsWithSnapshots = attachRecommendationSnapshots(actions, context);
+  await replaceAgentActions(env, run.id, actionsWithSnapshots);
   await persistAgentContextSnapshot(env, context);
   await updateAgentRun(env, run.id, {
     status: "completed",
@@ -936,6 +939,7 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       source: pack.source,
       selectedRepos: decisions.map((decision) => decision.repoFullName),
       actionPortfolio: scopedActionPortfolio(pack.actionPortfolio, decisions) as unknown as JsonValue,
+      counterfactualReasons: scopedCounterfactualReasons(decisions) as unknown as JsonValue,
       evidenceGraph: (pack.evidenceGraph
         ? {
             version: pack.evidenceGraph.version,
@@ -949,6 +953,16 @@ function contextSnapshotFromPack(runId: string, pack: ContributorDecisionPack, d
       openPrMonitor: (pack.openPrMonitor ?? null) as unknown as JsonValue,
     },
   };
+}
+
+function scopedCounterfactualReasons(decisions: RepoDecision[]): Array<{ repoFullName: string; recommendation: RepoDecision["recommendation"]; rejectedAlternatives: NonNullable<RepoDecision["counterfactualReasons"]> }> {
+  return decisions
+    .map((decision) => ({
+      repoFullName: decision.repoFullName,
+      recommendation: decision.recommendation,
+      rejectedAlternatives: (decision.counterfactualReasons ?? []).slice(0, 5),
+    }))
+    .filter((entry) => entry.rejectedAlternatives.length > 0);
 }
 
 function scopedActionPortfolio(portfolio: ActionPortfolio | undefined, decisions: RepoDecision[]): ActionPortfolio | null {
@@ -1057,6 +1071,7 @@ export const __agentOrchestratorInternals = {
   actionFromRepoDecision,
   actionRecord,
   contextSnapshotFromPack,
+  scopedCounterfactualReasons,
   scopedActionPortfolio,
   buildRunRecord,
   mapDecisionAction,

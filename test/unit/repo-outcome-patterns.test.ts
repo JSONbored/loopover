@@ -247,6 +247,40 @@ describe("buildRepoOutcomePatterns", () => {
     expect(sizeKeys).toContain("medium");
   });
 
+  it("counts merged PRs that exist only in recent_merged_pull_requests toward the merge rate", () => {
+    // The open-PR backfill leaves only closed shells in pull_requests; the merged history
+    // lives in a separate recent_merged_pull_requests table and must still be counted.
+    const pullRequests = [closedPr(50), closedPr(51), closedPr(52)];
+    const mergedOnly = (number: number, overrides: Partial<RecentMergedPullRequestRecord> = {}): RecentMergedPullRequestRecord => ({
+      repoFullName: REPO,
+      number,
+      title: `PR ${number}`,
+      authorLogin: "dev",
+      mergedAt: "2026-05-01T00:00:00.000Z",
+      labels: ["bug"],
+      linkedIssues: [number + 100],
+      changedFiles: ["src/a.ts"],
+      payload: { author_association: "NONE" },
+      ...overrides,
+    });
+    const recentMergedPullRequests: RecentMergedPullRequestRecord[] = [
+      // Different repo -> excluded (covers the repo-mismatch branch).
+      mergedOnly(999, { repoFullName: "other/repo" }),
+      // Returning contributor.
+      mergedOnly(1, { payload: { author_association: "CONTRIBUTOR" } }),
+      // No author_association, unlinked, with a file record + review (covers files/review branches).
+      mergedOnly(2, { payload: {}, linkedIssues: [] }),
+      ...[3, 4, 5, 6, 7, 8, 9].map((number) => mergedOnly(number)),
+    ];
+    const files = [file(2, "src/b.ts")];
+    const reviews = [review(2, "CHANGES_REQUESTED")];
+    const result = buildRepoOutcomePatterns({ repo: repo(), repoFullName: REPO, pullRequests, recentMergedPullRequests, files, reviews });
+    // 9 merged (numbers 1-9) + 3 closed outside-contributor PRs -> 9/12 = 0.75 merge rate -> "merge well".
+    expect(result.totals.merged).toBe(9);
+    expect(result.successPatterns.some((pattern) => pattern.title === "Outside contributors merge well here")).toBe(true);
+    expect(result.riskPatterns.some((pattern) => pattern.title === "Outside contributor PRs rarely merge here")).toBe(false);
+  });
+
   it("reports a low-sample finding when there are too few decided PRs", () => {
     const result = buildRepoOutcomePatterns({ repo: repo(), repoFullName: REPO, pullRequests: [mergedPr(1)] });
     expect(result.findings.some((f) => f.code === "low_outcome_sample")).toBe(true);

@@ -7401,6 +7401,43 @@
             "items": {
               "$ref": "#/components/schemas/Finding"
             }
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "sourceUrl": {
+                "type": "string",
+                "nullable": true
+              },
+              "discoveredAt": {
+                "type": "string",
+                "nullable": true
+              },
+              "updatedAt": {
+                "type": "string",
+                "nullable": true
+              },
+              "observedAt": {
+                "type": "string",
+                "nullable": true
+              },
+              "ageDays": {
+                "type": "number",
+                "nullable": true
+              },
+              "freshness": {
+                "type": "string",
+                "enum": [
+                  "fresh",
+                  "stale",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "ageDays",
+              "freshness"
+            ]
           }
         },
         "required": [
@@ -7412,6 +7449,7 @@
           "isActiveOpportunity",
           "fundingStatus",
           "consensusRisk",
+          "source",
           "linkedPrs",
           "findings"
         ]
@@ -7535,6 +7573,42 @@
           "privateTrustEnabled": {
             "type": "boolean"
           },
+          "commandAuthorization": {
+            "type": "object",
+            "properties": {
+              "default": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "maintainer",
+                    "collaborator",
+                    "pr_author",
+                    "confirmed_miner"
+                  ]
+                }
+              },
+              "commands": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "maintainer",
+                      "collaborator",
+                      "pr_author",
+                      "confirmed_miner"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "default",
+              "commands"
+            ]
+          },
           "createdAt": {
             "type": "string",
             "nullable": true
@@ -7557,7 +7631,8 @@
           "includeMaintainerAuthors",
           "requireLinkedIssue",
           "backfillEnabled",
-          "privateTrustEnabled"
+          "privateTrustEnabled",
+          "commandAuthorization"
         ]
       },
       "InstallationRepair": {
@@ -8001,6 +8076,54 @@
               },
               "requireLinkedIssue": {
                 "type": "boolean"
+              },
+              "commandAuthorization": {
+                "type": "object",
+                "properties": {
+                  "defaultAllowed": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "maintainer",
+                        "collaborator",
+                        "pr_author",
+                        "confirmed_miner"
+                      ]
+                    }
+                  },
+                  "commandOverrides": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string"
+                        },
+                        "allowedRoles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "maintainer",
+                              "collaborator",
+                              "pr_author",
+                              "confirmed_miner"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "command",
+                        "allowedRoles"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "defaultAllowed",
+                  "commandOverrides"
+                ]
               }
             },
             "required": [
@@ -8013,7 +8136,77 @@
               "gittensorLabel",
               "createMissingLabel",
               "includeMaintainerAuthors",
-              "requireLinkedIssue"
+              "requireLinkedIssue",
+              "commandAuthorization"
+            ]
+          },
+          "commandAuthorizationPreview": {
+            "type": "object",
+            "properties": {
+              "commandName": {
+                "type": "string"
+              },
+              "commenterLogin": {
+                "type": "string"
+              },
+              "commenterAssociation": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "object",
+                "properties": {
+                  "authorized": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "actorKind": {
+                    "type": "string",
+                    "enum": [
+                      "maintainer",
+                      "author",
+                      "none"
+                    ]
+                  },
+                  "matchedRole": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maintainer",
+                      "collaborator",
+                      "pr_author",
+                      "confirmed_miner",
+                      null
+                    ]
+                  },
+                  "allowedRoles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "maintainer",
+                        "collaborator",
+                        "pr_author",
+                        "confirmed_miner"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "authorized",
+                  "reason",
+                  "actorKind",
+                  "matchedRole",
+                  "allowedRoles"
+                ]
+              }
+            },
+            "required": [
+              "commandName",
+              "commenterLogin",
+              "commenterAssociation",
+              "decision"
             ]
           },
           "installation": {
@@ -8404,6 +8597,7 @@
           "repoFullName",
           "generatedAt",
           "settings",
+          "commandAuthorizationPreview",
           "installation",
           "sample",
           "decision",
@@ -8413,6 +8607,92 @@
           "installPreview",
           "warnings",
           "summary"
+        ]
+      },
+      "SkippedPrAuditExport": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "repoFullName": {
+                "type": "string",
+                "nullable": true
+              },
+              "reason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "surface_off",
+                  "missing_author",
+                  "bot_author",
+                  "maintainer_author",
+                  "miner_detection_unavailable",
+                  "not_official_gittensor_miner",
+                  null
+                ]
+              },
+              "since": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "repoFullName",
+              "reason",
+              "since"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "pullNumber": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "exclusiveMinimum": true
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                },
+                "remediation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "repoFullName",
+                "pullNumber",
+                "reason",
+                "timestamp",
+                "remediation"
+              ]
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "limit",
+          "hasMore",
+          "filters",
+          "items"
         ]
       },
       "CommandPreviewResponse": {
@@ -10756,6 +11036,119 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "bounty": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "lifecycle": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "historical",
+                        "completed",
+                        "cancelled",
+                        "stale",
+                        "ambiguous",
+                        "unknown"
+                      ]
+                    },
+                    "isActiveOpportunity": {
+                      "type": "boolean"
+                    },
+                    "fundingStatus": {
+                      "type": "string",
+                      "enum": [
+                        "funded",
+                        "target_only",
+                        "unknown"
+                      ]
+                    },
+                    "consensusRisk": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "sourceUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "discoveredAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "ageDays": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "freshness": {
+                          "type": "string",
+                          "enum": [
+                            "fresh",
+                            "stale",
+                            "unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "ageDays",
+                        "freshness"
+                      ]
+                    },
+                    "linkedPrs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "number": {
+                            "type": "number"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "open",
+                              "closed",
+                              "merged",
+                              "unknown"
+                            ]
+                          },
+                          "isActive": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "number",
+                          "state",
+                          "isActive"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "lifecycle",
+                    "isActiveOpportunity",
+                    "fundingStatus",
+                    "consensusRisk",
+                    "source",
+                    "linkedPrs"
+                  ]
                 }
               },
               "required": [
@@ -13055,6 +13448,89 @@
           },
           "403": {
             "description": "Insufficient app role for requested report variant"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/skipped-pr-audit": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "50"
+            },
+            "required": false,
+            "description": "Maximum rows to return, clamped from 1 to 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "JSONbored/gittensory"
+            },
+            "required": false,
+            "description": "Optional repository filter. Browser sessions must have control-panel access to this repo.",
+            "name": "repoFullName",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "surface_off",
+                "missing_author",
+                "bot_author",
+                "maintainer_author",
+                "miner_detection_unavailable",
+                "not_official_gittensor_miner"
+              ],
+              "example": "not_official_gittensor_miner"
+            },
+            "required": false,
+            "description": "Optional PR skip reason filter.",
+            "name": "reason",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "2026-05-30T00:00:00.000Z"
+            },
+            "required": false,
+            "description": "Optional lower timestamp bound.",
+            "name": "since",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private bounded audit export for skipped PR public-surface decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkippedPrAuditExport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient app role or repository scope"
           }
         },
         "security": [

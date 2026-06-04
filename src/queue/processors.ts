@@ -66,7 +66,6 @@ import {
   type GittensoryMentionCommandName,
   isAuthorizedCommandActor,
   isMaintainerAssociation,
-  isMaintainerOnlyCommand,
   isMaintainerQueueDigestCommand,
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
@@ -84,6 +83,7 @@ import {
 } from "../services/contributor-evidence-graph";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
+import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection } from "../settings/command-authorization";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
@@ -719,7 +719,6 @@ async function maybePublishPrPublicSurface(
     minerStatus: "not_checked",
   });
   if (prelim.skipped) {
-    if (prelim.skipReason === "surface_off") return;
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
     return;
   }
@@ -931,38 +930,16 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     return true;
   }
 
-  const [repo, cachedPullRequest] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, issue.number)]);
+  const [repo, cachedPullRequest, settings] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, issue.number), getRepositorySettings(env, repoFullName)]);
   const pullRequestAuthor = cachedPullRequest?.authorLogin ?? issue.user?.login ?? null;
-  const maintainerActor = isMaintainerAssociation(commenterAssociation);
-  if (isMaintainerOnlyCommand(command.name) && !maintainerActor) {
-    await recordAuditEvent(env, {
-      eventType: "github_app.agent_command_skipped",
-      actor: commenter,
-      targetKey: `${repoFullName}#${issue.number}`,
-      outcome: "denied",
-      detail: "maintainer_command_requires_maintainer",
-      metadata: { deliveryId, command: command.name },
-    });
-    await recordAgentCommandUsage(env, {
-      repoFullName,
-      targetKey: `${repoFullName}#${issue.number}`,
-      actor: commenter,
-      command: command.name,
-      actorKind: "none",
-      outcome: "skipped",
-      detail: "maintainer_command_requires_maintainer",
-      family: "maintainer_digest",
-    });
-    await recordGithubProductUsage(env, "agent_command_skipped", {
-      actor: commenter,
-      repoFullName,
-      targetKey: `${repoFullName}#${issue.number}`,
-      outcome: "denied",
-      metadata: { command: command.name, reason: "maintainer_command_requires_maintainer", family: "queue_digest" },
-    });
-    return true;
-  }
-  const official = pullRequestAuthor && (!maintainerActor || command.name === "miner-context")
+  const needsMinerDetection = commandAuthorizationNeedsMinerDetection({
+    policy: settings.commandAuthorization,
+    commandName: command.name,
+    commenterLogin: commenter,
+    commenterAssociation,
+    pullRequestAuthorLogin: pullRequestAuthor,
+  });
+  const official = pullRequestAuthor && (needsMinerDetection || command.name === "miner-context")
     ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, { targetKey: `${repoFullName}#${issue.number}`, deliveryId })
     : undefined;
   const authorization = isAuthorizedCommandActor({
@@ -971,6 +948,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
     commenterAssociation,
     pullRequestAuthorLogin: pullRequestAuthor,
     officialAuthorDetection: official,
+    commandAuthorizationPolicy: settings.commandAuthorization,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -979,7 +957,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
       targetKey: `${repoFullName}#${issue.number}`,
       outcome: authorization.reason === "miner_detection_unavailable" ? "error" : "completed",
       detail: authorization.reason,
-      metadata: { deliveryId, command: command.name },
+      metadata: { deliveryId, command: command.name, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, command.name) },
     });
     await recordAgentCommandUsage(env, {
       repoFullName,

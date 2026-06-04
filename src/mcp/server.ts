@@ -1,6 +1,8 @@
 import { createMcpHandler } from "agents/mcp";
 import type { Context } from "hono";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
 import { loadControlPanelRoleSummary } from "../services/control-panel-roles";
@@ -47,6 +49,14 @@ import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
+  applyMcpPlanningChoices,
+  buildMcpPlanningElicitationAudit,
+  buildMcpPlanningElicitationRequest,
+  planningChoicesFromElicitationResult,
+  validateMcpPlanningElicitationRequest,
+  type McpPlanningChoices,
+} from "../services/mcp-planning-elicitation";
+import {
   buildBountyAdvisory,
   buildCollisionReport,
   buildConfigQuality,
@@ -72,6 +82,7 @@ type ToolPayload = {
   summary: string;
   data: Record<string, unknown>;
 };
+type McpToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: boolean): string {
   if (freshness === "fresh") return `Gittensory decision pack for ${login}.`;
@@ -327,12 +338,12 @@ const explainRepoDecisionOutputSchema = {
 
 const registryChangesOutputSchema = {
   generatedAt: z.string().optional(),
-  previous: z.unknown().optional(),
-  current: z.unknown().optional(),
-  added: z.unknown().optional(),
-  removed: z.unknown().optional(),
-  changed: z.unknown().optional(),
-  warnings: z.unknown().optional(),
+  currentSnapshotId: z.string().optional(),
+  previousSnapshotId: z.string().optional(),
+  addedRepos: z.unknown().optional(),
+  removedRepos: z.unknown().optional(),
+  changedRepos: z.unknown().optional(),
+  summary: z.string().optional(),
 };
 
 const upstreamDriftOutputSchema = {
@@ -666,7 +677,7 @@ export class GittensoryMcp {
         description: "Run the deterministic Gittensory base-agent planner and rank the next Gittensor OSS contribution actions.",
         inputSchema: agentPlanShape,
       },
-      async (input) => this.toolResult(await this.agentPlanNextWork(input)),
+      async (input, extra) => this.toolResult(await this.agentPlanNextWork(input, extra, server)),
     );
 
     server.registerTool(
@@ -1109,13 +1120,45 @@ export class GittensoryMcp {
     };
   }
 
-  private async agentPlanNextWork(input: z.infer<z.ZodObject<typeof agentPlanShape>>): Promise<ToolPayload> {
+  private async agentPlanNextWork(
+    input: z.infer<z.ZodObject<typeof agentPlanShape>>,
+    extra?: McpToolExtra,
+    mcpServer?: McpServer,
+  ): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
-    const bundle = await planNextWork(this.env, { ...input, surface: "mcp" });
+    const elicitation = await this.collectPlanningChoices(input, extra, mcpServer);
+    const planInput = applyMcpPlanningChoices(input, elicitation.choices);
+    const bundle = await planNextWork(this.env, { ...planInput, surface: "mcp" });
     return {
       summary: `Gittensory base-agent plan for ${input.login}.`,
-      data: bundle as unknown as Record<string, unknown>,
+      data: {
+        ...bundle,
+        planningElicitation: buildMcpPlanningElicitationAudit(elicitation, elicitation.choices),
+        planningChoices: elicitation.choices,
+      } as unknown as Record<string, unknown>,
     };
+  }
+
+  private async collectPlanningChoices(
+    input: z.infer<z.ZodObject<typeof agentPlanShape>>,
+    extra?: McpToolExtra,
+    mcpServer?: McpServer,
+  ): Promise<{ supported: boolean; requested: boolean; accepted: boolean; choices: McpPlanningChoices }> {
+    const elicitationCapabilities = mcpServer?.server.getClientCapabilities()?.elicitation;
+    const supportsFormElicitation = Boolean(
+      extra && elicitationCapabilities && (elicitationCapabilities.form || Object.keys(elicitationCapabilities).length === 0),
+    );
+    if (!extra || !supportsFormElicitation) return { supported: false, requested: false, accepted: false, choices: {} };
+    if (input.objective && input.repoFullName) return { supported: true, requested: false, accepted: false, choices: {} };
+    const request = buildMcpPlanningElicitationRequest();
+    validateMcpPlanningElicitationRequest(request);
+    try {
+      const result = await extra.sendRequest({ method: "elicitation/create", params: request }, ElicitResultSchema, { timeout: 1000 });
+      const choices = planningChoicesFromElicitationResult(result);
+      return { supported: true, requested: true, accepted: result.action === "accept", choices };
+    } catch {
+      return { supported: true, requested: true, accepted: false, choices: {} };
+    }
   }
 
   private async agentStartRun(input: z.infer<z.ZodObject<typeof agentRunShape>>): Promise<ToolPayload> {

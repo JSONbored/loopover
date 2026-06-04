@@ -3,6 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { BoundaryBadge, Stat, StatusPill } from "@/components/site/control-primitives";
 import { StateBoundary } from "@/components/site/state-views";
 import { TrendChart } from "@/components/site/trend-chart";
+import {
+  AdoptionRetentionPanel,
+  CommandUsefulnessPanel,
+  ProductUsageBreakdownPanel,
+  WeeklyValueMetricsPanel,
+} from "@/components/site/usage-analytics-panels";
 import { useApiResource } from "@/lib/api/use-api-resource";
 
 export const Route = createFileRoute("/app/analytics")({
@@ -12,6 +18,12 @@ export const Route = createFileRoute("/app/analytics")({
 type OperatorDashboard = {
   metrics: Array<{ label: string; value: string; delta: string }>;
   noiseReduction: Array<{ label: string; value: number; spark: number[] }>;
+  usageSummary?: {
+    totalEvents: number;
+    activeActors: number;
+    byEvent: Array<{ eventName: string; count: number }>;
+    bySurface: Array<{ surface: string; count: number }>;
+  };
   usageRollupStatus?: {
     status: "empty" | "ready" | "partial" | "stale" | "incomplete";
     latestRollupDay?: string | null;
@@ -23,11 +35,53 @@ type OperatorDashboard = {
     totalEvents: number;
     activeActors: number;
     activeRepos: number;
+    byRole: Array<{ role: string; count: number; activeActors: number; activeRepos: number }>;
+    activationByRole: Array<{
+      role: string;
+      firstUsefulActionActors: number;
+      doctorPassActors: number;
+    }>;
+    retention: Array<{
+      window: string;
+      activeActors: number;
+      retainedActors: number;
+      retentionRate: number;
+      capped: boolean;
+      byRole: Array<{
+        role: string;
+        activeActors: number;
+        retainedActors: number;
+        retentionRate: number;
+      }>;
+    }>;
+    byTool?: Array<{ key: string; count: number }>;
     activation: {
       fullyActivatedActors: number;
       githubActivatedRepos: number;
     };
   }>;
+  weeklyValueReport?: {
+    metrics: Array<{ id: string; label: string; value: number; detail: string }>;
+    warnings: string[];
+    freshness: { status: string; latestRollupDay?: string | null };
+  };
+  commandUsefulness?: {
+    windowDays: number;
+    totals: {
+      feedbackCount: number;
+      usefulCount: number;
+      notUsefulCount: number;
+      answerCount: number;
+      usefulnessRate: number | null;
+    };
+    commands: Array<{
+      command: string;
+      feedbackCount: number;
+      usefulCount: number;
+      notUsefulCount: number;
+      usefulnessRate: number | null;
+    }>;
+  };
   mcpCompatibilityAdoption?: {
     totalEvents: number;
     activeActors: number;
@@ -43,6 +97,7 @@ type OperatorDashboard = {
       count: number;
     }>;
   };
+  upstreamDrift?: { status?: string; openReportCount?: number } | null;
 };
 
 function ProductAnalytics() {
@@ -51,6 +106,10 @@ function ProductAnalytics() {
     "Product analytics",
   );
   const data = dashboard.status === "ready" ? dashboard.data : null;
+  const latestRollup =
+    data?.usageRollups && data.usageRollups.length > 0
+      ? [...data.usageRollups].sort((a, b) => b.day.localeCompare(a.day))[0]
+      : null;
 
   return (
     <StateBoundary
@@ -72,10 +131,11 @@ function ProductAnalytics() {
                 Analytics
               </div>
               <h1 className="mt-1 font-display text-token-2xl font-semibold tracking-tight">
-                Product analytics
+                Usage & value analytics
               </h1>
               <p className="mt-1 max-w-2xl text-token-sm text-muted-foreground">
-                Aggregate deployment, session, digest, and installation metrics from the live API.
+                Operator-facing adoption, activation, retention, and ecosystem value from product
+                usage rollups — not security audit logs or private source data.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -91,6 +151,11 @@ function ProductAnalytics() {
               >
                 {data.usageRollupStatus?.status ?? "Live API"}
               </StatusPill>
+              {data.upstreamDrift?.status ? (
+                <StatusPill status={data.upstreamDrift.status === "current" ? "ready" : "warn"}>
+                  Drift · {data.upstreamDrift.status}
+                </StatusPill>
+              ) : null}
               <BoundaryBadge boundary="private-api" />
             </div>
           </header>
@@ -105,6 +170,37 @@ function ProductAnalytics() {
               />
             ))}
           </section>
+
+          {data.weeklyValueReport ? (
+            <WeeklyValueMetricsPanel
+              metrics={data.weeklyValueReport.metrics}
+              warnings={data.weeklyValueReport.warnings}
+            />
+          ) : null}
+
+          {data.usageSummary ? (
+            <ProductUsageBreakdownPanel
+              byEvent={data.usageSummary.byEvent}
+              bySurface={data.usageSummary.bySurface}
+              byTool={latestRollup?.byTool}
+            />
+          ) : null}
+
+          {latestRollup ? (
+            <AdoptionRetentionPanel
+              byRole={latestRollup.byRole}
+              retention={latestRollup.retention}
+              activationByRole={latestRollup.activationByRole}
+            />
+          ) : null}
+
+          {data.commandUsefulness ? (
+            <CommandUsefulnessPanel
+              totals={data.commandUsefulness.totals}
+              commands={data.commandUsefulness.commands}
+              windowDays={data.commandUsefulness.windowDays}
+            />
+          ) : null}
 
           <section className="rounded-token border border-border bg-transparent p-5">
             <h2 className="font-display text-token-lg font-semibold">Operational trend signals</h2>
@@ -218,6 +314,13 @@ function ProductAnalytics() {
                   {data.usageRollupStatus?.latestRollupDay ?? "current"}
                 </StatusPill>
               </div>
+              {data.usageRollupStatus?.warnings.length ? (
+                <ul className="mt-3 space-y-1 text-token-xs text-amber-200/90">
+                  {data.usageRollupStatus.warnings.slice(0, 4).map((warning) => (
+                    <li key={warning}>· {warning}</li>
+                  ))}
+                </ul>
+              ) : null}
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[680px] text-left text-token-sm">
                   <thead className="border-b border-border text-token-xs uppercase text-muted-foreground">

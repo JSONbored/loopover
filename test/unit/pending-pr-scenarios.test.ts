@@ -84,6 +84,33 @@ describe("pending PR scenario detection", () => {
     expect(detection?.classified.find((entry) => entry.number === 12)?.classification).toBe("blocked");
   });
 
+  it("treats timed-out checks as failing work that blocks merge readiness", () => {
+    const classified = classifyOpenPullRequest({
+      pr: pr({ number: 77 }),
+      roleContext: outsideContributorRole,
+      reviews: [approvedReview(77)],
+      checks: [{ id: "c77", repoFullName: "entrius/allways-ui", pullNumber: 77, name: "ci", status: "completed", conclusion: "timed_out", payload: {} }],
+    });
+    expect(classified.classification).toBe("blocked");
+    expect(classified.reasons.join(" ")).toMatch(/failing or cancelled check/i);
+  });
+
+  it("counts stale approved PRs as pending closes and projects the post-cleanup open count", () => {
+    const staleDate = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const detection = detectPendingPrScenario({
+      login: "miner-a",
+      repoFullName: "entrius/allways-ui",
+      pullRequests: [pr({ number: 21, updatedAt: staleDate, createdAt: staleDate })],
+      roleContext: outsideContributorRole,
+      openPrCount: 2,
+      reviewsByPullNumber: new Map([[21, [approvedReview(21)]]]),
+      checksByPullNumber: new Map([[21, []]]),
+    });
+    expect(detection?.pendingMergedPrCount).toBe(0);
+    expect(detection?.pendingClosedPrCount).toBe(1);
+    expect(detection?.expectedOpenPrCountAfterMerge).toBe(1);
+  });
+
   it("does not treat draft, stale, or maintainer-lane PRs as likely-to-land", () => {
     const staleDate = new Date(Date.now() - 20 * 86_400_000).toISOString();
     const classified = [

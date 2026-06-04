@@ -353,8 +353,16 @@ export type RepositorySettings = {
   requireLinkedIssue: boolean;
   backfillEnabled: boolean;
   privateTrustEnabled: boolean;
+  commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
+};
+
+export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_author" | "confirmed_miner";
+
+export type RepositoryCommandAuthorizationPolicy = {
+  default: CommandAuthorizationRole[];
+  commands: Record<string, CommandAuthorizationRole[]>;
 };
 
 export type RepoSyncStateRecord = {

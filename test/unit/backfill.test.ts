@@ -9,6 +9,7 @@ import {
   listPullRequests,
   listPullRequestDetailSyncStates,
   listRecentMergedPullRequests,
+  upsertRecentMergedPullRequest,
   listLatestGitHubRateLimitObservations,
   listRepoLabels,
   listRepoSyncSegments,
@@ -729,6 +730,79 @@ describe("GitHub backfill", () => {
     expect(await listRepoLabels(env, "JSONbored/gittensory")).toEqual([expect.objectContaining({ name: "signal" })]);
   });
 
+  it("hydrates merged PR changed files in the recent-merged segment backfill", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 1, closedPullRequests: 1, labels: 0 });
+      }
+      if (url.includes("/pulls?state=closed")) {
+        return Response.json([
+          { number: 9, title: "Fix webhook processing", state: "closed", merged_at: "2026-05-22T00:00:00.000Z", user: { login: "oktofeesh1" }, labels: [{ name: "bug" }], body: "Fixes #1" },
+        ]);
+      }
+      if (url.includes("/pulls/9/files")) {
+        return Response.json([{ filename: "src/github/webhook.ts", status: "modified", additions: 12, deletions: 3, changes: 15 }]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "recent_merged_pull_requests", mode: "full" });
+
+    expect(result).toMatchObject({ status: "complete" });
+    // The segment path must hydrate changed files like the monolithic path (previously stored []).
+    expect(await listRecentMergedPullRequests(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ number: 9, changedFiles: expect.arrayContaining(["src/github/webhook.ts"]) })]),
+    );
+  });
+
+  it("preserves previously-hydrated merged PR files when a later upsert has none", async () => {
+    const env = createTestEnv();
+    await upsertRecentMergedPullRequest(env, {
+      repoFullName: "JSONbored/gittensory",
+      number: 9,
+      title: "Fix webhook",
+      authorLogin: "dev",
+      mergedAt: "2026-05-22T00:00:00.000Z",
+      labels: ["bug"],
+      linkedIssues: [1],
+      changedFiles: ["src/a.ts", "src/b.ts"],
+      payload: {},
+    });
+    // A later files-less upsert (e.g. a failed file fetch) must not erase the stored files.
+    await upsertRecentMergedPullRequest(env, {
+      repoFullName: "JSONbored/gittensory",
+      number: 9,
+      title: "Fix webhook (reconciled)",
+      authorLogin: "dev",
+      mergedAt: "2026-05-22T00:00:00.000Z",
+      labels: ["bug"],
+      linkedIssues: [1],
+      changedFiles: [],
+      payload: {},
+    });
+    expect(await listRecentMergedPullRequests(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ number: 9, title: "Fix webhook (reconciled)", changedFiles: ["src/a.ts", "src/b.ts"] })]),
+    );
+    // A later upsert that does carry files updates the stored list.
+    await upsertRecentMergedPullRequest(env, {
+      repoFullName: "JSONbored/gittensory",
+      number: 9,
+      title: "Fix webhook",
+      authorLogin: "dev",
+      mergedAt: "2026-05-22T00:00:00.000Z",
+      labels: ["bug"],
+      linkedIssues: [1],
+      changedFiles: ["src/c.ts"],
+      payload: {},
+    });
+    expect(await listRecentMergedPullRequests(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ number: 9, changedFiles: ["src/c.ts"] })]),
+    );
+  });
+
   it("does not let unauthenticated fallback rate limits poison the authenticated REST backoff", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await upsertRepositoryFromGitHub(env, {
@@ -752,6 +826,27 @@ describe("GitHub backfill", () => {
     expect(result).toMatchObject({ status: "waiting_rate_limit", fetchedCount: 0 });
     expect(await listLatestGitHubRateLimitObservations(env)).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ path: expect.stringContaining("/labels?"), statusCode: 403, remaining: 0 })]),
+    );
+  });
+
+  it("rolls an unfinished recent-merged crawl into the repo sync status instead of success", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const auth = new Headers(init?.headers).get("authorization");
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 1, closedPullRequests: 1, labels: 0 });
+      if (url.includes("/pulls?state=closed") && auth === "Bearer public-token") return new Response("", { status: 404 });
+      if (url.includes("/pulls?state=closed")) return new Response("limited", { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1779976046" } });
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "recent_merged_pull_requests", mode: "full" });
+
+    expect(result).toMatchObject({ status: "waiting_rate_limit" });
+    // The repo status must reflect the unfinished merged-history segment, not roll up to "success".
+    expect(await listRepoSyncStates(env)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ repoFullName: "JSONbored/gittensory", status: "rate_limited" })]),
     );
   });
 

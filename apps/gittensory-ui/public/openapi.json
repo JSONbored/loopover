@@ -8293,6 +8293,180 @@
               "detailLevel"
             ]
           },
+          "installPreview": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "needs_attention",
+                  "blocked"
+                ]
+              },
+              "summary": {
+                "type": "string"
+              },
+              "readScope": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "computedContext": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "previewBehavior": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "permissions": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "needs_attention",
+                      "blocked"
+                    ]
+                  },
+                  "required": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "missing": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "missingEvents": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "required",
+                  "missing",
+                  "missingEvents",
+                  "summary"
+                ]
+              },
+              "publicOutputs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "privateOnlyContext": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "commandAuthorization": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "auditBehavior": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sanitizerBoundaries": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "manualControls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "checklist": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "category": {
+                      "type": "string",
+                      "enum": [
+                        "permissions",
+                        "public_outputs",
+                        "private_context",
+                        "command_authorization",
+                        "audit",
+                        "sanitizer",
+                        "manual_control"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ready",
+                        "needs_attention",
+                        "blocked"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "category",
+                    "status",
+                    "label",
+                    "summary",
+                    "action"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "status",
+              "summary",
+              "readScope",
+              "computedContext",
+              "previewBehavior",
+              "permissions",
+              "publicOutputs",
+              "privateOnlyContext",
+              "commandAuthorization",
+              "auditBehavior",
+              "sanitizerBoundaries",
+              "manualControls",
+              "checklist"
+            ]
+          },
           "warnings": {
             "type": "array",
             "items": {
@@ -8313,6 +8487,7 @@
           "previewComment",
           "appliedLabel",
           "checkRun",
+          "installPreview",
           "warnings",
           "summary"
         ]

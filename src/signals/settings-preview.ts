@@ -1,4 +1,9 @@
-import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
+import type { CommandAuthorizationRole, IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
+import {
+  evaluateCommandAuthorization,
+  summarizeCommandAuthorizationPolicy,
+  type CommandAuthorizationDecision,
+} from "../settings/command-authorization";
 import { nowIso } from "../utils/json";
 import {
   buildCollisionReport,
@@ -112,6 +117,9 @@ export type PublicSurfaceSample = {
   body?: string | null | undefined;
   labels?: string[] | undefined;
   linkedIssues?: number[] | undefined;
+  commandName?: string | undefined;
+  commenterLogin?: string | null | undefined;
+  commenterAssociation?: string | null | undefined;
 };
 
 export type InstallationHealthSummary = {
@@ -169,6 +177,16 @@ export type RepoSettingsPreview = {
     createMissingLabel: boolean;
     includeMaintainerAuthors: boolean;
     requireLinkedIssue: boolean;
+    commandAuthorization: {
+      defaultAllowed: CommandAuthorizationRole[];
+      commandOverrides: Array<{ command: string; allowedRoles: CommandAuthorizationRole[] }>;
+    };
+  };
+  commandAuthorizationPreview: {
+    commandName: string;
+    commenterLogin: string;
+    commenterAssociation: string;
+    decision: CommandAuthorizationDecision;
   };
   installation: InstallationHealthSummary | null;
   sample: {
@@ -226,6 +244,22 @@ export function buildRepoSettingsPreview(args: {
     : null;
 
   const warnings = buildWarnings(settings, decision, args.installation);
+  const commandName = args.sample.commandName?.trim() || "preflight";
+  const commenterLogin = args.sample.commenterLogin?.trim() || sample.authorLogin;
+  const commenterAssociation = args.sample.commenterAssociation || sample.authorAssociation;
+  const commandAuthorizationPreview = {
+    commandName,
+    commenterLogin,
+    commenterAssociation,
+    decision: evaluateCommandAuthorization({
+      policy: settings.commandAuthorization,
+      commandName,
+      commenterLogin,
+      commenterAssociation,
+      pullRequestAuthorLogin: sample.authorLogin,
+      minerStatus: sample.minerStatus,
+    }),
+  };
   const installPreview = buildRepoInstallPreview({
     repo,
     settings,
@@ -248,7 +282,9 @@ export function buildRepoSettingsPreview(args: {
       createMissingLabel: settings.createMissingLabel,
       includeMaintainerAuthors: settings.includeMaintainerAuthors,
       requireLinkedIssue: settings.requireLinkedIssue,
+      commandAuthorization: summarizeCommandAuthorizationPolicy(settings.commandAuthorization),
     },
+    commandAuthorizationPreview,
     installation: args.installation,
     sample,
     decision,

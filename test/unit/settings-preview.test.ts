@@ -263,4 +263,30 @@ describe("buildRepoSettingsPreview", () => {
     expect(preview.previewComment).not.toBeNull();
     expect(preview.previewComment ?? "").not.toMatch(/wallet|hotkey|trust score|raw trust|scoreability|payout|reward|farming|\/100|reviewability\s*\d/i);
   });
+
+  it("reports a generic needs-attention summary when health is degraded but no permission or event is missing", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings(),
+      installation: { ...healthyInstall, status: "needs_attention", missingPermissions: [], missingEvents: [] },
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+    expect(preview.installPreview.status).toBe("needs_attention");
+    expect(preview.installPreview.permissions.summary).toMatch(/needs attention; review remediation/i);
+    expect(preview.installPreview.permissions.missing).toEqual([]);
+  });
+
+  it("requires no issues/checks write scope and lists a no-output sample when every public action is disabled", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ publicSurface: "label_only", autoLabelEnabled: false, commentMode: "off", checkRunMode: "off" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+    expect(preview.decision).toMatchObject({ skipped: false, willComment: false, willLabel: false, willCheckRun: false, actions: ["none"] });
+    // requiredInstallPermissions keeps only read scopes when no public write action is enabled.
+    expect(preview.installPreview.permissions.required).toEqual(["metadata: read", "pull_requests: read"]);
+    expect(preview.installPreview.publicOutputs).toEqual(["No public comment, label, or check run for this sample."]);
+    expect(preview.installPreview.checklist.find((item) => item.id === "public-outputs")?.summary).toMatch(/no public output action is enabled/i);
+  });
 });

@@ -1260,6 +1260,69 @@ describe("decision-pack service", () => {
     ).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
   });
 
+  it("adds deterministic counterfactual reasons for wait, cleanup-first, and choose-another-issue alternatives", () => {
+    const pursue = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/direct-counterfactual", 0.04, 0, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 0, mergedPullRequests: 2, closedPullRequestRate: 0, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript", openPullRequestsCount: 1, openIssuesCount: 6 } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(pursue.recommendation).toBe("pursue");
+    expect(pursue.counterfactualReasons?.map((reason) => reason.alternative)).toEqual(
+      expect.arrayContaining(["wait", "cleanup_first", "choose_another_issue"]),
+    );
+    expect(pursue.counterfactualReasons?.find((reason) => reason.alternative === "wait")).toMatchObject({
+      rank: expect.any(Number),
+      facts: expect.arrayContaining([expect.stringContaining("current recommendation is pursue")]),
+      assumptions: expect.arrayContaining([expect.stringContaining("No issue-quality cache")]),
+    });
+
+    const cleanupFirst = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/cleanup-counterfactual", 0.04, 0, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      outcome: { openPullRequests: 7, mergedPullRequests: 1, closedPullRequestRate: 0.1, credibility: 1 } as any,
+      syncState: { primaryLanguage: "TypeScript", openPullRequestsCount: 8, openIssuesCount: 4 } as any,
+      languageSet: new Set(["typescript"]),
+      labelHistory: new Set(["bug"]),
+    });
+    expect(cleanupFirst.recommendation).toBe("cleanup_first");
+    expect(cleanupFirst.counterfactualReasons?.map((reason) => reason.alternative)).toEqual(
+      expect.arrayContaining(["wait", "choose_another_issue", "replace"]),
+    );
+    expect(cleanupFirst.counterfactualReasons?.map((reason) => reason.alternative)).not.toContain("cleanup_first");
+
+    const issueDiscovery = __decisionPackInternals.buildRepoDecision({
+      repo: repoWithLabels("owner/issue-counterfactual", 0.02, 1, { bug: 1.1 }),
+      roleContext: { maintainerLane: false } as any,
+      issueQuality: {
+        repoFullName: "owner/issue-counterfactual",
+        generatedAt: "2026-06-02T00:00:00.000Z",
+        lane: { repoFullName: "owner/issue-counterfactual", lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+        issues: [
+          { number: 11, title: "Ready issue", status: "ready", score: 90, reasons: [], warnings: [] },
+          { number: 12, title: "Covered issue", status: "do_not_use", score: 0, reasons: [], warnings: [] },
+        ],
+        summary: "2 open issues evaluated.",
+      },
+    });
+    const chooseAnother = issueDiscovery.counterfactualReasons?.find((reason) => reason.alternative === "choose_another_issue");
+    expect(issueDiscovery.recommendation).toBe("watch");
+    expect(chooseAnother?.facts.join(" ")).toMatch(/issue-quality cache has 1 ready candidate/);
+
+    const summaries = [pursue, cleanupFirst, issueDiscovery].flatMap((decision) => decision.counterfactualReasons?.map((reason) => reason.publicSummary) ?? []);
+    expect(summaries.join(" ")).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
+  });
+
+  it("sanitizes counterfactual public summaries", () => {
+    expect(
+      __decisionPackInternals.sanitizeCounterfactualPublicText(
+        "wallet hotkey reward-estimate payout scoreability public-score-prediction trust-score private-reviewability private-scoreability farming-language",
+      ),
+    ).not.toMatch(FORBIDDEN_PUBLIC_TRADEOFF_LANGUAGE);
+  });
+
   it("covers languageMatch true/false and labelFit empty/non-empty paths", () => {
     const ctx = (overrides: Record<string, unknown> = {}) =>
       __decisionPackInternals.buildRepoDecision({

@@ -436,6 +436,12 @@ export type RepoGithubTotalsSnapshotRecord = {
   payload: Record<string, JsonValue>;
 };
 
+export type RepoQueueTrendSnapshotRecord = {
+  repoFullName: string;
+  payload: Record<string, JsonValue>;
+  generatedAt: string;
+};
+
 export type PullRequestDetailSyncStateRecord = {
   repoFullName: string;
   pullNumber: number;

@@ -18,6 +18,8 @@ import {
   listIssues,
   listIssueSignalSample,
   listLatestSignalSnapshotsByTarget,
+  listSignalSnapshots,
+  listRepoGithubTotalsSnapshotHistory,
   listOtherOpenPullRequests,
   listOpenPullRequests,
   listPullRequests,
@@ -35,6 +37,7 @@ import {
   persistSignalSnapshot,
   recordWebhookEvent,
   replaceCollisionEdges,
+  upsertRepoQueueTrendSnapshot,
   upsertAgentCommandAnswer,
   upsertOfficialMinerDetection,
   rollupProductUsageDaily,
@@ -84,6 +87,7 @@ import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
+import { buildQueueTrendReport, QUEUE_TREND_HISTORY_DAYS } from "../services/queue-trends";
 import {
   buildUpstreamRulesetSnapshot,
   detectAndPersistUpstreamDrift,
@@ -463,13 +467,16 @@ async function buildBurdenForecasts(env: Env, repoFullName?: string): Promise<vo
 export async function generateSignalSnapshots(env: Env, repoFullName?: string): Promise<void> {
   const repositories = (await listRepositories(env)).filter((repo) => repo.isRegistered && (!repoFullName || repo.fullName === repoFullName));
   for (const repo of repositories) {
-    const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts, bounties] = await Promise.all([
+    const trendSince = new Date(Date.now() - QUEUE_TREND_HISTORY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts, bounties, totalsHistory, queueHealthHistory] = await Promise.all([
       listIssueSignalSample(env, repo.fullName),
       listOpenPullRequests(env, repo.fullName),
       listRecentMergedPullRequests(env, repo.fullName),
       listRepoLabels(env, repo.fullName),
       loadOpenQueueCounts(env, repo.fullName),
       listBountiesByRepo(env, repo.fullName),
+      listRepoGithubTotalsSnapshotHistory(env, repo.fullName, { sinceIso: trendSince, limit: 120 }),
+      listSignalSnapshots(env, "queue-health", repo.fullName),
     ]);
     const collisions = buildCollisionReport(repo.fullName, issues, pullRequests, recentMergedPullRequests);
     const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions, queueCounts);
@@ -487,6 +494,17 @@ export async function generateSignalSnapshots(env: Env, repoFullName?: string): 
       targetKey: repo.fullName,
       repoFullName: repo.fullName,
       payload: queueHealth as unknown as Record<string, never>,
+      generatedAt,
+    });
+    await upsertRepoQueueTrendSnapshot(env, {
+      repoFullName: repo.fullName,
+      payload: buildQueueTrendReport({
+        repoFullName: repo.fullName,
+        totalsSnapshots: totalsHistory,
+        queueHealthSnapshots: queueHealthHistory,
+        currentQueueHealth: queueHealth,
+        generatedAt,
+      }) as unknown as Record<string, never>,
       generatedAt,
     });
     await persistSignalSnapshot(env, {

@@ -13,6 +13,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getIssue,
   getRepository,
+  getRepoQueueTrendSnapshot,
   listCheckSummaries,
   listContributorRepoStats,
   listContributorIssues,
@@ -44,6 +45,7 @@ import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -264,6 +266,7 @@ const repoContextOutputSchema = {
   repo: z.unknown().optional(),
   lane: z.unknown().optional(),
   queueHealth: z.unknown().optional(),
+  queueTrends: z.unknown().optional(),
   collisions: z.unknown().optional(),
   configQuality: z.unknown().optional(),
   dataQuality: z.unknown().optional(),
@@ -794,12 +797,13 @@ export class GittensoryMcp {
 
   private async getRepoContext(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts] = await Promise.all([
+    const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts, queueTrends] = await Promise.all([
       getRepository(this.env, fullName),
       listIssueSignalSample(this.env, fullName),
       listOpenPullRequests(this.env, fullName),
       listRecentMergedPullRequests(this.env, fullName),
       this.loadOpenQueueCounts(fullName),
+      getRepoQueueTrendSnapshot(this.env, fullName),
     ]);
     const collisions = buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
     return {
@@ -809,6 +813,7 @@ export class GittensoryMcp {
         repo,
         lane: buildLaneAdvice(repo, fullName),
         queueHealth: buildQueueHealth(repo, issues, pullRequests, collisions, queueCounts),
+        queueTrends: queueTrends?.payload ?? buildUnavailableQueueTrendReport(fullName),
         collisions,
         configQuality: buildConfigQuality(repo, issues, pullRequests, fullName),
         dataQuality: await this.loadRepoDataQuality(fullName),

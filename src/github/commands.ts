@@ -1,8 +1,9 @@
 import { AGENT_COMMAND_COMMENT_MARKER } from "./comments";
 import type { AgentRunBundle } from "../services/agent-orchestrator";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
-import type { AgentActionRecord } from "../types";
+import type { AgentActionRecord, RepositoryCommandAuthorizationPolicy } from "../types";
 import type { CheckSummaryRecord, GitHubIssuePayload, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord } from "../types";
+import { evaluateCommandAuthorization } from "../settings/command-authorization";
 import { buildCollisionReport, buildQueueHealth, type CollisionCluster, type QueueHealth } from "../signals/engine";
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [
@@ -166,21 +167,17 @@ export function isAuthorizedCommandActor(args: {
   commenterAssociation?: string | null | undefined;
   pullRequestAuthorLogin?: string | null | undefined;
   officialAuthorDetection?: OfficialGittensorMinerDetection | undefined;
+  commandAuthorizationPolicy?: RepositoryCommandAuthorizationPolicy | null | undefined;
 }): { authorized: boolean; reason: string; actorKind: "maintainer" | "author" | "none" } {
-  if (isMaintainerAssociation(args.commenterAssociation)) return { authorized: true, reason: "maintainer_invocation", actorKind: "maintainer" };
-  if (args.commandName && isMaintainerOnlyCommand(args.commandName)) {
-    return { authorized: false, reason: "maintainer_command_requires_maintainer", actorKind: "none" };
-  }
-  if (!args.commenterLogin || !args.pullRequestAuthorLogin || args.commenterLogin.toLowerCase() !== args.pullRequestAuthorLogin.toLowerCase()) {
-    return { authorized: false, reason: "not_maintainer_or_pr_author", actorKind: "none" };
-  }
-  if (!args.officialAuthorDetection || args.officialAuthorDetection.status === "unavailable") {
-    return { authorized: false, reason: "miner_detection_unavailable", actorKind: "author" };
-  }
-  if (args.officialAuthorDetection.status !== "confirmed") {
-    return { authorized: false, reason: "pr_author_not_confirmed_miner", actorKind: "author" };
-  }
-  return { authorized: true, reason: "confirmed_miner_pr_author", actorKind: "author" };
+  const decision = evaluateCommandAuthorization({
+    policy: args.commandAuthorizationPolicy,
+    commandName: args.commandName ?? "preflight",
+    commenterLogin: args.commenterLogin,
+    commenterAssociation: args.commenterAssociation,
+    pullRequestAuthorLogin: args.pullRequestAuthorLogin,
+    minerStatus: args.officialAuthorDetection?.status,
+  });
+  return { authorized: decision.authorized, reason: decision.reason, actorKind: decision.actorKind };
 }
 
 export function buildPublicAgentCommandComment(args: {

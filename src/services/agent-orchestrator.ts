@@ -30,6 +30,7 @@ import { buildContributorOpenPrMonitor, type ContributorOpenPrMonitor } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest, type LocalBranchAnalysis, type LocalBranchAnalysisInput } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { withAgentActionExplanationCard } from "./agent-action-explanation-card";
+import { attachRecommendationSnapshots } from "./recommendation-snapshots";
 import type {
   AgentActionRecord,
   AgentActionStatus,
@@ -262,10 +263,11 @@ async function executeDecisionPackRun(env: Env, run: AgentRunRecord, kind: strin
     kind === "explain_blockers"
       ? buildBlockerActions(run, pack, decisions, { allowFallback: allowCrossRepoFallback })
       : buildDecisionActions(run, pack, scopedDecisionActions);
-  const contexts = [contextSnapshotFromPack(run.id, pack, decisions)];
-  const selectedActionPortfolio = contexts[0]?.payload.actionPortfolio ?? null;
-  await replaceAgentActions(env, run.id, actions);
-  await persistAgentContextSnapshot(env, contexts[0]!);
+  const context = contextSnapshotFromPack(run.id, pack, decisions);
+  const actionsWithSnapshots = attachRecommendationSnapshots(actions, context);
+  const selectedActionPortfolio = context.payload.actionPortfolio ?? null;
+  await replaceAgentActions(env, run.id, actionsWithSnapshots);
+  await persistAgentContextSnapshot(env, context);
   const dataQualityStatus = isStale ? "degraded" : pack.dataQuality.signalFidelity.status;
   await updateAgentRun(env, run.id, {
     status: "completed",
@@ -310,7 +312,8 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
       dataQuality: (analysis.dataQuality ?? null) as unknown as JsonValue,
     },
   };
-  await replaceAgentActions(env, run.id, actions);
+  const actionsWithSnapshots = attachRecommendationSnapshots(actions, context);
+  await replaceAgentActions(env, run.id, actionsWithSnapshots);
   await persistAgentContextSnapshot(env, context);
   await updateAgentRun(env, run.id, {
     status: "completed",

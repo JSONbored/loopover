@@ -39,6 +39,28 @@ describe("extension packet helper internals", () => {
     expect(markdown).not.toMatch(/closed PR rate|repo-specific|wallet|payout|hotkey|reward estimate|estimated score|raw trust score/i);
   });
 
+  it.each([
+    ["review_now", "ready for maintainer review"],
+    ["maintainer_lane", "maintainer follow-up recommended"],
+    ["likely_duplicate", "possible overlap to verify"],
+    ["close_or_redirect", "triage may be needed before review"],
+    ["unknown", "keep monitoring the public PR context"],
+  ])("describes %s extension readiness with public-safe guidance", (action, expectedText) => {
+    const markdown = __routesInternals.buildExtensionPublicSafePacket({
+      repoFullName: "owner/repo",
+      pullNumber: 12,
+      contributor: "alice",
+      reviewability: {
+        action,
+        noiseSources: [],
+        maintainerNextSteps: [],
+      },
+    });
+
+    expect(markdown).toContain(expectedText);
+    expect(markdown).not.toMatch(/private reviewability|trust score|reward estimate|payout|\/100/i);
+  });
+
   it("authenticates request identity from browser session cookie fallback", async () => {
     const env = createTestEnv();
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 7 });

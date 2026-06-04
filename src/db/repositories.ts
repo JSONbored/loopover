@@ -2053,7 +2053,9 @@ export async function upsertRecentMergedPullRequest(env: Env, pr: RecentMergedPu
         mergedAt: pr.mergedAt,
         labelsJson: jsonString(pr.labels),
         linkedIssuesJson: jsonString(pr.linkedIssues),
-        changedFilesJson: jsonString(pr.changedFiles),
+        // Keep a previously-hydrated file list instead of clobbering it with an empty
+        // one (e.g. a files-less upsert or a failed file fetch).
+        changedFilesJson: pr.changedFiles.length > 0 ? jsonString(pr.changedFiles) : sql`${recentMergedPullRequests.changedFilesJson}`,
         payloadJson: jsonString(pr.payload),
         updatedAt: nowIso(),
       },

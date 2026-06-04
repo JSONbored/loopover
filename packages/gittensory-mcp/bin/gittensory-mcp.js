@@ -1006,6 +1006,7 @@ await server.connect(new StdioServerTransport());
 async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
+  if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   const options = parseOptions(args.slice(1));
@@ -1019,7 +1020,7 @@ async function runCli(args) {
   if (command === "init-client") return initClient(options);
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
-  if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}`);
+  if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}. Run \`gittensory-mcp --help\` to list commands.`);
   const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
   const result = await analyzeCurrentBranch({
@@ -1240,9 +1241,19 @@ function isUnsafePublicPacketText(value) {
   return /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(value);
 }
 
+function printVersion(options) {
+  const payload = { name: packageName, version: packageVersion, apiVersion: currentApiVersion, node: process.version };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
+}
+
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
+  gittensory-mcp version [--json]
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]

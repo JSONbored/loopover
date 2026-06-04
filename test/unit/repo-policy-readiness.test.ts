@@ -134,6 +134,14 @@ function input(overrides: Partial<RepoPolicyReadinessInput> = {}): RepoPolicyRea
 }
 
 describe("buildRepoPolicyReadiness", () => {
+  it("summarizes a clean policy when no warnings are present", () => {
+    const report = buildRepoPolicyReadiness(input());
+
+    expect(report.publicWarnings).toEqual([]);
+    expect(report.droppedPublicWarnings).toEqual([]);
+    expect(report.summary).toBe("Policy readiness has no public-safe warnings for owner review.");
+  });
+
   it("warns when direct-PR policy is loose", () => {
     const report = buildRepoPolicyReadiness(
       input({
@@ -158,6 +166,32 @@ describe("buildRepoPolicyReadiness", () => {
     expect(report.publicWarnings.flatMap((warning) => [warning.title, warning.detail, warning.action]).every(isFocusManifestPublicSafe)).toBe(true);
   });
 
+  it("warns when contribution scope only defines blocked work", () => {
+    const report = buildRepoPolicyReadiness(
+      input({
+        settings: settings({ requireLinkedIssue: true }),
+        focusManifest: parseFocusManifest({
+          blockedPaths: ["docs/"],
+          linkedIssuePolicy: "optional",
+          testExpectations: ["Run npm run test:ci."],
+        }),
+      }),
+    );
+
+    expect(report.ownerContext).toMatchObject({
+      wantedPathCount: 0,
+      blockedPathCount: 1,
+      issuePolicy: "direct_pr_requires_linked_issue",
+    });
+    expect(report.publicWarnings.map((warning) => warning.code)).toEqual(
+      expect.arrayContaining([
+        "contribution_scope_unclear",
+        "blocked_work_without_wanted_scope",
+        "linked_issue_policy_mismatch",
+      ]),
+    );
+  });
+
   it("warns about issue-discovery policy conflicts and intake gaps", () => {
     const report = buildRepoPolicyReadiness(
       input({
@@ -177,6 +211,31 @@ describe("buildRepoPolicyReadiness", () => {
         "issue_discovery_policy_mismatch",
         "issue_discovery_intake_not_ready",
         "maintainer_burden_high",
+      ]),
+    );
+  });
+
+  it("marks blocked issue-discovery intake as critical", () => {
+    const report = buildRepoPolicyReadiness(
+      input({
+        lane: lane({ lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0 }),
+        focusManifest: parseFocusManifest({
+          wantedPaths: ["src/"],
+          linkedIssuePolicy: "required",
+          issueDiscoveryPolicy: "neutral",
+          testExpectations: ["Run npm run test:ci."],
+        }),
+        contributorIntakeHealth: intake({ level: "blocked" }),
+      }),
+    );
+
+    expect(report.ownerContext.issuePolicy).toBe("issue_discovery_enabled");
+    expect(report.publicWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "issue_discovery_intake_not_ready",
+          severity: "critical",
+        }),
       ]),
     );
   });
@@ -317,6 +376,29 @@ describe("buildRepoPolicyReadiness", () => {
       previewOnly: true,
       present: false,
       ownerContext: { manifestPresent: false, manifestSource: "none" },
+    });
+    expect(report.publicWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "focus_policy_missing" }),
+      ]),
+    );
+  });
+
+  it("uses empty owner-context defaults when the focus manifest is omitted", () => {
+    const report = buildRepoPolicyReadiness(input({ focusManifest: undefined }));
+
+    expect(report).toMatchObject({
+      present: false,
+      ownerContext: {
+        manifestPresent: false,
+        manifestSource: "none",
+        privateNoteCount: 0,
+        manifestWarningCount: 0,
+        wantedPathCount: 0,
+        blockedPathCount: 0,
+        validationExpectationCount: 0,
+        issueDiscoveryPolicy: "neutral",
+      },
     });
     expect(report.publicWarnings).toEqual(
       expect.arrayContaining([

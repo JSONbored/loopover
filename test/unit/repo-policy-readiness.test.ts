@@ -324,4 +324,26 @@ describe("buildRepoPolicyReadiness", () => {
       ]),
     );
   });
+
+  it("handles absent optional policy data and clean policy summaries", () => {
+    const missing = buildRepoPolicyReadiness(input({ focusManifest: undefined }));
+    expect(missing).toMatchObject({
+      present: false,
+      ownerContext: {
+        manifestPresent: false,
+        manifestSource: "none",
+        privateNoteCount: 0,
+        manifestWarningCount: 0,
+        wantedPathCount: 0,
+        blockedPathCount: 0,
+        validationExpectationCount: 0,
+        issueDiscoveryPolicy: "neutral",
+      },
+    });
+
+    const clean = buildRepoPolicyReadiness(input());
+    expect(clean.publicWarnings).toEqual([]);
+    expect(clean.droppedPublicWarnings).toEqual([]);
+    expect(clean.summary).toBe("Policy readiness has no public-safe warnings for owner review.");
+  });
 });

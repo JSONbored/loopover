@@ -22,6 +22,7 @@ import {
   upsertRepoLabel,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
+  recordAuditEvent,
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
   persistScoringModelSnapshot,
@@ -2708,6 +2709,159 @@ describe("api routes", () => {
     expect(operatorWeeklyReportMarkdownText).toContain("## Operator detail");
     expect(operatorWeeklyReportMarkdownText).toContain("- Product events:");
     expect(operatorWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+  });
+
+  it("serves bounded private skipped PR audit exports with scoped access and redaction", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "operator" });
+    await upsertInstallation(env, {
+      installation: {
+        id: 101,
+        account: { login: "repo-owner", id: 101, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "owned-repo", full_name: "repo-owner/owned-repo", private: false, default_branch: "main", owner: { login: "repo-owner" } }, 101);
+    await upsertInstallation(env, {
+      installation: {
+        id: 202,
+        account: { login: "victim-org", id: 202, type: "Organization" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["pull_request", "repository"],
+      },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "secret-repo", full_name: "victim-org/secret-repo", private: true, default_branch: "main", owner: { login: "victim-org" } }, 202);
+    const secretMetadata = { deliveryId: "delivery-secret", token: "github_pat_should_not_export", privateNote: "wallet hotkey raw trust" };
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "private-author",
+      targetKey: "repo-owner/owned-repo#3",
+      outcome: "completed",
+      detail: "not_official_gittensor_miner",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:01.000Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "missing-secret",
+      targetKey: "repo-owner/owned-repo#2",
+      outcome: "completed",
+      detail: "missing_author",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:00.500Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "legacy-secret",
+      targetKey: "repo-owner/owned-repo#1",
+      outcome: "completed",
+      detail: "legacy_skip_reason",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:00.250Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "bot-secret",
+      targetKey: "repo-owner/owned-repo#4",
+      outcome: "completed",
+      detail: "bot_author",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:02.000Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "detector-secret",
+      targetKey: "repo-owner/owned-repo#5",
+      outcome: "completed",
+      detail: "miner_detection_unavailable",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:03.000Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "surface-secret",
+      targetKey: "repo-owner/owned-repo#6",
+      outcome: "completed",
+      detail: "surface_off",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:04.000Z",
+    });
+    await recordAuditEvent(env, {
+      eventType: "github_app.pr_visibility_skipped",
+      actor: "victim-secret",
+      targetKey: "victim-org/secret-repo#7",
+      outcome: "completed",
+      detail: "maintainer_author",
+      metadata: secretMetadata,
+      createdAt: "2026-05-28T00:00:05.000Z",
+    });
+
+    expect((await app.request("/v1/app/skipped-pr-audit", {}, env)).status).toBe(401);
+    const { token: unknownToken } = await createSessionForGitHubUser(env, { login: "unknown-user", id: 404 });
+    expect((await app.request("/v1/app/skipped-pr-audit", { headers: { cookie: `gittensory_session=${unknownToken}` } }, env)).status).toBe(403);
+
+    const bounded = await app.request("/v1/app/skipped-pr-audit?limit=3", { headers: apiHeaders(env) }, env);
+    expect(bounded.status).toBe(200);
+    const boundedBody = (await bounded.json()) as {
+      limit: number;
+      hasMore: boolean;
+      items: Array<{ repoFullName: string; pullNumber: number; reason: string; timestamp: string; remediation: string }>;
+    };
+    expect(boundedBody.limit).toBe(3);
+    expect(boundedBody.hasMore).toBe(true);
+    expect(boundedBody.items).toEqual([
+      expect.objectContaining({ repoFullName: "victim-org/secret-repo", pullNumber: 7, reason: "maintainer_author" }),
+      expect.objectContaining({ repoFullName: "repo-owner/owned-repo", pullNumber: 6, reason: "surface_off" }),
+      expect.objectContaining({ repoFullName: "repo-owner/owned-repo", pullNumber: 5, reason: "miner_detection_unavailable" }),
+    ]);
+    expect(boundedBody.items[1]?.remediation).toContain("repository settings");
+    expect(JSON.stringify(boundedBody)).not.toMatch(/private-author|bot-secret|detector-secret|surface-secret|victim-secret|delivery-secret|github_pat|wallet|hotkey|raw trust/i);
+
+    const reasonFiltered = await app.request("/v1/app/skipped-pr-audit?reason=bot_author&limit=500", { headers: apiHeaders(env) }, env);
+    expect(reasonFiltered.status).toBe(200);
+    const reasonFilteredBody = (await reasonFiltered.json()) as { limit: number; hasMore: boolean; items: Array<{ reason: string; pullNumber: number }> };
+    expect(reasonFilteredBody.limit).toBe(100);
+    expect(reasonFilteredBody.hasMore).toBe(false);
+    expect(reasonFilteredBody.items).toEqual([expect.objectContaining({ reason: "bot_author", pullNumber: 4 })]);
+    const staticRepoFiltered = await app.request("/v1/app/skipped-pr-audit?repoFullName=repo-owner/owned-repo&limit=100", { headers: apiHeaders(env) }, env);
+    expect(staticRepoFiltered.status).toBe(200);
+    const staticRepoFilteredBody = (await staticRepoFiltered.json()) as { items: Array<{ reason: string; remediation: string }> };
+    expect(staticRepoFilteredBody.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: "missing_author", remediation: expect.stringContaining("resolvable pull request author") }),
+        expect.objectContaining({ reason: "legacy_skip_reason", remediation: expect.stringContaining("installation health") }),
+      ]),
+    );
+
+    const sinceFiltered = await app.request("/v1/app/skipped-pr-audit?since=2026-05-28T00:00:04.500Z", { headers: apiHeaders(env) }, env);
+    expect(sinceFiltered.status).toBe(200);
+    await expect(sinceFiltered.json()).resolves.toMatchObject({ items: [expect.objectContaining({ repoFullName: "victim-org/secret-repo", pullNumber: 7 })] });
+    expect((await app.request("/v1/app/skipped-pr-audit?since=not-a-date", { headers: apiHeaders(env) }, env)).status).toBe(400);
+    expect((await app.request("/v1/app/skipped-pr-audit?reason=unknown", { headers: apiHeaders(env) }, env)).status).toBe(400);
+
+    const { token: ownerToken } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 101 });
+    const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
+    const ownerAudit = await app.request("/v1/app/skipped-pr-audit", { headers: ownerHeaders }, env);
+    expect(ownerAudit.status).toBe(200);
+    const ownerAuditBody = (await ownerAudit.json()) as { items: Array<{ repoFullName: string; reason: string }> };
+    expect(ownerAuditBody.items).toHaveLength(6);
+    expect(ownerAuditBody.items.map((item) => item.reason)).toEqual(
+      expect.arrayContaining(["not_official_gittensor_miner", "bot_author", "miner_detection_unavailable", "surface_off", "missing_author", "legacy_skip_reason"]),
+    );
+    expect(JSON.stringify(ownerAuditBody)).not.toContain("victim-org");
+
+    const forbiddenRepo = await app.request("/v1/app/skipped-pr-audit?repoFullName=victim-org/secret-repo", { headers: ownerHeaders }, env);
+    expect(forbiddenRepo.status).toBe(403);
+    await expect(forbiddenRepo.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    const ownedRepo = await app.request("/v1/app/skipped-pr-audit?repoFullName=repo-owner/owned-repo&reason=surface_off", { headers: ownerHeaders }, env);
+    expect(ownedRepo.status).toBe(200);
+    await expect(ownedRepo.json()).resolves.toMatchObject({
+      filters: { repoFullName: "repo-owner/owned-repo", reason: "surface_off" },
+      items: [expect.objectContaining({ repoFullName: "repo-owner/owned-repo", reason: "surface_off" })],
+    });
   });
 
   it("covers live app auth, validation, and internal job queue edge routes", async () => {

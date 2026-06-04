@@ -59,6 +59,7 @@ import {
   listDigestSubscriptionsForLogin,
   listProductUsageDailyRollups,
   listOpenPullRequests,
+  listPrVisibilitySkipAuditEvents,
   listPullRequestFiles,
   listPullRequestReviews,
   listRecentMergedPullRequests,
@@ -172,7 +173,7 @@ import { buildPullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildRepoSettingsPreview } from "../signals/settings-preview";
+import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
 import type {
@@ -233,6 +234,14 @@ async function recordRouteProductUsage(
 
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
+const PR_VISIBILITY_SKIP_REASONS = [
+  "surface_off",
+  "missing_author",
+  "bot_author",
+  "maintainer_author",
+  "miner_detection_unavailable",
+  "not_official_gittensor_miner",
+] as const satisfies readonly PublicSurfaceSkipReason[];
 
 const preflightSchema = z.object({
   repoFullName: z.string().min(3),
@@ -251,6 +260,15 @@ const localDiffPreflightSchema = preflightSchema.extend({
   testFiles: z.array(z.string()).optional(),
   commitMessage: z.string().optional(),
 });
+
+const skippedPrAuditQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().optional(),
+    repoFullName: z.string().trim().min(3).max(200).optional(),
+    reason: z.enum(PR_VISIBILITY_SKIP_REASONS).optional(),
+    since: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict();
 
 const localBranchChangedFileSchema = z
   .object({
@@ -830,6 +848,44 @@ export function createApp() {
         reason: pull.linkedIssues.length > 0 ? `linked issue #${pull.linkedIssues[0]}` : "cached open PR without linked issue",
       })),
       settingsPreview: buildMaintainerSettingsPreview(),
+    });
+  });
+
+  app.get("/v1/app/skipped-pr-audit", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const summary = await getRoleSummaryForIdentity(c.env, identity);
+    if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
+
+    const parsed = skippedPrAuditQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return c.json({ error: "invalid_skipped_pr_audit_query", issues: parsed.error.issues }, 400);
+    const sinceIso = parsed.data.since ? toIsoQueryDate(parsed.data.since) : undefined;
+    if (parsed.data.since && !sinceIso) return c.json({ error: "invalid_since" }, 400);
+    const requestedRepo = parsed.data.repoFullName;
+    const repoFullNames = await skippedPrAuditRepoScope(c, identity, summary.roles, requestedRepo);
+    if (repoFullNames instanceof Response) return repoFullNames;
+    const page = await listPrVisibilitySkipAuditEvents(c.env, {
+      limit: clampInteger(parsed.data.limit ?? 50, 1, 100),
+      repoFullNames,
+      reason: parsed.data.reason,
+      sinceIso,
+    });
+    return c.json({
+      generatedAt: nowIso(),
+      limit: page.limit,
+      hasMore: page.hasMore,
+      filters: {
+        repoFullName: requestedRepo ?? null,
+        reason: parsed.data.reason ?? null,
+        since: sinceIso ?? null,
+      },
+      items: page.items.map((item) => ({
+        repoFullName: item.repoFullName,
+        pullNumber: item.pullNumber,
+        reason: item.reason,
+        timestamp: item.createdAt,
+        remediation: skippedPrAuditRemediation(item.reason),
+      })),
     });
   });
 
@@ -3080,6 +3136,45 @@ async function requireCommandPreviewRepoAccess(
   if (scopedRepoNames.has(requestedRepo)) return null;
   if (repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase())) return null;
   return c.json({ error: "forbidden_repo" }, 403);
+}
+
+async function skippedPrAuditRepoScope(
+  c: ProtectedRouteContext,
+  identity: AuthIdentity,
+  roles: ControlPanelRoleName[],
+  requestedRepo: string | undefined,
+): Promise<string[] | undefined | Response> {
+  if (identity.kind !== "session" || roles.includes("operator")) return requestedRepo ? [requestedRepo] : undefined;
+  const scope = await loadControlPanelAccessScope(c.env, identity.actor);
+  const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
+  if (requestedRepo) {
+    return scopedRepoNames.has(requestedRepo.toLowerCase()) ? [requestedRepo] : c.json({ error: "forbidden_repo" }, 403);
+  }
+  return scope.repositoryFullNames;
+}
+
+function skippedPrAuditRemediation(reason: string): string {
+  switch (reason) {
+    case "surface_off":
+      return "Enable a PR public surface or check runs in repository settings if maintainers want Gittensory to post.";
+    case "missing_author":
+      return "Retry after GitHub provides a resolvable pull request author.";
+    case "bot_author":
+      return "No action needed; bot-authored pull requests are intentionally kept quiet.";
+    case "maintainer_author":
+      return "Enable maintainer-authored PRs in repository settings only if those PRs should receive public GitHub App output.";
+    case "miner_detection_unavailable":
+      return "Retry after official Gittensor miner detection recovers; Gittensory skips instead of guessing.";
+    case "not_official_gittensor_miner":
+      return "No public action is needed unless the author should be recognized as an official Gittensor miner.";
+    default:
+      return "Review repository settings and installation health before reprocessing the pull request.";
+  }
+}
+
+function toIsoQueryDate(value: string): string | undefined {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
 }
 
 function requiresApiToken(path: string): boolean {

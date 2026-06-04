@@ -3,13 +3,14 @@ import {
   createAgentRun,
   getAgentRecommendationOutcomeSummary,
   listAgentRecommendationOutcomes,
+  persistAgentContextSnapshot,
   replaceAgentActions,
   upsertAgentRecommendationOutcome,
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
 } from "../../src/db/repositories";
 import { classifyRecommendationOutcome, evaluateRecommendationOutcomes } from "../../src/services/recommendation-outcomes";
-import type { AgentActionRecord, AgentRunRecord, GitHubIssuePayload, GitHubPullRequestPayload, IssueRecord, PullRequestRecord } from "../../src/types";
+import type { AgentActionRecord, AgentContextSnapshotRecord, AgentRunRecord, GitHubIssuePayload, GitHubPullRequestPayload, IssueRecord, PullRequestRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 describe("recommendation outcome feedback", () => {
@@ -349,6 +350,122 @@ describe("recommendation outcome feedback", () => {
         issues: [issueRecord(96, "owner/collab", { authorAssociation: "COLLABORATOR" })],
       }),
     ).toMatchObject({ maintainerLane: true });
+  });
+
+  it("classifies rejected, and all seven outcome states are reachable from PR fixtures", () => {
+    const run = runRecord("run-rejected", "dev", "2026-05-01T00:00:00.000Z");
+    const base = {
+      run,
+      evaluatedAt: "2026-06-01T00:00:00.000Z",
+      staleAfterMs: 14 * 24 * 60 * 60 * 1000,
+      ignoredAfterMs: 7 * 24 * 60 * 60 * 1000,
+    };
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 0, { targetRepoFullName: "owner/rejected-pr", targetPullNumber: 200 }),
+        pullRequests: [prRecord(200, "owner/rejected-pr", { updatedAt: "2026-05-10T00:00:00.000Z", reviewDecision: "CHANGES_REQUESTED" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "rejected", outcomeTargetType: "pull_request", outcomePullNumber: 200, confidence: "high" });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 1, { targetRepoFullName: "owner/merged-pr", targetPullNumber: 201 }),
+        pullRequests: [prRecord(201, "owner/merged-pr", { state: "closed", mergedAt: "2026-05-05T00:00:00.000Z", updatedAt: "2026-05-05T00:00:00.000Z" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "merged" });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 2, { targetRepoFullName: "owner/closed-pr", targetPullNumber: 202 }),
+        pullRequests: [prRecord(202, "owner/closed-pr", { state: "closed", updatedAt: "2026-05-05T00:00:00.000Z" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "closed" });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 3, { targetRepoFullName: "owner/improved-pr", targetPullNumber: 203 }),
+        pullRequests: [prRecord(203, "owner/improved-pr", { updatedAt: "2026-05-05T00:00:00.000Z", reviewDecision: "APPROVED" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "improved" });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 4, { targetRepoFullName: "owner/accepted-pr", targetPullNumber: 204 }),
+        pullRequests: [prRecord(204, "owner/accepted-pr", { updatedAt: "2026-05-05T00:00:00.000Z" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "accepted" });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 5, { targetRepoFullName: "owner/stale-pr", targetPullNumber: 205 }),
+        pullRequests: [prRecord(205, "owner/stale-pr", { createdAt: "2026-04-01T00:00:00.000Z", updatedAt: "2026-04-01T00:00:00.000Z" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "stale" });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 6, { targetRepoFullName: "owner/ignored-repo" }),
+        pullRequests: [],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "ignored" });
+  });
+
+  it("captures surface and snapshotId on persisted outcome records", async () => {
+    const env = createTestEnv();
+    const run = runRecord("run-surface", "dev", "2026-05-01T00:00:00.000Z");
+    await createAgentRun(env, run);
+    const snap: AgentContextSnapshotRecord = {
+      id: "snap-surface-001",
+      runId: run.id,
+      repoSignalSnapshotIds: [],
+      freshnessWarnings: [],
+      payload: {},
+    };
+    await persistAgentContextSnapshot(env, snap);
+    await replaceAgentActions(env, run.id, [action(run, 0, { targetRepoFullName: "owner/surface-pr", targetPullNumber: 300 })]);
+    await upsertPullRequestFromGitHub(env, "owner/surface-pr", pr(300, { state: "closed", merged_at: "2026-05-05T00:00:00.000Z", created_at: "2026-05-02T00:00:00.000Z", updated_at: "2026-05-05T00:00:00.000Z" }));
+
+    const result = await evaluateRecommendationOutcomes(env, "dev", { now: "2026-06-01T00:00:00.000Z" });
+    expect(result.outcomes).toHaveLength(1);
+    const outcome = result.outcomes[0]!;
+    expect(outcome.surface).toBe("api");
+    expect(outcome.snapshotId).toBe("snap-surface-001");
+    expect(outcome.outcomeState).toBe("merged");
+  });
+
+  it("does not expose private outcome fields in public-safe action summaries or serialized event JSON", async () => {
+    const env = createTestEnv();
+    const run = runRecord("run-privacy", "dev", "2026-05-01T00:00:00.000Z");
+    await createAgentRun(env, run);
+    await replaceAgentActions(env, run.id, [action(run, 0, { targetRepoFullName: "owner/private-pr", targetPullNumber: 400, publicSafeSummary: "Open a small scoped PR." })]);
+    await upsertPullRequestFromGitHub(env, "owner/private-pr", pr(400, { state: "closed", merged_at: "2026-05-05T00:00:00.000Z", created_at: "2026-05-02T00:00:00.000Z", updated_at: "2026-05-05T00:00:00.000Z" }));
+
+    const result = await evaluateRecommendationOutcomes(env, "dev", { now: "2026-06-01T00:00:00.000Z" });
+    const outcome = result.outcomes[0]!;
+
+    const privateSerialized = JSON.stringify(outcome);
+    expect(privateSerialized).not.toMatch(/scoreabilit|reward|payout|wallet|hotkey|coldkey|raw trust/i);
+
+    const summary = await getAgentRecommendationOutcomeSummary(env, "dev", { now: "2026-06-01T00:00:00.000Z" });
+    expect(summary.privateSummary).not.toMatch(/scoreabilit|reward|payout|wallet|hotkey|coldkey|raw trust/i);
+    expect(summary.totals.total).toBe(1);
+    expect(summary.totals.merged).toBe(1);
+    expect(summary.totals.rejected).toBe(0);
   });
 
   it("maps legacy recommendation outcome rows to safe enum defaults", async () => {

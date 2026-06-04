@@ -1,6 +1,8 @@
 import type { RegistryRepoConfig, RepositoryRecord, RepositorySettings } from "../types";
 import { nowIso } from "../utils/json";
 import type { ConfigQuality, ContributorIntakeHealth, LabelAudit, LaneAdvice, MaintainerCutReadiness, QueueHealth } from "./engine";
+import type { FocusManifest } from "./focus-manifest";
+import { buildRepoPolicyReadiness, policyReadinessWarningText, type RepoPolicyReadinessReport } from "./repo-policy-readiness";
 
 export type RegistrationMode = "direct_pr" | "issue_discovery" | "split";
 export type IssuePolicy = "issue_discovery_enabled" | "split_pr_and_issue_discovery_enabled" | "direct_pr_requires_linked_issue" | "direct_pr_no_issue_required";
@@ -58,6 +60,7 @@ export type RegistrationReadinessReport = {
   contributorIntakeHealth: ContributorIntakeHealth;
   docsCompleteness: { status: string; requiredDocs: string[]; note: string };
   githubApp: GithubAppBehavior;
+  policyReadiness: RepoPolicyReadinessReport | null;
   blockers: string[];
   warnings: string[];
 };
@@ -74,6 +77,7 @@ export type RegistrationReadinessInput = {
   contributorIntakeHealth: ContributorIntakeHealth;
   installation: InstallationHealthSummary | null;
   upstreamRegistryDriftWarnings?: string[] | undefined;
+  focusManifest?: FocusManifest | undefined;
 };
 
 const REQUIRED_DOCS = ["README", "CONTRIBUTING", "SECURITY", "SUPPORT"];
@@ -142,6 +146,19 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
 
   const testCoverageHealth = buildTestCoverageHealth(labelAudit, settings);
   const githubApp = buildGithubAppBehavior(repo, settings, installation);
+  const policyReadiness =
+    input.focusManifest === undefined
+      ? null
+      : buildRepoPolicyReadiness({
+          repoFullName,
+          focusManifest: input.focusManifest,
+          settings,
+          lane,
+          configQuality,
+          labelAudit,
+          queueHealth,
+          contributorIntakeHealth,
+        });
 
   const blockers = [
     ...(!isRegistered ? ["Repository is not registered in the latest Gittensory registry snapshot."] : []),
@@ -174,6 +191,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
     ...(settings.publicSurface === "off" ? ["GitHub App public surface is disabled; maintainers will not get comment/label assistance."] : []),
     ...testCoverageHealth.warnings,
     ...labelAudit.missingConfiguredLabels.map((label) => `Configured registry label "${label}" is missing from live GitHub labels.`),
+    ...(policyReadiness?.publicWarnings.map(policyReadinessWarningText) ?? []),
     ...upstreamRegistryDriftWarnings,
   ];
 
@@ -210,6 +228,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
       note: "Gittensory validates public repo docs from the local project during CI; remote repo-doc crawling is not enabled in this signal yet.",
     },
     githubApp,
+    policyReadiness,
     blockers,
     warnings,
   };

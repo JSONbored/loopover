@@ -593,6 +593,36 @@ export const RepoSettingsPreviewSchema = z
         detailLevel: z.enum(["minimal", "standard", "deep"]),
       })
       .nullable(),
+    installPreview: z.object({
+      status: z.enum(["ready", "needs_attention", "blocked"]),
+      summary: z.string(),
+      readScope: z.array(z.string()),
+      computedContext: z.array(z.string()),
+      previewBehavior: z.array(z.string()),
+      permissions: z.object({
+        status: z.enum(["ready", "needs_attention", "blocked"]),
+        required: z.array(z.string()),
+        missing: z.array(z.string()),
+        missingEvents: z.array(z.string()),
+        summary: z.string(),
+      }),
+      publicOutputs: z.array(z.string()),
+      privateOnlyContext: z.array(z.string()),
+      commandAuthorization: z.array(z.string()),
+      auditBehavior: z.array(z.string()),
+      sanitizerBoundaries: z.array(z.string()),
+      manualControls: z.array(z.string()),
+      checklist: z.array(
+        z.object({
+          id: z.string(),
+          category: z.enum(["permissions", "public_outputs", "private_context", "command_authorization", "audit", "sanitizer", "manual_control"]),
+          status: z.enum(["ready", "needs_attention", "blocked"]),
+          label: z.string(),
+          summary: z.string(),
+          action: z.string(),
+        }),
+      ),
+    }),
     warnings: z.array(z.string()),
     summary: z.string(),
   })
@@ -1698,6 +1728,32 @@ export const RegistrationReadinessSchema = z
       behavior: z.string(),
       warnings: z.array(z.string()),
     }),
+    policyReadiness: z
+      .object({
+        repoFullName: z.string(),
+        source: z.enum(["focus_manifest_policy"]),
+        previewOnly: z.boolean(),
+        present: z.boolean(),
+        publicWarnings: z.array(
+          z.object({
+            code: z.string(),
+            category: z.enum(["contribution_flow", "direct_pr_policy", "issue_discovery", "validation", "maintainer_burden"]),
+            severity: z.enum(["info", "warning", "critical"]),
+            title: z.string(),
+            detail: z.string(),
+            action: z.string(),
+          }),
+        ),
+        // Owner-only focus-manifest metadata is intentionally excluded from this broad route.
+        droppedPublicWarnings: z.array(
+          z.object({
+            code: z.string(),
+            reason: z.enum(["unsafe_public_text"]),
+          }),
+        ),
+        summary: z.string(),
+      })
+      .nullable(),
     blockers: z.array(z.string()),
     warnings: z.array(z.string()),
     dataQuality: z.record(z.string(), z.unknown()),

@@ -57,7 +57,7 @@ describe("GitHub check runs", () => {
 
     const result = await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory);
 
-    expect(result?.id).toBe(42);
+    expect(result).toMatchObject({ kind: "published", id: 42 });
     expect(calls.some((url) => url.includes("/app/installations/123/access_tokens"))).toBe(true);
     expect(calls.some((url) => url.includes("/repos/JSONbored/gittensory/check-runs"))).toBe(true);
   });
@@ -114,8 +114,138 @@ describe("GitHub check runs", () => {
 
     const result = await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory);
 
-    expect(result?.id).toBe(42);
+    expect(result).toMatchObject({ kind: "published", id: 42 });
     expect(methods.some((call) => call.startsWith("PATCH ") && call.includes("/check-runs/42"))).toBe(true);
+  });
+
+  it("returns permission_missing outcome when GitHub returns 403", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-403",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#5",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 5,
+      headSha: "def456",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    const result = await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory);
+
+    expect(result).toMatchObject({ kind: "permission_missing" });
+    expect((result as { kind: string; warning: string }).warning).toMatch(/Checks: write/i);
+  });
+
+  it("publishes check run with standard detail level and includes public-safe finding text", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { output?: { text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as { output?: { text?: string } };
+        return Response.json({ id: 77, html_url: "https://github.com/checks/77" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-std",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#9",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 9,
+      headSha: "bbb999",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning", detail: "No closing reference." }],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    const result = await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory, "standard");
+
+    expect(result).toMatchObject({ kind: "published", id: 77 });
+    expect(capturedBody.output?.text).toMatch(/⚠️/);
+    expect(capturedBody.output?.text).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|farming/i);
+  });
+
+  it("returns permission_missing for message-based 422 permission errors", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        return new Response(JSON.stringify({ message: "Resource not accessible by integration" }), { status: 422 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-422",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#6",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 6,
+      headSha: "fff111",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    const result = await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory);
+    expect(result).toMatchObject({ kind: "permission_missing" });
+  });
+
+  it("rethrows non-permission errors from the check-run API", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) return new Response("internal server error", { status: 500 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-500",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#7",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 7,
+      headSha: "aaa000",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    await expect(createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory)).rejects.toThrow();
   });
 
   it("skips check creation when no head SHA is available", async () => {

@@ -150,6 +150,46 @@ describe("agent orchestrator", () => {
     });
   });
 
+  it("threads scoped counterfactual reasons into decision context snapshots", () => {
+    const generatedAt = nowIso();
+    const rejectedAlternative = {
+      alternative: "wait",
+      group: "wait",
+      rank: 1,
+      reason: "Waiting was rejected because current facts support active cleanup.",
+      facts: ["owner/repo: current recommendation is cleanup_first."],
+      assumptions: ["No issue-quality cache is available for this repo decision."],
+      publicSummary: "owner/repo: active cleanup is preferred over passive waiting.",
+    } satisfies NonNullable<ContributorDecisionPack["repoDecisions"][number]["counterfactualReasons"]>[number];
+    const decision = repoDecision({
+      repoFullName: "owner/repo",
+      recommendation: "cleanup_first",
+      counterfactualReasons: [rejectedAlternative],
+    });
+    const pack = decisionPackFixture({
+      generatedAt,
+      repoDecisions: [decision],
+      topActions: [],
+    });
+
+    const snapshot = __agentOrchestratorInternals.contextSnapshotFromPack("run-counterfactual", pack, [decision]);
+    const counterfactuals = snapshot.payload.counterfactualReasons as unknown as Array<{
+      repoFullName: string;
+      recommendation: string;
+      rejectedAlternatives: Array<typeof rejectedAlternative>;
+    }>;
+
+    expect(counterfactuals).toEqual([
+      {
+        repoFullName: "owner/repo",
+        recommendation: "cleanup_first",
+        rejectedAlternatives: [rejectedAlternative],
+      },
+    ]);
+    expect(__agentOrchestratorInternals.scopedCounterfactualReasons([{ ...decision, counterfactualReasons: [] }])).toEqual([]);
+    expect(JSON.stringify(counterfactuals)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
+  });
+
   it("does not fall back to cross-repo private rankings for public GitHub comments", async () => {
     const env = createTestEnv();
     const secretDecision = repoDecision({

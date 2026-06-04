@@ -47,6 +47,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   requireLinkedIssue: integer("require_linked_issue", { mode: "boolean" }).notNull().default(false),
   backfillEnabled: integer("backfill_enabled", { mode: "boolean" }).notNull().default(true),
   privateTrustEnabled: integer("private_trust_enabled", { mode: "boolean" }).notNull().default(true),
+  commandAuthorizationJson: text("command_authorization_json").notNull().default("{}"),
   createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
   updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
 });

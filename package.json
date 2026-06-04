@@ -40,6 +40,7 @@
     "changelog:check:root": "node scripts/check-changelog.mjs --root",
     "changelog:check:mcp": "node scripts/check-changelog.mjs --mcp",
     "mcp:release-due": "node scripts/check-mcp-release-due.mjs --json",
+    "mcp:release-candidate": "node scripts/check-mcp-release-candidate.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",

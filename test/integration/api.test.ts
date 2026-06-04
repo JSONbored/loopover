@@ -4287,17 +4287,13 @@ describe("api routes", () => {
     const policyReadiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
     expect(policyReadiness.status).toBe(200);
     const policyPayload = (await policyReadiness.json()) as {
-      policyReadiness: { publicWarnings: unknown[] };
+      policyReadiness: { ownerContext?: unknown; publicWarnings: unknown[] };
       warnings: string[];
     };
     expect(policyPayload).toMatchObject({
       policyReadiness: {
         previewOnly: true,
         present: true,
-        ownerContext: {
-          privateNoteCount: 1,
-          blockedPathCount: 1,
-        },
         publicWarnings: expect.arrayContaining([
           expect.objectContaining({ code: "blocked_work_without_wanted_scope" }),
           expect.objectContaining({ code: "linked_issue_policy_mismatch" }),
@@ -4308,8 +4304,9 @@ describe("api routes", () => {
         expect.stringContaining("Blocked work lacks a positive lane"),
       ]),
     });
+    expect(policyPayload.policyReadiness).not.toHaveProperty("ownerContext");
     expect(JSON.stringify(policyPayload.policyReadiness.publicWarnings)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
-    expect(JSON.stringify(policyPayload.policyReadiness)).not.toMatch(/wallet|hotkey|raw trust|private[-\s]?reviewability|farming/i);
+    expect(JSON.stringify(policyPayload.policyReadiness)).not.toMatch(/wallet|hotkey|raw trust|private[-\s]?reviewability|farming|privateNoteCount|blockedPathCount/i);
 
     await persistRegistrySnapshot(
       env,

@@ -447,6 +447,12 @@ describe("api routes", () => {
       if (url.includes("/users/oktofeesh1/repos")) {
         return Response.json([{ language: "TypeScript" }, { language: "Python" }, { language: "TypeScript" }]);
       }
+      if (url.endsWith("/users/other")) {
+        return Response.json({ login: "other", public_repos: 4, followers: 1 });
+      }
+      if (url.includes("/users/other/repos")) {
+        return Response.json([{ language: "TypeScript" }]);
+      }
       return new Response("not found", { status: 404 });
     });
 
@@ -475,11 +481,29 @@ describe("api routes", () => {
       env,
     );
     expect(minerPreview.status).toBe(200);
-    const minerPreviewBody = (await minerPreview.json()) as { decision: { willComment: boolean; skipped: boolean }; previewComment: string | null; settings: { publicSurface: string } };
+    const minerPreviewBody = (await minerPreview.json()) as {
+      decision: { willComment: boolean; skipped: boolean };
+      previewComment: string | null;
+      settings: { publicSurface: string };
+      installPreview: {
+        status: string;
+        permissions: { required: string[]; status: string };
+        checklist: Array<{ id: string; status: string; summary: string; action: string }>;
+      };
+    };
     expect(minerPreviewBody.decision.skipped).toBe(false);
     expect(minerPreviewBody.decision.willComment).toBe(true);
     expect(minerPreviewBody.previewComment).toContain("Gittensory contribution context");
     expect(minerPreviewBody.previewComment).not.toMatch(/wallet|hotkey|trust score|scoreability|payout/i);
+    expect(minerPreviewBody.installPreview).toMatchObject({
+      status: "ready",
+      permissions: { required: expect.arrayContaining(["issues: write"]) },
+      checklist: expect.arrayContaining([
+        expect.objectContaining({ id: "permissions", status: "ready" }),
+        expect.objectContaining({ id: "sanitizer-boundaries", status: "ready" }),
+        expect.objectContaining({ id: "manual-controls", status: "ready" }),
+      ]),
+    });
 
     const invalidPreview = await app.request(
       "/v1/repos/entrius/allways-ui/settings-preview",
@@ -492,6 +516,7 @@ describe("api routes", () => {
     expect(unknownRepoPreview.status).toBe(200);
     await expect(unknownRepoPreview.json()).resolves.toMatchObject({
       installation: null,
+      installPreview: { status: "blocked", permissions: { status: "blocked" } },
       sample: { authorLogin: "sample-contributor", minerStatus: "confirmed" },
     });
 
@@ -799,6 +824,14 @@ describe("api routes", () => {
       env,
     );
     expect(invalidQueueIntelligence.status).toBe(400);
+
+    const missingQueuePullRequests = await app.request(
+      "/v1/internal/queue-intelligence",
+      { method: "POST", headers: internalHeaders(env), body: JSON.stringify({}) },
+      env,
+    );
+    expect(missingQueuePullRequests.status).toBe(400);
+    await expect(missingQueuePullRequests.json()).resolves.toMatchObject({ error: "invalid_request", detail: "pullRequests array required" });
 
     const invalidRepoContext = await app.request(
       "/v1/internal/queue-intelligence",
@@ -2410,20 +2443,47 @@ describe("api routes", () => {
     const extensionPayload = (await extensionContext.json()) as {
       repoFullName: string;
       pullNumber: number;
+      contributor: { login: string; minerStatus: string };
+      privacy: { surface: string; publicPosting: boolean; sourceUpload: boolean; githubMutations: boolean };
       reviewability: { repoFullName: string; pullNumber: number };
       actions: Array<{ id: string; markdown?: string; blockers?: Array<{ detail: string }> }>;
       panels: Array<{ label: string }>;
+      sections: Array<{ id: string; label: string; badge?: string }>;
     };
     expect(extensionPayload).toMatchObject({
       repoFullName: "entrius/allways-ui",
       pullNumber: 12,
+      contributor: { login: "oktofeesh1", minerStatus: "confirmed" },
+      privacy: { surface: "browser_extension", publicPosting: false, sourceUpload: false, githubMutations: false },
       reviewability: { repoFullName: "entrius/allways-ui", pullNumber: 12 },
       actions: expect.arrayContaining([
         expect.objectContaining({ id: "copy_public_safe_packet", visibility: "public_safe" }),
         expect.objectContaining({ id: "view_private_blockers", visibility: "private", requiresAuth: true }),
       ]),
       panels: expect.arrayContaining([expect.objectContaining({ label: "Reviewability" }), expect.objectContaining({ label: "Boundary" })]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "miner-context", label: "Miner Context", badge: "confirmed" }),
+        expect.objectContaining({ id: "lane-fit", label: "Lane Fit" }),
+        expect.objectContaining({ id: "duplicate-risk", label: "Duplicate Risk", badge: "check overlap" }),
+        expect.objectContaining({ id: "linked-issue-state", label: "Linked Issue State", badge: "linked" }),
+        expect.objectContaining({ id: "queue-pressure", label: "Queue Pressure" }),
+        expect.objectContaining({ id: "public-safe-actions", label: "Public-Safe Packet Actions" }),
+        expect.objectContaining({ id: "boundary", label: "Boundary", badge: "private" }),
+      ]),
     });
+    expect(JSON.stringify(extensionPayload)).not.toMatch(/wallet|hotkey|coldkey|raw trust|private ranking|github_pat|ghp_|payout|reward estimate|farming/i);
+
+    const nonMinerExtensionContext = await app.request(
+      "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=13",
+      { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
+      env,
+    );
+    expect(nonMinerExtensionContext.status).toBe(200);
+    await expect(nonMinerExtensionContext.json()).resolves.toMatchObject({
+      contributor: { login: "other", minerStatus: "not_found" },
+      sections: expect.arrayContaining([expect.objectContaining({ id: "miner-context", badge: "non-miner" })]),
+    });
+
     const packet = extensionPayload.actions.find((action) => action.id === "copy_public_safe_packet")?.markdown ?? "";
     expect(packet).toContain("# Public-safe PR packet");
     expect(packet).not.toMatch(/wallet|hotkey|coldkey|reward estimate|payout|farming|raw trust score|estimated score|score estimate|private reviewability/i);
@@ -2440,8 +2500,14 @@ describe("api routes", () => {
     await expect(missingPullContext.json()).resolves.toMatchObject({
       repoFullName: "entrius/allways-ui",
       pullNumber: 99,
+      contributor: { login: "unknown", minerStatus: "unavailable" },
       actions: expect.arrayContaining([expect.objectContaining({ id: "copy_public_safe_packet" }), expect.objectContaining({ id: "view_private_blockers" })]),
       panels: expect.arrayContaining([expect.objectContaining({ label: "Contributor", badge: "unknown" })]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "miner-context", badge: "unavailable" }),
+        expect.objectContaining({ id: "duplicate-risk", badge: "clear" }),
+        expect.objectContaining({ id: "linked-issue-state", badge: "missing" }),
+      ]),
     });
 
     const expiringExtensionSession = await app.request("/v1/auth/extension/session", { method: "POST", headers: cookieHeaders }, env);

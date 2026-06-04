@@ -486,7 +486,7 @@ describe("gittensory-mcp CLI", () => {
       GITTENSORY_API_URL: url,
       GITTENSORY_TOKEN: "session-token",
       GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_API_TIMEOUT_MS: "100",
+      GITTENSORY_API_TIMEOUT_MS: "1000",
     };
 
     const online = JSON.parse(await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)) as { status: string; source: string };

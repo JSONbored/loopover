@@ -162,13 +162,17 @@ import {
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
   buildPullRequestMaintainerPacket,
+  buildRoleContext,
   buildPreflightResult,
   buildQueueHealth,
   buildRegistryChangeReport,
+  type ContributorOutcomeHistory,
+  type PullRequestMaintainerPacket,
+  type RoleContext,
 } from "../signals/engine";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
-import { buildPullRequestReviewability } from "../signals/reward-risk";
+import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -1147,7 +1151,7 @@ export function createApp() {
     ]);
     const contributor = pullRequest?.authorLogin;
     const contributorContext = contributor ? await loadContributorFastContext(c.env, contributor).catch(() => null) : null;
-    const reviewability = buildPullRequestReviewability({
+    const signalArgs = {
       repo,
       pullRequest,
       issues,
@@ -1160,6 +1164,16 @@ export function createApp() {
       pullNumber,
       profile: contributorContext?.profile,
       outcomeHistory: contributorContext?.outcomeHistory,
+    };
+    const packet = buildPullRequestMaintainerPacket(signalArgs);
+    const reviewability = buildPullRequestReviewability(signalArgs);
+    const roleContext = buildRoleContext({
+      login: contributor ?? contributorContext?.profile.login ?? "unknown",
+      repo,
+      repoFullName: fullName,
+      pullRequests,
+      issues,
+      profile: contributorContext?.profile,
     });
     const publicSafePacketMarkdown = buildExtensionPublicSafePacket({
       repoFullName: fullName,
@@ -1189,32 +1203,20 @@ export function createApp() {
       clientName: "browser_extension",
       metadata: { hasContributorContext: Boolean(contributorContext), hasCachedPullRequest: Boolean(pullRequest) },
     });
-    return c.json({
-      generatedAt: nowIso(),
-      repoFullName: fullName,
-      pullNumber,
-      reviewability,
-      actions: [
-        {
-          id: "copy_public_safe_packet",
-          label: "Copy public-safe packet",
-          visibility: "public_safe",
-          markdown: publicSafePacketMarkdown,
-        },
-        {
-          id: "view_private_blockers",
-          label: "View private blockers",
-          visibility: "private",
-          requiresAuth: true,
-          blockers: privateBlockers,
-        },
-      ],
-      panels: [
-        { label: "Reviewability", badge: reviewability.action, rows: [{ k: "action", v: reviewability.action }, { k: "score", v: String(reviewability.score) }] },
-        { label: "Contributor", badge: contributor ?? "unknown", rows: [{ k: "author", v: contributor ?? "unknown" }, { k: "prs", v: String(contributorContext?.contributorPullRequests.length ?? 0) }] },
-        { label: "Boundary", badge: "private", rows: [{ k: "surface", v: "browser extension" }, { k: "public", v: "no" }] },
-      ],
-    });
+    return c.json(
+      buildExtensionPullContextPayload({
+        fullName,
+        pullNumber,
+        pullRequest,
+        contributorContext,
+        packet,
+        reviewability,
+        roleContext,
+        pullRequests,
+        publicSafePacketMarkdown,
+        privateBlockers,
+      }),
+    );
   });
 
   app.get("/v1/registry/snapshot", async (c) => {
@@ -2920,6 +2922,316 @@ async function loadContributorFastContext(env: Env, login: string) {
     profile,
     outcomeHistory,
   };
+}
+
+type ExtensionContributorContext = Awaited<ReturnType<typeof loadContributorFastContext>> | null;
+
+type ExtensionPullContextSection = {
+  id: string;
+  label: string;
+  badge: string;
+  tone: "good" | "warn" | "neutral" | "private";
+  rows: Array<{ label: string; value: string }>;
+  items: string[];
+  actions: string[];
+};
+
+type ExtensionQueueLevel = "low" | "medium" | "high" | "unknown";
+
+const EXTENSION_REVIEWABILITY_TONES: Record<PullRequestReviewability["action"], ExtensionPullContextSection["tone"]> = {
+  review_now: "good",
+  needs_author: "warn",
+  likely_duplicate: "warn",
+  close_or_redirect: "warn",
+  watch: "neutral",
+  maintainer_lane: "private",
+};
+
+const EXTENSION_QUEUE_TONES: Record<ExtensionQueueLevel, ExtensionPullContextSection["tone"]> = {
+  low: "good",
+  medium: "warn",
+  high: "warn",
+  unknown: "neutral",
+};
+
+const EXTENSION_QUEUE_DETAILS: Record<ExtensionQueueLevel, string> = {
+  low: "Cached repo and author queue pressure are low enough for normal review flow.",
+  medium: "Some open PR pressure is visible; check queue hygiene before encouraging more work from the same lane.",
+  high: "Resolve open PR pressure before encouraging more work from the same lane.",
+  unknown: "Author repo-history context is unavailable; use cached repo open PR count as a lightweight pressure signal.",
+};
+
+function buildExtensionPullContextPayload(args: {
+  fullName: string;
+  pullNumber: number;
+  pullRequest: PullRequestRecord | null;
+  contributorContext: ExtensionContributorContext;
+  packet: PullRequestMaintainerPacket;
+  reviewability: PullRequestReviewability;
+  roleContext: RoleContext;
+  pullRequests: PullRequestRecord[];
+  publicSafePacketMarkdown: string;
+  privateBlockers: ReturnType<typeof buildExtensionPrivateBlockers>;
+}) {
+  const contributor = args.pullRequest?.authorLogin ?? args.contributorContext?.profile.login ?? "unknown";
+  const minerStatus = extensionMinerStatus(args.contributorContext);
+  const repoOutcome = args.contributorContext?.outcomeHistory.repoOutcomes.find((outcome) => outcome.repoFullName.toLowerCase() === args.fullName.toLowerCase());
+  const repoOpenPullRequests = args.pullRequests.filter((pull) => pull.repoFullName === args.fullName && pull.state === "open").length;
+  const queue = extensionQueuePressure(repoOpenPullRequests, repoOutcome);
+  const linkedIssues = args.packet.reviewSignals.linkedIssues;
+  const duplicateCount = args.packet.reviewSignals.collisionClusters;
+  const publicActions = uniqueStrings([...args.reviewability.maintainerNextSteps, ...args.packet.contributorNextSteps]).slice(0, 5).map(sanitizeExtensionPrivateText);
+  const sections: ExtensionPullContextSection[] = [
+    cleanExtensionSection({
+      id: "miner-context",
+      label: "Miner Context",
+      badge: minerStatus.badge,
+      tone: minerStatus.tone,
+      rows: [
+        { label: "author", value: contributor },
+        { label: "status", value: minerStatus.label },
+        { label: "source", value: minerStatus.source },
+      ],
+      items: [minerStatus.detail],
+      actions: [],
+    }),
+    cleanExtensionSection({
+      id: "lane-fit",
+      label: "Lane Fit",
+      badge: args.roleContext.maintainerLane ? "maintainer lane" : args.roleContext.role,
+      tone: args.roleContext.maintainerLane ? "private" : args.roleContext.role === "outside_contributor" ? "good" : "neutral",
+      rows: [
+        { label: "role", value: args.roleContext.role },
+        { label: "normal evidence", value: args.roleContext.normalContributorEvidenceAllowed ? "allowed" : "separate lane" },
+        { label: "source", value: args.roleContext.source },
+      ],
+      items: uniqueStrings([args.roleContext.guidance, ...args.roleContext.reasons]).slice(0, 4),
+      actions: [],
+    }),
+    cleanExtensionSection({
+      id: "duplicate-risk",
+      label: "Duplicate Risk",
+      badge: duplicateCount > 0 ? "check overlap" : "clear",
+      tone: duplicateCount > 0 ? "warn" : "good",
+      rows: [
+        { label: "clusters", value: String(duplicateCount) },
+        { label: "action", value: duplicateCount > 0 ? "compare before review" : "no cached overlap" },
+      ],
+      items:
+        duplicateCount > 0
+          ? ["Compare linked issues, active PRs, and recent merges before detailed review."]
+          : ["No duplicate or WIP collision cluster includes this PR in cached metadata."],
+      actions: [],
+    }),
+    cleanExtensionSection({
+      id: "linked-issue-state",
+      label: "Linked Issue State",
+      badge: linkedIssues.length > 0 ? "linked" : "missing",
+      tone: linkedIssues.length > 0 ? "good" : "warn",
+      rows: [
+        { label: "issues", value: linkedIssues.length > 0 ? linkedIssues.map((issue) => `#${issue}`).join(", ") : "none cached" },
+        { label: "policy", value: linkedIssues.length > 0 ? "review traceable" : "ask for context" },
+      ],
+      items:
+        linkedIssues.length > 0
+          ? [`Cached PR body links ${linkedIssues.map((issue) => `#${issue}`).join(", ")}.`]
+          : ["Ask for a linked issue or a clear no-issue rationale before deep review."],
+      actions: [],
+    }),
+    cleanExtensionSection({
+      id: "queue-pressure",
+      label: "Queue Pressure",
+      badge: queue.level,
+      tone: queue.tone,
+      rows: [
+        { label: "repo open PRs", value: String(repoOpenPullRequests) },
+        { label: "author open PRs", value: queue.authorOpenPullRequests },
+        { label: "author merged", value: queue.authorMergedPullRequests },
+      ],
+      items: [queue.detail],
+      actions: [],
+    }),
+    cleanExtensionSection({
+      id: "public-safe-actions",
+      label: "Public-Safe Packet Actions",
+      badge: args.reviewability.action,
+      tone: EXTENSION_REVIEWABILITY_TONES[args.reviewability.action],
+      rows: [
+        { label: "priority", value: args.packet.reviewPriority },
+        { label: "checks", value: `${args.packet.reviewSignals.checkFailureCount} failing` },
+        { label: "reviews", value: `${args.packet.reviewSignals.reviewCount} cached` },
+      ],
+      items: args.reviewability.whyThisHelps.slice(0, 3),
+      actions: publicActions,
+    }),
+    cleanExtensionSection({
+      id: "boundary",
+      label: "Boundary",
+      badge: "private",
+      tone: "private",
+      rows: [
+        { label: "surface", value: "browser extension" },
+        { label: "public posting", value: "none" },
+        { label: "source upload", value: "none" },
+      ],
+      items: ["This panel is maintainer-private context and does not create comments, labels, checks, or source uploads."],
+      actions: [],
+    }),
+  ];
+
+  return {
+    generatedAt: nowIso(),
+    repoFullName: args.fullName,
+    pullNumber: args.pullNumber,
+    contributor: {
+      login: sanitizeExtensionPrivateText(contributor),
+      minerStatus: minerStatus.status,
+      role: sanitizeExtensionPrivateText(args.roleContext.role),
+      maintainerLane: args.roleContext.maintainerLane,
+    },
+    privacy: {
+      surface: "browser_extension",
+      publicPosting: false,
+      sourceUpload: false,
+      githubMutations: false,
+    },
+    reviewability: args.reviewability,
+    actions: [
+      {
+        id: "copy_public_safe_packet",
+        label: "Copy public-safe packet",
+        visibility: "public_safe",
+        markdown: args.publicSafePacketMarkdown,
+      },
+      {
+        id: "view_private_blockers",
+        label: "View private blockers",
+        visibility: "private",
+        requiresAuth: true,
+        blockers: args.privateBlockers,
+      },
+    ],
+    sections,
+    panels: [
+      {
+        label: "Reviewability",
+        badge: sanitizeExtensionPrivateText(args.reviewability.action),
+        rows: [
+          { k: "action", v: sanitizeExtensionPrivateText(args.reviewability.action) },
+          { k: "score", v: String(args.reviewability.score) },
+        ],
+      },
+      {
+        label: "Contributor",
+        badge: sanitizeExtensionPrivateText(contributor),
+        rows: [
+          { k: "author", v: sanitizeExtensionPrivateText(contributor) },
+          { k: "prs", v: String(args.contributorContext?.contributorPullRequests.length ?? 0) },
+        ],
+      },
+      {
+        label: "Boundary",
+        badge: "private",
+        rows: [
+          { k: "surface", v: "browser extension" },
+          { k: "public", v: "no" },
+        ],
+      },
+    ],
+  };
+}
+
+function extensionMinerStatus(context: ExtensionContributorContext): {
+  status: "confirmed" | "not_found" | "unavailable";
+  badge: string;
+  label: string;
+  source: string;
+  detail: string;
+  tone: ExtensionPullContextSection["tone"];
+} {
+  if (!context) {
+    return {
+      status: "unavailable",
+      badge: "unavailable",
+      label: "official context unavailable",
+      source: "unavailable",
+      detail: "Official contributor context is unavailable; this panel does not guess or post publicly.",
+      tone: "neutral",
+    };
+  }
+  if (context.profile.gittensor) {
+    return {
+      status: "confirmed",
+      badge: "confirmed",
+      label: "confirmed miner",
+      source: "official Gittensor API",
+      detail: "Official miner context is available for private maintainer triage without exposing wallet or key material.",
+      tone: "good",
+    };
+  }
+  return {
+    status: "not_found",
+    badge: "non-miner",
+    label: "no confirmed miner record",
+    source: context.profile.source,
+    detail: "No confirmed miner record is cached for this GitHub login; use normal PR review signals.",
+    tone: "neutral",
+  };
+}
+
+function extensionQueuePressure(
+  repoOpenPullRequests: number,
+  repoOutcome: ContributorOutcomeHistory["repoOutcomes"][number] | undefined,
+): { level: ExtensionQueueLevel; tone: ExtensionPullContextSection["tone"]; authorOpenPullRequests: string; authorMergedPullRequests: string; detail: string } {
+  if (!repoOutcome) {
+    const level = repoOpenPullRequests >= 6 ? "medium" : "unknown";
+    return {
+      level,
+      tone: EXTENSION_QUEUE_TONES[level],
+      authorOpenPullRequests: "unknown",
+      authorMergedPullRequests: "unknown",
+      detail: EXTENSION_QUEUE_DETAILS[level],
+    };
+  }
+  const authorOpenPullRequests = repoOutcome.openPullRequests;
+  const level = extensionQueueLevel(repoOpenPullRequests, authorOpenPullRequests);
+  return {
+    level,
+    tone: EXTENSION_QUEUE_TONES[level],
+    authorOpenPullRequests: String(authorOpenPullRequests),
+    authorMergedPullRequests: String(repoOutcome.mergedPullRequests),
+    detail: EXTENSION_QUEUE_DETAILS[level],
+  };
+}
+
+function extensionQueueLevel(repoOpenPullRequests: number, authorOpenPullRequests: number): "low" | "medium" | "high" {
+  if (repoOpenPullRequests >= 8 || authorOpenPullRequests >= 4) return "high";
+  if (repoOpenPullRequests >= 4 || authorOpenPullRequests >= 2) return "medium";
+  return "low";
+}
+
+function cleanExtensionSection(section: ExtensionPullContextSection): ExtensionPullContextSection {
+  return {
+    id: section.id,
+    label: sanitizeExtensionPrivateText(section.label),
+    badge: sanitizeExtensionPrivateText(section.badge),
+    tone: section.tone,
+    rows: section.rows.map((row) => ({ label: sanitizeExtensionPrivateText(row.label), value: sanitizeExtensionPrivateText(row.value) })),
+    items: section.items.map(sanitizeExtensionPrivateText),
+    actions: section.actions.map(sanitizeExtensionPrivateText),
+  };
+}
+
+function sanitizeExtensionPrivateText(value: unknown): string {
+  const text = String(value).replace(
+    /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|private keys?|raw trust scores?|trust scores?|raw rankings?|private rankings?|reward estimates?|payouts?|farming)\b|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+/gi,
+    "private signal",
+  );
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 async function loadCheckSummariesForPullRequests(env: Env, repoFullName: string, input: Parameters<typeof findCurrentBranchPullRequest>[0], pullRequests: Parameters<typeof findCurrentBranchPullRequest>[1]) {

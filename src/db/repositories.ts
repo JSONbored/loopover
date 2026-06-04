@@ -3510,6 +3510,13 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
   return record;
 }
 
+// Bounded enum dimensions (surface / outcome / eventName) are consumed by exact-name lookups
+// (e.g. the weekly value report's sumEvent over byEvent), so they must be stored complete:
+// frequency-truncating a bounded exact-lookup dimension silently zeroes any value below the
+// top-N cut on a high-diversity day. Only the genuinely-unbounded repo/command/tool/route
+// dimensions keep a display top-N.
+const FULL_DIMENSION_LIMIT = Number.MAX_SAFE_INTEGER;
+
 function buildProductUsageDailyRollupRecord(args: {
   day: string;
   generatedAt: string;
@@ -3537,9 +3544,9 @@ function buildProductUsageDailyRollupRecord(args: {
     maxEventCapacity: PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT,
     firstEventAt: args.events[0]?.occurredAt ?? null,
     lastEventAt: args.events.at(-1)?.occurredAt ?? null,
-    bySurface: countProductUsageDimensions(args.events.map((event) => event.surface)).map(({ key, count }) => ({ surface: normalizeProductUsageSurface(key), count })),
-    byOutcome: countProductUsageDimensions(args.events.map((event) => event.outcome)).map(({ key, count }) => ({ outcome: normalizeProductUsageOutcome(key), count })),
-    byEvent: countProductUsageDimensions(args.events.map((event) => event.eventName)).map(({ key, count }) => ({ eventName: key, count })),
+    bySurface: countProductUsageDimensions(args.events.map((event) => event.surface), FULL_DIMENSION_LIMIT).map(({ key, count }) => ({ surface: normalizeProductUsageSurface(key), count })),
+    byOutcome: countProductUsageDimensions(args.events.map((event) => event.outcome), FULL_DIMENSION_LIMIT).map(({ key, count }) => ({ outcome: normalizeProductUsageOutcome(key), count })),
+    byEvent: countProductUsageDimensions(args.events.map((event) => event.eventName), FULL_DIMENSION_LIMIT).map(({ key, count }) => ({ eventName: key, count })),
     byRepo: countProductUsageDimensions(args.events.map((event) => event.repoFullName)),
     byCommand: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "command"))),
     byTool: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "toolName"))),

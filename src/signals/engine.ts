@@ -429,6 +429,18 @@ export type PreflightResult = {
   collisions: CollisionCluster[];
 };
 
+export type PublicReadinessScore = {
+  total: number;
+  components: Array<{
+    key: "traceability" | "related_work" | "change_scope" | "validation" | "pr_state" | "queue_pressure";
+    label: string;
+    score: number;
+    max: number;
+    evidence: string;
+    action: string;
+  }>;
+};
+
 export type LocalDiffPreflightInput = PreflightInput & {
   changedLineCount?: number | undefined;
   testFiles?: string[] | undefined;
@@ -800,7 +812,7 @@ export function buildCollisionReport(
       clusters.set(key, {
         id: key,
         risk: overlap.score >= 0.75 ? "high" : "medium",
-        reason: `Titles share ${overlap.shared} meaningful terms.`,
+        reason: `Titles/paths share ${overlap.shared} meaningful terms.`,
         items: [left, right],
       });
     }
@@ -3417,6 +3429,90 @@ export function buildBountyAdvisory(
   };
 }
 
+export function buildPublicReadinessScore(args: {
+  pr: PullRequestRecord;
+  preflight: PreflightResult;
+  queueHealth: QueueHealth;
+  linkedDuplicatePrs?: number[] | undefined;
+  scopedOverlapCount?: number | undefined;
+}): PublicReadinessScore {
+  const linkedIssues = args.pr.linkedIssues;
+  const hasNoIssueRationale = hasClearNoIssueRationale(args.pr);
+  const linkedDuplicatePrs = args.linkedDuplicatePrs ?? [];
+  const scopedOverlapCount = args.scopedOverlapCount ?? 0;
+  const reviewLoadScore = reviewLoadComponentScore(args.preflight.reviewBurden);
+  const validation = validationComponent(args.pr, args.preflight);
+  const queueScore = queuePressureComponentScore(args.queueHealth.level);
+  const components: PublicReadinessScore["components"] = [
+    {
+      key: "traceability",
+      label: "Traceability",
+      score: linkedIssues.length > 0 || hasNoIssueRationale ? 15 : 8,
+      max: 15,
+      evidence:
+        linkedIssues.length > 0
+          ? `Linked issue${linkedIssues.length === 1 ? "" : "s"} ${formatIssueRefs(linkedIssues)}.`
+          : hasNoIssueRationale
+            ? "PR body includes a no-issue rationale."
+            : "No linked issue or no-issue rationale found.",
+      action: linkedIssues.length > 0 || hasNoIssueRationale ? "No action." : "Explain no-issue PR.",
+    },
+    {
+      key: "related_work",
+      label: "Related work",
+      score: linkedDuplicatePrs.length > 0 ? 8 : scopedOverlapCount > 0 ? 14 : 20,
+      max: 20,
+      evidence:
+        linkedDuplicatePrs.length > 0
+          ? `Same linked issue with ${formatPrRefs(linkedDuplicatePrs)}.`
+          : scopedOverlapCount > 0
+            ? `${Math.min(scopedOverlapCount, 3)} scoped overlap${Math.min(scopedOverlapCount, 3) === 1 ? "" : "s"} found.`
+            : "No active overlap found.",
+      action: linkedDuplicatePrs.length > 0 ? `Compare ${formatPrRefs(linkedDuplicatePrs)}.` : scopedOverlapCount > 0 ? "Review top overlaps." : "No action.",
+    },
+    {
+      key: "change_scope",
+      label: "Change scope",
+      score: reviewLoadScore,
+      max: 20,
+      evidence: `Readiness component derived from cached public PR metadata and labels${formatSizeLabelEvidence(args.pr.labels)}.`,
+      action: reviewLoadScore >= 18 ? "No action." : "Add scope summary.",
+    },
+    {
+      key: "validation",
+      label: "Validation evidence",
+      score: validation.score,
+      max: 25,
+      evidence: validation.evidence,
+      action: validation.action,
+    },
+    {
+      key: "pr_state",
+      label: "PR state",
+      score: args.pr.state === "open" && !args.pr.isDraft ? 10 : args.pr.state === "open" ? 6 : 3,
+      max: 10,
+      evidence: args.pr.isDraft ? "PR is open as draft." : `PR state is ${args.pr.state}.`,
+      action: args.pr.state === "open" && !args.pr.isDraft ? "No action." : args.pr.isDraft ? "Mark ready when done." : "No action.",
+    },
+    {
+      key: "queue_pressure",
+      label: "Open PR queue",
+      score: queueScore,
+      max: 10,
+      evidence: `${args.queueHealth.signals.openPullRequests} open PR(s), ${args.queueHealth.signals.likelyReviewablePullRequests} likely reviewable.`,
+      action: queueScore >= 8 ? "No action." : "Expect slower review.",
+    },
+  ];
+  return {
+    total: clamp(
+      components.reduce((sum, component) => sum + component.score, 0),
+      0,
+      100,
+    ),
+    components,
+  };
+}
+
 export function buildPublicPrIntelligenceComment(args: {
   repo: RepositoryRecord | null;
   pr: PullRequestRecord;
@@ -3430,19 +3526,16 @@ export function buildPublicPrIntelligenceComment(args: {
 }): string {
   const publicFindings = args.preflight.findings
     .filter((finding) => finding.severity !== "critical")
-    .filter((finding) => args.settings.requireLinkedIssue || finding.code !== "missing_linked_issue")
+    .filter((finding) => args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
     .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
   const scopedOverlapCount = Math.max(prCollisionClusters.length, args.preflight.collisions.length);
   const hasRelatedWork = linkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
-  const linkedIssues =
-    args.pr.linkedIssues.length > 0
-      ? args.pr.linkedIssues.map((issue) => `#${issue}`).join(", ")
-      : args.settings.requireLinkedIssue
-        ? "None detected"
-        : "Not required by this repo setting";
+  const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
+  const linkedIssueResult = linkedIssuePanelResult(args.pr);
+  const relatedWorkResult = relatedWorkPanelResult(linkedDuplicatePrs, scopedOverlapCount);
   const roleContext = buildRoleContext({
     login: args.pr.authorLogin ?? args.profile.login,
     repo: args.repo,
@@ -3453,43 +3546,43 @@ export function buildPublicPrIntelligenceComment(args: {
   });
   const nextSteps = [
     ...(roleContext.maintainerLane ? ["Treat this as maintainer-lane context rather than normal contributor-lane activity."] : []),
-    ...(args.settings.requireLinkedIssue && args.pr.linkedIssues.length === 0 ? ["Link the issue being solved, or explain why this is a no-issue PR."] : []),
-    ...(linkedDuplicatePrs.length > 0 ? [`Resolve the same-issue overlap with ${formatPrRefs(linkedDuplicatePrs)}, or explain why both PRs should stay open.`] : []),
-    ...(linkedDuplicatePrs.length === 0 && hasRelatedWork ? ["Review the scoped related-work signal before deep review; it is not a merge blocker by itself."] : []),
+    ...readiness.components.map((component) => component.action).filter((action) => action !== "No action."),
     /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
     ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
   ].filter((step) => !containsPrivatePublicTerm(step));
   const gateEnabled = args.settings.gateCheckMode === "enabled";
-  const missingRequiredIssue = args.settings.requireLinkedIssue && args.pr.linkedIssues.length === 0;
+  const hardLinkedIssueBlock =
+    args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
+  const hardDuplicateBlock = args.settings.duplicatePrGateMode === "block" && linkedDuplicatePrs.length > 0;
   const fallbackGateConclusion = !gateEnabled
     ? "success"
-    : missingRequiredIssue || linkedDuplicatePrs.length > 0 || !args.repo
-      ? "failure"
-      : "success";
+    : !args.repo
+      ? "action_required"
+      : hardLinkedIssueBlock || hardDuplicateBlock
+        ? "failure"
+        : "success";
   const gateConclusion = args.gate?.conclusion ?? fallbackGateConclusion;
-  const gateBlocking = gateEnabled && gateConclusion !== "success";
+  const gateBlocking = gateEnabled && (gateConclusion === "failure" || gateConclusion === "action_required");
+  const missingLinkedIssue = args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
   const confirmedMiner = isOfficialContributorDetection(args.detection);
   const genericOssMode = args.settings.publicAudienceMode === "oss_maintainer";
+  const hasPublicWarnings = publicFindings.some((finding) => finding.severity === "warning");
   const alert = gateBlocking
     ? gateConclusion === "action_required"
       ? "IMPORTANT"
-      : missingRequiredIssue
-      ? "WARNING"
-      : "CAUTION"
-    : args.preflight.findings.some((finding) => finding.severity === "warning") || hasRelatedWork
+      : missingLinkedIssue && args.settings.linkedIssueGateMode === "block"
+        ? "WARNING"
+        : "CAUTION"
+    : hasPublicWarnings || hasRelatedWork
       ? "IMPORTANT"
       : "TIP";
   const panelTitle = gateBlocking
     ? "Gittensory Gate is blocking merge"
-    : args.preflight.findings.some((finding) => finding.severity === "warning") || hasRelatedWork
+    : hasPublicWarnings || hasRelatedWork
       ? "Gittensory found maintainer review notes"
       : "Gittensory PR readiness looks good";
   const panelSummary = gateBlocking
-    ? args.gate?.summary ?? (missingRequiredIssue
-      ? "This repository requires linked issues, but this PR does not reference one yet."
-      : linkedDuplicatePrs.length > 0
-        ? `Another open PR references the same linked issue: ${formatPrRefs(linkedDuplicatePrs)}.`
-        : "Gittensory cannot evaluate the repo state closely enough for the enabled gate.")
+    ? args.gate?.summary ?? (gateConclusion === "action_required" ? "Gittensory cannot evaluate the repo state closely enough for the enabled gate." : "A repo-configured hard blocker was found.")
     : linkedDuplicatePrs.length > 0
       ? `Same-issue duplicate risk found against ${formatPrRefs(linkedDuplicatePrs)}. Maintainers should resolve the overlap before review continues.`
       : hasRelatedWork
@@ -3497,17 +3590,26 @@ export function buildPublicPrIntelligenceComment(args: {
     : genericOssMode
       ? "Public GitHub metadata was checked for review readiness. Gittensor-specific context appears only when confirmed."
       : "Confirmed Gittensor contributor context was checked from public metadata and Gittensory cache.";
-  const rows: Array<[string, string, string]> = [
+  const readinessByKey = new Map(readiness.components.map((component) => [component.key, component]));
+  const validationComponent = readinessByKey.get("validation");
+  const changeScopeComponent = readinessByKey.get("change_scope");
+  const queueComponent = readinessByKey.get("queue_pressure");
+  const contributorContext = contributorContextPanelResult(args.pr, args.profile, args.detection, confirmedMiner);
+  const rows: Array<[string, string, string, string]> = [
     [
       "Linked issue",
-      linkedIssues,
-      args.pr.linkedIssues.length > 0 ? "Ready for issue-scoped review." : args.settings.requireLinkedIssue ? "Required before merge." : "Optional for this repo.",
+      linkedIssueResult.result,
+      linkedIssueResult.evidence,
+      linkedIssueResult.action,
     ],
-    ["Duplicate risk", duplicateRiskStatus(linkedDuplicatePrs, scopedOverlapCount), duplicateRiskAction(linkedDuplicatePrs, scopedOverlapCount, gateBlocking)],
-    ["Review burden", titleCase(args.preflight.reviewBurden), "Estimated from public PR metadata."],
-    ["Repo queue", titleCase(args.queueHealth.level), "Repo-wide context only; this does not block the gate."],
-    ["Contributor context", confirmedMiner ? "Confirmed Gittensor contributor" : "Public profile only", confirmedMiner ? "Official public API confirmed this GitHub user." : "Cached contributor activity is not published."],
-    ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "No required check is being enforced."],
+    ["Related work", relatedWorkResult.result, relatedWorkResult.evidence, relatedWorkResult.action],
+    /* v8 ignore start -- Readiness components are built as a fixed key set; fallbacks guard future partial score shapes. */
+    ["Review load", scoreResultIcon(changeScopeComponent), changeScopeComponent?.evidence ?? "No public scope metadata found.", changeScopeComponent?.action ?? "No action."],
+    ["Validation evidence", scoreResultIcon(validationComponent), validationComponent?.evidence ?? "No validation signal found.", validationComponent?.action ?? "Add validation note."],
+    ["Open PR queue", scoreResultIcon(queueComponent), queueComponent?.evidence ?? "Open PR queue unavailable.", queueComponent?.action ?? "No action."],
+    /* v8 ignore stop */
+    ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action],
+    ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."],
   ];
   const overlapDetails = relatedWorkDetails(args.pr, prCollisionClusters, args.preflight.collisions);
   const maintainerNotes =
@@ -3525,10 +3627,22 @@ export function buildPublicPrIntelligenceComment(args: {
       `## ${panelTitle}`,
       panelSummary,
       "",
-      "| Signal | Status | Action |",
-      "| --- | --- | --- |",
-      ...rows.map(([signal, state, action]) => `| ${escapeTableCell(signal)} | ${escapeTableCell(state)} | ${escapeTableCell(action)} |`),
+      `**Readiness score: ${readiness.total}/100**`,
+      "",
+      "| Signal | Result | Evidence | Action |",
+      "| --- | --- | --- | --- |",
+      ...rows.map(([signal, result, evidence, action]) => `| ${escapeTableCell(signal)} | ${escapeTableCell(result)} | ${escapeTableCell(evidence)} | ${escapeTableCell(action)} |`),
     ]),
+    "",
+    "<details>",
+    "<summary>Signal definitions</summary>",
+    "",
+    "- Related work = same linked issue, overlapping active PRs, or title/path similarity.",
+    "- Review load = cached public PR metadata such as size labels, changed paths, and preflight status.",
+    "- Open PR queue = repo-wide review pressure; it is not a PR quality failure.",
+    "- Contributor context = public GitHub/Gittensor identity context; non-Gittensor status is not a blocker.",
+    "",
+    "</details>",
     "",
     "<details>",
     "<summary>Review context</summary>",
@@ -3538,7 +3652,7 @@ export function buildPublicPrIntelligenceComment(args: {
     `- Public audience mode: ${args.settings.publicAudienceMode.replace(/_/g, " ")}`,
     `- Lane context: ${sanitizePanelText(buildLaneAdvice(args.repo, args.pr.repoFullName).summary)}`,
     `- Public profile languages: ${args.profile.github.topLanguages.length > 0 ? sanitizePanelText(args.profile.github.topLanguages.join(", ")) : "not available"}`,
-    ...(confirmedMiner ? [`- Official Gittensor activity: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s).`] : ["- Contributor context: public profile only."]),
+    ...(confirmedMiner ? [`- Official Gittensor activity: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s).`] : ["- Contributor context: Public profile only; not a blocker."]),
     ...overlapDetails,
     "",
     "</details>",
@@ -3563,7 +3677,7 @@ export function buildPublicPrIntelligenceComment(args: {
 }
 
 type PublicPrPanelGateEvaluation = {
-  conclusion: "success" | "failure" | "action_required";
+  conclusion: "success" | "failure" | "action_required" | "neutral" | "skipped";
   summary: string;
 };
 
@@ -3587,55 +3701,186 @@ function linkedIssueDuplicatePullRequests(pr: PullRequestRecord, clusters: Colli
   return [...new Set(duplicates)].sort((left, right) => left - right);
 }
 
-function duplicateRiskStatus(linkedDuplicatePrs: number[], scopedOverlapCount: number): string {
-  if (linkedDuplicatePrs.length > 0) return `Clear same-issue overlap: ${formatPrRefs(linkedDuplicatePrs)}`;
-  if (scopedOverlapCount > 0) return `${displayScopedCount(scopedOverlapCount)} scoped related-work signal${scopedOverlapCount === 1 ? "" : "s"}`;
-  return "No PR-specific duplicate found";
+function linkedIssuePanelResult(pr: PullRequestRecord): { result: string; evidence: string; action: string } {
+  if (pr.linkedIssues.length > 0) {
+    return {
+      result: `✅ Linked`,
+      evidence: formatIssueRefs(pr.linkedIssues),
+      action: "No action.",
+    };
+  }
+  if (hasClearNoIssueRationale(pr)) {
+    return {
+      result: "✅ No-issue rationale",
+      evidence: "PR body explains why no issue is linked.",
+      action: "No action.",
+    };
+  }
+  return {
+    result: "⚠️ Missing",
+    evidence: "No linked issue or no-issue rationale found.",
+    action: "Explain no-issue PR.",
+  };
 }
 
-function duplicateRiskAction(linkedDuplicatePrs: number[], scopedOverlapCount: number, gateBlocking: boolean): string {
-  if (linkedDuplicatePrs.length > 0) return gateBlocking ? "Resolve before merge." : "Maintainer should reconcile before review.";
-  if (scopedOverlapCount > 0) return "Advisory review only.";
-  return "No action needed.";
+function relatedWorkPanelResult(linkedDuplicatePrs: number[], scopedOverlapCount: number): { result: string; evidence: string; action: string } {
+  if (linkedDuplicatePrs.length > 0) {
+    return {
+      result: `⚠️ Same linked issue: ${formatPrRefs(linkedDuplicatePrs)}`,
+      evidence: "Another open PR references the same linked issue.",
+      action: `Compare ${formatPrRefs(linkedDuplicatePrs)}.`,
+    };
+  }
+  if (scopedOverlapCount > 0) {
+    const visible = Math.min(scopedOverlapCount, 3);
+    return {
+      result: `⚠️ ${visible} scoped overlap${visible === 1 ? "" : "s"}`,
+      evidence: "Top overlaps are listed below; lower-confidence bulk is hidden.",
+      action: "Review top overlaps.",
+    };
+  }
+  return {
+    result: "✅ No active overlap found",
+    evidence: "No same-issue or scoped active PR overlap found.",
+    action: "No action.",
+  };
 }
 
-function displayScopedCount(count: number): string {
-  return count > 9 ? "9+" : String(count);
+function contributorContextPanelResult(
+  pr: PullRequestRecord,
+  profile: ContributorProfile,
+  detection: ContributorDetection,
+  confirmedMiner: boolean,
+): { result: string; evidence: string; action: string } {
+  const login = pr.authorLogin ?? profile.login;
+  const githubLink = `[${sanitizePanelText(login)}](${githubProfileUrl(login)})`;
+  if (!confirmedMiner) {
+    return {
+      result: "❌ No public Gittensor match",
+      evidence: `${githubLink}; not a blocker.`,
+      action: "No action.",
+    };
+  }
+  const minerLink = profile.gittensor?.githubId
+    ? `[official public miner data](${gittensorMinerApiUrl(profile.gittensor.githubId)})`
+    : "official public API confirmation";
+  return {
+    result: "✅ Confirmed Gittensor contributor",
+    evidence: `${githubLink}; ${minerLink}; ${detection.priorPullRequests} PR(s), ${detection.priorIssues} issue(s).`,
+    action: "No action.",
+  };
+}
+
+function scoreResultIcon(component: PublicReadinessScore["components"][number] | undefined): string {
+  /* v8 ignore next -- Component lookup is fixed today; undefined is a defensive fallback for future score shape drift. */
+  if (!component) return "⚠️ No score";
+  const ratio = component.score / component.max;
+  if (ratio >= 0.85) return `✅ ${component.score}/${component.max}`;
+  if (ratio >= 0.45) return `⚠️ ${component.score}/${component.max}`;
+  return `❌ ${component.score}/${component.max}`;
+}
+
+function reviewLoadComponentScore(reviewBurden: PreflightResult["reviewBurden"]): number {
+  if (reviewBurden === "low") return 20;
+  if (reviewBurden === "medium") return 14;
+  return 8;
+}
+
+function validationComponent(pr: PullRequestRecord, preflight: PreflightResult): { score: number; evidence: string; action: string } {
+  const findingCodes = preflight.findings.map((finding) => finding.code);
+  const missingTests = findingCodes.some((code) => /missing.*test|test.*missing|no_test/i.test(code));
+  const explicitValidation = hasValidationNote(pr.body ?? "");
+  if (preflight.status === "hold") {
+    return { score: 5, evidence: "Cached preflight status is hold.", action: "Fix blocker." };
+  }
+  if (missingTests && !explicitValidation) {
+    return { score: 10, evidence: "No cached test files or validation note found.", action: "Add validation note." };
+  }
+  if (explicitValidation) {
+    return { score: 25, evidence: "PR body includes validation/test evidence.", action: "No action." };
+  }
+  if (preflight.status === "ready") {
+    return { score: 20, evidence: "Cached preflight status is ready; explicit validation note not found.", action: "Add validation note." };
+  }
+  return { score: 12, evidence: "Cached preflight status needs author follow-up.", action: "Add validation note." };
+}
+
+function queuePressureComponentScore(level: QueueHealth["level"]): number {
+  if (level === "low") return 10;
+  if (level === "medium") return 8;
+  if (level === "high") return 5;
+  return 3;
+}
+
+function hasClearNoIssueRationale(pr: PullRequestRecord): boolean {
+  return /\b(no issue\s*(?:because|:)|no linked issue\s*(?:because|:)|no ticket\s*(?:because|:)|maintenance|docs? only|typo|chore|cleanup)\b/i.test([pr.title, pr.body ?? ""].join(" "));
+}
+
+function hasValidationNote(value: string): boolean {
+  return /\b(test(?:ed|s|ing)?|validation|validated|verified|manual check|smoke|pytest|vitest|npm test|pnpm test|cargo test|go test)\b/i.test(value);
+}
+
+function formatSizeLabelEvidence(labels: string[]): string {
+  const sizeLabel = labels.find((label) => /^size[:/-]/i.test(label));
+  return sizeLabel ? `; size label ${sizeLabel}` : "";
 }
 
 function gateStatus(gateEnabled: boolean, conclusion: PublicPrPanelGateEvaluation["conclusion"]): string {
-  if (!gateEnabled) return "Advisory only";
-  if (conclusion === "success") return "Passing";
-  return conclusion === "action_required" ? "Action required" : "Failing";
+  if (!gateEnabled) return "⚠️ Advisory only";
+  if (conclusion === "success") return "✅ Passing";
+  if (conclusion === "action_required") return "⚠️ App action required";
+  if (conclusion === "neutral" || conclusion === "skipped") return "⚠️ Skipped";
+  return "❌ Blocking";
 }
 
 function gateAction(conclusion: PublicPrPanelGateEvaluation["conclusion"]): string {
   if (conclusion === "success") return "No configured blocker found.";
-  if (conclusion === "action_required") return "Fix app/repo state, then re-run.";
-  return "Fix configured blocker before merge.";
+  if (conclusion === "action_required") return "Install/config needs attention.";
+  if (conclusion === "neutral" || conclusion === "skipped") return "PR closed before full evaluation.";
+  return "Repo-configured hard blocker found.";
 }
 
-function titleCase(value: string): string {
-  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
+function gateNextAction(conclusion: PublicPrPanelGateEvaluation["conclusion"]): string {
+  if (conclusion === "success" || conclusion === "neutral" || conclusion === "skipped") return "No action.";
+  if (conclusion === "action_required") return "Fix app config.";
+  return "Fix blocker.";
 }
 
 function formatPrRefs(numbers: number[]): string {
   return numbers.map((number) => `#${number}`).join(", ");
 }
 
+function formatIssueRefs(numbers: number[]): string {
+  return numbers.map((number) => `#${number}`).join(", ");
+}
+
+function githubProfileUrl(login: string): string {
+  return `https://github.com/${encodeURIComponent(login)}`;
+}
+
+function gittensorMinerApiUrl(githubId: string): string {
+  return `https://api.gittensor.io/miners/${encodeURIComponent(githubId)}`;
+}
+
 function relatedWorkDetails(pr: PullRequestRecord, prCollisionClusters: CollisionCluster[], preflightCollisions: CollisionCluster[]): string[] {
   const clusters = [...new Map([...prCollisionClusters, ...preflightCollisions].map((cluster) => [cluster.id, cluster])).values()];
   if (clusters.length === 0) return ["- PR-specific overlap: none found."];
-  const summaries = clusters.slice(0, 4).map((cluster) => {
+  const summaries = clusters.slice(0, 3).map((cluster) => {
     const refs = cluster.items
       .filter((item) => !(item.type === "pull_request" && item.number === pr.number))
-      .slice(0, 4)
-      .map((item) => `${item.type === "issue" ? "issue" : item.type === "recent_merged_pull_request" ? "merged PR" : "PR"} #${item.number}`)
+      .slice(0, 3)
+      .map(formatCollisionItemRef)
       .join(", ");
-    return `- PR-specific overlap: ${sanitizePanelText(cluster.reason)}${refs ? ` (${refs})` : ""}`;
+    return `- Related work: ${sanitizePanelText(cluster.reason)}${refs ? ` (${refs})` : ""}`;
   });
-  if (clusters.length > summaries.length) summaries.push(`- Additional scoped related-work signals hidden: ${clusters.length - summaries.length}.`);
+  if (clusters.length > summaries.length) summaries.push("- Additional title-only matches omitted; title-only overlap does not block.");
   return summaries;
+}
+
+function formatCollisionItemRef(item: CollisionItem): string {
+  const label = item.type === "issue" ? "issue" : item.type === "recent_merged_pull_request" ? "merged PR" : "PR";
+  const text = `${label} #${item.number}`;
+  return item.htmlUrl ? `[${text}](${item.htmlUrl})` : text;
 }
 
 function formatAlertBlock(lines: string[]): string[] {
@@ -3643,7 +3888,7 @@ function formatAlertBlock(lines: string[]): string[] {
 }
 
 function containsPrivatePublicTerm(value: string): boolean {
-  return /\b(reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d|\/100)\b/i.test(value);
+  return /\b(reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d)\b/i.test(value);
 }
 
 function sanitizePanelText(value: string): string {
@@ -3782,7 +4027,7 @@ function collisionTerms(item: CollisionItem): CollisionTerms {
  * uses between items, rather than a one-direction substring test.
  */
 function plannedContributionTerms(input: PreflightInput): CollisionTerms {
-  const terms = new Set(tokenize([input.title, input.body ?? ""].join(" ")));
+  const terms = new Set(tokenize([input.title, ...(input.labels ?? []), ...(input.changedFiles ?? [])].join(" ")));
   return { terms, size: terms.size };
 }
 
@@ -3797,7 +4042,7 @@ function termOverlap(left: CollisionTerms, right: CollisionTerms): { score: numb
 }
 
 function collisionItemText(item: CollisionItem): string {
-  return [item.title, item.body, ...(item.labels ?? []), ...(item.changedFiles ?? [])].filter(Boolean).join(" ");
+  return [item.title, ...(item.labels ?? []), ...(item.changedFiles ?? [])].filter(Boolean).join(" ");
 }
 
 function tokenize(value: string): string[] {

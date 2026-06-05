@@ -179,6 +179,10 @@ export type RepoSettingsPreview = {
     checkRunMode: RepositorySettings["checkRunMode"];
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
     gateCheckMode: RepositorySettings["gateCheckMode"];
+    linkedIssueGateMode: RepositorySettings["linkedIssueGateMode"];
+    duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];
+    qualityGateMode: RepositorySettings["qualityGateMode"];
+    qualityGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
     createMissingLabel: boolean;
@@ -286,6 +290,10 @@ export function buildRepoSettingsPreview(args: {
       checkRunMode: settings.checkRunMode,
       checkRunDetailLevel: settings.checkRunDetailLevel,
       gateCheckMode: settings.gateCheckMode,
+      linkedIssueGateMode: settings.linkedIssueGateMode,
+      duplicatePrGateMode: settings.duplicatePrGateMode,
+      qualityGateMode: settings.qualityGateMode,
+      qualityGateMinScore: settings.qualityGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
       createMissingLabel: settings.createMissingLabel,

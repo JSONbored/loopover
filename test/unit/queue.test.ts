@@ -720,10 +720,17 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/commits/gate123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/check-runs") && (init?.method ?? "GET") === "POST") {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ name: "Gittensory Gate", conclusion: "failure", output: { title: "Gittensory Gate is blocking merge" } });
+        const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
+        expect(body).toMatchObject({ name: "Gittensory Gate", status: "in_progress", output: { title: "Gittensory Gate is evaluating" } });
+        expect(body.conclusion).toBeUndefined();
         calls.gateChecks += 1;
         return Response.json({ id: 900 }, { status: 201 });
+      }
+      if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
+        expect(body).toMatchObject({ name: "Gittensory Gate", status: "completed", conclusion: "success", output: { title: "Gittensory Gate passed" } });
+        calls.gateChecks += 1;
+        return Response.json({ id: 900 });
       }
       return new Response("not found", { status: 404 });
     });
@@ -740,7 +747,7 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ minerList: 0, gateChecks: 1 });
+    expect(calls).toEqual({ minerList: 0, gateChecks: 2 });
   });
 
   it("audits opt-in gate check permission failures without blocking webhook processing", async () => {
@@ -794,6 +801,95 @@ describe("queue processors", () => {
       outcome: "error",
     });
     expect(audit?.detail).toMatch(/Checks: write permission is missing/i);
+  });
+
+  it("marks closed PR gates skipped without creating late first comments", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+    });
+    const calls = { gateWrites: 0, commentGets: 0, commentPosts: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/closed123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
+        expect(body).toMatchObject({ name: "Gittensory Gate", status: "completed", conclusion: "skipped", output: { title: "Gittensory Gate skipped" } });
+        calls.gateWrites += 1;
+        return Response.json({ id: 901 }, { status: 201 });
+      }
+      if (url.includes("/issues/43/comments") && method === "GET") {
+        calls.commentGets += 1;
+        return Response.json([]);
+      }
+      if (url.includes("/issues/43/comments") && method === "POST") {
+        calls.commentPosts += 1;
+        return Response.json({ id: 1 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-closed",
+      eventName: "pull_request",
+      payload: {
+        action: "closed",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 43, title: "Fast merged PR", state: "closed", user: { login: "contributor" }, head: { sha: "closed123" }, labels: [], body: "Fixes #1" },
+      },
+    });
+
+    expect(calls).toEqual({ gateWrites: 1, commentGets: 1, commentPosts: 0 });
+  });
+
+  it("debounces noisy PR events without publishing public surfaces", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: true,
+      checkRunMode: "enabled",
+      gateCheckMode: "enabled",
+    });
+    let publicCalls = 0;
+    vi.stubGlobal("fetch", async () => {
+      publicCalls += 1;
+      return new Response("unexpected public call", { status: 500 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pr-labeled-noisy",
+      eventName: "pull_request",
+      payload: {
+        action: "labeled",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 44, title: "Noisy event PR", state: "open", user: { login: "contributor" }, head: { sha: "noisy123" }, labels: [{ name: "bug" }], body: "Fixes #1" },
+      },
+    });
+
+    expect(publicCalls).toBe(0);
   });
 
   it("processes GitHub webhook jobs for PRs, issues, comments-off, comment-attempt, and deleted installs", async () => {
@@ -1076,7 +1172,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/abc123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/check-runs") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { output?: { title?: string; text?: string } };
-        expect(body.output).toMatchObject({ title: "Gittensory context checked", text: "No detailed findings are published in check runs." });
+        expect(body.output?.text).toBe("No detailed findings are published in check runs.");
         calls.checks += 1;
         return Response.json({ id: 99 }, { status: 201 });
       }

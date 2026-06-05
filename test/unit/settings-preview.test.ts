@@ -38,6 +38,10 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     checkRunMode: "off",
     checkRunDetailLevel: "standard",
     gateCheckMode: "off",
+    linkedIssueGateMode: "advisory",
+    duplicatePrGateMode: "advisory",
+    qualityGateMode: "advisory",
+    qualityGateMinScore: null,
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
     createMissingLabel: true,
@@ -280,7 +284,8 @@ describe("buildRepoSettingsPreview", () => {
       sample: { authorLogin: "miner", minerStatus: "confirmed", title: "Improve wallet hotkey trust score payout", body: "raw trust and scoreability /100 reviewability 5", labels: ["bug"], linkedIssues: [7] },
     });
     expect(preview.previewComment).not.toBeNull();
-    expect(preview.previewComment ?? "").not.toMatch(/wallet|hotkey|trust score|raw trust|scoreability|payout|reward|farming|\/100|reviewability\s*\d/i);
+    expect(preview.previewComment ?? "").toMatch(/Readiness score: \d+\/100/);
+    expect(preview.previewComment ?? "").not.toMatch(/wallet|hotkey|trust score|raw trust|scoreability|payout|reward|farming|reviewability\s*\d/i);
   });
 
   it("reports a generic needs-attention summary when health is degraded but no permission or event is missing", () => {

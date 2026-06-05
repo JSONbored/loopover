@@ -19,12 +19,14 @@ import {
   buildPreflightResult,
   buildPublicCommentSignalBundle,
   buildPublicPrIntelligenceComment,
+  buildPublicReadinessScore,
   buildQueueHealth,
   buildRoleContext,
   detectGittensorContributor,
   shouldPublishPrIntelligenceComment,
   type CollisionCluster,
   type CollisionReport,
+  type QueueHealth,
 } from "../../src/signals/engine";
 import {
   buildContributorRewardRiskStrategy,
@@ -32,6 +34,7 @@ import {
   buildPullRequestReviewability,
   buildRepoRewardRisk,
 } from "../../src/signals/reward-risk";
+import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
   ContributorRepoStatRecord,
   CheckSummaryRecord,
@@ -595,8 +598,9 @@ describe("signal coverage edge cases", () => {
     });
 
     expect(comment).toContain("Confirmed Gittensor contributor");
-    expect(comment).toContain("| Linked issue | None detected |");
-    expect(comment).not.toMatch(/reward|score|wallet|hotkey|trust score|farming|critical private/i);
+    expect(comment).toContain("| Linked issue | ⚠️ Missing |");
+    expect(comment).toMatch(/Readiness score: \d+\/100/);
+    expect(comment).not.toMatch(/reward|wallet|hotkey|trust score|farming|critical private/i);
 
     const maintainerComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -610,7 +614,7 @@ describe("signal coverage edge cases", () => {
     });
 
     expect(maintainerComment).toContain("maintainer lane");
-    expect(maintainerComment).not.toMatch(/reward|score|wallet|hotkey|trust score|farming/i);
+    expect(maintainerComment).not.toMatch(/reward|wallet|hotkey|trust score|farming/i);
   });
 
   it("renders opt-in gate panel states for collision and repo evaluation blockers", () => {
@@ -628,7 +632,7 @@ describe("signal coverage edge cases", () => {
     );
     const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
     const detection = { detected: true, source: "github_cache" as const, reason: "cached contributor", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 };
-    const gateSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const };
+    const gateSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const };
 
     const collisionComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -642,10 +646,10 @@ describe("signal coverage edge cases", () => {
     });
 
     expect(collisionComment).toContain("> [!CAUTION]");
-    expect(collisionComment).toContain("Another open PR references the same linked issue: #8.");
-    expect(collisionComment).toContain("> | Gate result | Failing | Fix configured blocker before merge. |");
+    expect(collisionComment).toContain("A repo-configured hard blocker was found.");
+    expect(collisionComment).toContain("> | Gate result | ❌ Blocking | Repo-configured hard blocker found. | Fix blocker. |");
     expect(collisionComment).toContain("Public profile only");
-    expect(collisionComment).toContain("Resolve the same-issue overlap with #8");
+    expect(collisionComment).toContain("Compare #8.");
     expect(collisionComment).not.toContain("possible overlaps");
     expect(collisionComment).not.toContain("Cached OSS contributor activity");
     expect(collisionComment).not.toContain("gittensor.io");
@@ -666,10 +670,10 @@ describe("signal coverage edge cases", () => {
       settings: gateSettings,
     });
 
-    expect(repoBlockedComment).toContain("> [!CAUTION]");
+    expect(repoBlockedComment).toContain("> [!IMPORTANT]");
     expect(repoBlockedComment).toContain("cannot evaluate the repo state");
     expect(repoBlockedComment).toContain("Public profile only");
-    expect(repoBlockedComment).toContain("> | Gate result | Failing | Fix configured blocker before merge. |");
+    expect(repoBlockedComment).toContain("> | Gate result | ⚠️ App action required | Install/config needs attention. | Fix app config. |");
 
     const missingIssueComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -684,13 +688,12 @@ describe("signal coverage edge cases", () => {
         [existingIssue],
         [currentPr],
       ),
-      settings: { ...gateSettings, requireLinkedIssue: true },
+      settings: { ...gateSettings, requireLinkedIssue: true, linkedIssueGateMode: "block" },
     });
 
     expect(missingIssueComment).toContain("> [!WARNING]");
-    expect(missingIssueComment).toContain("requires linked issues");
-    expect(missingIssueComment).toContain("> | Linked issue | None detected | Required before merge. |");
-    expect(missingIssueComment).toContain("Link the issue being solved");
+    expect(missingIssueComment).toContain("> | Linked issue | ⚠️ Missing | No linked issue or no-issue rationale found. | Explain no-issue PR. |");
+    expect(missingIssueComment).toContain("Explain no-issue PR.");
 
     const passingGateComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -709,7 +712,7 @@ describe("signal coverage edge cases", () => {
     });
 
     expect(passingGateComment).toContain("> [!TIP]");
-    expect(passingGateComment).toContain("> | Gate result | Passing | No configured blocker found. |");
+    expect(passingGateComment).toContain("> | Gate result | ✅ Passing | No configured blocker found. | No action. |");
     expect(passingGateComment).toContain("Public GitHub metadata was checked");
 
     const advisoryOnlyComment = buildPublicPrIntelligenceComment({
@@ -734,7 +737,7 @@ describe("signal coverage edge cases", () => {
     expect(advisoryOnlyComment).toContain("> [!IMPORTANT]");
     expect(advisoryOnlyComment).toContain("Gittensory found maintainer review notes");
     expect(advisoryOnlyComment).toContain("Validation note missing");
-    expect(advisoryOnlyComment).toContain("> | Gate result | Advisory only | No required check is being enforced. |");
+    expect(advisoryOnlyComment).toContain("> | Gate result | ⚠️ Advisory only | Advisory only. | No action. |");
 
     const actionRequiredComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -754,7 +757,7 @@ describe("signal coverage edge cases", () => {
     });
     expect(actionRequiredComment).toContain("> [!IMPORTANT]");
     expect(actionRequiredComment).toContain("Gittensory cannot evaluate this PR until installation state is repaired.");
-    expect(actionRequiredComment).toContain("> | Gate result | Action required | Fix app/repo state, then re-run. |");
+    expect(actionRequiredComment).toContain("> | Gate result | ⚠️ App action required | Install/config needs attention. | Fix app config. |");
 
     const duplicateAdvisoryComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -767,7 +770,7 @@ describe("signal coverage edge cases", () => {
       settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
     });
     expect(duplicateAdvisoryComment).toContain("Same-issue duplicate risk found against #8.");
-    expect(duplicateAdvisoryComment).toContain("> | Duplicate risk | Clear same-issue overlap: #8 | Maintainer should reconcile before review. |");
+    expect(duplicateAdvisoryComment).toContain("> | Related work | ⚠️ Same linked issue: #8 | Another open PR references the same linked issue. | Compare #8. |");
 
     const scopedClusters: CollisionCluster[] = Array.from({ length: 12 }, (_, index) => ({
       id: `scoped-${index}`,
@@ -794,8 +797,8 @@ describe("signal coverage edge cases", () => {
       },
       settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
     });
-    expect(scopedComment).toContain("> | Duplicate risk | 9+ scoped related-work signals | Advisory review only. |");
-    expect(scopedComment).toContain("Additional scoped related-work signals hidden: 8.");
+    expect(scopedComment).toContain("> | Related work | ⚠️ 3 scoped overlaps | Top overlaps are listed below; lower-confidence bulk is hidden. | Review top overlaps. |");
+    expect(scopedComment).toContain("Additional title-only matches omitted; title-only overlap does not block.");
   });
 
   it("does not present global repo collision clusters as PR duplicate risk", () => {
@@ -828,8 +831,8 @@ describe("signal coverage edge cases", () => {
       settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" },
     });
 
-    expect(comment).toContain("> | Duplicate risk | No PR-specific duplicate found | No action needed. |");
-    expect(comment).toContain("> | Gate result | Passing | No configured blocker found. |");
+    expect(comment).toContain("> | Related work | ✅ No active overlap found | No same-issue or scoped active PR overlap found. | No action. |");
+    expect(comment).toContain("> | Gate result | ✅ Passing | No configured blocker found. | No action. |");
     expect(comment).not.toContain("possible overlap");
     expect(comment).not.toContain("12");
   });
@@ -878,7 +881,7 @@ describe("signal coverage edge cases", () => {
       preflight: basePreflight,
       settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
     });
-    expect(edgeComment).toContain("PR-specific overlap: Only this PR is present.");
+    expect(edgeComment).toContain("Related work: Only this PR is present.");
     expect(edgeComment).toContain("merged PR #11");
 
     const bundle = buildPublicCommentSignalBundle({
@@ -892,6 +895,167 @@ describe("signal coverage edge cases", () => {
       settings: repoSettings(directRepo.fullName),
     });
     expect(bundle).toMatchObject({ confirmedMiner: false, minerSignalDetected: false, priorPullRequests: 0, priorIssues: 0, collisionClusters: 3 });
+  });
+
+  it("renders concrete readiness states, miner links, no-issue rationale, and skipped gates", () => {
+    const directRepo = repo("owner/readiness");
+    const currentPr = pr(directRepo.fullName, 31, "Maintenance cleanup with no linked issue", {
+      authorLogin: "JSONbored",
+      body: "No issue because this is maintenance cleanup.\n\nValidation: npm test",
+      labels: ["size:L"],
+      isDraft: true,
+    });
+    const profile = buildContributorProfile(
+      "JSONbored",
+      { login: "JSONbored", topLanguages: ["TypeScript"], source: "github" },
+      [currentPr],
+      [],
+      [],
+      officialSnapshot(),
+    );
+    const preflight = {
+      ...buildPreflightResult(
+        { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, labels: currentPr.labels },
+        directRepo,
+        [],
+        [currentPr],
+      ),
+      status: "hold" as const,
+      reviewBurden: "high" as const,
+      findings: [
+        { code: "tests_missing", severity: "warning" as const, title: "Test evidence missing", detail: "No cached test files found.", action: "Add validation note." },
+        { code: "private_score", severity: "critical" as const, title: "Private score", detail: "wallet hotkey payout trust score", action: "secret" },
+      ],
+    };
+    const queueHealth = buildQueueHealth(
+      directRepo,
+      [],
+      Array.from({ length: 16 }, (_, index) => pr(directRepo.fullName, 100 + index, `Open PR ${index}`)),
+      buildCollisionReport(directRepo.fullName, [], []),
+    );
+    const settings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, qualityGateMode: "block" as const, qualityGateMinScore: 95 };
+    const comment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: currentPr,
+      profile,
+      detection: { detected: true, source: "official_gittensor_api", reason: "official", priorPullRequests: 29, priorMergedPullRequests: 20, priorIssues: 6 },
+      queueHealth,
+      collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      preflight,
+      settings,
+      gate: { conclusion: "skipped", summary: "PR closed before full evaluation." },
+    });
+
+    expect(comment).toContain("> | Linked issue | ✅ No-issue rationale | PR body explains why no issue is linked. | No action. |");
+    expect(comment).toContain("> | Review load | ❌ 8/20 |");
+    expect(comment).toContain("> | Validation evidence | ❌ 5/25 | Cached preflight status is hold. | Fix blocker. |");
+    expect(comment).toContain("> | Open PR queue | ❌ 3/10 |");
+    expect(comment).toContain("> | Gate result | ⚠️ Skipped | PR closed before full evaluation. | No action. |");
+    expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
+    expect(comment).toContain("[official public miner data](https://api.gittensor.io/miners/49853598)");
+    expect(comment).toContain("Official Gittensor activity: 29 PR(s), 6 issue(s).");
+    expect(comment).not.toMatch(/wallet|hotkey|payout|trust score|private score/i);
+  });
+
+  it("scores public readiness from deterministic PR facts across branch cases", () => {
+    const directRepo = repo("owner/score");
+    const basePr = pr(directRepo.fullName, 40, "Add focused feature", {
+      body: "Fixes #1\n\nValidation: npm test",
+      labels: ["size:S"],
+      linkedIssues: [1, 2],
+    });
+    const readyPreflight = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: basePr.title, body: basePr.body ?? undefined, labels: basePr.labels, linkedIssues: basePr.linkedIssues },
+      directRepo,
+      [],
+      [basePr],
+    );
+    const strong = buildPublicReadinessScore({
+      pr: basePr,
+      preflight: { ...readyPreflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: queueHealthFixture(directRepo.fullName, "low"),
+      scopedOverlapCount: 1,
+    });
+
+    expect(scoreComponent(strong, "traceability")).toMatchObject({ score: 15, evidence: "Linked issues #1, #2." });
+    expect(scoreComponent(strong, "related_work")).toMatchObject({ score: 14, evidence: "1 scoped overlap found.", action: "Review top overlaps." });
+    expect(scoreComponent(strong, "change_scope")).toMatchObject({ score: 20, action: "No action." });
+    expect(scoreComponent(strong, "validation")).toMatchObject({ score: 25, evidence: "PR body includes validation/test evidence." });
+    expect(scoreComponent(strong, "queue_pressure")).toMatchObject({ score: 10, action: "No action." });
+
+    const draftPr = pr(directRepo.fullName, 41, "Unlinked feature", {
+      body: "",
+      labels: [],
+      linkedIssues: [],
+      isDraft: true,
+    });
+    const missingValidation = buildPublicReadinessScore({
+      pr: draftPr,
+      preflight: {
+        ...readyPreflight,
+        status: "needs_work",
+        reviewBurden: "medium",
+        findings: [{ code: "missing_tests", severity: "warning", title: "Tests missing", detail: "No tests found." }],
+      },
+      queueHealth: queueHealthFixture(directRepo.fullName, "high"),
+      linkedDuplicatePrs: [3, 4],
+    });
+
+    expect(scoreComponent(missingValidation, "traceability")).toMatchObject({ score: 8, action: "Explain no-issue PR." });
+    expect(scoreComponent(missingValidation, "related_work")).toMatchObject({ score: 8, evidence: "Same linked issue with #3, #4.", action: "Compare #3, #4." });
+    expect(scoreComponent(missingValidation, "change_scope")).toMatchObject({ score: 14, action: "Add scope summary." });
+    expect(scoreComponent(missingValidation, "validation")).toMatchObject({ score: 10, evidence: "No cached test files or validation note found.", action: "Add validation note." });
+    expect(scoreComponent(missingValidation, "pr_state")).toMatchObject({ score: 6, evidence: "PR is open as draft.", action: "Mark ready when done." });
+    expect(scoreComponent(missingValidation, "queue_pressure")).toMatchObject({ score: 5, action: "Expect slower review." });
+
+    const closedPr = pr(directRepo.fullName, 42, "Closed cleanup", { state: "closed", body: "cleanup", linkedIssues: [] });
+    const weak = buildPublicReadinessScore({
+      pr: closedPr,
+      preflight: { ...readyPreflight, status: "needs_work", reviewBurden: "high", findings: [] },
+      queueHealth: queueHealthFixture(directRepo.fullName, "critical"),
+    });
+
+    expect(scoreComponent(weak, "validation")).toMatchObject({ score: 12, evidence: "Cached preflight status needs author follow-up." });
+    expect(scoreComponent(weak, "pr_state")).toMatchObject({ score: 3, evidence: "PR state is closed.", action: "No action." });
+    expect(scoreComponent(weak, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
+  });
+
+  it("filters disabled linked-issue findings and uses fallback next steps when the panel is clean", () => {
+    const directRepo = repo("owner/clean-panel");
+    const currentPr = pr(directRepo.fullName, 50, "Fix documented bug", {
+      body: "Fixes #10\n\nValidation: npm test",
+      linkedIssues: [10],
+    });
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
+    const preflight = {
+      ...buildPreflightResult(
+        { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: currentPr.linkedIssues },
+        directRepo,
+        [],
+        [currentPr],
+      ),
+      status: "ready" as const,
+      reviewBurden: "low" as const,
+      findings: [
+        { code: "missing_linked_issue", severity: "warning" as const, title: "No linked issue detected", detail: "Should be hidden when linked issue gate is off." },
+        { code: "private_reward", severity: "warning" as const, title: "Reward wallet", detail: "wallet reward", action: "secret" },
+      ],
+    };
+    const comment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: currentPr,
+      profile,
+      detection: { detected: false, reason: "no official match", priorPullRequests: 0, priorMergedPullRequests: 0, priorIssues: 0 },
+      queueHealth: queueHealthFixture(directRepo.fullName, "low"),
+      collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      preflight,
+      settings: { ...repoSettings(directRepo.fullName), linkedIssueGateMode: "off" },
+    });
+
+    expect(comment).toContain("Gittensory PR readiness looks good");
+    expect(comment).toContain("- No public-safe advisory findings were generated from cached metadata.");
+    expect(comment).toContain("- Keep the PR focused and include validation evidence before maintainer review.");
+    expect(comment).not.toMatch(/No linked issue detected|reward|wallet/i);
   });
 
   it("audits label ordering and suspicious configured labels deterministically", () => {
@@ -1015,6 +1179,10 @@ function repoSettings(repoFullName: string): RepositorySettings {
     checkRunMode: "off",
     checkRunDetailLevel: "minimal",
     gateCheckMode: "off",
+    linkedIssueGateMode: "advisory",
+    duplicatePrGateMode: "advisory",
+    qualityGateMode: "advisory",
+    qualityGateMinScore: null,
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
     createMissingLabel: true,
@@ -1037,5 +1205,84 @@ function scoringSnapshot(): ScoringModelSnapshotRecord {
     programmingLanguages: {},
     warnings: [],
     payload: {},
+  };
+}
+
+function queueHealthFixture(repoFullName: string, level: QueueHealth["level"]): QueueHealth {
+  return {
+    repoFullName,
+    generatedAt: "2026-05-25T00:00:00.000Z",
+    burdenScore: 0,
+    level,
+    summary: `${level} queue`,
+    signals: {
+      openIssues: 0,
+      openPullRequests: level === "low" ? 1 : level === "medium" ? 4 : level === "high" ? 9 : 16,
+      unlinkedPullRequests: 0,
+      stalePullRequests: 0,
+      maintainerAuthoredPullRequests: 0,
+      collisionClusters: 0,
+      ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 },
+      likelyReviewablePullRequests: level === "low" ? 1 : level === "medium" ? 3 : level === "high" ? 6 : 10,
+    },
+    findings: [],
+  };
+}
+
+function scoreComponent(score: ReturnType<typeof buildPublicReadinessScore>, key: ReturnType<typeof buildPublicReadinessScore>["components"][number]["key"]) {
+  const component = score.components.find((item) => item.key === key);
+  expect(component).toBeDefined();
+  return component!;
+}
+
+function officialSnapshot(): GittensorContributorSnapshot {
+  return {
+    source: "gittensor_api",
+    githubId: "49853598",
+    githubUsername: "JSONbored",
+    uid: 29,
+    hotkey: "private-hotkey",
+    isEligible: true,
+    credibility: 1,
+    eligibleRepoCount: 1,
+    issueDiscoveryScore: 0,
+    issueTokenScore: 0,
+    issueCredibility: 1,
+    isIssueEligible: false,
+    issueEligibleRepoCount: 0,
+    alphaPerDay: 1,
+    taoPerDay: 1,
+    usdPerDay: 1,
+    totals: {
+      pullRequests: 29,
+      mergedPullRequests: 20,
+      openPullRequests: 4,
+      closedPullRequests: 5,
+      openIssues: 4,
+      closedIssues: 2,
+      solvedIssues: 1,
+      validSolvedIssues: 1,
+    },
+    repositories: [
+      {
+        repoFullName: "owner/readiness",
+        pullRequests: 29,
+        mergedPullRequests: 20,
+        openPullRequests: 4,
+        closedPullRequests: 5,
+        openIssues: 4,
+        closedIssues: 2,
+        solvedIssues: 1,
+        validSolvedIssues: 1,
+        isEligible: true,
+        isIssueEligible: false,
+        credibility: 1,
+        issueCredibility: 1,
+        totalScore: 1,
+        baseTotalScore: 1,
+      },
+    ],
+    pullRequests: [],
+    issueLabels: [],
   };
 }

@@ -60,7 +60,7 @@ import {
   refreshInstallationHealth,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, getInstallationId } from "../github/app";
+import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment } from "../github/comments";
 import {
   buildMaintainerQueueDigest,
@@ -117,21 +117,22 @@ import {
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
   buildPreflightResult,
-  buildPublicCommentSignalBundle,
   buildPublicPrIntelligenceComment,
+  buildPublicReadinessScore,
   buildQueueHealth,
   buildRoleContext,
   detectGittensorContributor,
 } from "../signals/engine";
-import { rewritePublicPrIntelligenceComment } from "../services/ai-summaries";
 import { decidePublicSurface } from "../signals/settings-preview";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
-import type { ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue } from "../types";
+import type { ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
+const PR_PUBLIC_SURFACE_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
+const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
   switch (message.type) {
@@ -679,12 +680,16 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
         getRepositorySettings(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
       ]);
-      const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests, requireLinkedIssue: settings.requireLinkedIssue });
+      const advisory = buildPullRequestAdvisory(repo, pr, {
+        otherOpenPullRequests,
+        requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+      });
       await persistAdvisory(env, advisory);
-      if (installationId) {
+      if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
         await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
           deliveryId,
           authorType: payload.pull_request.user?.type,
+          action: payload.action,
         }).catch((error) => {
           console.error(
             JSON.stringify({
@@ -734,6 +739,72 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
 type PublicSurfaceOutput = "comment" | "label" | "check_run";
 type PublicSurfaceOutputFailure = { output: PublicSurfaceOutput; error: string };
 
+function shouldProcessPullRequestPublicSurface(action: string | undefined): boolean {
+  return PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") || PR_GATE_CLOSED_ACTIONS.has(action ?? "");
+}
+
+function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null) {
+  return {
+    linkedIssueGateMode: settings.linkedIssueGateMode,
+    duplicatePrGateMode: settings.duplicatePrGateMode,
+    qualityGateMode: settings.qualityGateMode,
+    qualityGateMinScore: settings.qualityGateMinScore ?? null,
+    readinessScore: readinessScore ?? null,
+  };
+}
+
+function linkedIssueDuplicatePullRequestsForGate(pr: PullRequestRecord, pullRequests: PullRequestRecord[]): number[] {
+  const linkedIssues = new Set(pr.linkedIssues);
+  if (linkedIssues.size === 0) return [];
+  return [
+    ...new Set(
+      pullRequests.flatMap((otherPr) => {
+        if (otherPr.number === pr.number || otherPr.state !== "open") return [];
+        return otherPr.linkedIssues.some((issue) => linkedIssues.has(issue)) ? [otherPr.number] : [];
+      }),
+    ),
+  ].sort((left, right) => left - right);
+}
+
+function pullRequestSpecificCollisionCount(collisions: ReturnType<typeof buildCollisionReport>, pr: PullRequestRecord): number {
+  return collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number)).length;
+}
+
+async function auditGateCheckPermissionMissing(
+  env: Env,
+  actor: string | null,
+  repoFullName: string,
+  pullNumber: number,
+  deliveryId: string,
+  warning: string,
+): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: "github_app.gate_check_permission_missing",
+    actor,
+    targetKey: `${repoFullName}#${pullNumber}`,
+    outcome: "error",
+    detail: warning,
+    metadata: { deliveryId, repoFullName },
+  });
+}
+
+function buildClosedPrPanelUpdate(repoFullName: string, pullNumber: number): string {
+  return [
+    "<!-- gittensory-pr-panel:v1 -->",
+    "",
+    "> [!NOTE]",
+    "> ## Gittensory Gate skipped",
+    "> PR closed before full evaluation. No late first comment was created.",
+    ">",
+    "> | Signal | Result | Evidence | Action |",
+    "> | --- | --- | --- | --- |",
+    `> | Gate result | ⚠️ Skipped | ${repoFullName}#${pullNumber} is no longer open. | No action. |`,
+    "",
+    "---",
+    "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers.",
+  ].join("\n");
+}
+
 async function maybePublishPrPublicSurface(
   env: Env,
   installationId: number,
@@ -742,22 +813,74 @@ async function maybePublishPrPublicSurface(
   repo: Awaited<ReturnType<typeof getRepository>>,
   settings: Awaited<ReturnType<typeof getRepositorySettings>>,
   advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>,
-  webhook: { deliveryId: string; authorType?: string | undefined },
+  webhook: { deliveryId: string; authorType?: string | undefined; action?: string | undefined },
 ): Promise<void> {
   const author = pr.authorLogin ?? null;
-  if (settings.gateCheckMode === "enabled" && advisory.headSha) {
-    const gateCheckResult = await createOrUpdateGateCheckRun(env, installationId, repoFullName, advisory);
+  const gateEnabled = settings.gateCheckMode === "enabled" && Boolean(advisory.headSha);
+  if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
+    const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.");
     if (gateCheckResult?.kind === "permission_missing") {
-      await recordAuditEvent(env, {
-        eventType: "github_app.gate_check_permission_missing",
-        actor: author,
-        targetKey: `${repoFullName}#${pr.number}`,
-        outcome: "error",
-        detail: gateCheckResult.warning,
-        metadata: { deliveryId: webhook.deliveryId, repoFullName },
-      });
+      await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
+    }
+    await createOrUpdatePrIntelligenceComment(
+      env,
+      installationId,
+      repoFullName,
+      pr.number,
+      buildClosedPrPanelUpdate(repoFullName, pr.number),
+      { createIfMissing: false },
+    ).catch(() => undefined);
+    return;
+  }
+  let pendingGateCheckRunId: number | undefined;
+  if (gateEnabled) {
+    const pendingGateResult = await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory);
+    if (pendingGateResult?.kind === "published") pendingGateCheckRunId = pendingGateResult.id;
+    if (pendingGateResult?.kind === "permission_missing") {
+      await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, pendingGateResult.warning);
     }
   }
+
+  const [repoIssues, repoPullRequests, repoBounties] = await Promise.all([
+    listIssues(env, repoFullName),
+    listPullRequests(env, repoFullName),
+    listBountiesByRepo(env, repoFullName),
+  ]);
+  const collisions = buildCollisionReport(repoFullName, repoIssues, repoPullRequests);
+  const queueHealth = buildQueueHealth(repo, repoIssues, repoPullRequests, collisions);
+  const preflight = buildPreflightResult(
+    {
+      repoFullName,
+      contributorLogin: author ?? undefined,
+      title: pr.title,
+      body: pr.body ?? undefined,
+      labels: pr.labels,
+      linkedIssues: pr.linkedIssues,
+      authorAssociation: pr.authorAssociation ?? undefined,
+    },
+    repo,
+    repoIssues,
+    repoPullRequests,
+    repoBounties,
+  );
+  const readiness = buildPublicReadinessScore({
+    pr,
+    preflight,
+    queueHealth,
+    linkedDuplicatePrs: linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests),
+    scopedOverlapCount: Math.max(pullRequestSpecificCollisionCount(collisions, pr), preflight.collisions.length),
+  });
+
+  const gateEvaluation = settings.gateCheckMode === "enabled" ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total)) : undefined;
+  if (gateEnabled) {
+    const gateCheckResult = await createOrUpdateGateCheckRun(env, installationId, repoFullName, advisory, gateCheckPolicy(settings, readiness.total), {
+      checkRunId: pendingGateCheckRunId,
+    });
+    if (gateCheckResult?.kind === "permission_missing") {
+      await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
+    }
+  }
+
   // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
   const prelim = decidePublicSurface({
     settings,
@@ -795,12 +918,9 @@ async function maybePublishPrPublicSurface(
   });
 
   const publishCachedContributorActivity = official.status === "confirmed";
-  const [contributorPullRequests, contributorIssues, repoIssues, repoPullRequests, repoBounties, github, cachedRepoStats] = await Promise.all([
+  const [contributorPullRequests, contributorIssues, github, cachedRepoStats] = await Promise.all([
     publishCachedContributorActivity ? listContributorPullRequests(env, author) : Promise.resolve([]),
     publishCachedContributorActivity ? listContributorIssues(env, author) : Promise.resolve([]),
-    listIssues(env, repoFullName),
-    listPullRequests(env, repoFullName),
-    listBountiesByRepo(env, repoFullName),
     fetchPublicContributorProfile(author),
     publishCachedContributorActivity ? listContributorRepoStats(env, author) : Promise.resolve([]),
   ]);
@@ -811,23 +931,6 @@ async function maybePublishPrPublicSurface(
       : { detected: false, reason: "Official Gittensor API did not confirm this GitHub user.", priorPullRequests: 0, priorMergedPullRequests: 0, priorIssues: 0 };
 
   const profile = buildContributorProfile(author, github, contributorPullRequests, contributorIssues, repoStats, official.status === "confirmed" ? official.snapshot : null);
-  const collisions = buildCollisionReport(repoFullName, repoIssues, repoPullRequests);
-  const queueHealth = buildQueueHealth(repo, repoIssues, repoPullRequests, collisions);
-  const preflight = buildPreflightResult(
-    {
-      repoFullName,
-      contributorLogin: author,
-      title: pr.title,
-      body: pr.body ?? undefined,
-      labels: pr.labels,
-      linkedIssues: pr.linkedIssues,
-      authorAssociation: pr.authorAssociation ?? undefined,
-    },
-    repo,
-    repoIssues,
-    repoPullRequests,
-    repoBounties,
-  );
   const publishedOutputs: PublicSurfaceOutput[] = [];
   const failedOutputs: PublicSurfaceOutputFailure[] = [];
 
@@ -855,18 +958,10 @@ async function maybePublishPrPublicSurface(
   }
 
   if (decision.willComment) {
-    const commentArgs = { repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: settings.gateCheckMode === "enabled" ? evaluateGateCheck(advisory) : undefined };
+    const commentArgs = { repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation };
     const deterministicBody = buildPublicPrIntelligenceComment(commentArgs);
-    // Optional AI rewrite (issue #151): disabled by default, source-free bundle only, quota-limited,
-    // sanitizer-gated, and falls back to the deterministic body on any non-ok outcome.
     try {
-      const { body } = await rewritePublicPrIntelligenceComment(env, {
-        bundle: buildPublicCommentSignalBundle(commentArgs),
-        deterministicBody,
-        actor: author,
-        route: "github_app.pr_public_surface",
-      });
-      await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, body);
+      await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, deterministicBody);
       publishedOutputs.push("comment");
     } catch (error) {
       const message = errorMessage(error);

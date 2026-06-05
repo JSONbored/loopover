@@ -385,6 +385,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      linkedIssueGateMode: "advisory",
+      duplicatePrGateMode: "advisory",
+      qualityGateMode: "advisory",
+      qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -404,6 +408,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
+    duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
+    qualityGateMode: parseGateRuleMode(row.qualityGateMode),
+    qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
     createMissingLabel: row.createMissingLabel,
@@ -427,6 +435,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
+    linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
+    duplicatePrGateMode: settings.duplicatePrGateMode ?? "advisory",
+    qualityGateMode: settings.qualityGateMode ?? "advisory",
+    qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     createMissingLabel: settings.createMissingLabel ?? true,
@@ -448,6 +460,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
+      linkedIssueGateMode: resolved.linkedIssueGateMode,
+      duplicatePrGateMode: resolved.duplicatePrGateMode,
+      qualityGateMode: resolved.qualityGateMode,
+      qualityGateMinScore: resolved.qualityGateMinScore,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
       createMissingLabel: resolved.createMissingLabel,
@@ -468,6 +484,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
+        linkedIssueGateMode: resolved.linkedIssueGateMode,
+        duplicatePrGateMode: resolved.duplicatePrGateMode,
+        qualityGateMode: resolved.qualityGateMode,
+        qualityGateMinScore: resolved.qualityGateMinScore,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
         createMissingLabel: resolved.createMissingLabel,
@@ -2785,6 +2805,7 @@ export async function recordWebhookEvent(
       payloadHash: args.payloadHash,
       status: args.status,
       errorSummary: args.errorSummary,
+      receivedAt: nowIso(),
       processedAt: args.status === "processed" || args.status === "error" ? nowIso() : undefined,
     })
     .onConflictDoUpdate({
@@ -4261,6 +4282,16 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 
 function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
   return value === "enabled" ? "enabled" : "off";
+}
+
+function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMode"] {
+  if (value === "off" || value === "block") return value;
+  return "advisory";
+}
+
+function normalizeQualityGateMinScore(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {

@@ -952,7 +952,7 @@ describe("signal coverage edge cases", () => {
     expect(comment).toContain("> | Open PR queue | ❌ 3/10 |");
     expect(comment).toContain("> | Gate result | ⚠️ Skipped | PR closed before full evaluation. | No action. |");
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
-    expect(comment).toContain("[official public miner data](https://api.gittensor.io/miners/49853598)");
+    expect(comment).toContain("[Gittensor profile](https://gittensor.io/miners/details?githubId=49853598)");
     expect(comment).toContain("Official Gittensor activity: 29 PR(s), 6 issue(s).");
     expect(comment).not.toMatch(/wallet|hotkey|payout|trust score|private score/i);
   });

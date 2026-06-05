@@ -3762,8 +3762,8 @@ function contributorContextPanelResult(
     };
   }
   const minerLink = profile.gittensor?.githubId
-    ? `[official public miner data](${gittensorMinerApiUrl(profile.gittensor.githubId)})`
-    : "official public API confirmation";
+    ? `[Gittensor profile](${gittensorMinerDashboardUrl(profile.gittensor.githubId)})`
+    : "official public Gittensor confirmation";
   return {
     result: "✅ Confirmed Gittensor contributor",
     evidence: `${githubLink}; ${minerLink}; ${detection.priorPullRequests} PR(s), ${detection.priorIssues} issue(s).`,
@@ -3858,8 +3858,8 @@ function githubProfileUrl(login: string): string {
   return `https://github.com/${encodeURIComponent(login)}`;
 }
 
-function gittensorMinerApiUrl(githubId: string): string {
-  return `https://api.gittensor.io/miners/${encodeURIComponent(githubId)}`;
+function gittensorMinerDashboardUrl(githubId: string): string {
+  return `https://gittensor.io/miners/details?githubId=${encodeURIComponent(githubId)}`;
 }
 
 function relatedWorkDetails(pr: PullRequestRecord, prCollisionClusters: CollisionCluster[], preflightCollisions: CollisionCluster[]): string[] {

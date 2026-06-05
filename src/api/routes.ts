@@ -1492,6 +1492,12 @@ export function createApp() {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
     if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
     const response = await buildRepoOnboardingPackPreviewForRepo(c.env, fullName, {
       refreshManifest: c.req.query("refresh") === "true",
     });
@@ -3356,8 +3362,13 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
+  if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoOnboardingPackPreviewPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/onboarding-pack\/preview$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

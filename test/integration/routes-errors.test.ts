@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { RateLimiter } from "../../src/auth/rate-limit";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { persistSignalSnapshot, upsertInstallation } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { handleMcpRequest } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -96,6 +96,49 @@ describe("api route guards and error branches", () => {
     const signedOut = await app.request("/v1/auth/session", { headers: { cookie: sessionCookie } }, env);
     expect(signedOut.status).toBe(200);
     await expect(signedOut.json()).resolves.toMatchObject({ status: "signed_out" });
+  });
+
+  it("allows repository-scoped owner sessions to preview accepted onboarding packs", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    vi.stubGlobal("fetch", async () => Response.json({}, { status: 404 }));
+
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    await seedRegisteredInstalledRepo(env, 202, "other-owner", "other-repo");
+    await persistSignalSnapshot(env, {
+      id: "owned-repo-focus-manifest",
+      signalType: "repo-focus-manifest",
+      targetKey: "repo-owner/owned-repo",
+      repoFullName: "repo-owner/owned-repo",
+      payload: {
+        wantedPaths: ["src/"],
+        testExpectations: ["npm test"],
+        publicNotes: ["Keep onboarding guidance public-safe."],
+      },
+      generatedAt: new Date().toISOString(),
+    });
+
+    const { token: ownerToken } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
+    const { token: otherOwnerToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
+    const ownerCookie = `gittensory_session=${ownerToken}`;
+    const otherOwnerCookie = `gittensory_session=${otherOwnerToken}`;
+
+    const roles = await app.request("/v1/auth/session", { headers: { cookie: ownerCookie } }, env);
+    expect(roles.status).toBe(200);
+    await expect(roles.json()).resolves.toMatchObject({ roles: ["maintainer", "owner"] });
+
+    const ownerPreview = await app.request("/v1/repos/repo-owner/owned-repo/onboarding-pack/preview", { headers: { cookie: ownerCookie } }, env);
+    expect(ownerPreview.status).toBe(200);
+    await expect(ownerPreview.json()).resolves.toMatchObject({
+      repoFullName: "repo-owner/owned-repo",
+      accepted: true,
+      policySource: "policy_compiler",
+      preview: { previewOnly: true, publicSafe: true },
+    });
+
+    const otherOwnerPreview = await app.request("/v1/repos/repo-owner/owned-repo/onboarding-pack/preview", { headers: { cookie: otherOwnerCookie } }, env);
+    expect(otherOwnerPreview.status).toBe(403);
+    await expect(otherOwnerPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
 
   it("rejects bad GitHub web OAuth callbacks without creating a browser session", async () => {
@@ -972,6 +1015,26 @@ describe("api route guards and error branches", () => {
     await expect(updated.json()).resolves.toMatchObject({ commentMode: "all_prs", checkRunDetailLevel: "deep", backfillEnabled: false, privateTrustEnabled: false });
   });
 });
+
+async function seedRegisteredInstalledRepo(env: Env, installationId: number, owner: string, name: string): Promise<void> {
+  await upsertInstallation(env, {
+    installation: {
+      id: installationId,
+      account: { login: owner, id: installationId, type: "User" },
+      repository_selection: "selected",
+      permissions: { metadata: "read", contents: "read" },
+      events: ["repository"],
+    },
+  });
+  await upsertRepositoryFromGitHub(
+    env,
+    { name, full_name: `${owner}/${name}`, private: false, owner: { login: owner } },
+    installationId,
+  );
+  await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?")
+    .bind(`${owner}/${name}`)
+    .run();
+}
 
 function apiHeaders(env: Env): Record<string, string> {
   return {

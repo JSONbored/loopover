@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,8 +19,8 @@ export function parseGitRemote(remoteUrl) {
   return undefined;
 }
 
-export function collectLocalDiff(cwd, baseRef) {
-  const metadata = collectLocalBranchMetadata({ cwd, baseRef, login: "local" });
+export function collectLocalDiff(cwd, baseRef, workspaceRoots) {
+  const metadata = collectLocalBranchMetadata({ cwd, baseRef, login: "local", workspaceRoots });
   return {
     title: metadata.title ?? "Local diff preflight",
     commitMessage: metadata.commitMessages.join("\n\n").trim(),
@@ -32,7 +33,8 @@ export function collectLocalDiff(cwd, baseRef) {
 
 export function collectLocalBranchMetadata(input) {
   assertSourceUploadDisabled();
-  const cwd = input.cwd ?? process.cwd();
+  const workspace = resolveWorkspaceCwd(input);
+  const cwd = workspace.cwd;
   const baseRef = input.baseRef ?? defaultBaseRef(cwd);
   const remoteUrl = gitLines(cwd, ["config", "--get", "remote.origin.url"])[0] ?? "";
   const repoFullName = input.repoFullName ?? parseGitRemote(remoteUrl);
@@ -104,8 +106,9 @@ export function collectCiStatusHints(cwd, baseRef, changedFiles = []) {
 }
 
 export function buildBranchAnalysisPayload(input) {
-  const metadata = collectLocalBranchMetadata(input);
-  const scorerMetadata = { ...metadata, repoRoot: input.cwd ?? process.cwd() };
+  const workspace = resolveWorkspaceCwd(input);
+  const metadata = collectLocalBranchMetadata({ ...input, cwd: workspace.cwd });
+  const scorerMetadata = { ...metadata, repoRoot: workspace.cwd };
   const scorerCommand = resolveScorePreviewCommand(input);
   const externalPreview = runExternalScorePreview(scorerMetadata, scorerCommand);
   const localScorer = externalPreview.ok ? normalizeScorerOutput(externalPreview.payload) : metadataOnlyScorer(externalPreview);
@@ -114,6 +117,71 @@ export function buildBranchAnalysisPayload(input) {
     localScorer,
     localScorerStatus: sanitizeLocalScorerStatus(externalPreview),
   };
+}
+
+export function resolveWorkspaceCwd(input = {}) {
+  const workspaceRoots = normalizeMcpWorkspaceRoots(input.workspaceRoots);
+  if (workspaceRoots.length === 0) {
+    return {
+      cwd: safeResolvedPath(input.cwd ?? process.cwd()),
+      rootsAvailable: false,
+      rootCount: 0,
+    };
+  }
+
+  const selectedRoot = workspaceRoots[0];
+  const requestedCwd =
+    input.cwd === undefined || input.cwd === null || input.cwd === ""
+      ? selectedRoot.path
+      : isAbsolute(String(input.cwd))
+        ? String(input.cwd)
+        : resolve(selectedRoot.path, String(input.cwd));
+  const cwd = safeResolvedPath(requestedCwd);
+  const containingRoot = workspaceRoots.find((root) => pathIsInside(cwd, root.path));
+  if (!containingRoot) {
+    throw new Error("Selected workspace is outside the MCP roots exposed by the client.");
+  }
+
+  return {
+    cwd,
+    rootsAvailable: true,
+    rootCount: workspaceRoots.length,
+  };
+}
+
+export function normalizeMcpWorkspaceRoots(roots) {
+  if (!Array.isArray(roots)) return [];
+  const normalized = [];
+  const seen = new Set();
+  for (const root of roots) {
+    const uri = typeof root?.uri === "string" ? root.uri : "";
+    if (!uri.startsWith("file:")) continue;
+    try {
+      const path = safeResolvedPath(fileURLToPath(uri));
+      if (seen.has(path)) continue;
+      seen.add(path);
+      normalized.push({ path });
+    } catch {
+      // Ignore non-local or malformed root URIs. Clients without usable roots fall back to cwd.
+    }
+  }
+  return normalized;
+}
+
+function safeResolvedPath(path) {
+  const resolved = resolve(String(path));
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function pathIsInside(candidate, root) {
+  const child = safeResolvedPath(candidate);
+  const parent = safeResolvedPath(root);
+  const childRelativeToParent = relative(parent, child);
+  return childRelativeToParent === "" || (!!childRelativeToParent && !childRelativeToParent.startsWith("..") && !isAbsolute(childRelativeToParent));
 }
 
 export function resolveScorePreviewCommand(input = {}) {

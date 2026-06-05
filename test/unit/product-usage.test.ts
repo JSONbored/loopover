@@ -38,6 +38,7 @@ describe("product usage events", () => {
     if (!row) throw new Error("expected product usage event");
     expect(row).toMatchObject({
       surface: "control_panel",
+      role: "unknown",
       eventName: "command_previewed",
       route: "/v1/app/commands/preview",
       repoFullName: "<redacted-actor>/private-tool",
@@ -170,6 +171,46 @@ describe("product usage events", () => {
     expect(row.metadata).not.toHaveProperty("diff");
     expect(row.metadata).not.toHaveProperty("cwd");
     expect(JSON.stringify(row.metadata)).not.toMatch(/\/Users|github_pat|ghp_|source code|private patch|trustScore|wallet/i);
+  });
+
+  it("persists normalized role on the event row and strips private scoreability metadata", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    const recorded = await recordProductUsageEvent(env, {
+      surface: "control_panel",
+      eventName: "command_previewed",
+      role: "maintainer",
+      actor: "oktofeesh1",
+      metadata: {
+        role: "owner",
+        privateScoreability: "must not persist",
+        reviewability: "private context",
+        farming: "optimization tactic",
+        prompt: "raw prompt text",
+        sourceContents: "file contents",
+      },
+    });
+
+    expect(recorded.role).toBe("maintainer");
+    const [row] = await listProductUsageEvents(env);
+    expect(row?.role).toBe("maintainer");
+    expect(row?.metadata).not.toHaveProperty("privateScoreability");
+    expect(row?.metadata).not.toHaveProperty("reviewability");
+    expect(row?.metadata).not.toHaveProperty("farming");
+    expect(row?.metadata).not.toHaveProperty("prompt");
+    expect(row?.metadata).not.toHaveProperty("sourceContents");
+    expect(JSON.stringify(row)).not.toMatch(/wallet|hotkey|raw trust|reward estimate|farming|privateScoreability|reviewability/i);
+  });
+
+  it("infers miner role for MCP usage when role is omitted", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+    const recorded = await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_tool_called",
+      actor: "miner-user",
+      metadata: { toolName: "gittensory_get_repo_context" },
+    });
+    expect(recorded.role).toBe("miner");
   });
 
   it("does not use API credentials as hash salt fallback", async () => {
@@ -429,6 +470,24 @@ describe("product usage events", () => {
     });
     await expect(listProductUsageDailyRollups(env)).resolves.toEqual([expect.objectContaining({ day, totalEvents: 6 })]);
     await expect(getProductUsageRollupStatus(env, { nowIso: "2026-05-31T00:40:00.000Z" })).resolves.toMatchObject({ status: "ready", warnings: [] });
+  });
+
+  it("retains low-frequency bounded events in byEvent on a high-diversity day (no top-20 truncation)", async () => {
+    const env = createTestEnv();
+    const day = "2026-05-30";
+    // 20 distinct filler events, each recorded twice (count 2), occupy the highest-frequency slots.
+    for (let i = 0; i < 20; i++) {
+      const eventName = `filler_event_${String(i).padStart(2, "0")}`;
+      await recordProductUsageEvent(env, { surface: "control_panel", eventName, actor: "user", outcome: "success", occurredAt: `${day}T00:00:00.000Z` });
+      await recordProductUsageEvent(env, { surface: "control_panel", eventName, actor: "user", outcome: "success", occurredAt: `${day}T01:00:00.000Z` });
+    }
+    // A low-frequency flagship event the weekly report looks up by exact name (count 1, ranks 21st).
+    await recordProductUsageEvent(env, { surface: "control_panel", eventName: "agent_pr_packet_completed", actor: "user", outcome: "success", occurredAt: `${day}T05:00:00.000Z` });
+
+    const run = await rollupProductUsageDaily(env, { day, nowIso: "2026-05-31T00:10:00.000Z" });
+    // Without the fix, byEvent was frequency-truncated to the top 20 and dropped this event.
+    expect(run.rollups[0]?.byEvent).toEqual(expect.arrayContaining([{ eventName: "agent_pr_packet_completed", count: 1 }]));
+    expect((run.rollups[0]?.byEvent ?? []).length).toBe(21);
   });
 
   it("builds empty role and retention rollups for days without product usage", async () => {
@@ -819,10 +878,11 @@ describe("product usage events", () => {
     await env.DB.batch(
       Array.from({ length: 5001 }, (_, index) =>
         env.DB.prepare(
-          "insert into product_usage_events (id, surface, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ).bind(
           `cap-event-${index}`,
           "api",
+          "miner",
           "agent_pr_packet_completed",
           "/v1/agent/prepare-pr-packet",
           null,
@@ -865,10 +925,11 @@ describe("product usage events", () => {
     await env.DB.batch(
       Array.from({ length: 5001 }, (_, index) =>
         env.DB.prepare(
-          "insert into product_usage_events (id, surface, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ).bind(
           `retention-cap-event-${index}`,
           "mcp",
+          "miner",
           "mcp_request",
           "/mcp",
           index === 5000 ? "retained-actor-hash" : `previous-actor-${index}`,
@@ -885,11 +946,12 @@ describe("product usage events", () => {
       ),
     );
     await env.DB.prepare(
-      "insert into product_usage_events (id, surface, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "insert into product_usage_events (id, surface, role, event_name, route, actor_hash, session_hash, repo_full_name, target_key, outcome, latency_ms, client_name, client_version, metadata_json, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
       .bind(
         "retention-cap-current-event",
         "mcp",
+        "miner",
         "mcp_request",
         "/mcp",
         "retained-actor-hash",

@@ -6,7 +6,7 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
+import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
 
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
@@ -202,7 +202,8 @@ server.registerTool(
     inputSchema: localDiffShape,
   },
   async (input) => {
-    const diff = collectLocalDiff(input.cwd ?? process.cwd(), input.baseRef);
+    const workspaceInput = await withClientWorkspaceRoots(input);
+    const diff = collectLocalDiff(workspaceInput.cwd, input.baseRef, workspaceInput.workspaceRoots);
     const body = {
       repoFullName: input.repoFullName,
       contributorLogin: input.contributorLogin,
@@ -236,7 +237,7 @@ server.registerTool(
     description: "Inspect local diff metadata and request a private Gittensory scoring preview. No source contents are uploaded.",
     inputSchema: localScoreShape,
   },
-  async (input) => toolResult("Gittensory private local PR scoring preview.", await previewLocalScore(input)),
+  async (input) => toolResult("Gittensory private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
 );
 
 server.registerTool(
@@ -270,8 +271,9 @@ server.registerTool(
     inputSchema: variantsShape,
   },
   async ({ variants }) => {
+    const roots = await clientWorkspaceRoots();
     const previews = [];
-    for (const variant of variants) previews.push(await previewLocalScore({ ...variant, targetKey: variant.targetKey ?? `variant:${previews.length + 1}` }));
+    for (const variant of variants) previews.push(await previewLocalScore(withWorkspaceRoots({ ...variant, targetKey: variant.targetKey ?? `variant:${previews.length + 1}` }, roots)));
     previews.sort((left, right) => Number(right?.remotePreview?.result?.effectiveEstimatedScore ?? right?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0) - Number(left?.remotePreview?.result?.effectiveEstimatedScore ?? left?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0));
     return toolResult("Gittensory PR variant comparison.", { variants: previews });
   },
@@ -289,8 +291,9 @@ server.registerTool(
   },
   async (input) => {
     let git = null;
+    const workspaceInput = await withClientWorkspaceRoots(input);
     try {
-      git = collectLocalBranchMetadata({ cwd: input.cwd ?? process.cwd(), baseRef: input.baseRef, repoFullName: input.repoFullName, login: "local" });
+      git = collectLocalBranchMetadata({ cwd: workspaceInput.cwd, baseRef: input.baseRef, repoFullName: input.repoFullName, login: "local", workspaceRoots: workspaceInput.workspaceRoots });
     } catch (error) {
       git = { error: error instanceof Error ? error.message : "local_status_failed" };
     }
@@ -306,6 +309,7 @@ server.registerTool(
       sessionExpiresAt: activeProfile.session?.expiresAt ?? null,
       sourceUploadDefault: false,
       sourceUploadSupported: false,
+      workspaceRoots: workspaceRootStatus(workspaceInput.workspaceRoots),
       git,
     });
   },
@@ -318,7 +322,7 @@ server.registerTool(
     inputSchema: currentBranchShape,
   },
   async (input) => {
-    const result = await analyzeCurrentBranch(input);
+    const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("Gittensory current-branch preflight.", {
       local: result.local,
       preflight: result.analysis.preflight,
@@ -335,7 +339,7 @@ server.registerTool(
     inputSchema: currentBranchShape,
   },
   async (input) => {
-    const result = await analyzeCurrentBranch(input);
+    const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("Gittensory current-branch private score preview.", {
       local: result.local,
       scorePreview: result.analysis.scorePreview,
@@ -353,7 +357,7 @@ server.registerTool(
     inputSchema: currentBranchShape,
   },
   async (input) => {
-    const result = await analyzeCurrentBranch(input);
+    const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("Gittensory local next-action ranking.", { local: result.local, nextActions: result.analysis.nextActions, rewardRisk: result.analysis.rewardRisk, recommendedRerunCondition: result.analysis.recommendedRerunCondition });
   },
 );
@@ -365,7 +369,7 @@ server.registerTool(
     inputSchema: currentBranchShape,
   },
   async (input) => {
-    const result = await analyzeCurrentBranch(input);
+    const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("Gittensory local blocker explanation.", {
       local: result.local,
       scoreBlockers: result.analysis.scoreBlockers,
@@ -385,7 +389,7 @@ server.registerTool(
     inputSchema: currentBranchShape,
   },
   async (input) => {
-    const result = await analyzeCurrentBranch(input);
+    const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("Gittensory public-safe PR packet.", { local: result.local, prPacket: result.analysis.prPacket });
   },
 );
@@ -397,8 +401,9 @@ server.registerTool(
     inputSchema: currentBranchVariantsShape,
   },
   async ({ variants }) => {
+    const roots = await clientWorkspaceRoots();
     const analyses = [];
-    for (const variant of variants) analyses.push(await analyzeCurrentBranch(variant));
+    for (const variant of variants) analyses.push(await analyzeCurrentBranch(withWorkspaceRoots(variant, roots)));
     analyses.sort(
       (left, right) =>
         Number(right.analysis.nextActions?.[0]?.priorityScore ?? 0) - Number(left.analysis.nextActions?.[0]?.priorityScore ?? 0) ||
@@ -477,14 +482,42 @@ server.registerTool(
     description: "Prepare a public-safe PR packet from current branch metadata. Sends metadata only.",
     inputSchema: currentBranchShape,
   },
-  async (input) => toolResult("Gittensory base-agent public-safe PR packet.", await agentPreparePrPacket(input)),
+  async (input) => toolResult("Gittensory base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
 );
 
 await server.connect(new StdioServerTransport());
 
+async function withClientWorkspaceRoots(input) {
+  return withWorkspaceRoots(input, await clientWorkspaceRoots());
+}
+
+function withWorkspaceRoots(input, roots) {
+  return roots.length > 0 ? { ...input, workspaceRoots: roots } : input;
+}
+
+async function clientWorkspaceRoots() {
+  if (!server.server.getClientCapabilities()?.roots) return [];
+  try {
+    const result = await server.server.listRoots(undefined, { timeout: 1000 });
+    return Array.isArray(result.roots) ? result.roots : [];
+  } catch {
+    return [];
+  }
+}
+
+function workspaceRootStatus(roots) {
+  const count = Array.isArray(roots) ? roots.length : 0;
+  return {
+    available: count > 0,
+    count,
+    pathsIncluded: false,
+  };
+}
+
 async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
+  if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   const options = parseOptions(args.slice(1));
@@ -498,7 +531,7 @@ async function runCli(args) {
   if (command === "init-client") return initClient(options);
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
-  if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}`);
+  if (command !== "analyze-branch" && command !== "preflight") throw new Error(`Unknown command: ${command}. Run \`gittensory-mcp --help\` to list commands.`);
   const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
   const result = await analyzeCurrentBranch({
@@ -719,9 +752,19 @@ function isUnsafePublicPacketText(value) {
   return /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(value);
 }
 
+function printVersion(options) {
+  const payload = { name: packageName, version: packageVersion, apiVersion: currentApiVersion, node: process.version };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
+}
+
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
+  gittensory-mcp version [--json]
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]
@@ -1989,12 +2032,19 @@ function compatibilityLatestRecommendedVersion(report) {
 }
 
 async function analyzeCurrentBranch(input) {
-  const payload = buildBranchAnalysisPayload(input);
+  const workspace = resolveWorkspaceCwd(input);
+  const payload = buildBranchAnalysisPayload({ ...input, cwd: workspace.cwd });
   const { localScorerStatus, ...body } = payload;
   const analysis = await apiPost("/v1/local/branch-analysis", body);
   return {
     local: {
       sourceUpload: false,
+      workspaceRoots: {
+        available: workspace.rootsAvailable,
+        count: workspace.rootCount,
+        cwdInsideRoot: workspace.rootsAvailable ? true : undefined,
+        pathsIncluded: false,
+      },
       repoFullName: body.repoFullName,
       baseRef: body.baseRef,
       headRef: body.headRef,
@@ -2014,21 +2064,23 @@ async function analyzeCurrentBranch(input) {
 }
 
 async function agentPreparePrPacket(input) {
-  const payload = buildBranchAnalysisPayload(input);
+  const workspace = resolveWorkspaceCwd(input);
+  const payload = buildBranchAnalysisPayload({ ...input, cwd: workspace.cwd });
   const { localScorerStatus: _localScorerStatus, ...body } = payload;
   return apiPost("/v1/agent/prepare-pr-packet", body);
 }
 
 async function previewLocalScore(input) {
-  const cwd = input.cwd ?? process.cwd();
-  const diff = collectLocalDiff(cwd, input.baseRef);
+  const workspace = resolveWorkspaceCwd(input);
+  const cwd = workspace.cwd;
+  const diff = collectLocalDiff(cwd, input.baseRef, input.workspaceRoots);
   const branchPayload = buildBranchAnalysisPayload({ ...input, login: input.contributorLogin ?? "local", cwd, repoFullName: input.repoFullName, baseRef: input.baseRef });
   const upstreamPreview = branchPayload.localScorerStatus;
   const estimatedSourceLines = input.sourceLines ?? Math.max(1, diff.changedLineCount - diff.testFiles.length);
   const body = {
     repoFullName: input.repoFullName,
     targetType: "local_diff",
-    targetKey: input.targetKey ?? `${input.repoFullName}:${cwd}:${input.baseRef}`,
+    targetKey: input.targetKey ?? localDiffTargetKey(branchPayload, input.baseRef),
     contributorLogin: input.contributorLogin,
     labels: input.labels,
     linkedIssueMode: input.linkedIssueMode,
@@ -2062,6 +2114,16 @@ async function previewLocalScore(input) {
       ? []
       : setupGuidanceForLocalScorer(upstreamPreview),
   };
+}
+
+function localDiffTargetKey(branchPayload, baseRef) {
+  return [
+    branchPayload.repoFullName,
+    branchPayload.branchName ?? branchPayload.headRef ?? "local",
+    branchPayload.headSha ?? baseRef ?? "diff",
+  ]
+    .filter(Boolean)
+    .join(":");
 }
 
 function branchEligibilityFromOptions(options) {

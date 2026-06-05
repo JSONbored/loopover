@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, not, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
@@ -135,6 +135,7 @@ import type {
 } from "../types";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
+import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
@@ -367,6 +368,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      commandAuthorization: normalizeCommandAuthorizationPolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).policy,
     };
   }
   return {
@@ -383,6 +385,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     requireLinkedIssue: row.requireLinkedIssue,
     backfillEnabled: row.backfillEnabled,
     privateTrustEnabled: row.privateTrustEnabled,
+    commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -403,6 +406,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     requireLinkedIssue: settings.requireLinkedIssue ?? false,
     backfillEnabled: settings.backfillEnabled ?? true,
     privateTrustEnabled: settings.privateTrustEnabled ?? true,
+    commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
   };
   const db = getDb(env.DB);
   await db
@@ -421,6 +425,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       requireLinkedIssue: resolved.requireLinkedIssue,
       backfillEnabled: resolved.backfillEnabled,
       privateTrustEnabled: resolved.privateTrustEnabled,
+      commandAuthorizationJson: jsonString(resolved.commandAuthorization),
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -438,6 +443,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         requireLinkedIssue: resolved.requireLinkedIssue,
         backfillEnabled: resolved.backfillEnabled,
         privateTrustEnabled: resolved.privateTrustEnabled,
+        commandAuthorizationJson: jsonString(resolved.commandAuthorization),
         updatedAt: nowIso(),
       },
     });
@@ -986,6 +992,7 @@ export async function recordProductUsageEvent(
   event: {
     surface: ProductUsageSurface;
     eventName: string;
+    role?: ProductUsageRole | string | null | undefined;
     actor?: string | null | undefined;
     sessionId?: string | null | undefined;
     route?: string | null | undefined;
@@ -1001,9 +1008,16 @@ export async function recordProductUsageEvent(
 ): Promise<ProductUsageEventRecord> {
   const db = getDb(env.DB);
   const actorRedactor = buildProductUsageActorRedactor(event.actor);
+  const sanitizedMetadata = sanitizeProductUsageMetadata(event.metadata, actorRedactor);
   const record: ProductUsageEventRecord = {
     id: crypto.randomUUID(),
     surface: normalizeProductUsageSurface(event.surface),
+    role: resolveProductUsageRole({
+      explicitRole: event.role,
+      surface: normalizeProductUsageSurface(event.surface),
+      eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
+      metadata: sanitizedMetadata,
+    }),
     eventName: boundedProductUsageField(event.eventName, 96) ?? "unknown",
     route: boundedProductUsageField(event.route, 160),
     actorHash: await hashProductUsageIdentifier(env, "actor", event.actor),
@@ -1014,12 +1028,13 @@ export async function recordProductUsageEvent(
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
     clientName: boundedProductUsageField(event.clientName, 80),
     clientVersion: boundedProductUsageField(event.clientVersion, 80),
-    metadata: sanitizeProductUsageMetadata(event.metadata, actorRedactor),
+    metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
   await db.insert(productUsageEvents).values({
     id: record.id,
     surface: record.surface,
+    role: record.role,
     eventName: record.eventName,
     route: record.route ?? null,
     actorHash: record.actorHash ?? null,
@@ -1386,6 +1401,74 @@ export async function hasRecentAuditEvent(env: Env, actor: string, eventType: st
   return rows.length > 0;
 }
 
+export type PrVisibilitySkipAuditEvent = {
+  repoFullName: string;
+  pullNumber: number;
+  reason: string;
+  outcome: AuditEventRecord["outcome"];
+  createdAt: string;
+};
+
+export type PrVisibilitySkipAuditPage = {
+  limit: number;
+  hasMore: boolean;
+  items: PrVisibilitySkipAuditEvent[];
+};
+
+export async function listPrVisibilitySkipAuditEvents(
+  env: Env,
+  options: {
+    limit?: number | undefined;
+    repoFullNames?: string[] | undefined;
+    reason?: string | undefined;
+    sinceIso?: string | undefined;
+  } = {},
+): Promise<PrVisibilitySkipAuditPage> {
+  const limit = clampInteger(options.limit ?? 50, 1, 100);
+  const scopedRepoNames = options.repoFullNames === undefined ? undefined : uniqueRepoNames(options.repoFullNames.map((name) => name.trim()).filter(Boolean));
+  if (scopedRepoNames !== undefined && scopedRepoNames.length === 0) return { limit, hasMore: false, items: [] };
+
+  const conditions: SQL[] = [eq(auditEvents.eventType, "github_app.pr_visibility_skipped")];
+  if (options.reason) conditions.push(eq(auditEvents.detail, options.reason));
+  if (options.sinceIso) conditions.push(gte(auditEvents.createdAt, options.sinceIso));
+  if (scopedRepoNames !== undefined) {
+    const repoFilters = scopedRepoNames.map((repoFullName) => {
+      const prefix = `${repoFullName.toLowerCase()}#`;
+      const upperBound = `${repoFullName.toLowerCase()}$`;
+      return sql`lower(${auditEvents.targetKey}) >= ${prefix} and lower(${auditEvents.targetKey}) < ${upperBound}`;
+    });
+    const repoFilter = or(...repoFilters);
+    if (repoFilter) conditions.push(repoFilter);
+  }
+
+  const rowLimit = Math.min(500, limit * 5 + 20);
+  const rows = await getDb(env.DB)
+    .select({
+      targetKey: auditEvents.targetKey,
+      detail: auditEvents.detail,
+      outcome: auditEvents.outcome,
+      createdAt: auditEvents.createdAt,
+    })
+    .from(auditEvents)
+    .where(and(...conditions))
+    .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+    .limit(rowLimit);
+  const items = rows.flatMap((row) => {
+    const target = parsePullRequestTargetKey(row.targetKey);
+    if (!target) return [];
+    return [
+      {
+        repoFullName: target.repoFullName,
+        pullNumber: target.pullNumber,
+        reason: row.detail ?? "skipped",
+        outcome: row.outcome as AuditEventRecord["outcome"],
+        createdAt: row.createdAt,
+      },
+    ];
+  });
+  return { limit, hasMore: items.length > limit, items: items.slice(0, limit) };
+}
+
 export async function getFreshOfficialMinerDetection(env: Env, login: string, now = nowIso()): Promise<OfficialGittensorMinerDetection | null> {
   const [row] = await getDb(env.DB).select().from(officialMinerDetections).where(and(eq(officialMinerDetections.login, login.toLowerCase()), gte(officialMinerDetections.expiresAt, now))).limit(1);
   return row ? toOfficialMinerDetection(row) : null;
@@ -1473,6 +1556,28 @@ async function hashCommandFeedbackActor(repoFullName: string, actorLogin: string
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function uniqueRepoNames(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}
+
+function parsePullRequestTargetKey(targetKey: string | null | undefined): { repoFullName: string; pullNumber: number } | null {
+  if (!targetKey) return null;
+  const delimiter = targetKey.lastIndexOf("#");
+  if (delimiter <= 0 || delimiter === targetKey.length - 1) return null;
+  const repoFullName = targetKey.slice(0, delimiter);
+  const pullNumber = Number(targetKey.slice(delimiter + 1));
+  if (!repoFullName.includes("/") || !Number.isInteger(pullNumber) || pullNumber <= 0) return null;
+  return { repoFullName, pullNumber };
 }
 
 function maxIso(left: string | null | undefined, right: string | null | undefined): string | null {
@@ -2044,7 +2149,9 @@ export async function upsertRecentMergedPullRequest(env: Env, pr: RecentMergedPu
         mergedAt: pr.mergedAt,
         labelsJson: jsonString(pr.labels),
         linkedIssuesJson: jsonString(pr.linkedIssues),
-        changedFilesJson: jsonString(pr.changedFiles),
+        // Keep a previously-hydrated file list instead of clobbering it with an empty
+        // one (e.g. a files-less upsert or a failed file fetch).
+        changedFilesJson: pr.changedFiles.length > 0 ? jsonString(pr.changedFiles) : sql`${recentMergedPullRequests.changedFilesJson}`,
         payloadJson: jsonString(pr.payload),
         updatedAt: nowIso(),
       },
@@ -3288,6 +3395,7 @@ function toProductUsageEventRecord(row: typeof productUsageEvents.$inferSelect):
   return {
     id: row.id,
     surface: normalizeProductUsageSurface(row.surface),
+    role: normalizeProductUsageRole(row.role) ?? "unknown",
     eventName: row.eventName,
     route: row.route,
     actorHash: row.actorHash,
@@ -3498,6 +3606,13 @@ async function upsertProductUsageDailyRollup(env: Env, day: string, generatedAt:
   return record;
 }
 
+// Bounded enum dimensions (surface / outcome / eventName) are consumed by exact-name lookups
+// (e.g. the weekly value report's sumEvent over byEvent), so they must be stored complete:
+// frequency-truncating a bounded exact-lookup dimension silently zeroes any value below the
+// top-N cut on a high-diversity day. Only the genuinely-unbounded repo/command/tool/route
+// dimensions keep a display top-N.
+const FULL_DIMENSION_LIMIT = Number.MAX_SAFE_INTEGER;
+
 function buildProductUsageDailyRollupRecord(args: {
   day: string;
   generatedAt: string;
@@ -3525,9 +3640,9 @@ function buildProductUsageDailyRollupRecord(args: {
     maxEventCapacity: PRODUCT_USAGE_ROLLUP_EVENT_SCAN_LIMIT,
     firstEventAt: args.events[0]?.occurredAt ?? null,
     lastEventAt: args.events.at(-1)?.occurredAt ?? null,
-    bySurface: countProductUsageDimensions(args.events.map((event) => event.surface)).map(({ key, count }) => ({ surface: normalizeProductUsageSurface(key), count })),
-    byOutcome: countProductUsageDimensions(args.events.map((event) => event.outcome)).map(({ key, count }) => ({ outcome: normalizeProductUsageOutcome(key), count })),
-    byEvent: countProductUsageDimensions(args.events.map((event) => event.eventName)).map(({ key, count }) => ({ eventName: key, count })),
+    bySurface: countProductUsageDimensions(args.events.map((event) => event.surface), FULL_DIMENSION_LIMIT).map(({ key, count }) => ({ surface: normalizeProductUsageSurface(key), count })),
+    byOutcome: countProductUsageDimensions(args.events.map((event) => event.outcome), FULL_DIMENSION_LIMIT).map(({ key, count }) => ({ outcome: normalizeProductUsageOutcome(key), count })),
+    byEvent: countProductUsageDimensions(args.events.map((event) => event.eventName), FULL_DIMENSION_LIMIT).map(({ key, count }) => ({ eventName: key, count })),
     byRepo: countProductUsageDimensions(args.events.map((event) => event.repoFullName)),
     byCommand: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "command"))),
     byTool: countProductUsageDimensions(args.events.map((event) => productUsageMetadataString(event, "toolName"))),
@@ -3676,6 +3791,7 @@ function productUsageRolesForEvent(event: ProductUsageEventRecord, actorRoles: M
 
 function productUsageBaseRolesForEvent(event: ProductUsageEventRecord): ProductUsageRole[] {
   const roles = new Set<ProductUsageRole>();
+  if (event.role && event.role !== "unknown") roles.add(event.role);
   addProductUsageRolesFromValue(roles, event.metadata.role);
   addProductUsageRolesFromValue(roles, event.metadata.roles);
   addProductUsageRolesFromValue(roles, event.metadata.audience);
@@ -3708,6 +3824,35 @@ function addProductUsageRolesFromValue(roles: Set<ProductUsageRole>, value: Json
   if (typeof value !== "string") return;
   const role = normalizeProductUsageRole(value);
   if (role) roles.add(role);
+}
+
+function resolveProductUsageRole(args: {
+  explicitRole?: ProductUsageRole | string | null | undefined;
+  surface: ProductUsageSurface;
+  eventName: string;
+  metadata: Record<string, JsonValue>;
+}): ProductUsageRole {
+  if (typeof args.explicitRole === "string") {
+    const normalized = normalizeProductUsageRole(args.explicitRole);
+    if (normalized) return normalized;
+  }
+  const fromMetadata = new Set<ProductUsageRole>();
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.role);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.roles);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.audience);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.actorRole);
+  addProductUsageRolesFromValue(fromMetadata, args.metadata.actorKind);
+  if (fromMetadata.size > 0) return [...fromMetadata].sort((a, b) => productUsageRoleSortValue(a) - productUsageRoleSortValue(b))[0] ?? "unknown";
+  const [inferred] = productUsageBaseRolesForEvent({
+    id: "",
+    surface: args.surface,
+    role: "unknown",
+    eventName: args.eventName,
+    outcome: "success",
+    metadata: args.metadata,
+    occurredAt: nowIso(),
+  });
+  return inferred ?? "unknown";
 }
 
 function normalizeProductUsageRole(value: string): ProductUsageRole | null {
@@ -3890,8 +4035,9 @@ const PRODUCT_USAGE_USEFUL_ACTION_EVENTS = new Set([
 const PRODUCT_USAGE_SURFACES = new Set<ProductUsageSurface>(["api", "mcp", "github_app", "control_panel", "browser_extension", "internal"]);
 const PRODUCT_USAGE_OUTCOMES = new Set<ProductUsageOutcome>(["success", "denied", "error", "queued", "completed", "skipped"]);
 const PRODUCT_USAGE_SENSITIVE_KEY =
-  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd/i;
-const PRODUCT_USAGE_SENSITIVE_VALUE = /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey)\b/i;
+  /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
+const PRODUCT_USAGE_SENSITIVE_VALUE =
+  /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
 const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
@@ -4036,6 +4182,10 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {
   if (value === "comment_only" || value === "label_only" || value === "off") return value;
   return "comment_and_label";
+}
+
+function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
+  return normalizeCommandAuthorizationPolicy(parseJson<unknown>(value, null)).policy;
 }
 
 function parseSyncStatus(value: string): RepoSyncStateRecord["status"] {

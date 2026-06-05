@@ -475,6 +475,31 @@ export const BountySchema = z
   })
   .openapi("Bounty");
 
+const BountySourceContextSchema = z.object({
+  sourceUrl: z.string().nullable().optional(),
+  discoveredAt: z.string().nullable().optional(),
+  updatedAt: z.string().nullable().optional(),
+  observedAt: z.string().nullable().optional(),
+  ageDays: z.number().nullable(),
+  freshness: z.enum(["fresh", "stale", "unknown"]),
+});
+
+const BountyLinkedPrSchema = z.object({
+  number: z.number(),
+  state: z.enum(["open", "closed", "merged", "unknown"]),
+  isActive: z.boolean(),
+});
+
+const BountyOpportunityContextSchema = z.object({
+  id: z.string(),
+  lifecycle: z.enum(["active", "historical", "completed", "cancelled", "stale", "ambiguous", "unknown"]),
+  isActiveOpportunity: z.boolean(),
+  fundingStatus: z.enum(["funded", "target_only", "unknown"]),
+  consensusRisk: z.enum(["low", "medium", "high"]),
+  source: BountySourceContextSchema,
+  linkedPrs: z.array(BountyLinkedPrSchema),
+});
+
 export const BountyAdvisorySchema = z
   .object({
     id: z.string(),
@@ -485,13 +510,8 @@ export const BountyAdvisorySchema = z
     isActiveOpportunity: z.boolean(),
     fundingStatus: z.enum(["funded", "target_only", "unknown"]),
     consensusRisk: z.enum(["low", "medium", "high"]),
-    linkedPrs: z.array(
-      z.object({
-        number: z.number(),
-        state: z.enum(["open", "closed", "merged", "unknown"]),
-        isActive: z.boolean(),
-      }),
-    ),
+    source: BountySourceContextSchema,
+    linkedPrs: z.array(BountyLinkedPrSchema),
     findings: z.array(FindingSchema),
   })
   .openapi("BountyAdvisory");
@@ -528,6 +548,10 @@ export const RepositorySettingsSchema = z
     requireLinkedIssue: z.boolean(),
     backfillEnabled: z.boolean(),
     privateTrustEnabled: z.boolean(),
+    commandAuthorization: z.object({
+      default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
+      commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
+    }),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })
@@ -548,6 +572,27 @@ export const RepoSettingsPreviewSchema = z
       createMissingLabel: z.boolean(),
       includeMaintainerAuthors: z.boolean(),
       requireLinkedIssue: z.boolean(),
+      commandAuthorization: z.object({
+        defaultAllowed: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
+        commandOverrides: z.array(
+          z.object({
+            command: z.string(),
+            allowedRoles: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
+          }),
+        ),
+      }),
+    }),
+    commandAuthorizationPreview: z.object({
+      commandName: z.string(),
+      commenterLogin: z.string(),
+      commenterAssociation: z.string(),
+      decision: z.object({
+        authorized: z.boolean(),
+        reason: z.string(),
+        actorKind: z.enum(["maintainer", "author", "none"]),
+        matchedRole: z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]).nullable(),
+        allowedRoles: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
+      }),
     }),
     installation: z
       .object({
@@ -593,10 +638,64 @@ export const RepoSettingsPreviewSchema = z
         detailLevel: z.enum(["minimal", "standard", "deep"]),
       })
       .nullable(),
+    installPreview: z.object({
+      status: z.enum(["ready", "needs_attention", "blocked"]),
+      summary: z.string(),
+      readScope: z.array(z.string()),
+      computedContext: z.array(z.string()),
+      previewBehavior: z.array(z.string()),
+      permissions: z.object({
+        status: z.enum(["ready", "needs_attention", "blocked"]),
+        required: z.array(z.string()),
+        missing: z.array(z.string()),
+        missingEvents: z.array(z.string()),
+        summary: z.string(),
+      }),
+      publicOutputs: z.array(z.string()),
+      privateOnlyContext: z.array(z.string()),
+      commandAuthorization: z.array(z.string()),
+      auditBehavior: z.array(z.string()),
+      sanitizerBoundaries: z.array(z.string()),
+      manualControls: z.array(z.string()),
+      checklist: z.array(
+        z.object({
+          id: z.string(),
+          category: z.enum(["permissions", "public_outputs", "private_context", "command_authorization", "audit", "sanitizer", "manual_control"]),
+          status: z.enum(["ready", "needs_attention", "blocked"]),
+          label: z.string(),
+          summary: z.string(),
+          action: z.string(),
+        }),
+      ),
+    }),
     warnings: z.array(z.string()),
     summary: z.string(),
   })
   .openapi("RepoSettingsPreview");
+
+export const SkippedPrAuditExportSchema = z
+  .object({
+    generatedAt: z.string(),
+    limit: z.number().int().min(1).max(100),
+    hasMore: z.boolean(),
+    filters: z.object({
+      repoFullName: z.string().nullable(),
+      reason: z
+        .enum(["surface_off", "missing_author", "bot_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"])
+        .nullable(),
+      since: z.string().nullable(),
+    }),
+    items: z.array(
+      z.object({
+        repoFullName: z.string(),
+        pullNumber: z.number().int().positive(),
+        reason: z.string(),
+        timestamp: z.string(),
+        remediation: z.string(),
+      }),
+    ),
+  })
+  .openapi("SkippedPrAuditExport");
 
 export const CommandPreviewResponseSchema = z
   .object({
@@ -1207,6 +1306,7 @@ export const IssueQualityReportSchema = z
             warnings: z.array(z.string()),
           })
           .optional(),
+        bounty: BountyOpportunityContextSchema.optional(),
         status: z.enum(["ready", "needs_proof", "hold", "do_not_use"]),
         score: z.number(),
         reasons: z.array(z.string()),
@@ -1714,20 +1814,7 @@ export const RegistrationReadinessSchema = z
             action: z.string(),
           }),
         ),
-        ownerContext: z.object({
-          manifestPresent: z.boolean(),
-          manifestSource: z.enum(["repo_file", "api_record", "none"]),
-          privateNoteCount: z.number(),
-          manifestWarningCount: z.number(),
-          wantedPathCount: z.number(),
-          blockedPathCount: z.number(),
-          validationExpectationCount: z.number(),
-          queueLevel: z.enum(["low", "medium", "high", "critical"]),
-          contributorIntakeLevel: z.enum(["healthy", "watch", "strained", "blocked"]),
-          configLevel: z.enum(["excellent", "good", "needs_attention", "fragile"]),
-          issuePolicy: z.string(),
-          issueDiscoveryPolicy: z.enum(["encouraged", "neutral", "discouraged"]),
-        }),
+        // Owner-only focus-manifest metadata is intentionally excluded from this broad route.
         droppedPublicWarnings: z.array(
           z.object({
             code: z.string(),

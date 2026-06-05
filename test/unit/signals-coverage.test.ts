@@ -50,7 +50,7 @@ describe("signal coverage edge cases", () => {
     const inactiveRepo = repo("owner/inactive", { emissionShare: 0 });
     const missingRepo = { ...directRepo, isRegistered: false, registryConfig: null };
     const emptyTrusted = repo("owner/empty-trusted", { labelMultipliers: {}, trustedLabelPipeline: true });
-    const settings = repoSettings(directRepo.fullName);
+    const settings = { ...repoSettings(directRepo.fullName), publicAudienceMode: "gittensor_only" as const };
 
     expect(buildLaneAdvice(null, "missing/repo").lane).toBe("unknown");
     expect(buildLaneAdvice(missingRepo, missingRepo.fullName).lane).toBe("unknown");
@@ -591,8 +591,8 @@ describe("signal coverage edge cases", () => {
       settings: { ...repoSettings(directRepo.fullName), publicSignalLevel: "minimal", requireLinkedIssue: true },
     });
 
-    expect(comment).toContain("Confirmed Gittensor miner: yes");
-    expect(comment).toContain("Linked issues: None detected");
+    expect(comment).toContain("Confirmed Gittensor contributor");
+    expect(comment).toContain("| Linked issue | None detected |");
     expect(comment).not.toMatch(/reward|score|wallet|hotkey|trust score|farming|critical private/i);
 
     const maintainerComment = buildPublicPrIntelligenceComment({
@@ -608,6 +608,128 @@ describe("signal coverage edge cases", () => {
 
     expect(maintainerComment).toContain("maintainer lane");
     expect(maintainerComment).not.toMatch(/reward|score|wallet|hotkey|trust score|farming/i);
+  });
+
+  it("renders opt-in gate panel states for collision and repo evaluation blockers", () => {
+    const directRepo = repo("owner/gate");
+    const existingIssue = issue(directRepo.fullName, 7, "Cache refresh websocket reconnect failure");
+    const existingPr = pr(directRepo.fullName, 8, "Cache refresh websocket reconnect fix", { authorLogin: "other", linkedIssues: [7] });
+    const currentPr = pr(directRepo.fullName, 9, "Cache refresh websocket reconnect fix", { authorLogin: "dev", linkedIssues: [7], body: "Fixes #7" });
+    const collisions = buildCollisionReport(directRepo.fullName, [existingIssue], [existingPr, currentPr]);
+    const queueHealth = buildQueueHealth(directRepo, [existingIssue], [existingPr, currentPr], collisions);
+    const preflight = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: currentPr.linkedIssues },
+      directRepo,
+      [existingIssue],
+      [existingPr, currentPr],
+    );
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
+    const detection = { detected: true, source: "github_cache" as const, reason: "cached contributor", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 };
+    const gateSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const };
+
+    const collisionComment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: currentPr,
+      profile,
+      detection,
+      queueHealth,
+      collisions,
+      preflight,
+      settings: gateSettings,
+    });
+
+    expect(collisionComment).toContain("> [!CAUTION]");
+    expect(collisionComment).toContain("overlaps with cached open work");
+    expect(collisionComment).toContain("| Gate result | Failing |");
+    expect(collisionComment).toContain("Cached OSS contributor activity");
+    expect(collisionComment).toContain("Check overlapping issues/PRs before review continues.");
+    expect(collisionComment).not.toContain("gittensor.io");
+
+    const repoBlockedComment = buildPublicPrIntelligenceComment({
+      repo: null,
+      pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },
+      profile,
+      detection: { detected: false, reason: "no cache", priorPullRequests: 0, priorMergedPullRequests: 0, priorIssues: 0 },
+      queueHealth: buildQueueHealth(null, [], [], buildCollisionReport(directRepo.fullName, [], [])),
+      collisions: buildCollisionReport(directRepo.fullName, [], []),
+      preflight: buildPreflightResult(
+        { repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] },
+        null,
+        [],
+        [],
+      ),
+      settings: gateSettings,
+    });
+
+    expect(repoBlockedComment).toContain("> [!CAUTION]");
+    expect(repoBlockedComment).toContain("cannot evaluate the repo state");
+    expect(repoBlockedComment).toContain("Public profile only");
+    expect(repoBlockedComment).toContain("Gate result | Failing");
+
+    const missingIssueComment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: { ...currentPr, linkedIssues: [], body: "No linked issue yet." },
+      profile,
+      detection,
+      queueHealth: buildQueueHealth(directRepo, [existingIssue], [currentPr], buildCollisionReport(directRepo.fullName, [existingIssue], [currentPr])),
+      collisions: buildCollisionReport(directRepo.fullName, [existingIssue], [currentPr]),
+      preflight: buildPreflightResult(
+        { repoFullName: directRepo.fullName, title: currentPr.title, body: "No linked issue yet.", linkedIssues: [] },
+        directRepo,
+        [existingIssue],
+        [currentPr],
+      ),
+      settings: { ...gateSettings, requireLinkedIssue: true },
+    });
+
+    expect(missingIssueComment).toContain("> [!WARNING]");
+    expect(missingIssueComment).toContain("requires linked issues");
+    expect(missingIssueComment).toContain("| Linked issue | None detected |");
+    expect(missingIssueComment).toContain("Link the issue being solved");
+
+    const passingGateComment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },
+      profile,
+      detection,
+      queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
+      collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      preflight: buildPreflightResult(
+        { repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] },
+        directRepo,
+        [],
+        [currentPr],
+      ),
+      settings: gateSettings,
+    });
+
+    expect(passingGateComment).toContain("> [!TIP]");
+    expect(passingGateComment).toContain("| Gate result | Passing |");
+    expect(passingGateComment).toContain("Public GitHub metadata was checked");
+
+    const advisoryOnlyComment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },
+      profile,
+      detection,
+      queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
+      collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      preflight: {
+        ...buildPreflightResult(
+          { repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] },
+          directRepo,
+          [],
+          [currentPr],
+        ),
+        findings: [{ code: "public_warning", severity: "warning", title: "Validation note missing", detail: "Validation evidence is not cached yet." }],
+      },
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" },
+    });
+
+    expect(advisoryOnlyComment).toContain("> [!IMPORTANT]");
+    expect(advisoryOnlyComment).toContain("Gittensory found maintainer review notes");
+    expect(advisoryOnlyComment).toContain("Validation note missing");
+    expect(advisoryOnlyComment).toContain("| Gate result | Advisory only |");
   });
 
   it("audits label ordering and suspicious configured labels deterministically", () => {
@@ -726,9 +848,11 @@ function repoSettings(repoFullName: string): RepositorySettings {
   return {
     repoFullName,
     commentMode: "detected_contributors_only",
+    publicAudienceMode: "oss_maintainer",
     publicSignalLevel: "standard",
     checkRunMode: "off",
     checkRunDetailLevel: "minimal",
+    gateCheckMode: "off",
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
     createMissingLabel: true,

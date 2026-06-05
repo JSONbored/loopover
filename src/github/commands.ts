@@ -208,15 +208,29 @@ export function buildPublicAgentCommandComment(args: {
   });
   const body = [
     AGENT_COMMAND_COMMENT_MARKER,
-    `### ${COMMAND_TITLES[args.command.name]}`,
+    "",
+    "> [!NOTE]",
+    `> **${COMMAND_TITLES[args.command.name]}**`,
+    "> Gittensory updated this command response in place from cached public-safe context.",
+    "",
+    "| Signal | State |",
+    "| --- | --- |",
+    `| Command | \`@gittensory ${args.command.name}\` |`,
+    `| Scope | ${repoFullName}#${args.issue.number} |`,
+    `| Actor | ${args.actorKind} |`,
     "",
     `Command: \`@gittensory ${args.command.name}\``,
-    `Scope: ${repoFullName}#${args.issue.number}`,
+    "",
+    "<details>",
+    "<summary>Command result</summary>",
     "",
     ...renderPublicAnswerCard(card),
+    "",
+    "</details>",
     ...feedbackPromptSections(args.answerId),
     "",
-    "_Advisory context only. Public comments exclude non-public contributor signals and private planning internals._",
+    "---",
+    "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers.",
   ].join("\n");
   return sanitizePublicComment(body);
 }

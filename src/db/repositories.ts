@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, not, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
@@ -36,6 +36,7 @@ import {
   recentMergedPullRequests,
   repositories,
   repoGithubTotalsSnapshots,
+  repoQueueTrendSnapshots,
   registryDriftEvents,
   repoLabels,
   repoSnapshots,
@@ -117,6 +118,7 @@ import type {
   RegistryDriftEventRecord,
   RepoLabelRecord,
   RepoGithubTotalsSnapshotRecord,
+  RepoQueueTrendSnapshotRecord,
   RepoSnapshotRecord,
   RepoSyncSegmentRecord,
   RepoSyncStateRecord,
@@ -196,6 +198,16 @@ export async function markInstallationDeleted(env: Env, installationId: number):
     .update(repositories)
     .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
     .where(eq(repositories.installationId, installationId));
+}
+
+export async function markRepositoriesRemovedFromInstallation(env: Env, installationId: number, repoFullNames: string[]): Promise<void> {
+  const names = [...new Set(repoFullNames.filter(Boolean))];
+  if (names.length === 0) return;
+  const db = getDb(env.DB);
+  await db
+    .update(repositories)
+    .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
+    .where(and(eq(repositories.installationId, installationId), inArray(repositories.fullName, names)));
 }
 
 export async function getInstallation(env: Env, installationId: number): Promise<InstallationRecord | null> {
@@ -357,9 +369,11 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     return {
       repoFullName: fullName,
       commentMode: "detected_contributors_only",
+      publicAudienceMode: "oss_maintainer",
       publicSignalLevel: "standard",
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
+      gateCheckMode: "off",
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -374,9 +388,11 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
   return {
     repoFullName: row.repoFullName,
     commentMode: parseCommentMode(row.commentMode),
+    publicAudienceMode: parsePublicAudienceMode(row.publicAudienceMode),
     publicSignalLevel: row.publicSignalLevel === "minimal" ? "minimal" : "standard",
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
+    gateCheckMode: parseGateCheckMode(row.gateCheckMode),
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
     createMissingLabel: row.createMissingLabel,
@@ -395,9 +411,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
   const resolved: RepositorySettings = {
     repoFullName: settings.repoFullName,
     commentMode: settings.commentMode ?? "detected_contributors_only",
+    publicAudienceMode: settings.publicAudienceMode ?? "oss_maintainer",
     publicSignalLevel: settings.publicSignalLevel ?? "standard",
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
+    gateCheckMode: settings.gateCheckMode ?? "off",
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     createMissingLabel: settings.createMissingLabel ?? true,
@@ -414,9 +432,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     .values({
       repoFullName: resolved.repoFullName,
       commentMode: resolved.commentMode,
+      publicAudienceMode: resolved.publicAudienceMode,
       publicSignalLevel: resolved.publicSignalLevel,
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
+      gateCheckMode: resolved.gateCheckMode,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
       createMissingLabel: resolved.createMissingLabel,
@@ -432,9 +452,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       target: repositorySettings.repoFullName,
       set: {
         commentMode: resolved.commentMode,
+        publicAudienceMode: resolved.publicAudienceMode,
         publicSignalLevel: resolved.publicSignalLevel,
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
+        gateCheckMode: resolved.gateCheckMode,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
         createMissingLabel: resolved.createMissingLabel,
@@ -633,6 +655,24 @@ export async function getLatestRepoGithubTotalsSnapshot(env: Env, fullName: stri
   return row ? toRepoGithubTotalsSnapshotRecord(row) : null;
 }
 
+export async function listRepoGithubTotalsSnapshotHistory(
+  env: Env,
+  fullName: string,
+  options: { sinceIso?: string | undefined; limit?: number | undefined } = {},
+): Promise<RepoGithubTotalsSnapshotRecord[]> {
+  const db = getDb(env.DB);
+  const limit = Math.max(2, Math.min(options.limit ?? 120, 240));
+  const conditions = [eq(repoGithubTotalsSnapshots.repoFullName, fullName)];
+  if (options.sinceIso) conditions.push(gte(repoGithubTotalsSnapshots.fetchedAt, options.sinceIso));
+  const rows = await db
+    .select()
+    .from(repoGithubTotalsSnapshots)
+    .where(and(...conditions))
+    .orderBy(desc(repoGithubTotalsSnapshots.fetchedAt))
+    .limit(limit);
+  return rows.map(toRepoGithubTotalsSnapshotRecord).reverse();
+}
+
 export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<RepoGithubTotalsSnapshotRecord[]> {
   const db = getDb(env.DB);
   const latestRows = await db
@@ -652,6 +692,23 @@ export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<Rep
     if (row) rows.push(row);
   }
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
+}
+
+export async function upsertRepoQueueTrendSnapshot(env: Env, snapshot: RepoQueueTrendSnapshotRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .insert(repoQueueTrendSnapshots)
+    .values({ repoFullName: snapshot.repoFullName, payloadJson: jsonString(snapshot.payload), generatedAt: snapshot.generatedAt })
+    .onConflictDoUpdate({
+      target: repoQueueTrendSnapshots.repoFullName,
+      set: { payloadJson: jsonString(snapshot.payload), generatedAt: snapshot.generatedAt },
+    });
+}
+
+export async function getRepoQueueTrendSnapshot(env: Env, repoFullName: string): Promise<RepoQueueTrendSnapshotRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(repoQueueTrendSnapshots).where(eq(repoQueueTrendSnapshots.repoFullName, repoFullName)).limit(1);
+  return row ? toRepoQueueTrendSnapshotRecord(row) : null;
 }
 
 export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequestDetailSyncStateRecord): Promise<void> {
@@ -2855,6 +2912,14 @@ function toRepoGithubTotalsSnapshotRecord(row: typeof repoGithubTotalsSnapshots.
   };
 }
 
+function toRepoQueueTrendSnapshotRecord(row: typeof repoQueueTrendSnapshots.$inferSelect): RepoQueueTrendSnapshotRecord {
+  return {
+    repoFullName: row.repoFullName,
+    payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+    generatedAt: row.generatedAt,
+  };
+}
+
 function toPullRequestDetailSyncStateRecord(row: typeof pullRequestDetailSyncState.$inferSelect): PullRequestDetailSyncStateRecord {
   return {
     repoFullName: row.repoFullName,
@@ -4170,6 +4235,10 @@ function parseCommentMode(value: string): RepositorySettings["commentMode"] {
   return "off";
 }
 
+function parsePublicAudienceMode(value: string): RepositorySettings["publicAudienceMode"] {
+  return value === "gittensor_only" ? "gittensor_only" : "oss_maintainer";
+}
+
 function parseCheckRunMode(value: string): RepositorySettings["checkRunMode"] {
   return value === "enabled" ? "enabled" : "off";
 }
@@ -4177,6 +4246,10 @@ function parseCheckRunMode(value: string): RepositorySettings["checkRunMode"] {
 function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDetailLevel"] {
   if (value === "minimal" || value === "deep") return value;
   return "standard";
+}
+
+function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
+  return value === "enabled" ? "enabled" : "off";
 }
 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {

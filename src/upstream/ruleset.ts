@@ -603,7 +603,17 @@ function semanticPayload(payload: RulesetPayload): Record<string, JsonValue> {
 }
 
 type RulesetRegistryRepo = RulesetPayload["registry"]["repositories"][number];
-type RegistryHyperparameterDriftPayload = RegistryHyperparameterDriftSummary & { events: RegistryHyperparameterDriftEvent[] };
+// `affectedRepos` is the pre-cap list of distinct affected repositories, kept on the stored payload
+// (not the public summary) so multi-report aggregation can union repos across reports instead of
+// summing per-report counts. Mirrors how `affectedFields`/`affectedSurfaces` are unioned.
+type RegistryHyperparameterDriftPayload = RegistryHyperparameterDriftSummary & {
+  events: RegistryHyperparameterDriftEvent[];
+  affectedRepos: string[];
+};
+
+function uniqueRepoNames(events: RegistryHyperparameterDriftEvent[]): string[] {
+  return [...new Set(events.map((event) => event.repoFullName))].sort((left, right) => left.localeCompare(right));
+}
 
 const REGISTRY_DRIFT_FIELD_ORDER: RegistryHyperparameterDriftField[] = [
   "repo",
@@ -654,6 +664,7 @@ function buildRegistryHyperparameterDrift(previous: RulesetRegistryRepo[], curre
   return {
     ...summarizeRegistryHyperparameterDriftEvents(events),
     events: capped,
+    affectedRepos: uniqueRepoNames(events),
     omittedEvents: Math.max(events.length - capped.length, 0),
   };
 }
@@ -710,7 +721,10 @@ function summarizeRegistryHyperparameterDriftReports(reports: UpstreamDriftRepor
     totalEvents: sum(payloads.map((payload) => payload.totalEvents)) || fallbackSummary.totalEvents,
     omittedEvents: sum(payloads.map((payload) => payload.omittedEvents)),
     highImpactCount: sum(payloads.map((payload) => payload.highImpactCount)) || fallbackSummary.highImpactCount,
-    affectedRepoCount: sum(payloads.map((payload) => payload.affectedRepoCount)) || fallbackSummary.affectedRepoCount,
+    // Distinct repos across reports, not the sum of per-report unique counts -- a repo affected in
+    // several open reports must be counted once. Union the pre-cap repo lists (same approach as
+    // affectedFields/affectedSurfaces below).
+    affectedRepoCount: new Set(payloads.flatMap((payload) => payload.affectedRepos)).size || fallbackSummary.affectedRepoCount,
     affectedFields: uniqueSorted(payloads.flatMap((payload) => payload.affectedFields), REGISTRY_DRIFT_FIELD_ORDER),
     affectedSurfaces: uniqueSorted(
       payloads.flatMap((payload) => payload.affectedSurfaces),
@@ -726,6 +740,7 @@ function readRegistryHyperparameterDriftPayload(value: JsonValue | undefined): R
   const fallback = summarizeRegistryHyperparameterDriftEvents(events);
   const affectedFields = arrayPayload(payload.affectedFields).flatMap(readRegistryHyperparameterDriftField);
   const affectedSurfaces = arrayPayload(payload.affectedSurfaces).flatMap(readRegistryDriftSurface);
+  const affectedRepos = arrayPayload(payload.affectedRepos).filter((entry): entry is string => typeof entry === "string");
   return {
     events,
     totalEvents: numberPayload(payload.totalEvents) ?? fallback.totalEvents,
@@ -734,6 +749,9 @@ function readRegistryHyperparameterDriftPayload(value: JsonValue | undefined): R
     affectedRepoCount: numberPayload(payload.affectedRepoCount) ?? fallback.affectedRepoCount,
     affectedFields: affectedFields.length > 0 ? affectedFields : fallback.affectedFields,
     affectedSurfaces: affectedSurfaces.length > 0 ? affectedSurfaces : fallback.affectedSurfaces,
+    // Legacy payloads predate `affectedRepos`; derive it from the stored (capped) events so the
+    // reports aggregator can still union repos rather than fall back to summing.
+    affectedRepos: affectedRepos.length > 0 ? affectedRepos : uniqueRepoNames(events),
   };
 }
 
@@ -766,6 +784,7 @@ function emptyRegistryHyperparameterDriftPayload(): RegistryHyperparameterDriftP
     affectedRepoCount: 0,
     affectedFields: [],
     affectedSurfaces: [],
+    affectedRepos: [],
   };
 }
 

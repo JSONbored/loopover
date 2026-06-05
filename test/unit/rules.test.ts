@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildIssueAdvisory, buildPullRequestAdvisory, buildRepositoryAdvisory, formatCheckRunOutput } from "../../src/rules/advisory";
+import {
+  buildIssueAdvisory,
+  buildPullRequestAdvisory,
+  buildRepositoryAdvisory,
+  evaluateGateCheck,
+  formatCheckRunOutput,
+  formatGateCheckOutput,
+} from "../../src/rules/advisory";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
 
 const repo: RepositoryRecord = {
@@ -107,6 +114,82 @@ describe("advisory rules", () => {
     const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [otherPr] });
 
     expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+  });
+
+  it("keeps weak queue warnings advisory-only for the opt-in gate", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 12,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "contributor",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [4],
+    };
+    const otherOpenPullRequests = Array.from({ length: 10 }, (_, index): PullRequestRecord => ({
+      ...pr,
+      number: 100 + index,
+      linkedIssues: [20 + index],
+    }));
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests });
+    const gate = evaluateGateCheck(advisory);
+    const output = formatGateCheckOutput(gate);
+
+    expect(advisory.findings.map((finding) => finding.code)).toContain("busy_pr_queue");
+    expect(gate.conclusion).toBe("success");
+    expect(gate.blockers).toEqual([]);
+    expect(gate.warnings.map((finding) => finding.code)).not.toContain("busy_pr_queue");
+    expect(output.title).toBe("Gittensory Gate passed");
+    expect(output.text).toContain("No configured merge-blocking issue");
+  });
+
+  it("maps broken evaluation state to action_required gate output", () => {
+    const advisory = buildPullRequestAdvisory(null, null);
+    const gate = evaluateGateCheck(advisory);
+    const output = formatGateCheckOutput(gate);
+
+    expect(gate.conclusion).toBe("action_required");
+    expect(gate.blockers.map((finding) => finding.code)).toEqual(["repo_not_registered", "pr_not_cached"]);
+    expect(output.title).toBe("Gittensory Gate is blocking merge");
+    expect(output.text).toContain("Repository registration is unknown");
+    expect(output.text).toContain("Action: Refresh the Gittensor registry snapshot.");
+  });
+
+  it("formats and sanitizes gate blockers without leaking private scoring terms", () => {
+    const advisory = buildPullRequestAdvisory(repo, null);
+    const gate = evaluateGateCheck({
+      ...advisory,
+      findings: [
+        {
+          code: "missing_linked_issue",
+          title: "No linked issue near reward wallet trust score",
+          severity: "warning" as const,
+          detail: "Private score estimate detail.",
+        },
+      ],
+    });
+    const output = formatGateCheckOutput(gate);
+
+    expect(gate.conclusion).toBe("failure");
+    expect(output.text).toContain("No linked issue near");
+    expect(output.text).not.toMatch(/reward|wallet|trust score|score estimate/i);
+  });
+
+  it("keeps defensive gate output fallback public-safe", () => {
+    const output = formatGateCheckOutput({
+      enabled: true,
+      conclusion: "failure",
+      title: "Gittensory Gate is blocking merge",
+      summary: "A configured merge-blocking issue was found.",
+      blockers: [],
+      warnings: [],
+    });
+
+    expect(output.text).toBe("A configured merge-blocking issue was found.");
+    expect(output.text).not.toMatch(/reward|wallet|hotkey|trust score|payout|farming/i);
   });
 
   it("keeps private reviewability context out of check output", () => {

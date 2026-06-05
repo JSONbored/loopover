@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildRepoOnboardingPackPreviewForRepo,
+  buildRepoOnboardingPackPreviewFromManifest,
+} from "../../src/services/repo-onboarding-pack";
+import { createTestEnv } from "../helpers/d1";
+import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { parseFocusManifestContent } from "../../src/signals/focus-manifest";
+import { compileRepoPolicyCompilerOutput } from "../../src/signals/repo-policy-compiler";
+import {
   buildRepoOnboardingPackPreview,
   isRepoOnboardingPackPublicSafe,
   type RepoPolicyCompilerOutput,
@@ -200,6 +208,26 @@ describe("buildRepoOnboardingPackPreview", () => {
     expect(isRepoOnboardingPackPublicSafe(preview)).toBe(true);
   });
 
+  it("compiler fixture pipeline matches buildRepoOnboardingPackPreviewFromManifest", () => {
+    const manifest = parseFocusManifestContent(
+      JSON.stringify({
+        wantedPaths: ["src/"],
+        testExpectations: ["npm run test:ci"],
+        publicNotes: ["Stay advisory."],
+      }),
+      "repo_file",
+    );
+    const compiled = compileRepoPolicyCompilerOutput({
+      repoFullName: "JSONbored/gittensory",
+      manifest,
+    });
+    const fromCompiler = buildRepoOnboardingPackPreview(compiled);
+    const fromService = buildRepoOnboardingPackPreviewFromManifest("JSONbored/gittensory", manifest);
+    expect(fromService.preview.contributionLanes.length).toBe(fromCompiler.contributionLanes.length);
+    expect(fromService.preview.publication.status).toBe("preview_only");
+    expect(isRepoOnboardingPackPublicSafe(fromService.preview)).toBe(true);
+  });
+
   it("uses stable defaults when optional policy sections are omitted", () => {
     const preview = buildRepoOnboardingPackPreview(
       {
@@ -233,5 +261,37 @@ describe("buildRepoOnboardingPackPreview", () => {
     });
     expect(preview.droppedPublicItems).toEqual([]);
     expect(isRepoOnboardingPackPublicSafe(preview)).toBe(true);
+  });
+});
+
+describe("buildRepoOnboardingPackPreviewForRepo", () => {
+  it("returns preview_only pack for accepted registered repos", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+      1,
+    );
+    await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?")
+      .bind("JSONbored/gittensory")
+      .run();
+    const response = await buildRepoOnboardingPackPreviewForRepo(env, "JSONbored/gittensory");
+    expect("error" in response).toBe(false);
+    if ("error" in response) return;
+    expect(response.accepted).toBe(true);
+    expect(response.preview.previewOnly).toBe(true);
+    expect(response.preview.publication.allowed).toBe(false);
+    expect(isRepoOnboardingPackPublicSafe(response.preview)).toBe(true);
+  });
+
+  it("rejects onboarding pack preview for unregistered repos", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(
+      env,
+      { name: "unregistered", full_name: "owner/unregistered", private: false, owner: { login: "owner" } },
+      1,
+    );
+    const response = await buildRepoOnboardingPackPreviewForRepo(env, "owner/unregistered");
+    expect(response).toMatchObject({ error: "repo_not_accepted", repoFullName: "owner/unregistered" });
   });
 });

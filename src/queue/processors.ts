@@ -18,6 +18,8 @@ import {
   listIssues,
   listIssueSignalSample,
   listLatestSignalSnapshotsByTarget,
+  listSignalSnapshots,
+  listRepoGithubTotalsSnapshotHistory,
   listOtherOpenPullRequests,
   listOpenPullRequests,
   listPullRequests,
@@ -28,6 +30,7 @@ import {
   listRepoSyncSegments,
   listRepositories,
   markInstallationDeleted,
+  markRepositoriesRemovedFromInstallation,
   persistAdvisory,
   recordAgentCommandFeedback,
   recordAuditEvent,
@@ -35,6 +38,7 @@ import {
   persistSignalSnapshot,
   recordWebhookEvent,
   replaceCollisionEdges,
+  upsertRepoQueueTrendSnapshot,
   upsertAgentCommandAnswer,
   upsertOfficialMinerDetection,
   rollupProductUsageDaily,
@@ -55,7 +59,7 @@ import {
   refreshInstallationHealth,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, getInstallationId } from "../github/app";
+import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, getInstallationId } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment } from "../github/comments";
 import {
   buildMaintainerQueueDigest,
@@ -84,6 +88,7 @@ import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetecti
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
+import { buildQueueTrendReport, QUEUE_TREND_HISTORY_DAYS } from "../services/queue-trends";
 import {
   buildUpstreamRulesetSnapshot,
   detectAndPersistUpstreamDrift,
@@ -463,13 +468,16 @@ async function buildBurdenForecasts(env: Env, repoFullName?: string): Promise<vo
 export async function generateSignalSnapshots(env: Env, repoFullName?: string): Promise<void> {
   const repositories = (await listRepositories(env)).filter((repo) => repo.isRegistered && (!repoFullName || repo.fullName === repoFullName));
   for (const repo of repositories) {
-    const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts, bounties] = await Promise.all([
+    const trendSince = new Date(Date.now() - QUEUE_TREND_HISTORY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const [issues, pullRequests, recentMergedPullRequests, labels, queueCounts, bounties, totalsHistory, queueHealthHistory] = await Promise.all([
       listIssueSignalSample(env, repo.fullName),
       listOpenPullRequests(env, repo.fullName),
       listRecentMergedPullRequests(env, repo.fullName),
       listRepoLabels(env, repo.fullName),
       loadOpenQueueCounts(env, repo.fullName),
       listBountiesByRepo(env, repo.fullName),
+      listRepoGithubTotalsSnapshotHistory(env, repo.fullName, { sinceIso: trendSince, limit: 120 }),
+      listSignalSnapshots(env, "queue-health", repo.fullName),
     ]);
     const collisions = buildCollisionReport(repo.fullName, issues, pullRequests, recentMergedPullRequests);
     const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions, queueCounts);
@@ -487,6 +495,17 @@ export async function generateSignalSnapshots(env: Env, repoFullName?: string): 
       targetKey: repo.fullName,
       repoFullName: repo.fullName,
       payload: queueHealth as unknown as Record<string, never>,
+      generatedAt,
+    });
+    await upsertRepoQueueTrendSnapshot(env, {
+      repoFullName: repo.fullName,
+      payload: buildQueueTrendReport({
+        repoFullName: repo.fullName,
+        totalsSnapshots: totalsHistory,
+        queueHealthSnapshots: queueHealthHistory,
+        currentQueueHealth: queueHealth,
+        generatedAt,
+      }) as unknown as Record<string, never>,
       generatedAt,
     });
     await persistSignalSnapshot(env, {
@@ -574,7 +593,34 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
     }
 
     await upsertInstallation(env, payload);
-    if (eventName === "installation" && (payload.action === "created" || payload.action === "added")) {
+    if (eventName === "installation_repositories" && payload.installation?.id) {
+      const addedRepos = payload.repositories_added?.map((repo) => repo.full_name).filter(Boolean) ?? [];
+      const removedRepos = payload.repositories_removed?.map((repo) => repo.full_name).filter(Boolean) ?? [];
+      for (const repo of payload.repositories_added ?? []) await upsertRepositoryFromGitHub(env, repo, payload.installation.id);
+      await markRepositoriesRemovedFromInstallation(env, payload.installation.id, removedRepos);
+      await Promise.all([
+        ...addedRepos.slice(0, 50).map((repoFullName) =>
+          recordGithubProductUsage(env, "github_installation_repository_added", {
+            actor: payload.installation?.account?.login,
+            repoFullName,
+            targetKey: payload.installation?.id ? `installation:${payload.installation.id}` : repoFullName,
+            outcome: "completed",
+            metadata: { action: payload.action, repoCount: addedRepos.length, truncatedRepos: Math.max(addedRepos.length - 50, 0) },
+          }),
+        ),
+        ...removedRepos.slice(0, 50).map((repoFullName) =>
+          recordGithubProductUsage(env, "github_installation_repository_removed", {
+            actor: payload.installation?.account?.login,
+            repoFullName,
+            targetKey: payload.installation?.id ? `installation:${payload.installation.id}` : repoFullName,
+            outcome: "completed",
+            metadata: { action: payload.action, repoCount: removedRepos.length, truncatedRepos: Math.max(removedRepos.length - 50, 0) },
+          }),
+        ),
+      ]);
+    }
+
+    if (eventName === "installation" && payload.action === "created") {
       const installedRepos = payload.repositories?.map((repo) => repo.full_name).filter(Boolean) ?? (payload.repository?.full_name ? [payload.repository.full_name] : [undefined]);
       await Promise.all(
         installedRepos.slice(0, 50).map((repoFullName) =>
@@ -692,6 +738,19 @@ async function maybePublishPrPublicSurface(
   webhook: { deliveryId: string; authorType?: string | undefined },
 ): Promise<void> {
   const author = pr.authorLogin ?? null;
+  if (settings.gateCheckMode === "enabled" && advisory.headSha) {
+    const gateCheckResult = await createOrUpdateGateCheckRun(env, installationId, repoFullName, advisory);
+    if (gateCheckResult?.kind === "permission_missing") {
+      await recordAuditEvent(env, {
+        eventType: "github_app.gate_check_permission_missing",
+        actor: author,
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "error",
+        detail: gateCheckResult.warning,
+        metadata: { deliveryId: webhook.deliveryId, repoFullName },
+      });
+    }
+  }
   // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
   const prelim = decidePublicSurface({
     settings,
@@ -704,17 +763,19 @@ async function maybePublishPrPublicSurface(
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
     return;
   }
+  if (prelim.actions.length === 1 && prelim.actions[0] === "none") return;
   if (!author) return;
 
+  const requireOfficialMiner = settings.publicAudienceMode === "gittensor_only";
   const official = await getCachedOfficialMinerDetection(env, author, {
     targetKey: `${repoFullName}#${pr.number}`,
     deliveryId: webhook.deliveryId,
   });
-  if (official.status === "unavailable") {
+  if (requireOfficialMiner && official.status === "unavailable") {
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
     return;
   }
-  if (official.status !== "confirmed") {
+  if (requireOfficialMiner && official.status !== "confirmed") {
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
     return;
   }
@@ -723,7 +784,7 @@ async function maybePublishPrPublicSurface(
     authorLogin: author,
     authorType: webhook.authorType ?? null,
     authorAssociation: pr.authorAssociation ?? null,
-    minerStatus: "confirmed",
+    minerStatus: official.status,
   });
 
   const [contributorPullRequests, contributorIssues, repoIssues, repoPullRequests, repoBounties, github, cachedRepoStats] = await Promise.all([
@@ -735,10 +796,13 @@ async function maybePublishPrPublicSurface(
     fetchPublicContributorProfile(author),
     listContributorRepoStats(env, author),
   ]);
-  const repoStats = authoritativeContributorRepoStats(official.snapshot, cachedRepoStats);
-  const detection = officialGittensorContributorDetection(official.snapshot, pr, contributorPullRequests, contributorIssues, repoStats);
+  const repoStats = official.status === "confirmed" ? authoritativeContributorRepoStats(official.snapshot, cachedRepoStats) : cachedRepoStats;
+  const detection =
+    official.status === "confirmed"
+      ? officialGittensorContributorDetection(official.snapshot, pr, contributorPullRequests, contributorIssues, repoStats)
+      : detectGittensorContributor(author, pr, contributorPullRequests, contributorIssues, repoStats);
 
-  const profile = buildContributorProfile(author, github, contributorPullRequests, contributorIssues, repoStats, official.snapshot);
+  const profile = buildContributorProfile(author, github, contributorPullRequests, contributorIssues, repoStats, official.status === "confirmed" ? official.snapshot : null);
   const collisions = buildCollisionReport(repoFullName, repoIssues, repoPullRequests);
   const queueHealth = buildQueueHealth(repo, repoIssues, repoPullRequests, collisions);
   const preflight = buildPreflightResult(
@@ -797,6 +861,8 @@ async function maybePublishPrPublicSurface(
       publicSurface: settings.publicSurface,
       label: decision.willLabel ? settings.gittensorLabel : null,
       checkRunMode: settings.checkRunMode,
+      gateCheckMode: settings.gateCheckMode,
+      publicAudienceMode: settings.publicAudienceMode,
     },
   });
   await recordGithubProductUsage(env, "pr_public_surface_published", {
@@ -808,6 +874,8 @@ async function maybePublishPrPublicSurface(
       publicSurface: settings.publicSurface,
       labelApplied: decision.willLabel,
       checkRunMode: settings.checkRunMode,
+      gateCheckMode: settings.gateCheckMode,
+      publicAudienceMode: settings.publicAudienceMode,
     },
   });
 }

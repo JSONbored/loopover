@@ -36,9 +36,11 @@ export const repositories = sqliteTable("repositories", {
 export const repositorySettings = sqliteTable("repository_settings", {
   repoFullName: text("repo_full_name").primaryKey(),
   commentMode: text("comment_mode").notNull().default("detected_contributors_only"),
+  publicAudienceMode: text("public_audience_mode").notNull().default("oss_maintainer"),
   publicSignalLevel: text("public_signal_level").notNull().default("standard"),
   checkRunMode: text("check_run_mode").notNull().default("off"),
   checkRunDetailLevel: text("check_run_detail_level").notNull().default("minimal"),
+  gateCheckMode: text("gate_check_mode").notNull().default("off"),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),
   createMissingLabel: integer("create_missing_label", { mode: "boolean" }).notNull().default(true),
@@ -628,6 +630,12 @@ export const issueQualityReports = sqliteTable(
 );
 
 export const burdenForecasts = sqliteTable("burden_forecasts", {
+  repoFullName: text("repo_full_name").primaryKey(),
+  payloadJson: text("payload_json").notNull().default("{}"),
+  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+
+export const repoQueueTrendSnapshots = sqliteTable("repo_queue_trend_snapshots", {
   repoFullName: text("repo_full_name").primaryKey(),
   payloadJson: text("payload_json").notNull().default("{}"),
   generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),

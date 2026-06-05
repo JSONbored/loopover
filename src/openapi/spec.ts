@@ -68,6 +68,7 @@ import {
   ScorePreviewSchema,
   ScoringModelSnapshotSchema,
   SignalFidelitySchema,
+  SkippedPrAuditExportSchema,
   SyncStatusSchema,
   UpstreamDriftReportSchema,
   UpstreamRulesetSnapshotSchema,
@@ -119,6 +120,7 @@ export function buildOpenApiSpec() {
   registry.register("RepositorySettings", RepositorySettingsSchema);
   registry.register("InstallationRepair", InstallationRepairSchema);
   registry.register("RepoSettingsPreview", RepoSettingsPreviewSchema);
+  registry.register("SkippedPrAuditExport", SkippedPrAuditExportSchema);
   registry.register("CommandPreviewResponse", CommandPreviewResponseSchema);
   registry.register("AgentRun", AgentRunSchema);
   registry.register("AgentAction", AgentActionSchema);
@@ -652,6 +654,36 @@ export function buildOpenApiSpec() {
       },
       401: { description: "Unauthorized" },
       403: { description: "Insufficient app role for requested report variant" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/app/skipped-pr-audit",
+    request: {
+      query: z.object({
+        limit: z.string().optional().openapi({
+          param: { description: "Maximum rows to return, clamped from 1 to 100." },
+          example: "50",
+        }),
+        repoFullName: z.string().optional().openapi({
+          param: { description: "Optional repository filter. Browser sessions must have control-panel access to this repo." },
+          example: "JSONbored/gittensory",
+        }),
+        reason: z.enum(["surface_off", "missing_author", "bot_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"]).optional().openapi({
+          param: { description: "Optional PR skip reason filter." },
+          example: "not_official_gittensor_miner",
+        }),
+        since: z.string().optional().openapi({
+          param: { description: "Optional lower timestamp bound." },
+          example: "2026-05-30T00:00:00.000Z",
+        }),
+      }),
+    },
+    responses: {
+      200: { description: "Private bounded audit export for skipped PR public-surface decisions", content: { "application/json": { schema: SkippedPrAuditExportSchema } } },
+      400: { description: "Invalid query" },
+      401: { description: "Unauthorized" },
+      403: { description: "Insufficient app role or repository scope" },
     },
   });
   registry.registerPath({

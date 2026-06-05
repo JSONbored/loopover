@@ -229,17 +229,51 @@ describe("advisory rules", () => {
           title: "reward wallet hotkey trust score reviewability",
           severity: "warning" as const,
           detail: "private detail",
-          publicText: "reward and farming content near wallet hotkey",
+          publicText: "rewards and farming content near wallets hotkeys with trust score and score estimate",
           action: "Check your scoreability and reviewability",
         },
       ],
     };
     for (const level of ["minimal", "standard", "deep"] as const) {
       const out = formatCheckRunOutput(poisoned, level);
-      expect(out.title).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|scoreability|farming/i);
-      expect(out.summary).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|scoreability|farming/i);
-      expect(out.text).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|scoreability|farming/i);
+      expect(out.title).not.toMatch(/rewards?|wallets?|hotkeys?|trust score|score estimate|reviewability|scoreability|farming/i);
+      expect(out.summary).not.toMatch(/rewards?|wallets?|hotkeys?|trust score|score estimate|reviewability|scoreability|farming/i);
+      expect(out.text).not.toMatch(/rewards?|wallets?|hotkeys?|trust score|score estimate|reviewability|scoreability|farming/i);
     }
+  });
+
+  it("formatCheckRunOutput publishes only explicit public finding text", () => {
+    const advisory = buildPullRequestAdvisory(repo, null);
+    const output = formatCheckRunOutput(
+      {
+        ...advisory,
+        findings: [
+          {
+            code: "private_title",
+            title: "Maintainer allocation is configured",
+            severity: "info" as const,
+            detail: "Private allocation detail",
+            action: "Deep action exposes trust score and rewards estimate.",
+          },
+          {
+            code: "public_text",
+            title: "Private score estimate title",
+            severity: "warning" as const,
+            detail: "Private detail",
+            publicText: "Safe public repo context with trust score and rewards variants removed.",
+            action: "Do not publish this trust score action.",
+          },
+        ],
+      },
+      "deep",
+    );
+
+    expect(output.text).toContain("Safe public repo context");
+    expect(output.text).not.toContain("Maintainer allocation is configured");
+    expect(output.text).not.toContain("Private score estimate title");
+    expect(output.text).not.toContain("Deep action exposes");
+    expect(output.text).not.toContain("Do not publish this");
+    expect(output.text).not.toMatch(/trust score|rewards|score estimate/i);
   });
 
   it("classifies critical-severity findings as action_required", () => {
@@ -250,7 +284,8 @@ describe("advisory rules", () => {
     };
     const output = formatCheckRunOutput(withCritical, "standard");
     expect(output.title).toBe("Gittensory context posted");
-    expect(output.text).toMatch(/ℹ️|⚠️|Critical finding/);
+    expect(output.text).toContain("No detailed findings are published");
+    expect(output.text).not.toContain("Critical finding");
   });
 
   it("separates issue-discovery-only issues from clean split-lane issue advisories", () => {

@@ -1549,6 +1549,68 @@ describe("ask citation helpers", () => {
     expect(sections.join("\n")).toContain("Try @gittensory ask again shortly");
   });
 
+  it("does not publish private repo decision ranking evidence in ask citations", () => {
+    const bundle = askCitedBundle({
+      actions: [
+        {
+          id: "ask-private-decision-action",
+          runId: "run-ask-cited",
+          actionType: "choose_next_work",
+          status: "recommended",
+          recommendation: "recommendation",
+          why: [],
+          blockedBy: [],
+          targetRepoFullName: "owner/private-repo",
+          publicSafeSummary: "Run local branch preflight first.",
+          approvalRequired: true,
+          safetyClass: "private",
+          payload: {
+            recommendationEvidence: {
+              confidence: "high",
+              sourceSummary: "Decision pack evidence",
+              freshness: "fresh",
+              sources: [
+                {
+                  name: "repo_decision",
+                  source: "decision_pack",
+                  generatedAt: "2026-06-01T12:00:00.000Z",
+                  freshness: "fresh",
+                  summary: "owner/private-repo ranked pursue_now at priority 0.87321.",
+                },
+                {
+                  name: "open_pr_monitor",
+                  source: "github_cache",
+                  generatedAt: "2026-06-01T12:00:00.000Z",
+                  freshness: "fresh",
+                  summary: "Open PR monitor queue metadata.",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      contextSnapshots: [],
+    });
+
+    const sources = githubCommandsInternals.collectAskContributingSources(bundle);
+    expect(sources.some((source) => source.origin === "repo_decision")).toBe(false);
+    expect(sources.find((source) => source.origin === "open_pr_monitor")?.detail).toBe(
+      "Cached open PR and issue queue metadata was available for this cached agent run.",
+    );
+
+    const comment = buildPublicAgentCommandComment({
+      command: parseGittensoryMentionCommand("@gittensory ask what should I do next?")!,
+      repo: null,
+      issue: { number: 44, title: "PR", state: "open", pull_request: {} },
+      pullRequest: null,
+      actorKind: "author",
+      bundle,
+    });
+    expect(comment).toContain("origin: open_pr_monitor");
+    expect(comment).not.toMatch(/ranked|pursue_now|priority 0\.87321/i);
+    expect(comment).not.toContain("owner/private-repo ranked");
+  });
+
   it("collects connected-source metadata and formats concrete citations", () => {
     const sources = githubCommandsInternals.collectAskContributingSources({
       run: completedRun("run-ask-internals"),

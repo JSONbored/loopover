@@ -127,9 +127,15 @@ import {
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildAndPersistContributorDecisionPack,
+  CONTRIBUTOR_DECISION_PACK_SIGNAL,
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import {
+  buildMinerDashboardNextActions,
+  buildMinerDashboardRepoFit,
+  previousDecisionPackFromSnapshots,
+} from "../services/miner-dashboard-recommendations";
 import {
   buildStaticControlPanelRoleSummary,
   loadControlPanelAccessScope,
@@ -783,11 +789,12 @@ export function createApp() {
     if (!login) return c.json({ error: "login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
-    const [serving, scoring, upstreamDrift, runs] = await Promise.all([
+    const [serving, scoring, upstreamDrift, runs, decisionPackSnapshots] = await Promise.all([
       loadContributorDecisionPackForServing(c.env, login),
       getLatestScoringModelSnapshot(c.env),
       loadUpstreamStatus(c.env),
       listAgentRunsForActor(c.env, login, 5),
+      listSignalSnapshots(c.env, CONTRIBUTOR_DECISION_PACK_SIGNAL, login),
     ]);
     if (serving.kind === "needs_refresh") {
       return c.json({
@@ -803,21 +810,17 @@ export function createApp() {
       });
     }
     const pack = serving.pack;
+    const previousPack = previousDecisionPackFromSnapshots(pack, decisionPackSnapshots);
     return c.json({
       status: "ready",
       login,
       generatedAt: pack.generatedAt,
       source: pack.source,
       freshness: pack.freshness,
-      nextActions: pack.topActions ?? [],
+      nextActions: buildMinerDashboardNextActions(pack, previousPack),
       blockers: groupDecisionPackBlockers(pack.scoreBlockers ?? []),
       projections: buildProjectionRows(pack),
-      repoFit: [
-        ...(pack.pursueRepos ?? []).map((repo) => ({ ...repo, lane: "pursue" })),
-        ...(pack.cleanupFirst ?? []).map((repo) => ({ ...repo, lane: "cleanup-first" })),
-        ...(pack.maintainerLaneRepos ?? []).map((repo) => ({ ...repo, lane: "maintainer-lane" })),
-        ...(pack.avoidRepos ?? []).map((repo) => ({ ...repo, lane: "avoid" })),
-      ],
+      repoFit: buildMinerDashboardRepoFit(pack, previousPack),
       dataQuality: pack.dataQuality,
       mcp: { snapshot: scoring?.id ?? null, drift: upstreamDrift.status, lastRun: runs[0]?.updatedAt ?? null },
     });

@@ -14,10 +14,44 @@ const LANE_TONE: Record<string, Status> = {
   avoid: "blocked",
 };
 
+const CHANGE_TONE: Record<RecommendationChange["status"], Status> = {
+  new: "info",
+  changed: "warn",
+  unchanged: "ready",
+};
+
+type RecommendationSignalGroup =
+  | "repo_state"
+  | "contributor_state"
+  | "validation_state"
+  | "policy_context";
+
+type RecommendationChange = {
+  status: "new" | "changed" | "unchanged";
+  summary: string;
+  labels: Array<{
+    kind: RecommendationSignalGroup;
+    label: string;
+    before?: string;
+    after?: string;
+  }>;
+};
+
+type RerunReasonGroup = {
+  group: RecommendationSignalGroup;
+  title: string;
+  reasons: string[];
+};
+
 type MinerDashboard = {
   status: "ready" | "needs_refresh";
   login: string;
-  nextActions: Array<Record<string, unknown>>;
+  nextActions: Array<
+    Record<string, unknown> & {
+      change?: RecommendationChange;
+      rerunReasons?: RerunReasonGroup[];
+    }
+  >;
   blockers: Array<{
     group: string;
     items: Array<{ code: string; title: string; howToClear: string }>;
@@ -30,6 +64,8 @@ type MinerDashboard = {
       recommendation?: string;
       why?: string;
       rationale?: string;
+      change?: RecommendationChange;
+      rerunReasons?: RerunReasonGroup[];
     }
   >;
   mcp?: { snapshot?: string | null; drift?: string | null; lastRun?: string | null };
@@ -112,6 +148,10 @@ export function MinerPanel() {
                         <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-token-2xs text-muted-foreground">
                           <span>{stringField(action, "repoFullName", "repo pending")}</span>
                         </div>
+                        <RecommendationChangeDetails
+                          change={action.change}
+                          rerunReasons={action.rerunReasons}
+                        />
                       </div>
                     </div>
                   </li>
@@ -232,13 +272,16 @@ export function MinerPanel() {
                         key={`${repo.repoFullName ?? index}`}
                         className="border-b-hairline last:border-b-0 transition-colors hover:bg-muted/40"
                       >
-                        <td className="py-2 pr-3 font-mono text-token-xs text-foreground/90">
-                          {repo.repoFullName ?? "repo pending"}
+                        <td className="py-2 pr-3 align-top">
+                          <div className="break-all font-mono text-token-xs text-foreground/90">
+                            {repo.repoFullName ?? "repo pending"}
+                          </div>
+                          <RecommendationChangeInline change={repo.change} />
                         </td>
-                        <td className="py-2 pr-3">
+                        <td className="py-2 pr-3 align-top">
                           <StatusPill status={LANE_TONE[lane] ?? "info"}>{lane}</StatusPill>
                         </td>
-                        <td className="py-2 text-token-xs text-muted-foreground">
+                        <td className="py-2 align-top text-token-xs text-muted-foreground">
                           {repo.why ??
                             repo.rationale ??
                             repo.recommendation ??
@@ -260,4 +303,70 @@ export function MinerPanel() {
 function stringField(record: Record<string, unknown>, key: string, fallback: string): string {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function RecommendationChangeDetails({
+  change,
+  rerunReasons,
+}: {
+  change?: RecommendationChange;
+  rerunReasons?: RerunReasonGroup[];
+}) {
+  const groups = rerunReasons?.filter((group) => group.reasons.length > 0) ?? [];
+  if (!change && groups.length === 0) return null;
+  return (
+    <div className="mt-3 space-y-3 border-t-hairline pt-3">
+      {change && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={CHANGE_TONE[change.status]}>{change.status}</StatusPill>
+            <span className="text-token-xs text-muted-foreground">{change.summary}</span>
+          </div>
+          {change.labels.length > 0 && (
+            <dl className="grid gap-x-4 gap-y-1 text-token-2xs sm:grid-cols-2">
+              {change.labels.map((label) => (
+                <div key={`${label.kind}-${label.label}`} className="min-w-0">
+                  <dt className="font-mono uppercase tracking-wider text-muted-foreground">
+                    {label.label}
+                  </dt>
+                  <dd className="break-words text-foreground/80">
+                    {label.before ? `${label.before} -> ` : ""}
+                    {label.after ?? "changed"}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      )}
+      {groups.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {groups.map((group) => (
+            <div key={group.group} className="min-w-0">
+              <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                {group.title}
+              </div>
+              <ul className="mt-1 space-y-1 text-token-2xs text-muted-foreground">
+                {group.reasons.slice(0, 2).map((reason) => (
+                  <li key={reason} className="break-words">
+                    {reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecommendationChangeInline({ change }: { change?: RecommendationChange }) {
+  if (!change) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <StatusPill status={CHANGE_TONE[change.status]}>{change.status}</StatusPill>
+      <span className="text-token-2xs text-muted-foreground">{change.summary}</span>
+    </div>
+  );
 }

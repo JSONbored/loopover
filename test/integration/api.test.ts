@@ -1692,6 +1692,100 @@ describe("api routes", () => {
     });
 
     await persistSignalSnapshot(env, {
+      id: "rerun-pack-previous",
+      signalType: "contributor-decision-pack",
+      targetKey: "rerun-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "rerun-user",
+        generatedAt: "2026-05-27T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            recommendation: "watch",
+            priorityScore: 35,
+            queue: { openPullRequests: 0, openIssues: 1, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+            outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0 },
+            roleContext: { role: "contributor", maintainerLane: false },
+            scoreBlockers: [],
+          },
+        ],
+        topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", recommendation: "watch", priorityScore: 35 }],
+        pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "watch", priorityScore: 35 }],
+        cleanupFirst: [],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "complete" } },
+      } as never,
+      generatedAt: "2026-05-27T00:00:00.000Z",
+    });
+    await persistSignalSnapshot(env, {
+      id: "rerun-pack-current",
+      signalType: "contributor-decision-pack",
+      targetKey: "rerun-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "rerun-user",
+        generatedAt: "2026-05-28T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            recommendation: "pursue",
+            priorityScore: 82,
+            queue: { openPullRequests: 2, openIssues: 4, mergedPullRequests: 1, closedUnmergedPullRequests: 0 },
+            outcome: { openPullRequests: 1, mergedPullRequests: 1, closedPullRequests: 0 },
+            roleContext: { role: "contributor", maintainerLane: false },
+            scoreBlockers: [{ code: "open_pr_pressure", detail: "private scoreability must stay private" }],
+          },
+        ],
+        topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", recommendation: "pursue", priorityScore: 82 }],
+        actionPortfolio: {
+          topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", rerunWhen: "Rerun when queue changes." }],
+        },
+        pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "pursue", priorityScore: 82 }],
+        cleanupFirst: [],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "degraded" } },
+      } as never,
+      generatedAt: "2026-05-28T00:00:00.000Z",
+    });
+    const minerWithRerunReasons = await app.request("/v1/app/miner-dashboard?login=rerun-user", { headers: apiHeaders(env) }, env);
+    expect(minerWithRerunReasons.status).toBe(200);
+    const minerWithRerunReasonsBody = (await minerWithRerunReasons.json()) as {
+      nextActions: Array<{ change?: { status: string; labels: Array<{ kind: string }> }; rerunReasons?: Array<{ group: string }> }>;
+    };
+    expect(minerWithRerunReasonsBody.nextActions[0]?.change).toMatchObject({
+      status: "changed",
+      labels: expect.arrayContaining([
+        expect.objectContaining({ kind: "repo_state" }),
+        expect.objectContaining({ kind: "validation_state" }),
+        expect.objectContaining({ kind: "policy_context" }),
+      ]),
+    });
+    expect(minerWithRerunReasonsBody.nextActions[0]?.rerunReasons?.map((group) => group.group)).toEqual([
+      "repo_state",
+      "contributor_state",
+      "validation_state",
+      "policy_context",
+    ]);
+    expect(JSON.stringify(minerWithRerunReasonsBody.nextActions[0])).not.toMatch(
+      /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i,
+    );
+
+    await persistSignalSnapshot(env, {
       id: "blocker-pack",
       signalType: "contributor-decision-pack",
       targetKey: "blocker-user",

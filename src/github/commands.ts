@@ -8,6 +8,7 @@ import { buildCollisionReport, buildQueueHealth, type CollisionCluster, type Que
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [
   { id: "help", title: "Gittensory command help", description: "Show public-safe @gittensory command help." },
+  { id: "ask", title: "Gittensory contribution context Q&A", description: "Answer contribution-quality questions from connected cached sources with citations." },
   { id: "preflight", title: "Gittensory preflight", description: "Summarize public PR hygiene and validation readiness." },
   { id: "blockers", title: "Gittensory readiness blockers", description: "Explain public-safe readiness blockers." },
   { id: "duplicate-check", title: "Gittensory duplicate & WIP check", description: "Summarize duplicate and in-progress overlap caution." },
@@ -35,6 +36,7 @@ type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner
 export type GittensoryMentionCommand = {
   name: GittensoryMentionCommandName;
   raw: string;
+  question?: string | undefined;
 };
 
 type PublicAnswerCard = {
@@ -60,6 +62,7 @@ const AGENT_COMMAND_FEEDBACK_MARKER = "gittensory-agent-command-answer";
 const COMMAND_TITLES = Object.fromEntries(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => [command.id, command.title])) as Record<GittensoryMentionCommandName, string>;
 
 const REFRESH_SECTION_TITLES: Record<SnapshotCommandName, string> = {
+  ask: "Contribution context snapshot refresh",
   preflight: "Preflight snapshot refresh",
   blockers: "Blocker snapshot refresh",
   "duplicate-check": "Duplicate-check snapshot refresh",
@@ -70,6 +73,7 @@ const REFRESH_SECTION_TITLES: Record<SnapshotCommandName, string> = {
 };
 
 const EMPTY_SECTION_TITLES: Record<SnapshotCommandName, string> = {
+  ask: "Contribution context Q&A",
   preflight: "Preflight summary",
   blockers: "Readiness blockers",
   "duplicate-check": "Duplicate & WIP caution",
@@ -128,11 +132,12 @@ export type MaintainerQueueDigest = {
 
 export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
   if (!body) return null;
-  const match = body.match(/(?:^|\s)@gittensory(?:\s+([a-z-]+))?/i);
+  const match = body.match(/(?:^|\s)@gittensory(?:\s+([a-z-]+))?([^\n\r]*)/i);
   if (!match) return null;
   const requested = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName;
   const name = COMMANDS.has(requested) ? requested : "help";
-  return { name, raw: match[0].trim() };
+  const question = name === "ask" ? (match[2] ?? "").trim() : undefined;
+  return { name, raw: match[0].trim(), question: question && question.length > 0 ? question : undefined };
 }
 
 export function isMaintainerAssociation(association: string | null | undefined): boolean {
@@ -192,13 +197,14 @@ export function buildPublicAgentCommandComment(args: {
   maintainerDigest?: MaintainerQueueDigest | null | undefined;
 }): string {
   const repoFullName = args.repo?.fullName ?? args.pullRequest?.repoFullName ?? "this repository";
-  const sections = commandSections(args.command.name, args.bundle, args.officialMiner, args.maintainerDigest);
+  const sections = commandSections(args.command.name, args.bundle, args.officialMiner, args.maintainerDigest, args.command.question);
   const card = buildPublicAnswerCard({
     command: args.command.name,
     sections,
     bundle: args.bundle,
     officialMiner: args.officialMiner,
     actorKind: args.actorKind,
+    question: args.command.name === "ask" ? args.command.question : undefined,
   });
   const body = [
     AGENT_COMMAND_COMMENT_MARKER,
@@ -221,7 +227,11 @@ function buildPublicAnswerCard(args: {
   bundle: AgentRunBundle | null | undefined;
   officialMiner: GittensorContributorSnapshot | null | undefined;
   actorKind: "maintainer" | "author";
+  question?: string | undefined;
 }): PublicAnswerCard {
+  if (args.command === "ask") {
+    return buildAskPublicAnswerCard(args);
+  }
   const [titleLine, ...contentLines] = args.sections;
   const safeContent = contentLines.map(stripBulletPrefix).filter((line) => line.length > 0);
   const findings = safeContent.length > 0 ? safeContent.slice(0, 5) : ["No public-safe findings are available from the current cached context."];
@@ -233,6 +243,61 @@ function buildPublicAnswerCard(args: {
     nextActions: commandNextActions(args.command, args.bundle),
     sourceNotes: commandSourceNotes(args.command, args.bundle, args.officialMiner),
     safeDetails: safeContent.slice(5),
+  };
+}
+
+function buildAskPublicAnswerCard(args: {
+  bundle: AgentRunBundle | null | undefined;
+  officialMiner: GittensorContributorSnapshot | null | undefined;
+  actorKind: "maintainer" | "author";
+  question?: string | undefined;
+}): PublicAnswerCard {
+  const title = "Contribution context Q&A";
+  if (args.bundle?.run.status === "needs_snapshot_refresh") {
+    return {
+      title,
+      summary: commandSummary("ask"),
+      findings: [
+        stripEmphasis(REFRESH_SECTION_TITLES.ask),
+        "Gittensory is refreshing connected contribution-context snapshots (cached issues, PRs, signals, and decision packs). Try @gittensory ask again shortly.",
+      ],
+      evidence: commandEvidence("ask", args.bundle, args.officialMiner, args.actorKind),
+      nextActions: commandNextActions("ask", args.bundle),
+      sourceNotes: commandSourceNotes("ask", args.bundle, args.officialMiner),
+    };
+  }
+
+  const contributingSources = prioritizeAskSources(collectAskContributingSources(args.bundle));
+  const citationLines = contributingSources.slice(0, 8).map((source) => stripBulletPrefix(formatAskCitation(source)));
+  const answerLines = pickActions(args.bundle, () => true)
+    .slice(0, 3)
+    .map((action) => (action.targetRepoFullName ? `${action.targetRepoFullName}: ${action.publicSafeSummary}` : action.publicSafeSummary))
+    .filter((line) => line.trim().length > 0)
+    .map((line) => publicBlockerDetail(line));
+  const questionText = sanitizePublicComment(
+    args.question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.",
+  );
+  const findings = [
+    `Question: ${questionText}`,
+    ...(answerLines.length > 0 ? answerLines : ["No matching contribution-quality context is available in the current cached sources."]),
+    ...(citationLines.length > 0 ? citationLines : ["No concrete cached source reference is available for this response."]),
+  ];
+  const sourceEvidence = contributingSources.slice(0, 3).map((source) => {
+    const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
+    return `Connected source ${source.label} (${source.origin}): freshness ${source.freshness}${observed}.`;
+  });
+  return {
+    title,
+    summary: commandSummary("ask"),
+    findings,
+    evidence: [...commandEvidence("ask", args.bundle, args.officialMiner, args.actorKind), ...sourceEvidence],
+    nextActions: commandNextActions("ask", args.bundle),
+    sourceNotes: commandSourceNotes("ask", args.bundle, args.officialMiner),
+    safeDetails: [
+      ...(citationLines.length > 4 ? citationLines.slice(4) : []),
+      "README/docs context is included only when connected repo sources and app permissions allow it.",
+      "Source contents are not sent to optional AI unless explicitly enabled.",
+    ],
   };
 }
 
@@ -271,6 +336,8 @@ function commandSummary(command: GittensoryMentionCommandName): string {
   switch (command) {
     case "help":
       return "Available public commands and their safest use on a PR thread.";
+    case "ask":
+      return "Contribution-context Q&A from connected cached sources, scoped to contribution quality and repository policy.";
     case "miner-context":
       return "Public miner context from official Gittensor data when available.";
     case "preflight":
@@ -307,6 +374,10 @@ function commandEvidence(
   actorKind: "maintainer" | "author",
 ): string[] {
   const evidence = [`Invocation authorized for ${actorKind} command use.`, "Output is sanitized before posting to GitHub."];
+  if (command === "ask") {
+    evidence.push("Answer scope is limited to contribution quality and repository policy.");
+    evidence.push("Sources are cited with freshness and public-boundary redaction.");
+  }
   if (command === "miner-context") {
     evidence.push(officialMiner ? "Official Gittensor miner context was available." : "Official Gittensor miner context was unavailable.");
   }
@@ -321,10 +392,16 @@ function commandEvidence(
 }
 
 function commandNextActions(command: GittensoryMentionCommandName, bundle: AgentRunBundle | null | undefined): string[] {
-  if (bundle?.run.status === "needs_snapshot_refresh") return ["Retry after the contributor decision snapshot refresh completes."];
+  if (bundle?.run.status === "needs_snapshot_refresh") {
+    return command === "ask"
+      ? ["Retry @gittensory ask after the contribution context snapshot refresh completes."]
+      : ["Retry after the contributor decision snapshot refresh completes."];
+  }
   switch (command) {
     case "help":
       return ["Comment one listed command on the PR thread when more context is needed."];
+    case "ask":
+      return ["Ask one concrete contribution-quality question per command for clearer cited guidance."];
     case "miner-context":
       return ["Use MCP or the authenticated control panel for private contributor planning."];
     case "preflight":
@@ -362,6 +439,8 @@ function commandSourceNotes(
   const source =
     command === "help"
       ? "static command catalog"
+      : command === "ask"
+        ? askCommandSourceSummary(bundle)
       : command === "miner-context"
         ? officialMiner
           ? "official Gittensor miner API"
@@ -380,7 +459,9 @@ function publicFreshness(bundle: AgentRunBundle | null | undefined, command: Git
   if (command === "help") return "shipped command list";
   if (isMaintainerQueueDigestCommand(command)) return "cached queue digest generated at invocation time";
   if (!bundle) return "no agent run was required or available";
-  if (bundle.run.status === "needs_snapshot_refresh") return "snapshot refresh in progress";
+  if (bundle.run.status === "needs_snapshot_refresh") {
+    return command === "ask" ? "contribution context snapshot refresh in progress" : "snapshot refresh in progress";
+  }
   return `agent run status ${publicStatus(bundle.run.status)}`;
 }
 
@@ -412,10 +493,13 @@ function commandSections(
   bundle: AgentRunBundle | null | undefined,
   officialMiner: GittensorContributorSnapshot | null | undefined,
   maintainerDigest: MaintainerQueueDigest | null | undefined,
+  question?: string | undefined,
 ): string[] {
   switch (command) {
     case "help":
       return helpSections();
+    case "ask":
+      return askSections(bundle, question);
     case "miner-context":
       return minerContextSections(officialMiner);
     case "preflight":
@@ -446,6 +530,7 @@ function helpSections(): string[] {
     "**Commands**",
     "",
     "- `@gittensory help` shows this command list.",
+    "- `@gittensory ask <question>` answers contribution-quality Q&A with source citations and freshness.",
     "- `@gittensory preflight` summarizes public PR hygiene.",
     "- `@gittensory blockers` explains public readiness blockers.",
     "- `@gittensory duplicate-check` summarizes duplicate/WIP caution.",
@@ -460,6 +545,266 @@ function helpSections(): string[] {
     "- `@gittensory confirmed-miners` lists cached confirmed-miner PRs.",
     "- `@gittensory duplicate-clusters` lists duplicate/WIP clusters.",
   ];
+}
+
+type AskContributingSource = {
+  key: string;
+  label: string;
+  origin: string;
+  generatedAt: string | null;
+  freshness: string;
+  detail: string;
+};
+
+function askSections(bundle: AgentRunBundle | null | undefined, question?: string): string[] {
+  if (bundle?.run.status === "needs_snapshot_refresh") {
+    return refreshSections("ask");
+  }
+  const sourceReferences = askSourceReferences(bundle);
+  const cited = pickActions(bundle, () => true)
+    .slice(0, 4)
+    .map((action) => action.targetRepoFullName ? `${action.targetRepoFullName}: ${action.publicSafeSummary}` : action.publicSafeSummary)
+    .filter((line) => line.trim().length > 0)
+    .map((line) => `- ${publicBlockerDetail(line)}`);
+  return [
+    "**Contribution context Q&A**",
+    "",
+    `- Question: ${sanitizePublicComment(question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context.")}`,
+    "",
+    "**Answer**",
+    "",
+    ...(cited.length > 0 ? cited : ["- No matching contribution-quality context is available in the current cached sources."]),
+    "",
+    "**Citations**",
+    "",
+    ...(sourceReferences.length > 0 ? sourceReferences : ["- No concrete cached source reference is available for this response."]),
+    "",
+    "**Policy**",
+    "",
+    "- README/docs context is included only when connected repo sources and app permissions allow it.",
+    "- Source contents are not sent to optional AI unless explicitly enabled.",
+  ];
+}
+
+const ASK_SOURCE_DISPLAY_PRIORITY = [
+  "contributor_decision_pack",
+  "open_pr_monitor",
+  "repo_decision",
+  "github_cache",
+  "official_gittensor",
+  "repo_focus_manifest",
+  "upstream_ruleset",
+  "issue_quality",
+  "computed",
+  "mirror",
+  "metadata_only",
+  "cached_signals",
+] as const;
+
+function prioritizeAskSources(sources: AskContributingSource[]): AskContributingSource[] {
+  const rank = (origin: string) => {
+    const index = ASK_SOURCE_DISPLAY_PRIORITY.indexOf(origin as (typeof ASK_SOURCE_DISPLAY_PRIORITY)[number]);
+    return index >= 0 ? index : ASK_SOURCE_DISPLAY_PRIORITY.length;
+  };
+  return [...sources].sort((left, right) => rank(left.origin) - rank(right.origin) || left.label.localeCompare(right.label));
+}
+
+function askSourceReferences(bundle: AgentRunBundle | null | undefined): string[] {
+  return prioritizeAskSources(collectAskContributingSources(bundle)).slice(0, 8).map(formatAskCitation);
+}
+
+function collectAskContributingSources(bundle: AgentRunBundle | null | undefined): AskContributingSource[] {
+  if (!bundle) return [];
+  const collected: AskContributingSource[] = [];
+  const seen = new Set<string>();
+  const add = (entry: AskContributingSource | null | undefined) => {
+    if (!entry) return;
+    const dedupeKey = `${entry.key}|${entry.origin}|${entry.freshness}|${entry.generatedAt ?? ""}|${entry.detail}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    collected.push(entry);
+  };
+  for (const snapshot of bundle.contextSnapshots) {
+    for (const entry of askSourcesFromContextSnapshot(snapshot)) add(entry);
+  }
+  for (const action of bundle.actions) {
+    for (const entry of askSourcesFromActionEvidence(action)) add(entry);
+  }
+  return collected;
+}
+
+function askCommandSourceSummary(bundle: AgentRunBundle | null | undefined): string {
+  const sources = collectAskContributingSources(bundle);
+  if (sources.length === 0) return "cached Gittensory agent context (no connected-source metadata in this run)";
+  return sources
+    .slice(0, 4)
+    .map((source) => source.label)
+    .join("; ");
+}
+
+function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshots"][number]): AskContributingSource[] {
+  const payload = snapshot.payload ?? {};
+  const generatedAt = snapshot.createdAt ?? snapshot.decisionPackVersion ?? null;
+  const sources: AskContributingSource[] = [];
+  const graph = payload.evidenceGraph;
+  if (graph && typeof graph === "object" && !Array.isArray(graph)) {
+    const graphRecord = graph as Record<string, unknown>;
+    const graphGeneratedAt = typeof graphRecord.generatedAt === "string" ? graphRecord.generatedAt : generatedAt;
+    const graphSources = graphRecord.sources;
+    if (Array.isArray(graphSources)) {
+      for (const item of graphSources) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        const kind = typeof record.source === "string" ? record.source : "connected_source";
+        sources.push({
+          key: `evidence_graph_${kind}`,
+          label: askSourceLabel(kind),
+          origin: kind,
+          generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : graphGeneratedAt,
+          freshness: typeof record.freshness === "string" ? record.freshness : "unknown",
+          detail: typeof record.detail === "string" ? record.detail : "Connected contributor evidence graph source.",
+        });
+      }
+    }
+  }
+  const baseFreshness = readRecord(payload.baseFreshness);
+  if (baseFreshness) {
+    sources.push({
+      key: "base_freshness",
+      label: askSourceLabel("base_freshness"),
+      origin: "metadata_only",
+      generatedAt: typeof baseFreshness.observedAt === "string" ? baseFreshness.observedAt : generatedAt,
+      freshness: typeof baseFreshness.status === "string" ? baseFreshness.status : "unknown",
+      detail: "Repo/issue/PR sync freshness used for contribution-context answers.",
+    });
+  }
+  const branchEligibility = readRecord(payload.branchEligibility);
+  if (branchEligibility) {
+    sources.push({
+      key: "branch_eligibility",
+      label: askSourceLabel("branch_eligibility"),
+      origin: "metadata_only",
+      generatedAt,
+      freshness: branchEligibility.stale === true ? "stale" : branchEligibility.evidence === "missing" ? "missing" : "fresh",
+      detail: "Branch eligibility metadata from connected local/GitHub context.",
+    });
+  }
+  if (typeof payload.scoreabilityStatus === "string") {
+    sources.push({
+      key: "scoreability_status",
+      label: "contribution readiness metadata",
+      origin: "metadata_only",
+      generatedAt,
+      freshness: snapshotFreshnessFromWarnings(snapshot),
+      detail: `Contribution readiness status: ${payload.scoreabilityStatus}.`,
+    });
+  }
+  const dataQuality = readRecord(payload.dataQuality);
+  if (dataQuality && typeof dataQuality.status === "string") {
+    sources.push({
+      key: "signal_data_quality",
+      label: askSourceLabel("data_quality"),
+      origin: "cached_signals",
+      generatedAt,
+      freshness: dataQuality.status === "complete" ? "fresh" : String(dataQuality.status),
+      detail: "Signal fidelity and data-quality status for connected repo sources.",
+    });
+  }
+  if (snapshot.freshnessWarnings.length > 0) {
+    sources.push({
+      key: "freshness_warnings",
+      label: "snapshot freshness warnings",
+      origin: "cached_signals",
+      generatedAt,
+      freshness: "degraded",
+      detail: snapshot.freshnessWarnings.slice(0, 2).join(" "),
+    });
+  }
+  if (typeof payload.source === "string") {
+    sources.push({
+      key: "contributor_decision_pack",
+      label: askSourceLabel("contributor_decision_pack"),
+      origin: "contributor_decision_pack",
+      generatedAt: generatedAt ?? snapshot.decisionPackVersion ?? null,
+      freshness: snapshotFreshnessFromWarnings(snapshot),
+      detail: `Contributor decision pack (${payload.source}).`,
+    });
+  }
+  const openPrMonitor = readRecord(payload.openPrMonitor);
+  if (openPrMonitor) {
+    sources.push({
+      key: "open_pr_monitor",
+      label: askSourceLabel("open_pr_monitor"),
+      origin: "open_pr_monitor",
+      generatedAt,
+      freshness: typeof openPrMonitor.freshness === "string" ? openPrMonitor.freshness : "unknown",
+      detail: "Cached open PR and issue queue used for contribution-context answers.",
+    });
+  }
+  return sources;
+}
+
+function askSourcesFromActionEvidence(action: AgentActionRecord): AskContributingSource[] {
+  const evidence = readRecord(action.payload.recommendationEvidence);
+  if (!evidence || !Array.isArray(evidence.sources)) return [];
+  return evidence.sources
+    .map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const source = raw as Record<string, unknown>;
+      const name = typeof source.name === "string" ? source.name : "connected_source";
+      return {
+        key: name,
+        label: askSourceLabel(name),
+        origin: name,
+        generatedAt: typeof source.generatedAt === "string" ? source.generatedAt : null,
+        freshness: typeof source.freshness === "string" ? source.freshness : "unknown",
+        detail: typeof source.summary === "string" ? source.summary : "Connected recommendation evidence source.",
+      };
+    })
+    .filter((entry): entry is AskContributingSource => entry !== null);
+}
+
+function formatAskCitation(source: AskContributingSource): string {
+  const header = `Source: ${source.label}; origin: ${source.origin}; freshness: ${source.freshness}`;
+  const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
+  const detail = source.detail ? ` — ${publicBlockerDetail(source.detail)}` : "";
+  return `- ${header}${observed}${detail}.`;
+}
+
+function askSourceLabel(name: string): string {
+  const labels: Record<string, string> = {
+    contributor_decision_pack: "contributor decision pack snapshot",
+    repo_decision: "repo decision snapshot",
+    official_contributor_stats: "official Gittensor contributor stats",
+    repo_outcome_history: "repo outcome history",
+    open_pr_monitor: "cached GitHub open PR/issue queue",
+    local_branch_metadata: "local branch metadata (metadata-only)",
+    base_branch_freshness: "local git branch freshness",
+    base_freshness: "repo sync freshness metadata",
+    branch_eligibility: "branch eligibility metadata",
+    github_branch_status: "cached GitHub branch status",
+    linked_issue_multiplier: "linked-issue policy context",
+    score_preview: "private score preview metadata",
+    data_quality: "signal data-quality status",
+    official_gittensor: "official Gittensor API/cache",
+    mirror: "Gittensor mirror registry snapshot",
+    github_cache: "cached GitHub issues, PRs, reviews, and checks",
+    computed: "derived Gittensory contribution signals",
+    repo_focus_manifest: "repo focus manifest",
+    issue_quality: "issue quality snapshot",
+    upstream_ruleset: "upstream ruleset status",
+  };
+  return labels[name] ?? name.replace(/_/g, " ");
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function snapshotFreshnessFromWarnings(snapshot: AgentRunBundle["contextSnapshots"][number]): string {
+  if (snapshot.freshnessWarnings.some((warning) => /stale|rebuild/i.test(warning))) return "stale";
+  return "fresh";
 }
 
 function minerContextSections(miner: GittensorContributorSnapshot | null | undefined): string[] {
@@ -615,11 +960,11 @@ function packetSections(bundle: AgentRunBundle | null | undefined): string[] {
 }
 
 function refreshSections(command: SnapshotCommandName): string[] {
-  return [
-    `**${REFRESH_SECTION_TITLES[command]}**`,
-    "",
-    "- Gittensory is refreshing the contributor decision snapshot. Try the command again shortly.",
-  ];
+  const body =
+    command === "ask"
+      ? "- Gittensory is refreshing connected contribution-context snapshots (cached issues, PRs, signals, and decision packs). Try @gittensory ask again shortly."
+      : "- Gittensory is refreshing the contributor decision snapshot. Try the command again shortly.";
+  return [`**${REFRESH_SECTION_TITLES[command]}**`, "", body];
 }
 
 function emptySections(command: SnapshotCommandName): string[] {
@@ -971,3 +1316,12 @@ function sanitizeReviewabilityTerm(value: string): string {
     return prefix.endsWith("@gittensory ") ? match : "private context";
   });
 }
+
+/** @internal Exported for unit tests of ask citation helpers. */
+export const githubCommandsInternals = {
+  collectAskContributingSources,
+  formatAskCitation,
+  snapshotFreshnessFromWarnings,
+  refreshSections,
+  askSections,
+};

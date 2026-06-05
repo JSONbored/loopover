@@ -36,6 +36,7 @@ import {
   recentMergedPullRequests,
   repositories,
   repoGithubTotalsSnapshots,
+  repoQueueTrendSnapshots,
   registryDriftEvents,
   repoLabels,
   repoSnapshots,
@@ -117,6 +118,7 @@ import type {
   RegistryDriftEventRecord,
   RepoLabelRecord,
   RepoGithubTotalsSnapshotRecord,
+  RepoQueueTrendSnapshotRecord,
   RepoSnapshotRecord,
   RepoSyncSegmentRecord,
   RepoSyncStateRecord,
@@ -633,6 +635,24 @@ export async function getLatestRepoGithubTotalsSnapshot(env: Env, fullName: stri
   return row ? toRepoGithubTotalsSnapshotRecord(row) : null;
 }
 
+export async function listRepoGithubTotalsSnapshotHistory(
+  env: Env,
+  fullName: string,
+  options: { sinceIso?: string | undefined; limit?: number | undefined } = {},
+): Promise<RepoGithubTotalsSnapshotRecord[]> {
+  const db = getDb(env.DB);
+  const limit = Math.max(2, Math.min(options.limit ?? 120, 240));
+  const conditions = [eq(repoGithubTotalsSnapshots.repoFullName, fullName)];
+  if (options.sinceIso) conditions.push(gte(repoGithubTotalsSnapshots.fetchedAt, options.sinceIso));
+  const rows = await db
+    .select()
+    .from(repoGithubTotalsSnapshots)
+    .where(and(...conditions))
+    .orderBy(desc(repoGithubTotalsSnapshots.fetchedAt))
+    .limit(limit);
+  return rows.map(toRepoGithubTotalsSnapshotRecord).reverse();
+}
+
 export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<RepoGithubTotalsSnapshotRecord[]> {
   const db = getDb(env.DB);
   const latestRows = await db
@@ -652,6 +672,23 @@ export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<Rep
     if (row) rows.push(row);
   }
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
+}
+
+export async function upsertRepoQueueTrendSnapshot(env: Env, snapshot: RepoQueueTrendSnapshotRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .insert(repoQueueTrendSnapshots)
+    .values({ repoFullName: snapshot.repoFullName, payloadJson: jsonString(snapshot.payload), generatedAt: snapshot.generatedAt })
+    .onConflictDoUpdate({
+      target: repoQueueTrendSnapshots.repoFullName,
+      set: { payloadJson: jsonString(snapshot.payload), generatedAt: snapshot.generatedAt },
+    });
+}
+
+export async function getRepoQueueTrendSnapshot(env: Env, repoFullName: string): Promise<RepoQueueTrendSnapshotRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(repoQueueTrendSnapshots).where(eq(repoQueueTrendSnapshots.repoFullName, repoFullName)).limit(1);
+  return row ? toRepoQueueTrendSnapshotRecord(row) : null;
 }
 
 export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequestDetailSyncStateRecord): Promise<void> {
@@ -2852,6 +2889,14 @@ function toRepoGithubTotalsSnapshotRecord(row: typeof repoGithubTotalsSnapshots.
     rateLimitRemaining: row.rateLimitRemaining,
     rateLimitResetAt: row.rateLimitResetAt,
     payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+  };
+}
+
+function toRepoQueueTrendSnapshotRecord(row: typeof repoQueueTrendSnapshots.$inferSelect): RepoQueueTrendSnapshotRecord {
+  return {
+    repoFullName: row.repoFullName,
+    payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+    generatedAt: row.generatedAt,
   };
 }
 

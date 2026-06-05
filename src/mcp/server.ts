@@ -42,6 +42,7 @@ import {
   startAgentRun,
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
+import { renderScenarioSummary } from "../services/scenario-summary";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
@@ -633,6 +634,15 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_scenario_summary",
+      {
+        description: "Render the scenario simulator into concise summaries: a public-safe summary (ranked scenarios, reasons, blockers, assumptions, next safe action — free of reward/score/wallet/trust/reviewability language) and an authenticated private summary. Advisory only; takes no GitHub action.",
+        inputSchema: localBranchAnalysisShape,
+      },
+      async (input) => this.toolResult(await this.scenarioSummary(input)),
+    );
+
+    server.registerTool(
       "gittensory_rank_local_next_actions",
       {
         description: "Analyze current-branch metadata and rank local next actions by private reward/risk signals.",
@@ -1085,6 +1095,23 @@ export class GittensoryMcp {
         accountStateBlockers: slice === "scoreBlockers" ? analysis.accountStateBlockers : undefined,
         recommendedRerunCondition: slice === "scoreBlockers" || slice === "nextActions" ? analysis.recommendedRerunCondition : undefined,
         dataQuality: analysis.dataQuality,
+      } as Record<string, unknown>,
+    };
+  }
+
+  private async scenarioSummary(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+    const analysis = await this.analyzeLocalBranch(input);
+    // Render both visibilities so the public/private boundary is explicit; the public-safe
+    // summary is the surface-safe output, the private summary is for authenticated planning.
+    const publicSafe = renderScenarioSummary(analysis.scorePreview, { visibility: "public_safe" });
+    return {
+      summary: `Public-safe scenario summary for ${analysis.repoFullName}: ${publicSafe.summary}`,
+      data: {
+        login: analysis.login,
+        repoFullName: analysis.repoFullName,
+        generatedAt: analysis.generatedAt,
+        publicSafe,
+        private: renderScenarioSummary(analysis.scorePreview, { visibility: "private" }),
       } as Record<string, unknown>,
     };
   }

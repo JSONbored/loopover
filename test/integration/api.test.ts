@@ -4175,6 +4175,16 @@ describe("api routes", () => {
           ],
         },
       ],
+      [
+        "gittensory_scenario_summary",
+        {
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          branchName: "fix-cache-reconnect",
+          body: "Fixes #7",
+          changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        },
+      ],
       ["gittensory_get_bounty_advisory", { id: "bounty-1" }],
     ] as const) {
       const response = await app.request(
@@ -4196,6 +4206,14 @@ describe("api routes", () => {
           sources: expect.arrayContaining([expect.objectContaining({ name: "contributor_decision_pack" })]),
         });
       }
+      if (name === "gittensory_scenario_summary") {
+        const structured = payload.result?.structuredContent as { publicSafe?: { visibility?: string; rankedScenarios?: unknown[]; nextSafeAction?: string }; private?: { visibility?: string } } | undefined;
+        expect(structured?.publicSafe?.visibility).toBe("public_safe");
+        expect(Array.isArray(structured?.publicSafe?.rankedScenarios)).toBe(true);
+        expect(structured?.private?.visibility).toBe("private");
+        // The public-safe summary must never carry private/financial language.
+        expect(JSON.stringify(structured?.publicSafe)).not.toMatch(/\b(reward|wallet|hotkey|coldkey|raw trust|trust score|payout|farming|scoreability|private reviewability|public score estimate|estimated score)\b/i);
+      }
       const privateRewardTools = new Set([
         "gittensory_get_decision_pack",
         "gittensory_explain_repo_decision",
@@ -4207,6 +4225,7 @@ describe("api routes", () => {
         "gittensory_compare_local_variants",
         "gittensory_agent_plan_next_work",
         "gittensory_agent_explain_next_action",
+        "gittensory_scenario_summary",
       ]);
       expect(text).not.toMatch(/farming|wallet|hotkey|guaranteed payout/i);
       if (!privateRewardTools.has(name)) expect(text).not.toMatch(/reward/i);

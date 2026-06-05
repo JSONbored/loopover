@@ -2836,6 +2836,13 @@
               "nullable": true
             }
           },
+          "queueTrends": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "nullable": true
+            }
+          },
           "collisions": {
             "type": "object",
             "additionalProperties": {
@@ -3378,7 +3385,21 @@
                   "all_prs"
                 ]
               },
+              "publicAudienceMode": {
+                "type": "string",
+                "enum": [
+                  "oss_maintainer",
+                  "gittensor_only"
+                ]
+              },
               "checkRunMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "enabled"
+                ]
+              },
+              "gateCheckMode": {
                 "type": "string",
                 "enum": [
                   "off",
@@ -3402,7 +3423,9 @@
               "installed",
               "publicSurface",
               "commentMode",
+              "publicAudienceMode",
               "checkRunMode",
+              "gateCheckMode",
               "quietByDefault",
               "behavior",
               "warnings"
@@ -7361,40 +7384,6 @@
               "high"
             ]
           },
-          "linkedPrs": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "number": {
-                  "type": "number"
-                },
-                "state": {
-                  "type": "string",
-                  "enum": [
-                    "open",
-                    "closed",
-                    "merged",
-                    "unknown"
-                  ]
-                },
-                "isActive": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "number",
-                "state",
-                "isActive"
-              ]
-            }
-          },
-          "findings": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Finding"
-            }
-          },
           "source": {
             "type": "object",
             "properties": {
@@ -7431,6 +7420,40 @@
               "ageDays",
               "freshness"
             ]
+          },
+          "linkedPrs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "number"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "merged",
+                    "unknown"
+                  ]
+                },
+                "isActive": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "number",
+                "state",
+                "isActive"
+              ]
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
           }
         },
         "required": [
@@ -7514,6 +7537,13 @@
               "all_prs"
             ]
           },
+          "publicAudienceMode": {
+            "type": "string",
+            "enum": [
+              "oss_maintainer",
+              "gittensor_only"
+            ]
+          },
           "publicSignalLevel": {
             "type": "string",
             "enum": [
@@ -7534,6 +7564,13 @@
               "minimal",
               "standard",
               "deep"
+            ]
+          },
+          "gateCheckMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "enabled"
             ]
           },
           "autoLabelEnabled": {
@@ -7614,9 +7651,11 @@
         "required": [
           "repoFullName",
           "commentMode",
+          "publicAudienceMode",
           "publicSignalLevel",
           "checkRunMode",
           "checkRunDetailLevel",
+          "gateCheckMode",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",
@@ -7668,7 +7707,21 @@
                         "all_prs"
                       ]
                     },
+                    "publicAudienceMode": {
+                      "type": "string",
+                      "enum": [
+                        "oss_maintainer",
+                        "gittensor_only"
+                      ]
+                    },
                     "checkRunMode": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "enabled"
+                      ]
+                    },
+                    "gateCheckMode": {
                       "type": "string",
                       "enum": [
                         "off",
@@ -7682,7 +7735,9 @@
                   "required": [
                     "publicSurface",
                     "commentMode",
+                    "publicAudienceMode",
                     "checkRunMode",
+                    "gateCheckMode",
                     "autoLabelEnabled"
                   ]
                 }
@@ -7728,7 +7783,8 @@
                   "enum": [
                     "comment",
                     "label",
-                    "check_run"
+                    "check_run",
+                    "gate_check"
                   ]
                 },
                 "enabled": {
@@ -8033,6 +8089,13 @@
                   "all_prs"
                 ]
               },
+              "publicAudienceMode": {
+                "type": "string",
+                "enum": [
+                  "oss_maintainer",
+                  "gittensor_only"
+                ]
+              },
               "publicSignalLevel": {
                 "type": "string",
                 "enum": [
@@ -8053,6 +8116,13 @@
                   "minimal",
                   "standard",
                   "deep"
+                ]
+              },
+              "gateCheckMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "enabled"
                 ]
               },
               "autoLabelEnabled": {
@@ -8122,9 +8192,11 @@
             "required": [
               "publicSurface",
               "commentMode",
+              "publicAudienceMode",
               "publicSignalLevel",
               "checkRunMode",
               "checkRunDetailLevel",
+              "gateCheckMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",
@@ -11006,30 +11078,6 @@
                     "warnings"
                   ]
                 },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "ready",
-                    "needs_proof",
-                    "hold",
-                    "do_not_use"
-                  ]
-                },
-                "score": {
-                  "type": "number"
-                },
-                "reasons": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "warnings": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
                 "bounty": {
                   "type": "object",
                   "properties": {
@@ -11142,6 +11190,30 @@
                     "source",
                     "linkedPrs"
                   ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "needs_proof",
+                    "hold",
+                    "do_not_use"
+                  ]
+                },
+                "score": {
+                  "type": "number"
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -12248,6 +12320,99 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/self-dogfood/registration-pack": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Private self-dogfood registration pack for the Gittensory repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role for maintainer-only self-dogfood report"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Private self-dogfood registration pack when repo matches configured Gittensory target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role or repo is not the configured self-dogfood target"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/onboarding-pack/preview": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Preview-only repo onboarding pack for accepted repositories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Repository is not accepted or preview unavailable"
           }
         },
         "security": [
@@ -14009,66 +14174,6 @@
           },
           "401": {
             "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/app/self-dogfood/registration-pack": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Private self-dogfood registration pack for the Gittensory repo",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Insufficient role for maintainer-only self-dogfood report"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Private self-dogfood registration pack when repo matches configured Gittensory target",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Repo is not the configured self-dogfood target"
           }
         },
         "security": [

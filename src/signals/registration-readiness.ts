@@ -32,7 +32,9 @@ export type GithubAppBehavior = {
   installed: boolean;
   publicSurface: RepositorySettings["publicSurface"];
   commentMode: RepositorySettings["commentMode"];
+  publicAudienceMode: RepositorySettings["publicAudienceMode"];
   checkRunMode: RepositorySettings["checkRunMode"];
+  gateCheckMode: RepositorySettings["gateCheckMode"];
   quietByDefault: boolean;
   behavior: string;
   warnings: string[];
@@ -122,13 +124,15 @@ function buildGithubAppBehavior(repo: RepositoryRecord | null, settings: Reposit
     installed,
     publicSurface: settings.publicSurface,
     commentMode: settings.commentMode,
+    publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
+    gateCheckMode: settings.gateCheckMode,
     quietByDefault,
     behavior: !installed
       ? "Gittensory would stay silent because the GitHub App is not installed."
       : settings.publicSurface === "off"
-        ? "Gittensory stays quiet: no public comments or labels, confirmed-miner detection only."
-        : `Gittensory posts ${settings.publicSurface.replace(/_/g, " ")} for confirmed Gittensor miner PRs only, ${quietByDefault ? "quiet by default" : "for all PRs"}.`,
+        ? `Gittensory stays quiet: no public comments or labels${settings.gateCheckMode === "enabled" ? ", with the opt-in gate check still enabled" : ""}.`
+        : `Gittensory posts ${settings.publicSurface.replace(/_/g, " ")} in ${settings.publicAudienceMode.replace(/_/g, " ")} mode, ${quietByDefault ? "quiet by default" : "for all PRs"}.`,
     warnings,
   };
 }

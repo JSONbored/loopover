@@ -1,8 +1,11 @@
 import { Octokit } from "@octokit/core";
 import { createInstallationToken } from "./app";
 
-export const PR_INTELLIGENCE_COMMENT_MARKER = "<!-- gittensory-pr-intelligence -->";
-export const AGENT_COMMAND_COMMENT_MARKER = "<!-- gittensory-agent-command -->";
+export const PR_PANEL_COMMENT_MARKER = "<!-- gittensory-pr-panel:v1 -->";
+export const PR_INTELLIGENCE_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
+export const AGENT_COMMAND_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
+const LEGACY_PR_INTELLIGENCE_COMMENT_MARKER = "<!-- gittensory-pr-intelligence -->";
+const LEGACY_AGENT_COMMAND_COMMENT_MARKER = "<!-- gittensory-agent-command -->";
 
 type IssueComment = {
   id: number;
@@ -54,7 +57,8 @@ async function createOrUpdateIssueCommentWithMarker(
     per_page: 100,
   });
   const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
-  const existing = (comments.data as IssueComment[]).find((comment) => isGittensoryBotComment(comment, botLogin) && comment.body?.includes(marker));
+  const markers = markerAliases(marker);
+  const existing = (comments.data as IssueComment[]).find((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate)));
   if (existing) {
     const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
       owner,
@@ -75,4 +79,8 @@ async function createOrUpdateIssueCommentWithMarker(
 
 function isGittensoryBotComment(comment: IssueComment, botLogin: string): boolean {
   return comment.user?.type === "Bot" && comment.user.login?.toLowerCase() === botLogin.toLowerCase();
+}
+
+function markerAliases(_marker: string): string[] {
+  return [PR_PANEL_COMMENT_MARKER, LEGACY_PR_INTELLIGENCE_COMMENT_MARKER, LEGACY_AGENT_COMMAND_COMMENT_MARKER];
 }

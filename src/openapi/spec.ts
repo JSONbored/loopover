@@ -386,7 +386,16 @@ export function buildOpenApiSpec() {
     path: "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack",
     responses: {
       200: { description: "Private self-dogfood registration pack when repo matches configured Gittensory target", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
-      403: { description: "Repo is not the configured self-dogfood target" },
+      403: { description: "Insufficient role or repo is not the configured self-dogfood target" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/onboarding-pack/preview",
+    responses: {
+      200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role" },
+      404: { description: "Repository is not accepted or preview unavailable" },
     },
   });
   registry.registerPath({

@@ -15,9 +15,11 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
   return {
     repoFullName: "owner/repo",
     commentMode: "detected_contributors_only",
+    publicAudienceMode: "oss_maintainer",
     publicSignalLevel: "standard",
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
+    gateCheckMode: "off",
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
     createMissingLabel: true,
@@ -384,10 +386,9 @@ describe("buildRepoPolicyReadiness", () => {
     );
   });
 
-  it("uses empty owner-context defaults when the focus manifest is omitted", () => {
-    const report = buildRepoPolicyReadiness(input({ focusManifest: undefined }));
-
-    expect(report).toMatchObject({
+  it("handles absent optional policy data and clean policy summaries", () => {
+    const missing = buildRepoPolicyReadiness(input({ focusManifest: undefined }));
+    expect(missing).toMatchObject({
       present: false,
       ownerContext: {
         manifestPresent: false,
@@ -400,10 +401,15 @@ describe("buildRepoPolicyReadiness", () => {
         issueDiscoveryPolicy: "neutral",
       },
     });
-    expect(report.publicWarnings).toEqual(
+    expect(missing.publicWarnings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "focus_policy_missing" }),
       ]),
     );
+
+    const clean = buildRepoPolicyReadiness(input());
+    expect(clean.publicWarnings).toEqual([]);
+    expect(clean.droppedPublicWarnings).toEqual([]);
+    expect(clean.summary).toBe("Policy readiness has no public-safe warnings for owner review.");
   });
 });

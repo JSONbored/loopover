@@ -197,6 +197,7 @@ export function buildRepoRewardRisk(args: {
     existingContributorTokenScore: 0,
     credibility,
     metadataOnly: true,
+    duplicateRiskCount: collisions.summary.highRiskCount,
   };
   const currentPreview = buildScorePreview({
     input: { ...commonPreviewInput, openPrCount: currentOpenPrCount },

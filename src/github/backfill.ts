@@ -638,7 +638,7 @@ export async function refreshContributorActivity(
 
 export const REQUIRED_INSTALLATION_PERMISSIONS: Record<string, string> = {
   metadata: "read",
-  pull_requests: "read",
+  pull_requests: "write",
   issues: "write",
 };
 export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
@@ -646,10 +646,10 @@ export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
 };
 
 export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
-export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target"] as const;
+export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
 
 type InstallationModeImpact = {
-  mode: "comment" | "label" | "check_run";
+  mode: "comment" | "label" | "check_run" | "gate_check";
   enabled: boolean;
   affectedRepoCount: number;
   requiredPermissions: Array<{ permission: string; requiredAccess: string; missing: boolean; optional: boolean }>;
@@ -667,13 +667,21 @@ type InstallationEventDiagnostic = {
 
 export function enrichInstallationHealth(health: InstallationHealthRecord) {
   const missingPermissions = new Set(health.missingPermissions);
-  const missingEvents = new Set(health.missingEvents);
+  const requiredEventSet = new Set<string>(REQUIRED_INSTALLATION_EVENTS);
+  const normalizedMissingEvents = health.missingEvents.filter((event) => requiredEventSet.has(event));
+  const missingEvents = new Set(normalizedMissingEvents);
+  const status =
+    health.status === "needs_attention" && missingPermissions.size === 0 && missingEvents.size === 0 && !health.errorSummary
+      ? "healthy"
+      : health.status;
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(missingPermissions.has("checks") ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
   };
   return {
     ...health,
+    status,
+    missingEvents: normalizedMissingEvents,
     requiredPermissions,
     optionalPermissions: OPTIONAL_CHECK_RUN_PERMISSION,
     requiredEvents: [...REQUIRED_INSTALLATION_EVENTS],
@@ -708,31 +716,33 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
   const commentRepoCount = installedSettings.filter(usesCommentMode).length;
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
+  const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
   const missingPermissions = new Set(health.missingPermissions);
-  const missingEvents = new Set(health.missingEvents);
+  const requiredEventSet = new Set<string>(REQUIRED_INSTALLATION_EVENTS);
+  const missingEvents = new Set(health.missingEvents.filter((event) => requiredEventSet.has(event)));
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
-    ...(checkRunRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    ...(checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
   };
-  const optionalPermissions = checkRunRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
+  const optionalPermissions = checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
   const modeImpacts: InstallationModeImpact[] = [
     buildPermissionModeImpact({
       mode: "comment",
       enabled: commentRepoCount > 0,
       affectedRepoCount: commentRepoCount,
-      permission: "issues",
+      permission: "pull_requests",
       requiredAccess: "write",
-      missing: missingPermissions.has("issues"),
-      summary: "PR comments use the GitHub Issues API, so comment mode requires Issues: write.",
+      missing: missingPermissions.has("pull_requests"),
+      summary: "PR comments are posted on pull requests, so comment mode requires Pull requests: write.",
     }),
     buildPermissionModeImpact({
       mode: "label",
       enabled: labelRepoCount > 0,
       affectedRepoCount: labelRepoCount,
-      permission: "issues",
+      permission: "pull_requests",
       requiredAccess: "write",
-      missing: missingPermissions.has("issues"),
-      summary: "PR labels use the GitHub Issues API, so label mode requires Issues: write.",
+      missing: missingPermissions.has("pull_requests"),
+      summary: "PR labels are applied to pull requests, so label mode requires Pull requests: write.",
     }),
     buildPermissionModeImpact({
       mode: "check_run",
@@ -747,14 +757,39 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
           ? "Check run mode is enabled for at least one installed repo, so Checks: write is required."
           : "Checks: write is optional unless check run mode is enabled for an installed repo.",
     }),
+    buildPermissionModeImpact({
+      mode: "gate_check",
+      enabled: gateCheckRepoCount > 0,
+      affectedRepoCount: gateCheckRepoCount,
+      permission: "checks",
+      requiredAccess: "write",
+      missing: gateCheckRepoCount > 0 && missingPermissions.has("checks"),
+      optional: gateCheckRepoCount === 0,
+      summary:
+        gateCheckRepoCount > 0
+          ? "Gate check mode is enabled for at least one installed repo, so Checks: write is required."
+          : "Checks: write is optional unless gate check mode is enabled for an installed repo.",
+    }),
   ];
-  const eventDiagnostics: InstallationEventDiagnostic[] = REQUIRED_INSTALLATION_EVENTS.map((event) => ({
-    event,
-    missing: missingEvents.has(event),
-    optional: false,
-    summary: `Gittensory expects the ${event} webhook event for installation health and GitHub App automation.`,
-    action: missingEvents.has(event) ? `Subscribe to the ${event} webhook event, then approve or reinstall the app.` : "No change needed.",
-  }));
+  const eventDiagnostics: InstallationEventDiagnostic[] = [
+    ...REQUIRED_INSTALLATION_EVENTS.map((event) => ({
+      event,
+      missing: missingEvents.has(event),
+      optional: false,
+      summary: `Gittensory expects the ${event} webhook event for installation health and GitHub App automation.`,
+      action: missingEvents.has(event) ? `Subscribe to the ${event} webhook event, then approve or reinstall the app.` : "No change needed.",
+    })),
+    ...OPTIONAL_VISIBLE_INSTALLATION_EVENTS.map((event) => ({
+      event,
+      missing: missingEvents.has(event),
+      optional: true,
+      summary:
+        event === "installation_repositories"
+          ? "GitHub sends installation repository add/remove events automatically; it is not a selectable subscription event in the app settings UI."
+          : `The ${event} webhook event can appear in GitHub metadata, but it is not required for Gittensory PR automation.`,
+      action: "No manual subscription is required.",
+    })),
+  ];
   return {
     generatedAt: nowIso(),
     installation: enrichInstallationHealth(health),
@@ -820,7 +855,9 @@ function summarizeRepairSettings(settings: RepositorySettings) {
   return {
     publicSurface: settings.publicSurface,
     commentMode: settings.commentMode,
+    publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
+    gateCheckMode: settings.gateCheckMode,
     autoLabelEnabled: settings.autoLabelEnabled,
   };
 }

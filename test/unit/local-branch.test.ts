@@ -64,6 +64,35 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
 
+  it("surfaces a duplicate_risk reducer when the branch collides with a high-risk overlap cluster", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        title: "Fix dashboard cache refresh after reconnect",
+        body: "Fixes #7",
+        labels: ["bug"],
+        changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      // Issue #7 already has two open PRs targeting it -> a high-risk overlap cluster that
+      // also overlaps the branch (same dashboard-cache-refresh terms).
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Dashboard cache refresh fails after reconnect", state: "open", labels: ["bug"], linkedPrs: [21, 22] }],
+      pullRequests: [
+        { repoFullName: repo.fullName, number: 21, title: "Dashboard cache refresh fix after reconnect", state: "open", authorLogin: "other1", authorAssociation: "NONE", labels: ["bug"], linkedIssues: [7], body: "Fixes #7", updatedAt: "2026-05-20T00:00:00.000Z" },
+        { repoFullName: repo.fullName, number: 22, title: "Dashboard cache reconnect refresh fix", state: "open", authorLogin: "other2", authorAssociation: "NONE", labels: ["bug"], linkedIssues: [7], body: "Fixes #7", updatedAt: "2026-05-21T00:00:00.000Z" },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    // The duplicate_risk reducer was dead before this fix: duplicateRiskCount had no producer.
+    expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk" })]));
+  });
+
   it("bounds local scorer warnings before adding local findings", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

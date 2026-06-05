@@ -48,9 +48,11 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
   return {
     repoFullName,
     commentMode: "detected_contributors_only",
+    publicAudienceMode: "oss_maintainer",
     publicSignalLevel: "standard",
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
+    gateCheckMode: "off",
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
     createMissingLabel: true,

@@ -125,6 +125,24 @@ describe("signal coverage edge cases", () => {
     expect(strategy.nextActions).toEqual(expect.arrayContaining(["Clean up linked issue/context patterns before adding more open PRs.", "Prefer repos where the changed files match prior language evidence, or keep first submissions small."]));
   });
 
+  it("does not double-count stat-derived dominant labels for repos already covered by cached records", () => {
+    const profile = buildContributorProfile(
+      "dev",
+      { login: "dev", topLanguages: [], source: "github" },
+      [pr("owner/shared", 1, "Real work", { authorLogin: "dev", labels: ["real-label"] })],
+      [],
+      [
+        // Same repo as the cached PR -> its stat-derived dominant labels must not be re-counted.
+        { login: "dev", repoFullName: "owner/shared", pullRequests: 1, mergedPullRequests: 0, openPullRequests: 1, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["stat-only-label"] },
+        // No cached records for this repo -> its stat-derived labels still contribute (complementary coverage).
+        { login: "dev", repoFullName: "owner/uncached", pullRequests: 1, mergedPullRequests: 0, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["uncached-label"] },
+      ],
+    );
+    expect(profile.registeredRepoActivity.dominantLabels).toContain("real-label");
+    expect(profile.registeredRepoActivity.dominantLabels).not.toContain("stat-only-label");
+    expect(profile.registeredRepoActivity.dominantLabels).toContain("uncached-label");
+  });
+
   it("separates cached outcome history, maintainer role sources, and contributor detections", () => {
     const directRepo = repo("owner/direct");
     const ownerRepo = repo("owner/project");

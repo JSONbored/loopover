@@ -1050,11 +1050,16 @@ export function buildContributorProfile(
       ...matchingStats.filter((stat) => stat.pullRequests > 0 || stat.issues > 0).map((stat) => stat.repoFullName),
     ]),
   ].sort();
+  // `matchingStats` and the cached authored records are overlapping views of the same activity, so
+  // only fold in stat-derived dominant labels for repos that have no cached authored records --
+  // otherwise a shared repo's labels are double-counted (consistent with how reposTouched dedups and
+  // unlinkedOpenPullRequests maxes the same two sources).
+  const cachedLabelRepos = new Set([...authoredPullRequests, ...authoredIssues].map((record) => record.repoFullName.toLowerCase()));
   const dominantLabels = topItems(
     [
       ...authoredPullRequests.flatMap((record) => record.labels),
       ...authoredIssues.flatMap((record) => record.labels),
-      ...matchingStats.flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !cachedLabelRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -1103,11 +1108,14 @@ function buildGittensorContributorProfile(
     .filter((repo) => repo.pullRequests + repo.openIssues + repo.closedIssues > 0)
     .map((repo) => repo.repoFullName)
     .sort();
+  // The snapshot labels already cover snapshot.repositories; only fold in stat-derived dominant labels
+  // for repos the snapshot does not cover, so shared repos are not double-counted.
+  const snapshotRepos = new Set(snapshot.repositories.map((repo) => repo.repoFullName.toLowerCase()));
   const dominantLabels = topItems(
     [
       ...snapshot.pullRequests.flatMap((pr) => (pr.label ? [pr.label] : [])),
       ...snapshot.issueLabels,
-      ...matchingStats.flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !snapshotRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );

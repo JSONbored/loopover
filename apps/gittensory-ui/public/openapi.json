@@ -2836,6 +2836,13 @@
               "nullable": true
             }
           },
+          "queueTrends": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "nullable": true
+            }
+          },
           "collisions": {
             "type": "object",
             "additionalProperties": {

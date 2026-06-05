@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { __securityInternals } from "../../src/auth/security";
+import { __securityInternals, timingSafeEqual } from "../../src/auth/security";
 
 describe("security internals", () => {
   it("serializes cookies with optional HttpOnly and Secure flags", () => {
@@ -24,5 +24,10 @@ describe("security internals", () => {
     expect(strict).toContain("HttpOnly");
     expect(strict).toContain("Secure");
     expect(strict).toContain("SameSite=Strict");
+  });
+
+  it("rejects timing-safe comparisons when either value is missing", async () => {
+    await expect(timingSafeEqual(undefined, "expected")).resolves.toBe(false);
+    await expect(timingSafeEqual("actual", undefined)).resolves.toBe(false);
   });
 });

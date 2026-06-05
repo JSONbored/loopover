@@ -130,8 +130,8 @@ describe("GitHub mention commands", () => {
         summary: "done",
       },
     });
-    expect(body).toContain("<!-- gittensory-agent-command -->");
-    expect(body).toContain("Scope: this repository#12");
+    expect(body).toContain("<!-- gittensory-pr-panel:v1 -->");
+    expect(body).toContain("| Scope | this repository#12 |");
     expect(body).toContain("**Findings**");
     expect(body).toContain("**Evidence**");
     expect(body).toContain("**Next actions**");
@@ -184,7 +184,7 @@ describe("GitHub mention commands", () => {
       actorKind: "author",
       bundle,
     });
-    expect(preflight).toContain("### Gittensory preflight");
+    expect(preflight).toContain("**Gittensory preflight**");
     expect(preflight).toContain("**Preflight summary**");
     expect(preflight).toContain("Run local branch preflight first.");
 
@@ -196,7 +196,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
       bundle: blockerBundle(),
     });
-    expect(blockers).toContain("### Gittensory readiness blockers");
+    expect(blockers).toContain("**Gittensory readiness blockers**");
     expect(blockers).toContain("**Readiness blockers**");
     expect(blockers).toContain("Resolve queue pressure before opening more work.");
     expect(blockers).toContain("Open pull request queue pressure");
@@ -210,7 +210,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
       bundle: duplicateBundle(),
     });
-    expect(duplicateCheck).toContain("### Gittensory duplicate & WIP check");
+    expect(duplicateCheck).toContain("**Gittensory duplicate & WIP check**");
     expect(duplicateCheck).toContain("**Duplicate & WIP caution**");
     expect(duplicateCheck).toContain("possible overlap with existing work");
     expect(duplicateCheck).not.toMatch(/\blikely_duplicate\b/i);
@@ -223,7 +223,7 @@ describe("GitHub mention commands", () => {
       actorKind: "author",
       bundle,
     });
-    expect(nextAction).toContain("### Gittensory next step");
+    expect(nextAction).toContain("**Gittensory next step**");
     expect(nextAction).toContain("**Recommended next step**");
     expect(nextAction).toContain("After tests pass.");
 
@@ -235,7 +235,7 @@ describe("GitHub mention commands", () => {
       actorKind: "author",
       bundle: askCitedBundle(),
     });
-    expect(ask).toContain("### Gittensory contribution context Q&A");
+    expect(ask).toContain("**Gittensory contribution context Q&A**");
     expect(ask).toContain("**Contribution context Q&A**");
     expect(ask).toContain("Question: what should I improve for contribution quality?");
     const askFindings = publicCardFindings(ask);
@@ -373,7 +373,7 @@ describe("GitHub mention commands", () => {
       officialMiner: minerSnapshot(),
     });
     expect(minerContext).toContain("confirmed by the official Gittensor API");
-    expect(minerContext).toContain("Scope: owner/repo#22");
+    expect(minerContext).toContain("| Scope | owner/repo#22 |");
 
     const refresh = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory blockers")!,
@@ -798,7 +798,7 @@ describe("GitHub mention commands", () => {
         summary: "done",
       },
     });
-    expect(withPrFallbackScope).toContain("Scope: owner/from-pr#5");
+    expect(withPrFallbackScope).toContain("| Scope | owner/from-pr#5 |");
     expect(withPrFallbackScope).toContain("After tests pass.");
 
   });
@@ -1082,7 +1082,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
       bundle: preflightBundle(),
     });
-    expect(reviewability).toContain("### Gittensory PR readiness");
+    expect(reviewability).toContain("**Gittensory PR readiness**");
     expect(reviewability).toContain("Command: `@gittensory reviewability`");
     expect(reviewability).toContain("**PR readiness**");
     expect(reviewability).toContain("Run local branch preflight first.");
@@ -1096,7 +1096,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
       bundle: repoFitBundle(),
     });
-    expect(repoFit).toContain("### Gittensory repository fit");
+    expect(repoFit).toContain("**Gittensory repository fit**");
     expect(repoFit).toContain("**Repository fit**");
     expect(repoFit).toContain("Target: `owner/repo`");
     expect(repoFit).toContain("Use local branch preflight before posting.");
@@ -1110,7 +1110,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
       bundle: packetBundle(),
     });
-    expect(packet).toContain("### Gittensory public packet");
+    expect(packet).toContain("**Gittensory public packet**");
     expect(packet).toContain("**Public packet**");
     expect(packet).toContain("public-safe PR packet prepared from metadata only.");
     expect(packet).toContain("Use this as public PR-thread guidance only");
@@ -1316,7 +1316,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
       maintainerDigest: digest,
     });
-    expect(queueSummary).toContain("### Gittensory maintainer queue summary");
+    expect(queueSummary).toContain("**Gittensory maintainer queue summary**");
     expect(queueSummary).toContain("**Queue summary**");
     expect(queueSummary).toContain("Authenticated control panel: https://gittensory.test/app?view=maintainer&repo=owner%2Frepo");
     expect(queueSummary).toContain("Feedback on this response is tracked separately");

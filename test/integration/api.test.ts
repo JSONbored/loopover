@@ -498,7 +498,8 @@ describe("api routes", () => {
     };
     expect(minerPreviewBody.decision.skipped).toBe(false);
     expect(minerPreviewBody.decision.willComment).toBe(true);
-    expect(minerPreviewBody.previewComment).toContain("Gittensory contribution context");
+    expect(minerPreviewBody.previewComment).toContain("<!-- gittensory-pr-panel:v1 -->");
+    expect(minerPreviewBody.previewComment).toContain("Confirmed Gittensor contributor");
     expect(minerPreviewBody.previewComment).not.toMatch(/wallet|hotkey|trust score|scoreability|payout/i);
     expect(minerPreviewBody.installPreview).toMatchObject({
       status: "ready",
@@ -1338,7 +1339,7 @@ describe("api routes", () => {
       missingPermissions: ["checks"],
       missingEvents: [],
       permissions: { metadata: "read", pull_requests: "read", issues: "write" },
-      events: ["issues", "issue_comment", "pull_request", "repository"],
+      events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:01:00.000Z",
     });
     const repairWithChecks = await app.request("/v1/installations/777/repair", { headers: apiHeaders(env) }, env);
@@ -1357,7 +1358,7 @@ describe("api routes", () => {
           account: { login: "JSONbored", id: 1, type: "User" },
           repository_selection: "selected",
           permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
-          events: ["issues", "issue_comment", "pull_request", "repository"],
+          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
         });
       }
       return new Response("not found", { status: 404 });
@@ -1369,6 +1370,32 @@ describe("api routes", () => {
       installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
       requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
     });
+  });
+
+  it("counts cached open PRs across all in-scope repos, not just the first 12 fetched", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    // Two registered repos carry cached open-PR counts in sync state but have NO open PR records.
+    // The old metric summed PRs fetched per repo (so these contributed 0); the global count reports 8.
+    for (const [name, openPrs] of [["alpha", 5] as const, ["beta", 3] as const]) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `entrius/${name}`, private: false, owner: { login: "entrius" }, default_branch: "main" });
+      await upsertRepoSyncState(env, {
+        repoFullName: `entrius/${name}`,
+        status: "success",
+        sourceKind: "github",
+        primaryLanguage: "TypeScript",
+        defaultBranch: "main",
+        isPrivate: false,
+        openIssuesCount: 0,
+        openPullRequestsCount: openPrs,
+        recentMergedPullRequestsCount: 0,
+        warnings: [],
+      });
+    }
+    const res = await app.request("/v1/app/maintainer-dashboard", { headers: apiHeaders(env) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
+    expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(8);
   });
 
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
@@ -2018,10 +2045,10 @@ describe("api routes", () => {
         endpoint: "GitHub issue comment",
         decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false },
         sanitizer: { passed: true, forbiddenTerms: [] },
-        body: expect.stringContaining("### Gittensory preflight"),
+        body: expect.stringContaining("**Gittensory preflight**"),
       },
     });
-    expect(commandResponsePreviewBody.preview.body).toContain("Scope: entrius/allways-ui#12");
+    expect(commandResponsePreviewBody.preview.body).toContain("| Scope | entrius/allways-ui#12 |");
     expect(commandResponsePreviewBody.preview.body).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|scoreability|public score estimate/i);
 
     const nonMinerPreview = await app.request(
@@ -2124,7 +2151,7 @@ describe("api routes", () => {
     );
     expect(helpPreview.status).toBe(200);
     await expect(helpPreview.json()).resolves.toMatchObject({
-      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("### Gittensory command help") },
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("**Gittensory command help**") },
     });
 
     const maintainerCommandPreview = await app.request(
@@ -2143,7 +2170,7 @@ describe("api routes", () => {
     );
     expect(maintainerCommandPreview.status).toBe(200);
     await expect(maintainerCommandPreview.json()).resolves.toMatchObject({
-      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("### Gittensory maintainer queue summary") },
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("**Gittensory maintainer queue summary**") },
     });
 
     const maintainerMinerContextPreview = await app.request(
@@ -3559,7 +3586,7 @@ describe("api routes", () => {
       missingPermissions: ["issues"],
       missingEvents: [],
       permissions: { metadata: "read", pull_requests: "read" },
-      events: ["issues", "issue_comment", "pull_request", "repository"],
+      events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-23T00:00:00.000Z",
     });
     await upsertRepoSyncSegment(env, {
@@ -4156,6 +4183,19 @@ describe("api routes", () => {
       ],
       [
         "gittensory_prepare_pr_packet",
+        {
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          branchName: "fix-cache-reconnect",
+          body: "Fixes #7",
+          changedFiles: [
+            { path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" },
+            { path: "test/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+          ],
+        },
+      ],
+      [
+        "gittensory_draft_pr_body",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5476,7 +5516,7 @@ async function seedSignalData(env: Env): Promise<void> {
     missingPermissions: [],
     missingEvents: [],
     permissions: { metadata: "read", pull_requests: "read", issues: "write" },
-    events: ["issues", "issue_comment", "pull_request", "repository"],
+    events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
     checkedAt: freshAt,
   });
   await upsertIssueFromGitHub(env, "entrius/allways-ui", {

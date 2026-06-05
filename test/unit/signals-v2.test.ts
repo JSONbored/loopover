@@ -1559,9 +1559,11 @@ describe("v2 signal builders", () => {
       settings: {
         repoFullName: repo.fullName,
         commentMode: "detected_contributors_only",
+        publicAudienceMode: "oss_maintainer",
         publicSignalLevel: "standard",
         checkRunMode: "off",
         checkRunDetailLevel: "minimal",
+        gateCheckMode: "off",
         autoLabelEnabled: true,
         gittensorLabel: "gittensor",
         createMissingLabel: true,
@@ -1573,7 +1575,7 @@ describe("v2 signal builders", () => {
       },
     });
     expect(comment).toContain("Author: `unknown`");
-    expect(comment).toContain("No confirmed Gittensor miner activity detected.");
+    expect(comment).toContain("Public profile only");
     expect(comment).not.toMatch(/wallet|raw trust score|ranking/i);
   });
 });

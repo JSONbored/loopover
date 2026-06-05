@@ -15,9 +15,11 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
   return {
     repoFullName: "owner/repo",
     commentMode: "detected_contributors_only",
+    publicAudienceMode: "oss_maintainer",
     publicSignalLevel: "standard",
     checkRunMode: "enabled",
     checkRunDetailLevel: "standard",
+    gateCheckMode: "off",
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
     createMissingLabel: true,

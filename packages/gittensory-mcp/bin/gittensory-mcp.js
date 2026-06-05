@@ -23,6 +23,25 @@ const decisionPackCacheMaxBytes = 512 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const cliArgs = process.argv.slice(2);
 const defaultProfileName = "default";
+// Single source of truth for shell-completion: top-level command -> its subcommands (if any).
+const CLI_COMMAND_SPEC = {
+  login: [],
+  logout: [],
+  whoami: [],
+  status: [],
+  changelog: [],
+  version: [],
+  doctor: [],
+  "init-client": [],
+  "decision-pack": [],
+  "repo-decision": [],
+  "analyze-branch": [],
+  preflight: [],
+  profile: ["list", "create", "switch", "remove"],
+  cache: ["status", "clear"],
+  agent: ["plan", "status", "explain", "packet"],
+};
+const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
@@ -1039,6 +1058,7 @@ async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
   if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
+  if (command === "completion") return completionCommand(args.slice(1));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   const options = parseOptions(args.slice(1));
@@ -1282,10 +1302,90 @@ function printVersion(options) {
   process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
 }
 
+function completionCommand(args) {
+  const shell = args[0] && !args[0].startsWith("--") ? args[0] : undefined;
+  const options = parseOptions(args.filter((arg) => arg.startsWith("--")));
+  if (!shell) throw new Error(`Usage: gittensory-mcp completion <${COMPLETION_SHELLS.join("|")}> [--json]`);
+  if (!COMPLETION_SHELLS.includes(shell)) throw new Error(`Unsupported shell: ${shell}. Supported shells: ${COMPLETION_SHELLS.join(", ")}.`);
+  const script = buildCompletionScript(shell);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify({ shell, script }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${script}\n`);
+}
+
+function buildCompletionScript(shell) {
+  const topLevel = [...Object.keys(CLI_COMMAND_SPEC), "help"];
+  const withSubcommands = Object.entries(CLI_COMMAND_SPEC).filter(([, subcommands]) => subcommands.length > 0);
+  if (shell === "bash") return buildBashCompletion(topLevel, withSubcommands);
+  if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
+  return buildFishCompletion(topLevel, withSubcommands);
+}
+
+function buildBashCompletion(topLevel, withSubcommands) {
+  const subcommandCases = withSubcommands
+    .map(([command, subcommands]) => `      ${command}) COMPREPLY=( $(compgen -W "${subcommands.join(" ")}" -- "$cur") ); return 0;;`)
+    .join("\n");
+  return `# gittensory-mcp bash completion. Add to ~/.bashrc:
+#   source <(gittensory-mcp completion bash)
+_gittensory_mcp() {
+  local cur prev cword
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  cword=\$COMP_CWORD
+  local commands="${topLevel.join(" ")}"
+  if [ "\$cword" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "\$commands --help --version" -- "$cur") )
+    return 0
+  fi
+  case "\${COMP_WORDS[1]}" in
+${subcommandCases}
+      *) COMPREPLY=( $(compgen -W "--json --login --repo --profile --base --cwd" -- "$cur") ); return 0;;
+  esac
+}
+complete -F _gittensory_mcp gittensory-mcp`;
+}
+
+function buildZshCompletion(topLevel, withSubcommands) {
+  const subcommandCases = withSubcommands
+    .map(([command, subcommands]) => `      ${command}) _values 'subcommand' ${subcommands.join(" ")} ;;`)
+    .join("\n");
+  return `#compdef gittensory-mcp
+# gittensory-mcp zsh completion. Add to your fpath, or:
+#   source <(gittensory-mcp completion zsh)
+_gittensory_mcp() {
+  local -a commands
+  commands=(${topLevel.join(" ")})
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+  case $words[2] in
+${subcommandCases}
+  esac
+}
+_gittensory_mcp "$@"`;
+}
+
+function buildFishCompletion(topLevel, withSubcommands) {
+  const topLevelLines = topLevel
+    .map((command) => `complete -c gittensory-mcp -n __fish_use_subcommand -a ${command} -d 'gittensory-mcp command'`)
+    .join("\n");
+  const subcommandLines = withSubcommands
+    .map(([command, subcommands]) => `complete -c gittensory-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
+    .join("\n");
+  return `# gittensory-mcp fish completion. Save to:
+#   ~/.config/fish/completions/gittensory-mcp.fish
+${topLevelLines}
+${subcommandLines}`;
+}
+
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
   gittensory-mcp version [--json]
+  gittensory-mcp completion bash|zsh|fish [--json]
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]

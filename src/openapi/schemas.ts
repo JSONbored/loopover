@@ -537,9 +537,11 @@ export const RepositorySettingsSchema = z
   .object({
     repoFullName: z.string(),
     commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+    publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
     publicSignalLevel: z.enum(["minimal", "standard"]),
     checkRunMode: z.enum(["off", "enabled"]),
     checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
+    gateCheckMode: z.enum(["off", "enabled"]),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string(),
     createMissingLabel: z.boolean(),
@@ -564,9 +566,11 @@ export const RepoSettingsPreviewSchema = z
     settings: z.object({
       publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
       commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+      publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
       publicSignalLevel: z.enum(["minimal", "standard"]),
       checkRunMode: z.enum(["off", "enabled"]),
       checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
+      gateCheckMode: z.enum(["off", "enabled"]),
       autoLabelEnabled: z.boolean(),
       gittensorLabel: z.string(),
       createMissingLabel: z.boolean(),
@@ -918,7 +922,9 @@ export const InstallationRepairSchema = z
         settings: z.object({
           publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
           commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+          publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
           checkRunMode: z.enum(["off", "enabled"]),
+          gateCheckMode: z.enum(["off", "enabled"]),
           autoLabelEnabled: z.boolean(),
         }),
       }),
@@ -929,7 +935,7 @@ export const InstallationRepairSchema = z
     optionalEvents: z.array(z.string()),
     modeImpacts: z.array(
       z.object({
-        mode: z.enum(["comment", "label", "check_run"]),
+        mode: z.enum(["comment", "label", "check_run", "gate_check"]),
         enabled: z.boolean(),
         affectedRepoCount: z.number(),
         requiredPermissions: z.array(z.object({ permission: z.string(), requiredAccess: z.string(), missing: z.boolean(), optional: z.boolean() })),
@@ -1794,7 +1800,9 @@ export const RegistrationReadinessSchema = z
       installed: z.boolean(),
       publicSurface: z.enum(["off", "comment_and_label", "comment_only", "label_only"]),
       commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+      publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
       checkRunMode: z.enum(["off", "enabled"]),
+      gateCheckMode: z.enum(["off", "enabled"]),
       quietByDefault: z.boolean(),
       behavior: z.string(),
       warnings: z.array(z.string()),

@@ -645,11 +645,11 @@ export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
   checks: "write",
 };
 
-export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
+export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"] as const;
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target"] as const;
 
 type InstallationModeImpact = {
-  mode: "comment" | "label" | "check_run";
+  mode: "comment" | "label" | "check_run" | "gate_check";
   enabled: boolean;
   affectedRepoCount: number;
   requiredPermissions: Array<{ permission: string; requiredAccess: string; missing: boolean; optional: boolean }>;
@@ -708,13 +708,14 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
   const commentRepoCount = installedSettings.filter(usesCommentMode).length;
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
+  const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
   const missingPermissions = new Set(health.missingPermissions);
   const missingEvents = new Set(health.missingEvents);
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
-    ...(checkRunRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    ...(checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
   };
-  const optionalPermissions = checkRunRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
+  const optionalPermissions = checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
   const modeImpacts: InstallationModeImpact[] = [
     buildPermissionModeImpact({
       mode: "comment",
@@ -746,6 +747,19 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
         checkRunRepoCount > 0
           ? "Check run mode is enabled for at least one installed repo, so Checks: write is required."
           : "Checks: write is optional unless check run mode is enabled for an installed repo.",
+    }),
+    buildPermissionModeImpact({
+      mode: "gate_check",
+      enabled: gateCheckRepoCount > 0,
+      affectedRepoCount: gateCheckRepoCount,
+      permission: "checks",
+      requiredAccess: "write",
+      missing: gateCheckRepoCount > 0 && missingPermissions.has("checks"),
+      optional: gateCheckRepoCount === 0,
+      summary:
+        gateCheckRepoCount > 0
+          ? "Gate check mode is enabled for at least one installed repo, so Checks: write is required."
+          : "Checks: write is optional unless gate check mode is enabled for an installed repo.",
     }),
   ];
   const eventDiagnostics: InstallationEventDiagnostic[] = REQUIRED_INSTALLATION_EVENTS.map((event) => ({
@@ -820,7 +834,9 @@ function summarizeRepairSettings(settings: RepositorySettings) {
   return {
     publicSurface: settings.publicSurface,
     commentMode: settings.commentMode,
+    publicAudienceMode: settings.publicAudienceMode,
     checkRunMode: settings.checkRunMode,
+    gateCheckMode: settings.gateCheckMode,
     autoLabelEnabled: settings.autoLabelEnabled,
   };
 }

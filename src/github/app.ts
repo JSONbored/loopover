@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/core";
 import type { Advisory, GitHubWebhookPayload } from "../types";
 import { signRs256Jwt } from "../utils/crypto";
-import { formatCheckRunOutput } from "../rules/advisory";
+import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type GateCheckConclusion } from "../rules/advisory";
 
 type CheckRunResponse = {
   id: number;
@@ -19,6 +19,11 @@ type CheckRunListResponse = {
 export type CheckRunOutcome =
   | { kind: "published"; id: number; html_url?: string }
   | { kind: "permission_missing"; warning: string };
+
+export const GITTENSORY_CONTEXT_CHECK_NAME = "Gittensory Context";
+export const GITTENSORY_GATE_CHECK_NAME = "Gittensory Gate";
+
+type GitHubCheckConclusion = Advisory["conclusion"] | GateCheckConclusion | "skipped";
 
 export async function createInstallationToken(env: Env, installationId: number): Promise<string> {
   const jwt = await createAppJwt(env);
@@ -71,20 +76,47 @@ export async function createOrUpdateCheckRun(
   advisory: Advisory,
   detailLevel: "minimal" | "standard" | "deep" = "minimal",
 ): Promise<CheckRunOutcome | null> {
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_CONTEXT_CHECK_NAME,
+    conclusion: advisory.conclusion,
+    output: formatCheckRunOutput(advisory, detailLevel),
+  });
+}
+
+export async function createOrUpdateGateCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+): Promise<CheckRunOutcome | null> {
+  const gate = evaluateGateCheck(advisory);
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_GATE_CHECK_NAME,
+    conclusion: gate.conclusion,
+    output: formatGateCheckOutput(gate),
+  });
+}
+
+async function createOrUpdateNamedCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+  check: { name: string; conclusion: GitHubCheckConclusion; output: { title: string; summary: string; text: string } },
+): Promise<CheckRunOutcome | null> {
   if (!advisory.headSha) return null;
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   const token = await createInstallationToken(env, installationId);
   const octokit = new Octokit({ auth: token });
-  const output = formatCheckRunOutput(advisory, detailLevel);
 
   try {
     const existing = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
       owner,
       repo,
       ref: advisory.headSha,
-      check_name: "Gittensory",
+      check_name: check.name,
       filter: "latest",
       per_page: 1,
     });
@@ -94,10 +126,10 @@ export async function createOrUpdateCheckRun(
         owner,
         repo,
         check_run_id: existingCheckRun.id,
-        name: "Gittensory",
+        name: check.name,
         status: "completed",
-        conclusion: advisory.conclusion,
-        output,
+        conclusion: check.conclusion,
+        output: check.output,
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -106,11 +138,11 @@ export async function createOrUpdateCheckRun(
     const response = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
       owner,
       repo,
-      name: "Gittensory",
+      name: check.name,
       head_sha: advisory.headSha,
       status: "completed",
-      conclusion: advisory.conclusion,
-      output,
+      conclusion: check.conclusion,
+      output: check.output,
     });
     const data = response.data as CheckRunResponse;
     return publishedOutcome(data);
@@ -132,6 +164,7 @@ function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {
 }
 
 function isCheckRunPermissionError(error: unknown): boolean {
+  /* v8 ignore next -- Octokit wraps thrown fetch values in HttpError objects before this helper sees them. */
   if (typeof error !== "object" || error === null) return false;
   const e = error as { status?: number; message?: string };
   if (e.status === 403) return true;

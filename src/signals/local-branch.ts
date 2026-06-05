@@ -250,6 +250,7 @@ export function buildLocalBranchAnalysis(args: {
     outcomeHistory: args.outcomeHistory,
     repoOutcome,
     observedPullRequestScenarios,
+    duplicateRiskCount: preflight.collisions.filter((cluster) => cluster.risk === "high").length,
   });
   const scorePreview = buildScorePreview({
     input: scoreInput,
@@ -392,6 +393,7 @@ function buildLocalScoreInput(args: {
   outcomeHistory: ContributorOutcomeHistory;
   repoOutcome?: ContributorOutcomeHistory["repoOutcomes"][number] | undefined;
   observedPullRequestScenarios: ObservedPullRequestScenarios;
+  duplicateRiskCount: number;
 }): ScorePreviewInput {
   const scorer = args.input.localScorer;
   const testLineCount = args.changedFiles.filter((file) => isTestFile(file.path)).reduce((sum, file) => sum + nonNegative(file.additions) + nonNegative(file.deletions), 0);
@@ -424,6 +426,7 @@ function buildLocalScoreInput(args: {
     observedDraftPrCount: args.observedPullRequestScenarios.draft,
     observedBlockedPrCount: args.observedPullRequestScenarios.blocked,
     observedMaintainerPrCount: args.observedPullRequestScenarios.maintainerLane,
+    duplicateRiskCount: args.duplicateRiskCount,
     expectedOpenPrCountAfterMerge: args.input.expectedOpenPrCountAfterMerge,
     projectedCredibility: args.input.projectedCredibility,
     scenarioNotes: args.input.scenarioNotes,

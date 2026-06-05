@@ -472,6 +472,24 @@ describe("product usage events", () => {
     await expect(getProductUsageRollupStatus(env, { nowIso: "2026-05-31T00:40:00.000Z" })).resolves.toMatchObject({ status: "ready", warnings: [] });
   });
 
+  it("retains low-frequency bounded events in byEvent on a high-diversity day (no top-20 truncation)", async () => {
+    const env = createTestEnv();
+    const day = "2026-05-30";
+    // 20 distinct filler events, each recorded twice (count 2), occupy the highest-frequency slots.
+    for (let i = 0; i < 20; i++) {
+      const eventName = `filler_event_${String(i).padStart(2, "0")}`;
+      await recordProductUsageEvent(env, { surface: "control_panel", eventName, actor: "user", outcome: "success", occurredAt: `${day}T00:00:00.000Z` });
+      await recordProductUsageEvent(env, { surface: "control_panel", eventName, actor: "user", outcome: "success", occurredAt: `${day}T01:00:00.000Z` });
+    }
+    // A low-frequency flagship event the weekly report looks up by exact name (count 1, ranks 21st).
+    await recordProductUsageEvent(env, { surface: "control_panel", eventName: "agent_pr_packet_completed", actor: "user", outcome: "success", occurredAt: `${day}T05:00:00.000Z` });
+
+    const run = await rollupProductUsageDaily(env, { day, nowIso: "2026-05-31T00:10:00.000Z" });
+    // Without the fix, byEvent was frequency-truncated to the top 20 and dropped this event.
+    expect(run.rollups[0]?.byEvent).toEqual(expect.arrayContaining([{ eventName: "agent_pr_packet_completed", count: 1 }]));
+    expect((run.rollups[0]?.byEvent ?? []).length).toBe(21);
+  });
+
   it("builds empty role and retention rollups for days without product usage", async () => {
     const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
     const result = await rollupProductUsageDaily(env, { day: "2026-06-01", nowIso: "2026-06-02T00:00:00.000Z" });

@@ -633,6 +633,12 @@ export const burdenForecasts = sqliteTable("burden_forecasts", {
   generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
 });
 
+export const repoQueueTrendSnapshots = sqliteTable("repo_queue_trend_snapshots", {
+  repoFullName: text("repo_full_name").primaryKey(),
+  payloadJson: text("payload_json").notNull().default("{}"),
+  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+
 export const registryDriftEvents = sqliteTable("registry_drift_events", {
   id: text("id").primaryKey(),
   repoFullName: text("repo_full_name").notNull(),

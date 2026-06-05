@@ -1748,6 +1748,7 @@ export const RepoIntelligenceSchema = z
     repo: RepositorySchema.nullable(),
     lane: LaneAdviceSchema,
     queueHealth: z.record(z.string(), z.unknown()).nullable().optional(),
+    queueTrends: z.record(z.string(), z.unknown()).nullable().optional(),
     collisions: z.record(z.string(), z.unknown()).optional(),
     configQuality: z.record(z.string(), z.unknown()).nullable().optional(),
     labelAudit: z.record(z.string(), z.unknown()).nullable().optional(),

@@ -7647,20 +7647,6 @@
             "type": "string",
             "nullable": true
           },
-          "publicAudienceMode": {
-            "type": "string",
-            "enum": [
-              "oss_maintainer",
-              "gittensor_only"
-            ]
-          },
-          "gateCheckMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "enabled"
-            ]
-          },
           "linkedIssueGateMode": {
             "type": "string",
             "enum": [
@@ -8231,20 +8217,6 @@
                 "required": [
                   "defaultAllowed",
                   "commandOverrides"
-                ]
-              },
-              "publicAudienceMode": {
-                "type": "string",
-                "enum": [
-                  "oss_maintainer",
-                  "gittensor_only"
-                ]
-              },
-              "gateCheckMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "enabled"
                 ]
               },
               "linkedIssueGateMode": {

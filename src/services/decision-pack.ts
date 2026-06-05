@@ -23,7 +23,7 @@ import {
 } from "../db/repositories";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
-import { getOrCreateScoringModelSnapshot } from "../scoring/model";
+import { DEFAULT_SCORING_CONSTANTS, getOrCreateScoringModelSnapshot } from "../scoring/model";
 import {
   buildContributorFit,
   buildContributorOutcomeHistory,
@@ -70,6 +70,12 @@ import { nowIso } from "../utils/json";
 
 export const CONTRIBUTOR_DECISION_PACK_SIGNAL = "contributor-decision-pack";
 export const DECISION_PACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_OSS_EMISSION_SHARE = DEFAULT_SCORING_CONSTANTS.OSS_EMISSION_SHARE ?? 0.9;
+
+function resolveOssEmissionShare(constants: Record<string, number> | undefined): number {
+  const value = constants?.OSS_EMISSION_SHARE;
+  return typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_OSS_EMISSION_SHARE;
+}
 export const DECISION_PACK_REBUILD_DEBOUNCE_MS = 15 * 1000;
 const pendingDecisionPackRebuilds = new Map<string, Promise<boolean>>();
 
@@ -469,6 +475,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     totals,
     opportunities: fit.opportunities,
     scoringModelSnapshotId: scoringSnapshot.id,
+    ossEmissionShare: resolveOssEmissionShare(scoringSnapshot.constants),
     contributorPullRequests,
     contributorIssues,
     repoStats,
@@ -546,6 +553,7 @@ function buildContributorDecisionPack(args: {
   focusManifests?: Map<string, FocusManifest> | undefined;
   repoOutcomePatternsByRepo?: Map<string, RepoOutcomePatterns> | undefined;
   recommendationOutcomeFeedback?: AgentRecommendationOutcomeSummary | undefined;
+  ossEmissionShare?: number | undefined;
 }): ContributorDecisionPack {
   const recommendationOutcomeFeedback = args.recommendationOutcomeFeedback ?? emptyRecommendationOutcomeFeedback(args.login);
   const registeredRepositories = args.repositories.filter((repo) => repo.isRegistered);
@@ -584,6 +592,7 @@ function buildContributorDecisionPack(args: {
         focusManifest: args.focusManifests?.get(key),
         repoOutcomePatterns: args.repoOutcomePatternsByRepo?.get(key),
         recommendationOutcomeFeedback: recommendationFeedbackByRepo.get(key),
+        ossEmissionShare: args.ossEmissionShare,
       });
     })
     .sort((left, right) => right.priorityScore - left.priorityScore || left.repoFullName.localeCompare(right.repoFullName));
@@ -665,9 +674,12 @@ function buildRepoDecision(args: {
   focusManifest?: FocusManifest | undefined;
   repoOutcomePatterns?: RepoOutcomePatterns | undefined;
   recommendationOutcomeFeedback?: AgentRecommendationOutcomeRepoSummary | undefined;
+  ossEmissionShare?: number | undefined;
 }): RepoDecision {
   const lane = buildLaneAdvice(args.repo, args.repo.fullName);
   const config = args.repo.registryConfig;
+  const ossEmissionShare =
+    typeof args.ossEmissionShare === "number" && Number.isFinite(args.ossEmissionShare) ? args.ossEmissionShare : DEFAULT_OSS_EMISSION_SHARE;
   const openPullRequests = args.totals?.openPullRequestsTotal ?? args.syncState?.openPullRequestsCount ?? 0;
   const openIssues = args.totals?.openIssuesTotal ?? args.syncState?.openIssuesCount ?? 0;
   const queue = {
@@ -676,10 +688,14 @@ function buildRepoDecision(args: {
     mergedPullRequests: args.totals?.mergedPullRequestsTotal ?? args.syncState?.recentMergedPullRequestsCount ?? 0,
     closedUnmergedPullRequests: args.totals?.closedUnmergedPullRequestsTotal ?? 0,
   };
+  const baseEmissionShare = config?.emissionShare ?? 0;
+  // Lane shares are a split of the OSS *mining* pool (emissionShare * OSS_EMISSION_SHARE), matching
+  // preview.ts laneMath (directPrSlice/issueDiscoverySlice) and reward-risk.ts. The raw emissionShare
+  // field stays raw (it mirrors laneMath.repoEmissionShare).
   const rewardUpside = {
-    emissionShare: round(config?.emissionShare ?? 0),
-    directPrShare: round((config?.emissionShare ?? 0) * (1 - (config?.issueDiscoveryShare ?? 0))),
-    issueDiscoveryShare: round((config?.emissionShare ?? 0) * (config?.issueDiscoveryShare ?? 0)),
+    emissionShare: round(baseEmissionShare),
+    directPrShare: round(baseEmissionShare * ossEmissionShare * (1 - (config?.issueDiscoveryShare ?? 0))),
+    issueDiscoveryShare: round(baseEmissionShare * ossEmissionShare * (config?.issueDiscoveryShare ?? 0)),
     maintainerCut: round(config?.maintainerCut ?? 0),
   };
   const blockers = scoreBlockersFor(args.repo.fullName, lane.lane, args.roleContext, args.outcome);

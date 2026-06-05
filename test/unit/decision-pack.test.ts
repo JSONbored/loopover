@@ -96,7 +96,7 @@ describe("decision-pack service", () => {
         outcome: undefined,
         syncState: { openPullRequestsCount: 1, openIssuesCount: 2, recentMergedPullRequestsCount: 3 } as any,
       }),
-    ).toMatchObject({ recommendation: "watch", queue: { openPullRequests: 1, openIssues: 2, mergedPullRequests: 3 }, rewardUpside: { issueDiscoveryShare: 0.02 } });
+    ).toMatchObject({ recommendation: "watch", queue: { openPullRequests: 1, openIssues: 2, mergedPullRequests: 3 }, rewardUpside: { issueDiscoveryShare: 0.018 } });
     expect(
       __decisionPackInternals.buildRepoDecision({
         repo: repo("owner/inactive", 0, 0),
@@ -109,6 +109,31 @@ describe("decision-pack service", () => {
     expect(__decisionPackInternals.severityRank("info")).toBe(1);
     expect(__decisionPackInternals.clamp(10, 0, 5)).toBe(5);
     expect(__decisionPackInternals.round(1.23456)).toBe(1.2346);
+  });
+
+  it("applies OSS_EMISSION_SHARE to rewardUpside lane shares (not the raw emission share)", () => {
+    const outsideRole = { maintainerLane: false } as any;
+    // Split repo: emissionShare 0.04, issueDiscoveryShare 0.25. Lane shares are a split of the OSS
+    // mining pool (emissionShare * 0.9), matching preview.ts laneMath / reward-risk.ts -- NOT the raw split.
+    const split = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/split", 0.04, 0.25),
+      roleContext: outsideRole,
+      outcome: undefined,
+    }).rewardUpside;
+    expect(split.emissionShare).toBe(0.04); // raw value preserved (mirrors laneMath.repoEmissionShare)
+    expect(split.directPrShare).toBeCloseTo(0.04 * 0.9 * 0.75, 10); // 0.027
+    expect(split.issueDiscoveryShare).toBeCloseTo(0.04 * 0.9 * 0.25, 10); // 0.009
+    // A single lane share can never exceed the repo's whole OSS mining pool (emissionShare * 0.9).
+    expect(split.directPrShare).toBeLessThanOrEqual(0.04 * 0.9 + 1e-9);
+
+    // An explicit snapshot-provided OSS_EMISSION_SHARE override is honored.
+    const overridden = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/override", 0.04, 0),
+      roleContext: outsideRole,
+      outcome: undefined,
+      ossEmissionShare: 0.8,
+    }).rewardUpside;
+    expect(overridden.directPrShare).toBeCloseTo(0.04 * 0.8, 10); // 0.032
   });
 
   it("feeds repo outcome patterns into repo decisions without inflating maintainer-lane evidence", () => {
@@ -1048,7 +1073,8 @@ describe("decision-pack service", () => {
         summary: "0 open issues evaluated.",
       },
     });
-    expect(emptyQualityDecision.priorityScore).toBe(40);
+    // 38, not 40: upside = issueDiscoveryShare (0.02 * OSS_EMISSION_SHARE 0.9 = 0.018) * 1000 = 18.
+    expect(emptyQualityDecision.priorityScore).toBe(38);
   });
 
   it("issues avoid_for_now reasoning with sanitized public copy", () => {

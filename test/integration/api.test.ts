@@ -1108,7 +1108,7 @@ describe("api routes", () => {
     expect(installationHealth.status).toBe(200);
     await expect(installationHealth.json()).resolves.toMatchObject({
       installationId: 123,
-      requiredPermissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
       optionalPermissions: { checks: "write" },
       permissionRemediation: expect.arrayContaining([expect.objectContaining({ permission: "issues", ok: true })]),
       repairSteps: ["No repair needed."],
@@ -1313,15 +1313,15 @@ describe("api routes", () => {
     };
     expect(repairBody).toMatchObject({
       installation: { status: "needs_attention", missingPermissions: ["pull_requests", "issues"], missingEvents: ["issue_comment"] },
-      requiredPermissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
       optionalPermissions: { checks: "write" },
       refresh: { method: "POST", path: "/v1/installations/777/repair/refresh" },
     });
     expect(repairBody.requiredPermissions).not.toHaveProperty("checks");
     expect(repairBody.modeImpacts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "pull_requests", missing: true, optional: false })] }),
-        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "pull_requests", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
         expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: false, optional: true })] }),
       ]),
     );
@@ -1368,7 +1368,7 @@ describe("api routes", () => {
     await expect(refreshed.json()).resolves.toMatchObject({
       refreshed: true,
       installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
-      requiredPermissions: { metadata: "read", pull_requests: "write", issues: "write", checks: "write" },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
     });
   });
 
@@ -2095,7 +2095,7 @@ describe("api routes", () => {
     );
     expect(permissionMapPreview.status).toBe(200);
     await expect(permissionMapPreview.json()).resolves.toMatchObject({
-      preview: { decision: { status: "missing_permission", skipReason: "missing_permission" }, missingPermissions: ["issues", "pull_requests"] },
+      preview: { decision: { status: "missing_permission", skipReason: "missing_permission" }, missingPermissions: ["issues"] },
     });
 
     const checksWarningPreview = await app.request(

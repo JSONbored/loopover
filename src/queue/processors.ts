@@ -817,6 +817,21 @@ async function maybePublishPrPublicSurface(
 ): Promise<void> {
   const author = pr.authorLogin ?? null;
   const gateEnabled = settings.gateCheckMode === "enabled" && Boolean(advisory.headSha);
+  // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
+  const prelim = decidePublicSurface({
+    settings,
+    authorLogin: author,
+    authorType: webhook.authorType ?? null,
+    authorAssociation: pr.authorAssociation ?? null,
+    minerStatus: "not_checked",
+  });
+  if (prelim.skipped) {
+    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
+    return;
+  }
+  if (!gateEnabled && prelim.actions.length === 1 && prelim.actions[0] === "none") return;
+  if (!author) return;
+
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
     const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.");
     if (gateCheckResult?.kind === "permission_missing") {
@@ -832,6 +847,34 @@ async function maybePublishPrPublicSurface(
     ).catch(() => undefined);
     return;
   }
+  const prelimHasPublicOutput = prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run");
+  let official: Awaited<ReturnType<typeof getCachedOfficialMinerDetection>> | null = null;
+  let decision = prelim;
+  if (prelimHasPublicOutput) {
+    const requireOfficialMiner = settings.publicAudienceMode === "gittensor_only";
+    official = await getCachedOfficialMinerDetection(env, author, {
+      targetKey: `${repoFullName}#${pr.number}`,
+      deliveryId: webhook.deliveryId,
+    });
+    if (requireOfficialMiner && official.status === "unavailable") {
+      await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
+      return;
+    }
+    if (requireOfficialMiner && official.status !== "confirmed") {
+      await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
+      return;
+    }
+    decision = decidePublicSurface({
+      settings,
+      authorLogin: author,
+      authorType: webhook.authorType ?? null,
+      authorAssociation: pr.authorAssociation ?? null,
+      minerStatus: official.status,
+    });
+
+    if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return;
+  }
+
   let pendingGateCheckRunId: number | undefined;
   if (gateEnabled) {
     const pendingGateResult = await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory);
@@ -881,41 +924,8 @@ async function maybePublishPrPublicSurface(
     }
   }
 
-  // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
-  const prelim = decidePublicSurface({
-    settings,
-    authorLogin: author,
-    authorType: webhook.authorType ?? null,
-    authorAssociation: pr.authorAssociation ?? null,
-    minerStatus: "not_checked",
-  });
-  if (prelim.skipped) {
-    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
-    return;
-  }
-  if (prelim.actions.length === 1 && prelim.actions[0] === "none") return;
-  if (!author) return;
-
-  const requireOfficialMiner = settings.publicAudienceMode === "gittensor_only";
-  const official = await getCachedOfficialMinerDetection(env, author, {
-    targetKey: `${repoFullName}#${pr.number}`,
-    deliveryId: webhook.deliveryId,
-  });
-  if (requireOfficialMiner && official.status === "unavailable") {
-    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
-    return;
-  }
-  if (requireOfficialMiner && official.status !== "confirmed") {
-    await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
-    return;
-  }
-  const decision = decidePublicSurface({
-    settings,
-    authorLogin: author,
-    authorType: webhook.authorType ?? null,
-    authorAssociation: pr.authorAssociation ?? null,
-    minerStatus: official.status,
-  });
+  if (!prelimHasPublicOutput) return;
+  if (!official) return;
 
   const publishCachedContributorActivity = official.status === "confirmed";
   const [contributorPullRequests, contributorIssues, github, cachedRepoStats] = await Promise.all([

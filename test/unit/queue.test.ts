@@ -1338,7 +1338,17 @@ describe("queue processors", () => {
       autoLabelEnabled: false,
       checkRunMode: "off",
     });
-    const calls = { fetch: 0 };
+    const calls = { fetch: 0, repoWideReads: 0 };
+    const originalDb = env.DB;
+    env.DB = new Proxy(originalDb, {
+      get(target, prop, receiver) {
+        if (prop !== "prepare") return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          if (/from\s+["`]?issues["`]?/i.test(sql) || /from\s+["`]?bounties["`]?/i.test(sql)) calls.repoWideReads += 1;
+          return target.prepare(sql);
+        };
+      },
+    }) as D1Database;
     vi.stubGlobal("fetch", async () => {
       calls.fetch += 1;
       return new Response("unexpected fetch", { status: 500 });
@@ -1356,7 +1366,7 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls.fetch).toBe(0);
+    expect(calls).toEqual({ fetch: 0, repoWideReads: 0 });
     const skipped = await env.DB.prepare("select actor, target_key, detail, metadata_json from audit_events where event_type = ?").bind("github_app.pr_visibility_skipped").all<{
       actor: string;
       target_key: string;

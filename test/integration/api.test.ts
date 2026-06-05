@@ -7,6 +7,7 @@ import {
   upsertCheckSummary,
   upsertInstallation,
   upsertInstallationHealth,
+  upsertRepoQueueTrendSnapshot,
   upsertPullRequestFile,
   upsertPullRequestReview,
   upsertPullRequestDetailSyncState,
@@ -469,6 +470,7 @@ describe("api routes", () => {
       repoFullName: "entrius/allways-ui",
       lane: { lane: "direct_pr" },
       queueHealth: { signals: { openPullRequests: 2 } },
+      queueTrends: { status: "unavailable", windows: expect.arrayContaining([expect.objectContaining({ windowDays: 7, status: "unavailable" })]) },
       collisions: { summary: { clusterCount: expect.any(Number) } },
       configQuality: { notObservedConfiguredLabels: expect.arrayContaining(["refactor"]) },
       labelAudit: { missingConfiguredLabels: expect.arrayContaining(["refactor"]) },
@@ -1197,10 +1199,22 @@ describe("api routes", () => {
       payload: { repoFullName: "entrius/allways-ui", level: "medium", summary: "intelligence fixture" } as unknown as Record<string, JsonValue>,
       generatedAt: staleForecastGeneratedAt,
     });
+    await upsertRepoQueueTrendSnapshot(env, {
+      repoFullName: "entrius/allways-ui",
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      payload: {
+        repoFullName: "entrius/allways-ui",
+        status: "ready",
+        source: "snapshot",
+        windows: [{ windowDays: 7, status: "ready", pullRequestGrowth: 2, reviewVelocityPerDay: 1, summary: "7d fixture" }],
+        warnings: ["7d PR queue grew by 2; review load is increasing."],
+      } as unknown as Record<string, JsonValue>,
+    });
     const snapshotIntelligence = await app.request("/v1/repos/entrius/allways-ui/intelligence", { headers: apiHeaders(env) }, env);
     expect(snapshotIntelligence.status).toBe(200);
     const snapshotIntelligenceBody = (await snapshotIntelligence.json()) as Record<string, unknown> & { burdenForecast?: Record<string, unknown>; burdenForecastFreshness?: { freshness: string; source: string; ageSeconds: number } };
     expect(snapshotIntelligenceBody).toMatchObject({ source: "snapshot", queueHealth: { signals: { openPullRequests: 2 } } });
+    expect(snapshotIntelligenceBody.queueTrends).toMatchObject({ status: "ready", windows: [expect.objectContaining({ windowDays: 7, pullRequestGrowth: 2 })] });
     expect(snapshotIntelligenceBody.burdenForecast).toMatchObject({ level: "medium" });
     expect(snapshotIntelligenceBody.burdenForecastFreshness).toMatchObject({ source: "snapshot", freshness: "stale" });
     expect(snapshotIntelligenceBody.burdenForecastFreshness?.ageSeconds).toBeGreaterThanOrEqual(Math.floor((BURDEN_FORECAST_MAX_AGE_MS + 50_000) / 1000));
@@ -1355,6 +1369,32 @@ describe("api routes", () => {
       installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
       requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
     });
+  });
+
+  it("counts cached open PRs across all in-scope repos, not just the first 12 fetched", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    // Two registered repos carry cached open-PR counts in sync state but have NO open PR records.
+    // The old metric summed PRs fetched per repo (so these contributed 0); the global count reports 8.
+    for (const [name, openPrs] of [["alpha", 5] as const, ["beta", 3] as const]) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `entrius/${name}`, private: false, owner: { login: "entrius" }, default_branch: "main" });
+      await upsertRepoSyncState(env, {
+        repoFullName: `entrius/${name}`,
+        status: "success",
+        sourceKind: "github",
+        primaryLanguage: "TypeScript",
+        defaultBranch: "main",
+        isPrivate: false,
+        openIssuesCount: 0,
+        openPullRequestsCount: openPrs,
+        recentMergedPullRequestsCount: 0,
+        warnings: [],
+      });
+    }
+    const res = await app.request("/v1/app/maintainer-dashboard", { headers: apiHeaders(env) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
+    expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(8);
   });
 
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
@@ -4142,6 +4182,19 @@ describe("api routes", () => {
       ],
       [
         "gittensory_prepare_pr_packet",
+        {
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          branchName: "fix-cache-reconnect",
+          body: "Fixes #7",
+          changedFiles: [
+            { path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" },
+            { path: "test/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+          ],
+        },
+      ],
+      [
+        "gittensory_draft_pr_body",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",

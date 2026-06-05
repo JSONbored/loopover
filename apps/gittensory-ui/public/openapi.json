@@ -2836,6 +2836,13 @@
               "nullable": true
             }
           },
+          "queueTrends": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "nullable": true
+            }
+          },
           "collisions": {
             "type": "object",
             "additionalProperties": {
@@ -14009,6 +14016,39 @@
           },
           "401": {
             "description": "Invalid internal token"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/onboarding-pack/preview": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Preview-only repo onboarding pack for accepted repositories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "Repository is not accepted or preview unavailable"
           }
         },
         "security": [

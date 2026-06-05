@@ -38,6 +38,7 @@ import {
   getLatestScoringModelSnapshot,
   getPullRequest,
   getRepository,
+  getRepoQueueTrendSnapshot,
   getRepositorySettings,
   recordAuditEvent,
   getContributorEvidence,
@@ -148,6 +149,7 @@ import {
 } from "../services/weekly-value-report";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import {
   buildBountyAdvisory,
@@ -180,6 +182,7 @@ import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signa
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
@@ -825,11 +828,12 @@ export function createApp() {
     const summary = await getRoleSummaryForIdentity(c.env, identity);
     if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
 
-    const [allRepositories, allInstallations, allHealth, allRateLimits] = await Promise.all([
+    const [allRepositories, allInstallations, allHealth, allRateLimits, allSyncStates] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
       listInstallationHealth(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
+      listRepoSyncStates(c.env),
     ]);
     const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
     const scopedRepoNames = new Set(scope?.repositoryFullNames.map((repo) => repo.toLowerCase()) ?? []);
@@ -843,6 +847,13 @@ export function createApp() {
       ? allHealth.filter((record) => scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase()))
       : allHealth;
     const rateLimits = scope ? allRateLimits.filter((record) => record.repoFullName !== undefined && record.repoFullName !== null && scopedRepoNames.has(record.repoFullName.toLowerCase())) : allRateLimits;
+    // Cached open-PR count is summed across ALL in-scope repos from sync state (a single query) so the
+    // headline metric is a true global count like its siblings. The per-repo PR fetch below is capped at
+    // 12 only to bound the `reviewability` preview list, not the metric.
+    const scopedRepoNameSet = new Set(repositories.map((repo) => repo.fullName.toLowerCase()));
+    const scopedSyncStates = allSyncStates.filter((state) => scopedRepoNameSet.has(state.repoFullName.toLowerCase()));
+    const totalOpenPullRequestsCached = scopedSyncStates.reduce((sum, state) => sum + Math.max(0, state.openPullRequestsCount), 0);
+    const reposWithOpenPullRequests = scopedSyncStates.filter((state) => state.openPullRequestsCount > 0).length;
     const openPullRequests = (
       await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
     ).flat();
@@ -852,7 +863,7 @@ export function createApp() {
       health: health.map(enrichInstallationHealth),
       metrics: [
         { label: "Installations", value: installations.length, spark: sparklineFromCounts(installations.length, Math.max(installations.length, 1)) },
-        { label: "Open PRs cached", value: openPullRequests.length, spark: sparklineFromCounts(openPullRequests.length, Math.max(repositories.length, 1)) },
+        { label: "Open PRs cached", value: totalOpenPullRequestsCached, spark: sparklineFromCounts(reposWithOpenPullRequests, Math.max(repositories.length, 1)) },
         { label: "Install issues", value: health.filter((record) => record.status !== "healthy").length, spark: sparklineFromCounts(health.filter((record) => record.status === "healthy").length, Math.max(health.length, 1)) },
         { label: "Rate-limit events", value: rateLimits.length, spark: sparklineFromCounts(rateLimits.filter((record) => (record.remaining ?? 0) > 0).length, Math.max(rateLimits.length, 1)) },
       ],
@@ -1476,6 +1487,19 @@ export function createApp() {
   app.get("/v1/repos/:owner/:repo/gittensor-config-recommendation", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await buildGittensorConfigRecommendationResponse(c.env, fullName));
+  });
+
+  app.get("/v1/repos/:owner/:repo/onboarding-pack/preview", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const response = await buildRepoOnboardingPackPreviewForRepo(c.env, fullName, {
+      refreshManifest: c.req.query("refresh") === "true",
+    });
+    if ("error" in response) {
+      return c.json(response, 404);
+    }
+    return c.json(response);
   });
 
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
@@ -2733,7 +2757,7 @@ function buildDigestItems(args: {
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
   let burdenForecastError: unknown;
-  const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
+  const [repo, snapshots, dataQuality, burdenForecast, queueTrends] = await Promise.all([
     getRepository(env, fullName),
     Promise.all(
       ["queue-health", "config-quality", "label-audit", "maintainer-lane", "maintainer-cut-readiness", "contributor-intake-health"].map(async (signalType) => [
@@ -2746,6 +2770,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       burdenForecastError = error;
       return null;
     }),
+    getRepoQueueTrendSnapshot(env, fullName),
   ]);
   const intelligenceDataQuality = burdenForecastError
     ? withDataQualityWarning(dataQuality, `Burden forecast unavailable for ${fullName}: ${errorMessage(burdenForecastError)}`)
@@ -2762,6 +2787,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
         },
       }
     : {};
+  const queueTrendReport = queueTrends?.payload ?? (buildUnavailableQueueTrendReport(fullName) as unknown as Record<string, never>);
   if (snapshotMap["queue-health"] && snapshotMap["config-quality"] && snapshotMap["label-audit"]) {
     return {
       status: "ready",
@@ -2771,6 +2797,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       repo,
       lane: buildLaneAdvice(repo, fullName),
       queueHealth: snapshotMap["queue-health"],
+      queueTrends: queueTrendReport,
       configQuality: snapshotMap["config-quality"],
       labelAudit: snapshotMap["label-audit"],
       maintainerLane: snapshotMap["maintainer-lane"],
@@ -2802,6 +2829,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     repo,
     lane: buildLaneAdvice(repo, fullName),
     queueHealth,
+    queueTrends: queueTrendReport,
     collisions,
     configQuality,
     labelAudit,

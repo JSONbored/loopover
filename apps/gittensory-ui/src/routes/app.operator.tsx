@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, Copy, FileJson } from "lucide-react";
+import { BarChart3, Check, Copy, FileJson } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -23,12 +23,50 @@ type OperatorDashboardResponse = {
   metrics: Array<{ label: string; value: string; delta: string }>;
   noiseReduction: Array<{ label: string; value: number; spark: number[] }>;
   weeklyReport: string[];
+  recommendationQuality?: RecommendationQualityReport;
   weeklyValueReport?: {
     freshness: { status: string; latestRollupDay?: string | null };
     warnings: string[];
     metrics: Array<{ id: string; label: string; value: number; detail: string }>;
   };
   upstreamDrift?: { status?: string } | null;
+};
+
+type RecommendationQualityReport = {
+  windowDays: number;
+  visibility: "operator_only";
+  empty: boolean;
+  sparse: boolean;
+  totals: RecommendationQualityTotals;
+  trends: Array<RecommendationQualityTotals & { periodStart: string; periodEnd: string }>;
+  failureCategories: Array<{ category: string; label: string; count: number; detail: string }>;
+  roleSurfaces: Array<
+    RecommendationQualityTotals & {
+      role: "miner" | "maintainer" | "owner" | "operator";
+      label: string;
+      topRepos: Array<{
+        repoFullName: string;
+        total: number;
+        positive: number;
+        negative: number;
+        signal: "positive" | "negative" | "mixed";
+      }>;
+    }
+  >;
+  warnings: string[];
+  publicExport: { available: false; reason: string };
+  privateSummary: string;
+};
+
+type RecommendationQualityTotals = {
+  total: number;
+  positive: number;
+  negative: number;
+  positiveRate: number;
+  maintainerLaneTotal: number;
+  highConfidence: number;
+  mediumConfidence: number;
+  lowConfidence: number;
 };
 
 type ReportExportFormat = "markdown" | "json";
@@ -40,6 +78,7 @@ function OperatorDashboard() {
   );
   const [copiedExport, setCopiedExport] = useState<ReportExportFormat | null>(null);
   const data = dashboard.status === "ready" ? dashboard.data : null;
+  const quality = data?.recommendationQuality;
   const copyWeeklyReport = async (format: ReportExportFormat) => {
     if (!data?.weeklyValueReport) return;
     try {
@@ -105,6 +144,151 @@ function OperatorDashboard() {
               />
             ))}
           </section>
+
+          {quality ? (
+            <section className="rounded-token border border-border bg-transparent p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="size-4 text-mint" />
+                    <h2 className="font-display text-token-lg font-semibold">
+                      Recommendation quality
+                    </h2>
+                  </div>
+                  <p className="mt-1 max-w-2xl text-token-xs text-muted-foreground">
+                    {quality.privateSummary}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <StatusPill status={quality.empty ? "warn" : quality.sparse ? "stale" : "ready"}>
+                    {quality.empty ? "empty" : quality.sparse ? "sparse" : "populated"}
+                  </StatusPill>
+                  <StatusPill status="info">{quality.windowDays}d</StatusPill>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Stat
+                  label="Positive rate"
+                  value={`${Math.round(quality.totals.positiveRate * 100)}%`}
+                  hint={`${quality.totals.positive}/${quality.totals.total} evaluated`}
+                />
+                <Stat
+                  label="Unresolved or negative"
+                  value={quality.totals.negative}
+                  hint="closed, stale, or unmatched"
+                />
+                <Stat
+                  label="Maintainer lane"
+                  value={quality.totals.maintainerLaneTotal}
+                  hint="separated from contributor guidance"
+                />
+                <Stat
+                  label="High confidence"
+                  value={quality.totals.highConfidence}
+                  hint={`${quality.totals.mediumConfidence} medium · ${quality.totals.lowConfidence} low`}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+                <div>
+                  <h3 className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                    Role surfaces
+                  </h3>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {quality.roleSurfaces.length ? (
+                      quality.roleSurfaces.map((surface) => (
+                        <div key={surface.role} className="rounded-token border border-border p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-token-sm font-medium text-foreground">
+                                {surface.label}
+                              </div>
+                              <div className="mt-1 font-mono text-token-2xs text-muted-foreground">
+                                {surface.positive} positive · {surface.negative} negative
+                              </div>
+                            </div>
+                            <StatusPill status={qualityStatus(surface.positiveRate)}>
+                              {Math.round(surface.positiveRate * 100)}%
+                            </StatusPill>
+                          </div>
+                          {surface.topRepos.length ? (
+                            <ul className="mt-3 space-y-1 text-token-xs text-muted-foreground">
+                              {surface.topRepos.slice(0, 3).map((repo) => (
+                                <li key={repo.repoFullName} className="flex justify-between gap-3">
+                                  <span className="truncate">{repo.repoFullName}</span>
+                                  <span className="font-mono">
+                                    {repo.positive}/{repo.total}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-token border border-border p-3 text-token-sm text-muted-foreground sm:col-span-2">
+                        No role-specific outcomes in this window.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                    Failure categories
+                  </h3>
+                  <div className="mt-3 space-y-3">
+                    {quality.failureCategories.length ? (
+                      quality.failureCategories.map((category) => (
+                        <div key={category.category}>
+                          <div className="flex items-center justify-between gap-3 text-token-sm">
+                            <span className="text-foreground/90">{category.label}</span>
+                            <span className="font-mono text-muted-foreground">
+                              {category.count}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-token-xs text-muted-foreground">
+                            {category.detail}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-token-sm text-muted-foreground">
+                        No failure categories in this window.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {quality.trends.length ? (
+                <div className="mt-5">
+                  <h3 className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                    Trend
+                  </h3>
+                  <div className="mt-3 flex h-20 items-end gap-1">
+                    {quality.trends.map((bucket) => (
+                      <div
+                        key={bucket.periodStart}
+                        className="min-w-0 flex-1 rounded-token bg-mint/45"
+                        title={`${new Date(bucket.periodStart).toLocaleDateString()} · ${bucket.positive}/${bucket.total}`}
+                        style={{ height: `${Math.max(6, bucket.positiveRate * 100)}%` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {quality.warnings.length ? (
+                <ul className="mt-4 space-y-1 text-token-xs text-muted-foreground">
+                  {quality.warnings.slice(0, 3).map((warning) => (
+                    <li key={warning}>· {warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
 
           <section className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-token border border-border bg-transparent p-5">
@@ -198,6 +382,12 @@ function OperatorDashboard() {
       ) : null}
     </StateBoundary>
   );
+}
+
+function qualityStatus(rate: number): "ready" | "warn" | "stale" {
+  if (rate >= 0.67) return "ready";
+  if (rate >= 0.4) return "stale";
+  return "warn";
 }
 
 async function loadWeeklyReportMarkdown(): Promise<string> {

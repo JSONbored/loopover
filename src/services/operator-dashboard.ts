@@ -27,6 +27,7 @@ import type {
 } from "../types";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
+import { buildRecommendationQualityReport, type RecommendationQualityReport } from "./recommendation-quality-report";
 import { buildWeeklyValueReport } from "./weekly-value-report";
 
 export type OperatorDashboardMetric = {
@@ -52,6 +53,7 @@ export type OperatorDashboardPayload = {
   usageRollupStatus: ProductUsageRollupStatus;
   mcpCompatibilityAdoption: McpCompatibilityAdoptionSummary;
   commandUsefulness: CommandUsefulnessSummary;
+  recommendationQuality: RecommendationQualityReport;
   registry: RegistrySnapshot | null;
   scoringModel: ScoringModelSnapshotRecord | null;
   upstreamDrift: UpstreamStatus;
@@ -76,6 +78,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     usageRollupStatus,
     mcpCompatibilityAdoption,
     commandUsefulness,
+    recommendationQuality,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -91,6 +94,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     getProductUsageRollupStatus(env),
     summarizeMcpCompatibilityAdoption(env, usageSince),
     getCommandUsefulnessSummary(env),
+    buildRecommendationQualityReport(env, { windowDays: 90 }),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -131,6 +135,11 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
         delta: usefulnessDelta(commandUsefulness.totals.usefulnessRate),
       },
       {
+        label: "Recommendation quality",
+        value: `${recommendationQuality.totals.positive}/${recommendationQuality.totals.total}`,
+        delta: recommendationQuality.empty ? "no evaluated outcomes" : `${Math.round(recommendationQuality.totals.positiveRate * 100)}% positive`,
+      },
+      {
         label: "Install issues",
         value: String(health.filter((record: InstallationHealthRecord) => record.status !== "healthy").length),
         delta: "current health cache",
@@ -164,6 +173,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     usageRollupStatus,
     mcpCompatibilityAdoption,
     commandUsefulness,
+    recommendationQuality,
     registry,
     scoringModel: scoring,
     upstreamDrift,
@@ -172,7 +182,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
 
 export function latestUsageRollup(rollups: ProductUsageDailyRollupRecord[]): ProductUsageDailyRollupRecord | null {
   if (rollups.length === 0) return null;
-  return [...rollups].sort((a, b) => b.day.localeCompare(a.day))[0] ?? null;
+  return [...rollups].sort((a, b) => b.day.localeCompare(a.day))[0]!;
 }
 
 function usefulnessDelta(rate: number | null): string {

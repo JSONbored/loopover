@@ -972,7 +972,7 @@ async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string
         repoFullName,
         issue,
         pullRequest: cachedPullRequest,
-      });
+      }, command.question);
   const body = buildPublicAgentCommandComment({
     command,
     repo,
@@ -1044,6 +1044,7 @@ async function buildMentionCommandBundle(
     issue: NonNullable<GitHubWebhookPayload["issue"]>;
     pullRequest: Awaited<ReturnType<typeof getPullRequest>>;
   },
+  question?: string | undefined,
 ) {
   if (commandName === "help" || commandName === "miner-context") return null;
   if (commandName === "blockers") return explainBlockersWithAgent(env, { login: context.login, repoFullName: context.repoFullName, surface: "github_comment" });
@@ -1053,7 +1054,10 @@ async function buildMentionCommandBundle(
     login: context.login,
     repoFullName: context.repoFullName,
     surface: "github_comment",
-    objective: `Respond to @gittensory ${commandName} for ${context.repoFullName}#${context.issue.number}.`,
+    objective:
+      commandName === "ask" && question && question.trim().length > 0
+        ? `Respond to @gittensory ask for ${context.repoFullName}#${context.issue.number}. Question: ${question.trim().slice(0, 280)}`
+        : `Respond to @gittensory ${commandName} for ${context.repoFullName}#${context.issue.number}.`,
   });
 }
 

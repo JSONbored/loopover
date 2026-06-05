@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildPublicPrBodyDraft, EXCLUDED_PRIVATE_PR_BODY_FIELDS, type PrBodyDraftSource } from "../../src/services/pr-body-draft";
 
-const FORBIDDEN_PUBLIC_LANGUAGE =
-  /\b(wallet|hotkey|coldkey|mnemonic|raw trust score|raw[-_\s]?trust|trust score|payout|reward estimate|reward|farming|private reviewability|reviewability|public score estimate|scoreability|ranking)\b|\/Users\/|\/home\/|\/tmp\/|[A-Za-z]:\\Users\\/i;
+const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![:/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
+const FORBIDDEN_PUBLIC_LANGUAGE = new RegExp(
+  String.raw`\b(wallet|hotkey|coldkey|mnemonic|raw trust score|raw[-_\s]?trust|trust score|payout|reward estimate|reward|farming|private reviewability|reviewability|public score estimate|scoreability|ranking)\b|${LOCAL_PATH_SOURCE}`,
+  "i",
+);
 
 function source(overrides: Partial<PrBodyDraftSource> = {}): PrBodyDraftSource {
   return {
@@ -159,7 +162,47 @@ describe("buildPublicPrBodyDraft — source-upload guard", () => {
     );
     expect(draft.sourceUploadDisabled).toBe(true);
     const blob = JSON.stringify(draft);
-    expect(blob).not.toMatch(/\/Users\/|\/home\/|\/tmp\/|[A-Za-z]:\\Users\\/);
+    expect(blob).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+    expect(blob).toContain("src/ok.ts");
+  });
+
+  it("redacts nonstandard absolute paths from public draft metadata", () => {
+    const draft = buildPublicPrBodyDraft(
+      source({
+        prPacket: {
+          ...source().prPacket,
+          titleSuggestion: "Fix build under /workspace/customer-x",
+          bodySections: [
+            {
+              heading: "Changed Paths",
+              lines: [
+                "- /var/folders/alice/work/private-repo/src/cache.ts (modified, +1/-0)",
+                "- /opt/company/secret-project/src/cache.ts (modified, +1/-0)",
+                "- /private/tmp/gittensory/src/cache.ts (modified, +1/-0)",
+                "- \\\\fileserver\\share\\secret-project\\src\\cache.ts (modified, +1/-0)",
+                "- src/ok.ts (modified, +1/-0)",
+              ],
+            },
+          ],
+          validationSummary: {
+            passed: 2,
+            failed: 0,
+            notRun: 0,
+            commands: [
+              { command: "npm test -- --root /workspace/customer-x", status: "passed", summary: "logs in C:/Users/Alice/AppData/Local/Temp/gittensory" },
+              { command: "node C:\\Users\\Alice\\private-repo\\scripts\\check.mjs", status: "passed", summary: "ok" },
+            ],
+          },
+          publicSafeWarnings: ["Reviewed from /opt/company/secret-project before posting."],
+        },
+      }),
+    );
+    const blob = JSON.stringify(draft);
+    expect(blob).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+    expect(blob).not.toMatch(/customer-x|private-repo|secret-project|Alice|fileserver/);
+    expect(blob).toContain("[local path]");
+    expect(blob).toContain("src/ok.ts");
+    expect(draft.markdown).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
   });
 
   it("lists the private analysis fields it deliberately excludes", () => {

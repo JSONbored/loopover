@@ -843,7 +843,9 @@ async function maybePublishPrPublicSurface(
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
     return;
   }
-  if (!gateEnabled && prelim.actions.length === 1 && prelim.actions[0] === "none") return;
+  const needsMinerCheckForDetectedComment =
+    settings.commentMode === "detected_contributors_only" && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only");
+  if (!gateEnabled && prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment) return;
   if (!author) return;
 
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
@@ -861,7 +863,7 @@ async function maybePublishPrPublicSurface(
     ).catch(() => undefined);
     return;
   }
-  const prelimHasPublicOutput = prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run");
+  const prelimHasPublicOutput = needsMinerCheckForDetectedComment || prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run");
   let official: Awaited<ReturnType<typeof getCachedOfficialMinerDetection>> | null = null;
   let decision = prelim;
   if (prelimHasPublicOutput) {
@@ -941,14 +943,10 @@ async function maybePublishPrPublicSurface(
   if (!prelimHasPublicOutput) return;
   if (!official) return;
 
-  const publishCachedContributorActivity = official.status === "confirmed";
-  const [contributorPullRequests, contributorIssues, github, cachedRepoStats] = await Promise.all([
-    publishCachedContributorActivity ? listContributorPullRequests(env, author) : Promise.resolve([]),
-    publishCachedContributorActivity ? listContributorIssues(env, author) : Promise.resolve([]),
-    fetchPublicContributorProfile(author),
-    publishCachedContributorActivity ? listContributorRepoStats(env, author) : Promise.resolve([]),
-  ]);
-  const repoStats = official.status === "confirmed" ? authoritativeContributorRepoStats(official.snapshot, cachedRepoStats) : [];
+  const [github] = await Promise.all([fetchPublicContributorProfile(author)]);
+  const contributorPullRequests: Awaited<ReturnType<typeof listContributorPullRequests>> = [];
+  const contributorIssues: Awaited<ReturnType<typeof listContributorIssues>> = [];
+  const repoStats: Awaited<ReturnType<typeof listContributorRepoStats>> = official.status === "confirmed" ? contributorRepoStatsFromGittensor(official.snapshot) : [];
   const detection =
     official.status === "confirmed"
       ? officialGittensorContributorDetection(official.snapshot, pr, contributorPullRequests, contributorIssues, repoStats)

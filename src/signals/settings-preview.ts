@@ -18,9 +18,11 @@ export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
 }
 
-export function shouldPublishPrComment(settings: RepositorySettings): boolean {
+export function shouldPublishPrComment(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
   if (settings.commentMode === "off") return false;
-  return settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only";
+  if (settings.publicSurface !== "comment_and_label" && settings.publicSurface !== "comment_only") return false;
+  if (settings.commentMode === "detected_contributors_only") return minerStatus === "confirmed";
+  return true;
 }
 
 export function shouldApplyPrLabel(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
@@ -89,7 +91,7 @@ export function decidePublicSurface(input: PublicSurfaceDecisionInput): PublicSu
     if (input.minerStatus === "not_found") return skipDecision("not_official_gittensor_miner");
   }
 
-  const willComment = shouldPublishPrComment(settings);
+  const willComment = shouldPublishPrComment(settings, input.minerStatus);
   const willLabel =
     shouldApplyPrLabel(settings, input.minerStatus) ||
     (settings.publicAudienceMode === "oss_maintainer" && input.minerStatus === "not_checked" && settings.autoLabelEnabled && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "label_only"));

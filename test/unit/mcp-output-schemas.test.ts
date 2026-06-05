@@ -1,9 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import { persistSignalSnapshot, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
+import { REPO_OUTCOME_PATTERNS_SIGNAL } from "../../src/services/repo-outcome-patterns";
 import { createTestEnv } from "../helpers/d1";
 
 // Tools that ship an MCP-native output schema so modern clients can validate/render responses.
@@ -128,6 +130,33 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
   });
+
+  it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "computed", full_name: "owner/computed", private: false, owner: { login: "owner" }, default_branch: "main" });
+    const generatedAt = new Date().toISOString();
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_OUTCOME_PATTERNS_SIGNAL,
+      targetKey: "owner/cached",
+      repoFullName: "owner/cached",
+      payload: repoOutcomePatternsPayload("owner/cached", generatedAt) as unknown as Record<string, never>,
+      generatedAt,
+    });
+    const { client } = await connectTestClient(env);
+
+    const missing = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "ghost", repo: "missing" } });
+    expect(missing.isError).toBeFalsy();
+    expect(missing.structuredContent).toMatchObject({ status: "not_found", repoFullName: "ghost/missing" });
+
+    const computed = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "computed" } });
+    expect(computed.isError).toBeFalsy();
+    expect(computed.structuredContent).toMatchObject({ status: "ready", source: "computed", repoFullName: "owner/computed" });
+
+    const cached = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "cached" } });
+    expect(cached.isError).toBeFalsy();
+    expect(cached.structuredContent).toMatchObject({ status: "ready", source: "snapshot", freshness: "fresh", repoFullName: "owner/cached" });
+  });
 });
 
 // ── Public/private safety ─────────────────────────────────────────────────────
@@ -184,4 +213,23 @@ async function seedRegistryChangeSnapshots(env: Env) {
       "2026-05-25T00:00:00.000Z",
     ),
   );
+}
+
+function repoOutcomePatternsPayload(repoFullName: string, generatedAt: string) {
+  return {
+    repoFullName,
+    generatedAt,
+    lane: "direct_pr",
+    primaryLanguage: "TypeScript",
+    sampleSize: 0,
+    totals: { analyzed: 0, merged: 0, closedUnmerged: 0, openActive: 0, openStale: 0, maintainerLanePullRequests: 0, outsideContributorPullRequests: 0 },
+    outsideContributorMergeRate: 0,
+    maintainerLaneMergeRate: 0,
+    dimensions: [],
+    successPatterns: [],
+    riskPatterns: [],
+    evidenceCompleteness: { pullRequestsAnalyzed: 0, withFileDetail: 0, withReviewDetail: 0, withCheckDetail: 0, filesCompletenessRatio: 0, reviewsCompletenessRatio: 0, checksCompletenessRatio: 0, fullyDecidedWithDetail: 0, status: "missing" },
+    findings: [],
+    summary: "cached fixture",
+  };
 }

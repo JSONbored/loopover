@@ -77,7 +77,8 @@ describe("decidePublicSurface", () => {
     expect(decidePublicSurface({ settings: settings(), authorLogin: "owner", authorAssociation: "OWNER", minerStatus: "confirmed" }).skipReason).toBe("maintainer_author");
     expect(decidePublicSurface({ settings: settings({ publicAudienceMode: "gittensor_only" }), authorLogin: "x", minerStatus: "not_found" }).skipReason).toBe("not_official_gittensor_miner");
     expect(decidePublicSurface({ settings: settings({ publicAudienceMode: "gittensor_only" }), authorLogin: "x", minerStatus: "unavailable" }).skipReason).toBe("miner_detection_unavailable");
-    expect(decidePublicSurface({ settings: settings(), authorLogin: "x", minerStatus: "not_found" })).toMatchObject({ skipped: false, willComment: true, willLabel: false });
+    expect(decidePublicSurface({ settings: settings(), authorLogin: "x", minerStatus: "not_found" })).toMatchObject({ skipped: false, willComment: false, willLabel: false });
+    expect(decidePublicSurface({ settings: settings({ commentMode: "all_prs" }), authorLogin: "x", minerStatus: "not_found" })).toMatchObject({ skipped: false, willComment: true, willLabel: false });
   });
 
   it("includes maintainer authors when configured", () => {

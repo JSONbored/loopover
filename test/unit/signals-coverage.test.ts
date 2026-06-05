@@ -652,6 +652,7 @@ describe("signal coverage edge cases", () => {
     expect(collisionComment).toContain("Compare #8.");
     expect(collisionComment).not.toContain("possible overlaps");
     expect(collisionComment).not.toContain("Cached OSS contributor activity");
+    expect(collisionComment).not.toContain("Cached prior PRs/issues");
     expect(collisionComment).not.toContain("gittensor.io");
 
     const repoBlockedComment = buildPublicPrIntelligenceComment({

@@ -7,6 +7,7 @@ import {
   upsertCheckSummary,
   upsertInstallation,
   upsertInstallationHealth,
+  upsertRepoQueueTrendSnapshot,
   upsertPullRequestFile,
   upsertPullRequestReview,
   upsertPullRequestDetailSyncState,
@@ -29,6 +30,8 @@ import {
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
   createAgentRun,
+  replaceAgentActions,
+  upsertAgentRecommendationOutcome,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
@@ -467,6 +470,7 @@ describe("api routes", () => {
       repoFullName: "entrius/allways-ui",
       lane: { lane: "direct_pr" },
       queueHealth: { signals: { openPullRequests: 2 } },
+      queueTrends: { status: "unavailable", windows: expect.arrayContaining([expect.objectContaining({ windowDays: 7, status: "unavailable" })]) },
       collisions: { summary: { clusterCount: expect.any(Number) } },
       configQuality: { notObservedConfiguredLabels: expect.arrayContaining(["refactor"]) },
       labelAudit: { missingConfiguredLabels: expect.arrayContaining(["refactor"]) },
@@ -1195,10 +1199,22 @@ describe("api routes", () => {
       payload: { repoFullName: "entrius/allways-ui", level: "medium", summary: "intelligence fixture" } as unknown as Record<string, JsonValue>,
       generatedAt: staleForecastGeneratedAt,
     });
+    await upsertRepoQueueTrendSnapshot(env, {
+      repoFullName: "entrius/allways-ui",
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      payload: {
+        repoFullName: "entrius/allways-ui",
+        status: "ready",
+        source: "snapshot",
+        windows: [{ windowDays: 7, status: "ready", pullRequestGrowth: 2, reviewVelocityPerDay: 1, summary: "7d fixture" }],
+        warnings: ["7d PR queue grew by 2; review load is increasing."],
+      } as unknown as Record<string, JsonValue>,
+    });
     const snapshotIntelligence = await app.request("/v1/repos/entrius/allways-ui/intelligence", { headers: apiHeaders(env) }, env);
     expect(snapshotIntelligence.status).toBe(200);
     const snapshotIntelligenceBody = (await snapshotIntelligence.json()) as Record<string, unknown> & { burdenForecast?: Record<string, unknown>; burdenForecastFreshness?: { freshness: string; source: string; ageSeconds: number } };
     expect(snapshotIntelligenceBody).toMatchObject({ source: "snapshot", queueHealth: { signals: { openPullRequests: 2 } } });
+    expect(snapshotIntelligenceBody.queueTrends).toMatchObject({ status: "ready", windows: [expect.objectContaining({ windowDays: 7, pullRequestGrowth: 2 })] });
     expect(snapshotIntelligenceBody.burdenForecast).toMatchObject({ level: "medium" });
     expect(snapshotIntelligenceBody.burdenForecastFreshness).toMatchObject({ source: "snapshot", freshness: "stale" });
     expect(snapshotIntelligenceBody.burdenForecastFreshness?.ageSeconds).toBeGreaterThanOrEqual(Math.floor((BURDEN_FORECAST_MAX_AGE_MS + 50_000) / 1000));
@@ -1410,6 +1426,12 @@ describe("api routes", () => {
     expect(emptyOperator.status).toBe(200);
     await expect(emptyOperator.json()).resolves.toMatchObject({
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Registered repos", delta: "registry missing" })]),
+      recommendationQuality: expect.objectContaining({
+        empty: true,
+        sparse: false,
+        totals: expect.objectContaining({ total: 0, positive: 0, negative: 0 }),
+        roleSurfaces: [],
+      }),
     });
     const driftDigest = await app.request("/v1/app/digest", { headers: apiHeaders(emptyEnv) }, emptyEnv);
     expect(driftDigest.status).toBe(200);
@@ -1855,14 +1877,81 @@ describe("api routes", () => {
     expect(defaultUsefulness.status).toBe(200);
     await expect(defaultUsefulness.json()).resolves.toMatchObject({ windowDays: 30 });
 
+    await createAgentRun(env, {
+      id: "api-quality-run",
+      objective: "Track recommendation quality",
+      actorLogin: "quality-user",
+      surface: "api",
+      mode: "copilot",
+      status: "completed",
+      dataQualityStatus: "complete",
+      payload: {},
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    });
+    await replaceAgentActions(env, "api-quality-run", [
+      {
+        id: "api-quality-action",
+        runId: "api-quality-run",
+        actionType: "prepare_pr_packet",
+        targetRepoFullName: "JSONbored/gittensory",
+        targetPullNumber: null,
+        targetIssueNumber: null,
+        status: "recommended",
+        recommendation: "pursue",
+        why: ["Safe aggregate fixture."],
+        blockedBy: [],
+        publicSafeSummary: "Safe aggregate fixture.",
+        approvalRequired: true,
+        safetyClass: "private",
+        payload: {},
+        createdAt: "2026-05-28T00:00:00.000Z",
+      },
+    ]);
+    await upsertAgentRecommendationOutcome(env, {
+      actionId: "api-quality-action",
+      runId: "api-quality-run",
+      actorLogin: "quality-user",
+      actionType: "prepare_pr_packet",
+      targetRepoFullName: "JSONbored/gittensory",
+      targetPullNumber: null,
+      targetIssueNumber: null,
+      outcomeState: "merged",
+      outcomeTargetType: "pull_request",
+      outcomeRepoFullName: "JSONbored/gittensory",
+      outcomePullNumber: 330,
+      outcomeIssueNumber: null,
+      maintainerLane: false,
+      confidence: "high",
+      reason: "Safe aggregate fixture.",
+      sourceUpdatedAt: "2026-05-28T00:00:00.000Z",
+      detectedAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: { role: "miner" },
+    });
+
     const operator = await app.request("/v1/app/operator-dashboard", { headers: apiHeaders(env) }, env);
     expect(operator.status).toBe(200);
-    await expect(operator.json()).resolves.toMatchObject({
+    const operatorBody = (await operator.json()) as {
+      metrics: unknown[];
+      noiseReduction: unknown[];
+      weeklyReport: string[];
+      commandUsefulness: unknown;
+      recommendationQuality: unknown;
+    };
+    expect(operatorBody).toMatchObject({
       metrics: expect.arrayContaining([expect.objectContaining({ label: "Active sessions" }), expect.objectContaining({ label: "Digest subscriptions" }), expect.objectContaining({ label: "Command usefulness", value: "0/1" })]),
       noiseReduction: expect.any(Array),
       weeklyReport: expect.arrayContaining([expect.stringContaining("registered repo")]),
       commandUsefulness: expect.objectContaining({ totals: expect.objectContaining({ feedbackCount: 1 }) }),
+      recommendationQuality: expect.objectContaining({
+        visibility: "operator_only",
+        publicExport: expect.objectContaining({ available: false }),
+        totals: expect.objectContaining({ total: 1, positive: 1, negative: 0 }),
+        roleSurfaces: expect.arrayContaining([expect.objectContaining({ role: "miner", positive: 1 })]),
+      }),
     });
+    expect(JSON.stringify(operatorBody.recommendationQuality)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
 
     const notificationModel = await app.request("/v1/app/notification-model", { headers: apiHeaders(env) }, env);
     expect(notificationModel.status).toBe(200);

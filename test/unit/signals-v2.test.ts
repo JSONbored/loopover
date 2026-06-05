@@ -740,6 +740,47 @@ describe("v2 signal builders", () => {
     expect(history.reconciliation?.repos[0]?.discrepancyReasons).toEqual(expect.arrayContaining([expect.stringContaining("Official source unavailable")]));
   });
 
+  it("derives cache-only totals consistently and login-scoped (pullRequests = merged + open + closed)", () => {
+    const widgetRepo: RepositoryRecord = {
+      fullName: "acme/widgets",
+      owner: "acme",
+      name: "widgets",
+      isInstalled: true,
+      isRegistered: true,
+      isPrivate: false,
+      defaultBranch: "main",
+      registryConfig: { repo: "acme/widgets", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, trustedLabelPipeline: false, maintainerCut: 0, raw: {} },
+    };
+    const mk = (number: number, state: string, extra: Partial<PullRequestRecord> = {}): PullRequestRecord => ({
+      repoFullName: "acme/widgets",
+      number,
+      title: `PR ${number}`,
+      state,
+      authorLogin: "dev",
+      authorAssociation: "NONE",
+      labels: [],
+      linkedIssues: [],
+      body: "",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+      ...extra,
+    });
+    const prs = [mk(1, "merged", { mergedAt: "2026-05-01T00:00:00.000Z" }), mk(2, "open"), mk(3, "closed")];
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, prs, []);
+    // repoStats includes a DIFFERENT login that must not leak into this contributor's totals.
+    const repoStats: ContributorRepoStatRecord[] = [
+      { login: "dev", repoFullName: "acme/widgets", pullRequests: 3, mergedPullRequests: 1, openPullRequests: 1, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+      { login: "stranger", repoFullName: "acme/tools", pullRequests: 5, mergedPullRequests: 0, openPullRequests: 5, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: [] },
+    ];
+    const history = buildContributorOutcomeHistory({ login: "dev", profile, repositories: [widgetRepo], pullRequests: prs, issues: [], repoStats });
+
+    const t = history.totals;
+    // Invariant, login-scoping, and bounded rate were all broken by the mixed-source fallbacks.
+    expect(t.pullRequests).toBe(t.mergedPullRequests + t.openPullRequests + t.closedPullRequests);
+    expect(t.issues).toBe(t.openIssues + t.closedIssues);
+    expect(t.closedPullRequestRate).toBeLessThanOrEqual(1);
+    expect(t.openPullRequests).toBe(1); // the stranger's 5 open PRs are excluded
+  });
+
   it("derives solved and valid-solved issue-discovery counts from cache when official data is absent", () => {
     const mkRepo = (fullName: string, issueDiscoveryShare: number): RepositoryRecord => {
       const [owner, name] = fullName.split("/") as [string, string];

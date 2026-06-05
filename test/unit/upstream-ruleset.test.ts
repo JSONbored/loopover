@@ -605,11 +605,40 @@ describe("upstream ruleset drift tracking", () => {
         totalEvents: 4,
         omittedEvents: 1,
         highImpactCount: 3,
-        affectedRepoCount: 3,
+        // Distinct repos across reports, not the sum of per-report counts: only `owner/repo` and
+        // `owner/missing-values` are identifiable (the summary-only payload reports a count with no
+        // repo identity to union), so the deduped count is 2 -- previously this summed to 3.
+        affectedRepoCount: 2,
         affectedFields: ["repo", "maintainerCut"],
         affectedSurfaces: ["maintainer_economics"],
       },
     });
+  });
+
+  it("counts distinct affected repos across open drift reports instead of summing per-report counts", async () => {
+    const env = createTestEnv();
+    await persistUpstreamRulesetSnapshot(env, ruleset("current", "current-hash", "pending_saturation_model", 1, 0.01, new Date().toISOString()));
+    const driftEvent = (repoFullName: string) => ({
+      repoFullName,
+      field: "maintainerCut",
+      previous: 0.1,
+      current: 0.2,
+      severity: "high",
+      affectedSurfaces: ["maintainer_economics"],
+      summary: `${repoFullName} maintainerCut changed`,
+    });
+    await upsertUpstreamDriftReport(
+      env,
+      driftReport("registry-drift-a", { affectedAreas: ["registry"], payload: { registryHyperparameterDrift: { events: [driftEvent("owner/x"), driftEvent("owner/y"), driftEvent("owner/z")] } } }),
+    );
+    await upsertUpstreamDriftReport(
+      env,
+      driftReport("registry-drift-b", { affectedAreas: ["registry"], payload: { registryHyperparameterDrift: { events: [driftEvent("owner/z"), driftEvent("owner/w")] } } }),
+    );
+
+    const status = await loadUpstreamStatus(env);
+    // owner/z is affected in both reports: 4 distinct repos (x, y, z, w), not 3 + 2 = 5.
+    expect(status.registryHyperparameterDrift.affectedRepoCount).toBe(4);
   });
 
   it("builds low-severity source drift reports from legacy or partial ruleset payloads", async () => {

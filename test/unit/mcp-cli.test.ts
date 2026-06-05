@@ -924,6 +924,35 @@ describe("gittensory-mcp CLI", () => {
     expect(() => run(["bogus-command"])).toThrow(/Unknown command: bogus-command/);
     expect(() => run(["bogus-command"])).toThrow(/gittensory-mcp --help/);
   });
+
+  it("prints shell completion scripts for bash, zsh, and fish", () => {
+    const bash = run(["completion", "bash"]);
+    expect(bash).toContain("_gittensory_mcp()");
+    expect(bash).toContain("complete -F _gittensory_mcp gittensory-mcp");
+    expect(bash).toContain("analyze-branch");
+    expect(bash).toContain("version");
+    expect(bash).toContain("plan status explain packet");
+
+    const zsh = run(["completion", "zsh"]);
+    expect(zsh).toContain("#compdef gittensory-mcp");
+    expect(zsh).toContain("_describe 'command' commands");
+    expect(zsh).toContain("list create switch remove");
+
+    const fish = run(["completion", "fish"]);
+    expect(fish).toContain("complete -c gittensory-mcp");
+    expect(fish).toContain("__fish_seen_subcommand_from agent");
+  });
+
+  it("emits completion as machine-readable json", () => {
+    const payload = JSON.parse(run(["completion", "zsh", "--json"])) as { shell: string; script: string };
+    expect(payload.shell).toBe("zsh");
+    expect(payload.script).toContain("#compdef gittensory-mcp");
+  });
+
+  it("rejects missing or unsupported completion shells", () => {
+    expect(() => run(["completion"])).toThrow(/Usage: gittensory-mcp completion <bash\|zsh\|fish>/);
+    expect(() => run(["completion", "powershell"])).toThrow(/Unsupported shell: powershell/);
+  });
 });
 
 function run(args: string[], env: Record<string, string> = {}) {

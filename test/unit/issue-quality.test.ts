@@ -238,6 +238,28 @@ describe("buildContributorOpportunities x issue quality", () => {
     expect(opportunities[0]?.reasons).toEqual(expect.arrayContaining(["Issue quality report rates this issue as ready."]));
   });
 
+  it("surfaces the highest-quality issue even when it sits beyond the first 5 in DB order", () => {
+    const repo = issueDiscoveryRepo("owner/deep-ready");
+    // Six available issues in DB order; the only "ready" one is last (index 5), the rest are "hold".
+    const issues = [1, 2, 3, 4, 5, 6].map((n) => issue(repo.fullName, n, `Issue ${n}`, { body: "x".repeat(220), labels: ["bug"] }));
+    const quality: IssueQualityReport = {
+      repoFullName: repo.fullName,
+      generatedAt: now(),
+      lane: { repoFullName: repo.fullName, lane: "issue_discovery", issueDiscoveryShare: 1, directPrShare: 0, summary: "", contributorGuidance: "", maintainerGuidance: "" },
+      issues: [
+        ...[1, 2, 3, 4, 5].map((n) => ({ number: n, title: `Issue ${n}`, status: "hold" as const, score: 30, reasons: [], warnings: [] })),
+        { number: 6, title: "Issue 6", status: "ready" as const, score: 92, reasons: [], warnings: [] },
+      ],
+      summary: "",
+    };
+    const opportunities = buildContributorOpportunities(sampleProfile(), [repo], issues, [], [], new Map([[repo.fullName, quality]]));
+    // The "ready" issue #6 (highest score) must be surfaced and ranked first, even though it is the
+    // 6th available issue -- the per-repo cap selects the best, not the arbitrary first 5.
+    expect(opportunities.map((o) => o.issueNumber)).toContain(6);
+    expect(opportunities[0]?.issueNumber).toBe(6);
+    expect(opportunities[0]?.reasons).toEqual(expect.arrayContaining(["Issue quality report rates this issue as ready."]));
+  });
+
   it("downgrades needs_proof issues to caution and adds a warning", () => {
     const repo = issueDiscoveryRepo("owner/caution");
     const issues = [issue(repo.fullName, 1, "Vague candidate", { body: "x".repeat(220), labels: ["bug"] })];

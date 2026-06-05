@@ -201,6 +201,11 @@ describe("reopened-link — linked issue is raw (unvalidated, needs evidence)", 
     const codes = result.blockedBy.map((b) => b.code);
     expect(codes).toContain("linked_issue_unvalidated");
   });
+
+  it("cleanup path covers unvalidated linked-issue sync guidance", () => {
+    const plan = deriveEligibilityPlan(result);
+    expect(plan.cleanupPaths.join(" ")).toMatch(/solved-by-PR evidence|official mirror to sync/i);
+  });
 });
 
 // ── Fixture: plausible and unavailable link statuses ───────────────────────

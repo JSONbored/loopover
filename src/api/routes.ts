@@ -22,6 +22,7 @@ import {
   type AuthIdentity,
 } from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
+import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -37,6 +38,7 @@ import {
   getLatestScoringModelSnapshot,
   getPullRequest,
   getRepository,
+  getRepoQueueTrendSnapshot,
   getRepositorySettings,
   recordAuditEvent,
   getContributorEvidence,
@@ -59,6 +61,7 @@ import {
   listDigestSubscriptionsForLogin,
   listProductUsageDailyRollups,
   listOpenPullRequests,
+  listPrVisibilitySkipAuditEvents,
   listPullRequestFiles,
   listPullRequestReviews,
   listRecentMergedPullRequests,
@@ -146,6 +149,7 @@ import {
 } from "../services/weekly-value-report";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import {
   buildBountyAdvisory,
@@ -177,7 +181,7 @@ import { buildPullRequestReviewability, type PullRequestReviewability } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildRepoSettingsPreview } from "../signals/settings-preview";
+import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
 import type {
@@ -238,6 +242,14 @@ async function recordRouteProductUsage(
 
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
+const PR_VISIBILITY_SKIP_REASONS = [
+  "surface_off",
+  "missing_author",
+  "bot_author",
+  "maintainer_author",
+  "miner_detection_unavailable",
+  "not_official_gittensor_miner",
+] as const satisfies readonly PublicSurfaceSkipReason[];
 
 const preflightSchema = z.object({
   repoFullName: z.string().min(3),
@@ -256,6 +268,15 @@ const localDiffPreflightSchema = preflightSchema.extend({
   testFiles: z.array(z.string()).optional(),
   commitMessage: z.string().optional(),
 });
+
+const skippedPrAuditQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().optional(),
+    repoFullName: z.string().trim().min(3).max(200).optional(),
+    reason: z.enum(PR_VISIBILITY_SKIP_REASONS).optional(),
+    since: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict();
 
 const localBranchChangedFileSchema = z
   .object({
@@ -414,6 +435,12 @@ const repositorySettingsSchema = z.object({
   requireLinkedIssue: z.boolean().default(false),
   backfillEnabled: z.boolean().default(true),
   privateTrustEnabled: z.boolean().default(true),
+  commandAuthorization: z
+    .object({
+      default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),
+      commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
+    })
+    .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
 });
 
 const settingsPreviewSchema = z.object({
@@ -427,6 +454,9 @@ const settingsPreviewSchema = z.object({
       body: z.string().max(10000).nullable().optional(),
       labels: z.array(z.string().max(100)).max(50).optional(),
       linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
+      commandName: z.string().trim().min(1).max(64).optional(),
+      commenterLogin: z.string().trim().min(1).max(100).optional(),
+      commenterAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
     })
     .optional(),
 });
@@ -835,6 +865,44 @@ export function createApp() {
         reason: pull.linkedIssues.length > 0 ? `linked issue #${pull.linkedIssues[0]}` : "cached open PR without linked issue",
       })),
       settingsPreview: buildMaintainerSettingsPreview(),
+    });
+  });
+
+  app.get("/v1/app/skipped-pr-audit", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const summary = await getRoleSummaryForIdentity(c.env, identity);
+    if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
+
+    const parsed = skippedPrAuditQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return c.json({ error: "invalid_skipped_pr_audit_query", issues: parsed.error.issues }, 400);
+    const sinceIso = parsed.data.since ? toIsoQueryDate(parsed.data.since) : undefined;
+    if (parsed.data.since && !sinceIso) return c.json({ error: "invalid_since" }, 400);
+    const requestedRepo = parsed.data.repoFullName;
+    const repoFullNames = await skippedPrAuditRepoScope(c, identity, summary.roles, requestedRepo);
+    if (repoFullNames instanceof Response) return repoFullNames;
+    const page = await listPrVisibilitySkipAuditEvents(c.env, {
+      limit: clampInteger(parsed.data.limit ?? 50, 1, 100),
+      repoFullNames,
+      reason: parsed.data.reason,
+      sinceIso,
+    });
+    return c.json({
+      generatedAt: nowIso(),
+      limit: page.limit,
+      hasMore: page.hasMore,
+      filters: {
+        repoFullName: requestedRepo ?? null,
+        reason: parsed.data.reason ?? null,
+        since: sinceIso ?? null,
+      },
+      items: page.items.map((item) => ({
+        repoFullName: item.repoFullName,
+        pullNumber: item.pullNumber,
+        reason: item.reason,
+        timestamp: item.createdAt,
+        remediation: skippedPrAuditRemediation(item.reason),
+      })),
     });
   });
 
@@ -2091,6 +2159,7 @@ export function createApp() {
         requireLinkedIssue: parsed.data.requireLinkedIssue,
         backfillEnabled: parsed.data.backfillEnabled,
         privateTrustEnabled: parsed.data.privateTrustEnabled,
+        commandAuthorization: normalizeCommandAuthorizationPolicy(parsed.data.commandAuthorization).policy,
       }),
     );
   });
@@ -2641,7 +2710,7 @@ function buildDigestItems(args: {
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
   let burdenForecastError: unknown;
-  const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
+  const [repo, snapshots, dataQuality, burdenForecast, queueTrends] = await Promise.all([
     getRepository(env, fullName),
     Promise.all(
       ["queue-health", "config-quality", "label-audit", "maintainer-lane", "maintainer-cut-readiness", "contributor-intake-health"].map(async (signalType) => [
@@ -2654,6 +2723,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       burdenForecastError = error;
       return null;
     }),
+    getRepoQueueTrendSnapshot(env, fullName),
   ]);
   const intelligenceDataQuality = burdenForecastError
     ? withDataQualityWarning(dataQuality, `Burden forecast unavailable for ${fullName}: ${errorMessage(burdenForecastError)}`)
@@ -2670,6 +2740,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
         },
       }
     : {};
+  const queueTrendReport = queueTrends?.payload ?? (buildUnavailableQueueTrendReport(fullName) as unknown as Record<string, never>);
   if (snapshotMap["queue-health"] && snapshotMap["config-quality"] && snapshotMap["label-audit"]) {
     return {
       status: "ready",
@@ -2679,6 +2750,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       repo,
       lane: buildLaneAdvice(repo, fullName),
       queueHealth: snapshotMap["queue-health"],
+      queueTrends: queueTrendReport,
       configQuality: snapshotMap["config-quality"],
       labelAudit: snapshotMap["label-audit"],
       maintainerLane: snapshotMap["maintainer-lane"],
@@ -2710,6 +2782,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     repo,
     lane: buildLaneAdvice(repo, fullName),
     queueHealth,
+    queueTrends: queueTrendReport,
     collisions,
     configQuality,
     labelAudit,
@@ -3336,6 +3409,45 @@ async function requireSessionRepoAccess(
   if (scopedRepoNames.has(requestedRepo)) return null;
   if (repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase())) return null;
   return c.json({ error: "forbidden_repo" }, 403);
+}
+
+async function skippedPrAuditRepoScope(
+  c: ProtectedRouteContext,
+  identity: AuthIdentity,
+  roles: ControlPanelRoleName[],
+  requestedRepo: string | undefined,
+): Promise<string[] | undefined | Response> {
+  if (identity.kind !== "session" || roles.includes("operator")) return requestedRepo ? [requestedRepo] : undefined;
+  const scope = await loadControlPanelAccessScope(c.env, identity.actor);
+  const scopedRepoNames = new Set(scope.repositoryFullNames.map((name) => name.toLowerCase()));
+  if (requestedRepo) {
+    return scopedRepoNames.has(requestedRepo.toLowerCase()) ? [requestedRepo] : c.json({ error: "forbidden_repo" }, 403);
+  }
+  return scope.repositoryFullNames;
+}
+
+function skippedPrAuditRemediation(reason: string): string {
+  switch (reason) {
+    case "surface_off":
+      return "Enable a PR public surface or check runs in repository settings if maintainers want Gittensory to post.";
+    case "missing_author":
+      return "Retry after GitHub provides a resolvable pull request author.";
+    case "bot_author":
+      return "No action needed; bot-authored pull requests are intentionally kept quiet.";
+    case "maintainer_author":
+      return "Enable maintainer-authored PRs in repository settings only if those PRs should receive public GitHub App output.";
+    case "miner_detection_unavailable":
+      return "Retry after official Gittensor miner detection recovers; Gittensory skips instead of guessing.";
+    case "not_official_gittensor_miner":
+      return "No public action is needed unless the author should be recognized as an official Gittensor miner.";
+    default:
+      return "Review repository settings and installation health before reprocessing the pull request.";
+  }
+}
+
+function toIsoQueryDate(value: string): string | undefined {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
 }
 
 function requiresApiToken(path: string): boolean {

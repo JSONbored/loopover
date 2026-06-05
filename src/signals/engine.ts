@@ -497,6 +497,25 @@ export type BountyLinkedPr = {
   isActive: boolean;
 };
 
+export type BountySourceContext = {
+  sourceUrl?: string | null | undefined;
+  discoveredAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+  observedAt?: string | null | undefined;
+  ageDays: number | null;
+  freshness: "fresh" | "stale" | "unknown";
+};
+
+export type BountyOpportunityContext = {
+  id: string;
+  lifecycle: BountyLifecycle;
+  isActiveOpportunity: boolean;
+  fundingStatus: "funded" | "target_only" | "unknown";
+  consensusRisk: "low" | "medium" | "high";
+  source: BountySourceContext;
+  linkedPrs: BountyLinkedPr[];
+};
+
 export type BountyAdvisory = {
   id: string;
   repoFullName: string;
@@ -506,6 +525,7 @@ export type BountyAdvisory = {
   isActiveOpportunity: boolean;
   fundingStatus: "funded" | "target_only" | "unknown";
   consensusRisk: "low" | "medium" | "high";
+  source: BountySourceContext;
   linkedPrs: BountyLinkedPr[];
   findings: SignalFinding[];
 };
@@ -541,6 +561,7 @@ export type IssueQualityReport = {
     title: string;
     lifecycle?: IssueDiscoveryLifecycleState | undefined;
     linkage?: IssueLinkageRecord | undefined;
+    bounty?: BountyOpportunityContext | undefined;
     status: "ready" | "needs_proof" | "hold" | "do_not_use";
     score: number;
     reasons: string[];
@@ -1536,17 +1557,26 @@ export function buildContributorOutcomeHistory(args: {
       };
     })
     .filter((outcome) => outcome.pullRequests + outcome.issues > 0 || outcome.maintainerLane);
+  // When official Gittensor totals are absent, derive every PR/issue total from the same
+  // login-scoped, internally-consistent repoOutcomes (each repo keeps pullRequests >=
+  // merged + open + closed and issues = openIssues + closedIssues). Previously pullRequests/
+  // mergedPullRequests fell back to registeredRepoActivity and openPullRequests to an
+  // unfiltered repoStats sum, breaking the invariant and letting closedPullRequestRate exceed 1.
+  const sumOutcomes = (pick: (outcome: (typeof repoOutcomes)[number]) => number): number => repoOutcomes.reduce((sum, outcome) => sum + pick(outcome), 0);
+  const gittensorTotals = args.profile.gittensor?.totals;
+  const openIssues = gittensorTotals?.openIssues ?? sumOutcomes((outcome) => outcome.openIssues);
+  const closedIssues = gittensorTotals?.closedIssues ?? sumOutcomes((outcome) => outcome.closedIssues);
   const totals = {
-    pullRequests: args.profile.gittensor?.totals.pullRequests ?? args.profile.registeredRepoActivity.pullRequests,
-    mergedPullRequests: args.profile.gittensor?.totals.mergedPullRequests ?? args.profile.registeredRepoActivity.mergedPullRequests,
-    openPullRequests: args.profile.gittensor?.totals.openPullRequests ?? args.repoStats.reduce((sum, stat) => sum + stat.openPullRequests, 0),
-    closedPullRequests: args.profile.gittensor?.totals.closedPullRequests ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.closedPullRequests, 0),
+    pullRequests: gittensorTotals?.pullRequests ?? sumOutcomes((outcome) => outcome.pullRequests),
+    mergedPullRequests: gittensorTotals?.mergedPullRequests ?? sumOutcomes((outcome) => outcome.mergedPullRequests),
+    openPullRequests: gittensorTotals?.openPullRequests ?? sumOutcomes((outcome) => outcome.openPullRequests),
+    closedPullRequests: gittensorTotals?.closedPullRequests ?? sumOutcomes((outcome) => outcome.closedPullRequests),
     closedPullRequestRate: 0,
-    issues: args.profile.registeredRepoActivity.issues,
-    openIssues: args.profile.gittensor?.totals.openIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.openIssues, 0),
-    closedIssues: args.profile.gittensor?.totals.closedIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.closedIssues, 0),
-    solvedIssues: args.profile.gittensor?.totals.solvedIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.solvedIssues, 0),
-    validSolvedIssues: args.profile.gittensor?.totals.validSolvedIssues ?? repoOutcomes.reduce((sum, outcome) => sum + outcome.validSolvedIssues, 0),
+    issues: openIssues + closedIssues,
+    openIssues,
+    closedIssues,
+    solvedIssues: gittensorTotals?.solvedIssues ?? sumOutcomes((outcome) => outcome.solvedIssues),
+    validSolvedIssues: gittensorTotals?.validSolvedIssues ?? sumOutcomes((outcome) => outcome.validSolvedIssues),
     credibility: args.profile.gittensor?.credibility ?? 0,
     issueCredibility: args.profile.gittensor?.issueCredibility ?? 0,
   };
@@ -2666,6 +2696,7 @@ export function buildIssueQualityReport(
       const bodyLength = issue.body?.trim().length ?? 0;
       const bounty = bountyByIssue.get(bountyIssueKey(fullName, issue.number)) ?? null;
       const bountyLifecycle = bounty ? classifyBountyLifecycle(bounty, issue) : null;
+      const bountyContext = bounty ? buildBountyOpportunityContext(bounty, issue, linkedPrs, linkedMergedPrs) : undefined;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
       const linkage = buildIssueLinkageRecord(issue, lifecycleEntry, linkedPrs, linkedMergedPrs);
       const reasons = [
@@ -2700,7 +2731,7 @@ export function buildIssueQualityReport(
             : score < 45
               ? "hold"
               : "ready";
-      return { number: issue.number, title: issue.title, lifecycle, linkage, status, score, reasons, warnings };
+      return { number: issue.number, title: issue.title, lifecycle, linkage, bounty: bountyContext, status, score, reasons, warnings };
     })
     .sort((left, right) => right.score - left.score || left.number - right.number);
   return {
@@ -3173,18 +3204,65 @@ export function isHistoricalBountyLifecycle(lifecycle: BountyLifecycle): boolean
   return lifecycle === "historical" || lifecycle === "completed" || lifecycle === "cancelled";
 }
 
-function buildBountyLinkedPrs(issue: IssueRecord | null, pullRequests: PullRequestRecord[]): BountyLinkedPr[] {
+function buildBountySourceContext(bounty: BountyRecord): BountySourceContext {
+  const observedAt = bounty.updatedAt ?? bounty.discoveredAt ?? null;
+  const ageDays = observedAt ? daysSince(observedAt) : null;
+  return {
+    sourceUrl: bounty.sourceUrl ?? null,
+    discoveredAt: bounty.discoveredAt ?? null,
+    updatedAt: bounty.updatedAt ?? null,
+    observedAt,
+    ageDays,
+    freshness: ageDays === null ? "unknown" : ageDays > BOUNTY_STALE_DAYS ? "stale" : "fresh",
+  };
+}
+
+function buildBountyLinkedPrs(
+  issue: IssueRecord | null,
+  pullRequests: PullRequestRecord[],
+  recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
+): BountyLinkedPr[] {
   if (!issue) return [];
   const linkedNumbers = new Set<number>(issue.linkedPrs);
   for (const pr of pullRequests) {
     if (pr.linkedIssues.includes(issue.number)) linkedNumbers.add(pr.number);
   }
+  for (const pr of recentMergedPullRequests) {
+    if (pr.linkedIssues.includes(issue.number)) linkedNumbers.add(pr.number);
+  }
   const byNumber = new Map(pullRequests.map((pr) => [pr.number, pr]));
+  const recentMergedByNumber = new Set(recentMergedPullRequests.map((pr) => pr.number));
   return [...linkedNumbers].sort((left, right) => left - right).map((number) => {
     const pr = byNumber.get(number);
-    const state: BountyLinkedPr["state"] = !pr ? "unknown" : pr.mergedAt ? "merged" : pr.state === "open" ? "open" : "closed";
+    const state: BountyLinkedPr["state"] = recentMergedByNumber.has(number)
+      ? "merged"
+      : !pr
+        ? "unknown"
+        : pr.mergedAt
+          ? "merged"
+          : pr.state === "open"
+            ? "open"
+            : "closed";
     return { number, state, isActive: state === "open" };
   });
+}
+
+function buildBountyOpportunityContext(
+  bounty: BountyRecord,
+  issue: IssueRecord | null,
+  pullRequests: PullRequestRecord[] = [],
+  recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
+): BountyOpportunityContext {
+  const advisory = buildBountyAdvisory(bounty, null, issue, pullRequests, recentMergedPullRequests);
+  return {
+    id: advisory.id,
+    lifecycle: advisory.lifecycle,
+    isActiveOpportunity: advisory.isActiveOpportunity,
+    fundingStatus: advisory.fundingStatus,
+    consensusRisk: advisory.consensusRisk,
+    source: advisory.source,
+    linkedPrs: advisory.linkedPrs,
+  };
 }
 
 /**
@@ -3214,13 +3292,15 @@ export function buildBountyAdvisory(
   repo: RepositoryRecord | null,
   issue: IssueRecord | null,
   pullRequests: PullRequestRecord[] = [],
+  recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
 ): BountyAdvisory {
   const lifecycle = classifyBountyLifecycle(bounty, issue);
   const target = bounty.payload.target_bounty ?? bounty.payload.target_alpha;
   const amount = bounty.payload.bounty_amount ?? bounty.payload.bounty_alpha;
   /* v8 ignore next -- Unknown funding is a sparse-cache fallback; funded and target-only states are covered. */
   const fundingStatus = amount && amount !== 0 && amount !== "0.0000" ? "funded" : target ? "target_only" : "unknown";
-  const linkedPrs = buildBountyLinkedPrs(issue, pullRequests);
+  const source = buildBountySourceContext(bounty);
+  const linkedPrs = buildBountyLinkedPrs(issue, pullRequests, recentMergedPullRequests);
   const findings: SignalFinding[] = [];
   if (lifecycle === "completed") {
     findings.push({
@@ -3324,6 +3404,7 @@ export function buildBountyAdvisory(
     isActiveOpportunity: lifecycle === "active",
     fundingStatus,
     consensusRisk: computeBountyConsensusRisk(lifecycle, issue, openLinkedPrs.length, mergedLinkedPrs.length, closedLinkedPrs.length, unknownLinkedPrs.length),
+    source,
     linkedPrs,
     findings,
   };

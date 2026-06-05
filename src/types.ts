@@ -353,8 +353,16 @@ export type RepositorySettings = {
   requireLinkedIssue: boolean;
   backfillEnabled: boolean;
   privateTrustEnabled: boolean;
+  commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
+};
+
+export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_author" | "confirmed_miner";
+
+export type RepositoryCommandAuthorizationPolicy = {
+  default: CommandAuthorizationRole[];
+  commands: Record<string, CommandAuthorizationRole[]>;
 };
 
 export type RepoSyncStateRecord = {
@@ -434,6 +442,12 @@ export type RepoGithubTotalsSnapshotRecord = {
   rateLimitRemaining?: number | null | undefined;
   rateLimitResetAt?: string | null | undefined;
   payload: Record<string, JsonValue>;
+};
+
+export type RepoQueueTrendSnapshotRecord = {
+  repoFullName: string;
+  payload: Record<string, JsonValue>;
+  generatedAt: string;
 };
 
 export type PullRequestDetailSyncStateRecord = {

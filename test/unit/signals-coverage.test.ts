@@ -954,6 +954,8 @@ describe("signal coverage edge cases", () => {
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
     expect(comment).toContain("[Gittensor profile](https://gittensor.io/miners/details?githubId=49853598)");
     expect(comment).toContain("Official Gittensor activity: 29 PR(s), 6 issue(s).");
+    expect(comment).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review");
+    expect(comment).not.toContain("- [x] <!-- gittensory-rerun-review:v1 -->");
     expect(comment).not.toMatch(/wallet|hotkey|payout|trust score|private score/i);
   });
 

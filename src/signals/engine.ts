@@ -3513,6 +3513,8 @@ export function buildPublicReadinessScore(args: {
   };
 }
 
+export const PR_PANEL_RETRIGGER_MARKER = "<!-- gittensory-rerun-review:v1 -->";
+
 export function buildPublicPrIntelligenceComment(args: {
   repo: RepositoryRecord | null;
   pr: PullRequestRecord;
@@ -3670,6 +3672,8 @@ export function buildPublicPrIntelligenceComment(args: {
     ...(nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."]),
     "",
     "</details>",
+    "",
+    `- [ ] ${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
     "",
     "---",
     footer,

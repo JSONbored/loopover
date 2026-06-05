@@ -319,9 +319,11 @@ describe("world-class backend signals", () => {
     const settings = {
       repoFullName: repo.fullName,
       commentMode: "detected_contributors_only" as const,
+      publicAudienceMode: "gittensor_only" as const,
       publicSignalLevel: "standard" as const,
       checkRunMode: "off" as const,
       checkRunDetailLevel: "minimal" as const,
+      gateCheckMode: "off" as const,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -347,7 +349,7 @@ describe("world-class backend signals", () => {
 
     expect(detection.detected).toBe(true);
     expect(shouldPublishPrIntelligenceComment(settings, detection)).toBe(true);
-    expect(comment).toContain("<!-- gittensory-pr-intelligence -->");
+    expect(comment).toContain("<!-- gittensory-pr-panel:v1 -->");
     expect(comment).not.toMatch(/wallet|raw trust score|ranking|farming|reward/i);
   });
 
@@ -362,9 +364,11 @@ describe("world-class backend signals", () => {
     const settings: RepositorySettings = {
       repoFullName: repo.fullName,
       commentMode: "detected_contributors_only",
+      publicAudienceMode: "gittensor_only",
       publicSignalLevel: "standard",
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
+      gateCheckMode: "off",
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -440,9 +444,11 @@ describe("world-class backend signals", () => {
     const settings: RepositorySettings = {
       repoFullName: repo.fullName,
       commentMode: "off",
+      publicAudienceMode: "gittensor_only",
       publicSignalLevel: "minimal",
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
+      gateCheckMode: "off",
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -493,9 +499,11 @@ describe("world-class backend signals", () => {
     const settings: RepositorySettings = {
       repoFullName: repo.fullName,
       commentMode: "all_prs",
+      publicAudienceMode: "gittensor_only",
       publicSignalLevel: "minimal",
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
+      gateCheckMode: "off",
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -508,7 +516,7 @@ describe("world-class backend signals", () => {
 
     const comment = buildPublicPrIntelligenceComment({ repo, pr: currentPr, profile, detection, queueHealth, collisions, preflight, settings });
 
-    expect(comment).toContain("Linked issues: Not required by this repo setting");
+    expect(comment).toContain("| Linked issue | Not required by this repo setting |");
     expect(comment).toContain("Public profile languages: not available");
     expect(comment).not.toMatch(/trust score|wallet|ranking/i);
   });

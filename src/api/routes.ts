@@ -425,9 +425,11 @@ const agentExplainBlockersSchema = z.union([localBranchAnalysisSchema, agentPlan
 
 const repositorySettingsSchema = z.object({
   commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]).default("detected_contributors_only"),
+  publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]).default("oss_maintainer"),
   publicSignalLevel: z.enum(["minimal", "standard"]).default("standard"),
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
+  gateCheckMode: z.enum(["off", "enabled"]).default("off"),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   createMissingLabel: z.boolean().default(true),
@@ -2170,9 +2172,11 @@ export function createApp() {
       await upsertRepositorySettings(c.env, {
         repoFullName: fullName,
         commentMode: parsed.data.commentMode,
+        publicAudienceMode: parsed.data.publicAudienceMode,
         publicSignalLevel: parsed.data.publicSignalLevel,
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
+        gateCheckMode: parsed.data.gateCheckMode,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         createMissingLabel: parsed.data.createMissingLabel,

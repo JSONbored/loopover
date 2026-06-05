@@ -9,6 +9,17 @@ import type {
 } from "../types";
 import { nowIso } from "../utils/json";
 
+export type GateCheckConclusion = "success" | "failure" | "action_required";
+
+export type GateCheckEvaluation = {
+  enabled: boolean;
+  conclusion: GateCheckConclusion;
+  title: string;
+  summary: string;
+  blockers: AdvisoryFinding[];
+  warnings: AdvisoryFinding[];
+};
+
 export function buildRepositoryAdvisory(repo: RepositoryRecord | null, fullName: string): Advisory {
   const findings: AdvisoryFinding[] = [];
   if (!repo) {
@@ -114,6 +125,48 @@ export function formatCheckRunOutput(
   }
 
   return { title, summary, text: publicLines.join("\n") };
+}
+
+export function evaluateGateCheck(advisoryResult: Advisory): GateCheckEvaluation {
+  const blockers = advisoryResult.findings.filter((finding) => isGateBlocker(finding.code));
+  const brokenEvaluation = blockers.some((finding) => isEvaluationBlocker(finding.code));
+  if (blockers.length === 0) {
+    return {
+      enabled: true,
+      conclusion: "success",
+      title: "Gittensory Gate passed",
+      summary: "No configured merge-blocking hygiene issue was found.",
+      blockers,
+      warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning"),
+    };
+  }
+  return {
+    enabled: true,
+    conclusion: brokenEvaluation ? "action_required" : "failure",
+    title: "Gittensory Gate is blocking merge",
+    summary: `${blockers.length} configured merge-blocking issue${blockers.length === 1 ? "" : "s"} found.`,
+    blockers,
+    warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning" && !blockers.includes(finding)),
+  };
+}
+
+export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: string; summary: string; text: string } {
+  if (gate.conclusion === "success") {
+    return {
+      title: gate.title,
+      summary: "Gittensory Gate is an opt-in merge gate. This PR passed the configured public hygiene checks.",
+      text: "No configured merge-blocking issue was found.",
+    };
+  }
+  const blockerLines = gate.blockers.slice(0, 8).map((finding) => {
+    const action = finding.action ? ` Action: ${sanitizeForCheckRun(finding.action)}` : "";
+    return `- ${sanitizeForCheckRun(finding.title)}.${action}`;
+  });
+  return {
+    title: gate.title,
+    summary: "Gittensory Gate is an opt-in merge gate. Fix the listed public hygiene issue before merge, or disable the gate for this repo.",
+    text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured merge-blocking issue was found.",
+  };
 }
 
 function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): void {
@@ -301,4 +354,12 @@ function conclusionForSeverity(severity: AdvisorySeverity, findings: AdvisoryFin
   if (severity === "warning") return "neutral";
   if (severity === "critical") return "action_required";
   return "success";
+}
+
+function isGateBlocker(code: string): boolean {
+  return code === "missing_linked_issue" || code === "duplicate_pr_risk" || isEvaluationBlocker(code);
+}
+
+function isEvaluationBlocker(code: string): boolean {
+  return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached";
 }

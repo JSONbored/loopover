@@ -3403,13 +3403,29 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "publicAudienceMode": {
+                "type": "string",
+                "enum": [
+                  "oss_maintainer",
+                  "gittensor_only"
+                ]
+              },
+              "gateCheckMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "enabled"
+                ]
               }
             },
             "required": [
               "installed",
               "publicSurface",
               "commentMode",
+              "publicAudienceMode",
               "checkRunMode",
+              "gateCheckMode",
               "quietByDefault",
               "behavior",
               "warnings"
@@ -7616,14 +7632,30 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
+          },
+          "publicAudienceMode": {
+            "type": "string",
+            "enum": [
+              "oss_maintainer",
+              "gittensor_only"
+            ]
+          },
+          "gateCheckMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "enabled"
+            ]
           }
         },
         "required": [
           "repoFullName",
           "commentMode",
+          "publicAudienceMode",
           "publicSignalLevel",
           "checkRunMode",
           "checkRunDetailLevel",
+          "gateCheckMode",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",
@@ -7684,12 +7716,28 @@
                     },
                     "autoLabelEnabled": {
                       "type": "boolean"
+                    },
+                    "publicAudienceMode": {
+                      "type": "string",
+                      "enum": [
+                        "oss_maintainer",
+                        "gittensor_only"
+                      ]
+                    },
+                    "gateCheckMode": {
+                      "type": "string",
+                      "enum": [
+                        "off",
+                        "enabled"
+                      ]
                     }
                   },
                   "required": [
                     "publicSurface",
                     "commentMode",
+                    "publicAudienceMode",
                     "checkRunMode",
+                    "gateCheckMode",
                     "autoLabelEnabled"
                   ]
                 }
@@ -7735,7 +7783,8 @@
                   "enum": [
                     "comment",
                     "label",
-                    "check_run"
+                    "check_run",
+                    "gate_check"
                   ]
                 },
                 "enabled": {
@@ -8124,14 +8173,30 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
+              },
+              "publicAudienceMode": {
+                "type": "string",
+                "enum": [
+                  "oss_maintainer",
+                  "gittensor_only"
+                ]
+              },
+              "gateCheckMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "enabled"
+                ]
               }
             },
             "required": [
               "publicSurface",
               "commentMode",
+              "publicAudienceMode",
               "publicSignalLevel",
               "checkRunMode",
               "checkRunDetailLevel",
+              "gateCheckMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",

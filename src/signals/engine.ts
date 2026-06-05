@@ -1213,6 +1213,7 @@ export function detectGittensorContributor(
 export function shouldPublishPrIntelligenceComment(settings: RepositorySettings, detection: ContributorDetection): boolean {
   if (settings.commentMode === "off") return false;
   if (settings.publicSurface !== "comment_and_label" && settings.publicSurface !== "comment_only") return false;
+  if (settings.publicAudienceMode === "oss_maintainer") return settings.commentMode === "all_prs" || detection.detected || detection.source !== "official_gittensor_api";
   return detection.detected && detection.source === "official_gittensor_api";
 }
 
@@ -3453,41 +3454,100 @@ export function buildPublicPrIntelligenceComment(args: {
     /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
     ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
   ].filter((step) => !containsPrivatePublicTerm(step));
+  const gateEnabled = args.settings.gateCheckMode === "enabled";
+  const missingRequiredIssue = args.settings.requireLinkedIssue && args.pr.linkedIssues.length === 0;
+  const gateBlocking = gateEnabled && (missingRequiredIssue || collisionCount > 0 || !args.repo);
+  const confirmedMiner = args.detection.source === "official_gittensor_api";
+  const genericOssMode = args.settings.publicAudienceMode === "oss_maintainer";
+  const alert = gateBlocking
+    ? missingRequiredIssue
+      ? "WARNING"
+      : "CAUTION"
+    : args.preflight.findings.some((finding) => finding.severity === "warning")
+      ? "IMPORTANT"
+      : "TIP";
+  const panelTitle = gateBlocking
+    ? "Gittensory Gate is blocking merge"
+    : args.preflight.findings.some((finding) => finding.severity === "warning")
+      ? "Gittensory found maintainer review notes"
+      : "Gittensory PR readiness looks good";
+  const panelSummary = gateBlocking
+    ? missingRequiredIssue
+      ? "This repository requires linked issues, but this PR does not reference one yet."
+      : collisionCount > 0
+        ? "This PR overlaps with cached open work and should be resolved before merge."
+        : "Gittensory cannot evaluate the repo state closely enough for the enabled gate."
+    : genericOssMode
+      ? "Public GitHub metadata was checked for review readiness. Gittensor-specific context appears only when confirmed."
+      : "Confirmed Gittensor contributor context was checked from public metadata and Gittensory cache.";
+  const rows: Array<[string, string]> = [
+    ["Linked issue", linkedIssues],
+    ["Duplicate risk", collisionCount > 0 ? `${collisionCount} possible overlap${collisionCount === 1 ? "" : "s"}` : "No cached overlap"],
+    ["Review burden", args.preflight.reviewBurden],
+    ["Queue level", args.queueHealth.level],
+    ["Contributor context", confirmedMiner ? "Confirmed Gittensor contributor" : args.detection.detected ? "Cached OSS contributor activity" : "Public profile only"],
+    ["Gate result", gateEnabled ? (gateBlocking ? "Failing" : "Passing") : "Advisory only"],
+  ];
+  const maintainerNotes =
+    publicFindings.length > 0
+      ? publicFindings.map((finding) => `- ${sanitizePanelText(finding.title)}: ${sanitizePanelText(finding.publicText ?? finding.detail)}`)
+      : ["- No public-safe advisory findings were generated from cached metadata."];
+  const footer = confirmedMiner || args.settings.publicAudienceMode === "gittensor_only"
+    ? "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers. Learn more about [Gittensor](https://gittensor.io) contribution workflows."
+    : "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers.";
   return [
-    "<!-- gittensory-pr-intelligence -->",
-    "## Gittensory contribution context",
+    "<!-- gittensory-pr-panel:v1 -->",
     "",
-    "_Advisory context generated from public GitHub metadata and Gittensory's registered-repo cache. This is not an endorsement._",
+    `> [!${alert}]`,
+    `> **${panelTitle}**`,
+    `> ${panelSummary}`,
     "",
-    "### Contributor context",
-    `- Author: \`${args.pr.authorLogin ?? "unknown"}\``,
-    `- Confirmed Gittensor miner: ${args.detection.source === "official_gittensor_api" ? "yes" : "not confirmed"}`,
-    `- Role context: ${roleContext.role}${roleContext.maintainerLane ? " (maintainer lane)" : ""}`,
-    `- Gittensory signal: ${args.detection.detected ? args.detection.reason : "No confirmed Gittensor miner activity detected."}`,
-    `- Prior cached PRs/issues: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s)`,
-    `- Public profile languages: ${args.profile.github.topLanguages.length > 0 ? args.profile.github.topLanguages.join(", ") : "not available"}`,
+    "| Signal | State |",
+    "| --- | --- |",
+    ...rows.map(([signal, state]) => `| ${escapeTableCell(signal)} | ${escapeTableCell(state)} |`),
     "",
-    "### PR hygiene",
-    `- Linked issues: ${linkedIssues}`,
-    `- Lane context: ${buildLaneAdvice(args.repo, args.pr.repoFullName).summary}`,
-    `- Review burden: ${args.preflight.reviewBurden}`,
+    "<details>",
+    "<summary>Review context</summary>",
     "",
-    "### Duplicate/WIP risk",
-    `- Collision clusters found: ${collisionCount}`,
-    `- Queue level: ${args.queueHealth.level}`,
+    `- Author: \`${sanitizePanelText(args.pr.authorLogin ?? "unknown")}\``,
+    `- Role context: ${sanitizePanelText(roleContext.role)}${roleContext.maintainerLane ? " (maintainer lane)" : ""}`,
+    `- Public audience mode: ${args.settings.publicAudienceMode.replace(/_/g, " ")}`,
+    `- Lane context: ${sanitizePanelText(buildLaneAdvice(args.repo, args.pr.repoFullName).summary)}`,
+    `- Cached prior PRs/issues: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s)`,
+    `- Public profile languages: ${args.profile.github.topLanguages.length > 0 ? sanitizePanelText(args.profile.github.topLanguages.join(", ")) : "not available"}`,
+    ...(confirmedMiner ? ["- Gittensor context: official public API confirms this GitHub user."] : []),
     "",
-    "### Maintainer notes",
-    ...(publicFindings.length > 0
-      ? publicFindings.map((finding) => `- ${finding.title}: ${finding.publicText ?? finding.detail}`)
-      : ["- No public-safe advisory findings were generated from cached metadata."]),
+    "</details>",
     "",
-    "### Contributor next steps",
+    "<details>",
+    "<summary>Maintainer notes</summary>",
+    "",
+    ...maintainerNotes,
+    "",
+    "</details>",
+    "",
+    "<details>",
+    "<summary>Contributor next steps</summary>",
+    "",
     ...(nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."]),
+    "",
+    "</details>",
+    "",
+    "---",
+    footer,
   ].join("\n");
 }
 
 function containsPrivatePublicTerm(value: string): boolean {
   return /\b(reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d|\/100)\b/i.test(value);
+}
+
+function sanitizePanelText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function escapeTableCell(value: string): string {
+  return sanitizePanelText(value).replace(/\|/g, "\\|");
 }
 
 /**

@@ -361,6 +361,130 @@ function summarize(manifest: FocusManifest, blocked: string[], wanted: string[])
   return "Maintainer focus manifest applied with no path-specific verdict.";
 }
 
+// ─── Contribution Lanes ──────────────────────────────────────────────────────
+
+export type ContributionLanePreference = "preferred" | "neutral" | "discouraged";
+
+/**
+ * Standalone contribution lane summary derived from a focus manifest.
+ * Does not require a specific change set — describes the general contribution
+ * policy the maintainer has declared so contributors and repo owners can plan
+ * their work before touching any files.
+ */
+export type ContributionLanes = {
+  present: boolean;
+  source: FocusManifestSource;
+  directPrLane: ContributionLanePreference;
+  issueDiscoveryLane: ContributionLanePreference;
+  preferredEntryPaths: string[];
+  discouragedEntryPaths: string[];
+  validationExpectations: string[];
+  issueEntryGuidance: string[];
+  prEntryGuidance: string[];
+  warnings: string[];
+  summary: string;
+};
+
+/**
+ * Derive contribution lanes from a focus manifest without requiring a specific
+ * change set. The result is deterministic, explainable, and public-safe: no
+ * maintainer-private notes, scoreability, reviewability, reward/risk, wallet,
+ * hotkey, or raw trust context appears in any output field.
+ */
+export function deriveContributionLanes(manifest: FocusManifest): ContributionLanes {
+  if (!manifest.present) {
+    return {
+      present: false,
+      source: manifest.source,
+      directPrLane: "neutral",
+      issueDiscoveryLane: "neutral",
+      preferredEntryPaths: [],
+      discouragedEntryPaths: [],
+      validationExpectations: [],
+      issueEntryGuidance: [],
+      prEntryGuidance: [],
+      warnings: manifest.warnings,
+      summary: "No maintainer focus manifest; contribution lanes are not constrained.",
+    };
+  }
+
+  const directPrLane = deriveDirectPrLane(manifest);
+  const issueDiscoveryLane = deriveIssueDiscoveryLane(manifest);
+  const validationExpectations = deriveValidationExpectations(manifest);
+  const issueEntryGuidance = deriveIssueEntryGuidance(manifest);
+  const prEntryGuidance = derivePrEntryGuidance(manifest);
+
+  return {
+    present: true,
+    source: manifest.source,
+    directPrLane,
+    issueDiscoveryLane,
+    preferredEntryPaths: manifest.wantedPaths.filter(isFocusManifestPublicSafe),
+    discouragedEntryPaths: manifest.blockedPaths.filter(isFocusManifestPublicSafe),
+    validationExpectations,
+    issueEntryGuidance,
+    prEntryGuidance,
+    warnings: manifest.warnings,
+    summary: lanesSummary(manifest, directPrLane, issueDiscoveryLane),
+  };
+}
+
+function deriveDirectPrLane(manifest: FocusManifest): ContributionLanePreference {
+  if (manifest.issueDiscoveryPolicy === "encouraged") return "discouraged";
+  if (manifest.wantedPaths.length > 0) return "preferred";
+  return "neutral";
+}
+
+function deriveIssueDiscoveryLane(manifest: FocusManifest): ContributionLanePreference {
+  if (manifest.issueDiscoveryPolicy === "encouraged") return "preferred";
+  if (manifest.issueDiscoveryPolicy === "discouraged") return "discouraged";
+  return "neutral";
+}
+
+function deriveValidationExpectations(manifest: FocusManifest): string[] {
+  const expectations: string[] = [];
+  if (manifest.linkedIssuePolicy === "required") expectations.push("Link a tracked issue before opening a PR.");
+  else if (manifest.linkedIssuePolicy === "preferred") expectations.push("Link a tracked issue if one exists.");
+  for (const expectation of manifest.testExpectations) {
+    if (isFocusManifestPublicSafe(expectation)) expectations.push(expectation);
+  }
+  return expectations;
+}
+
+function deriveIssueEntryGuidance(manifest: FocusManifest): string[] {
+  const guidance: string[] = [];
+  if (manifest.issueDiscoveryPolicy === "encouraged") guidance.push("Issue discovery reports are welcomed; search for gaps before opening a PR.");
+  else if (manifest.issueDiscoveryPolicy === "discouraged") guidance.push("Prefer direct fixes over new issue reports; this repo discourages issue-discovery submissions.");
+  if (manifest.linkedIssuePolicy === "required") guidance.push("Issues must be linked to a PR before it is opened.");
+  else if (manifest.linkedIssuePolicy === "preferred") guidance.push("Link an existing issue to your PR when one is available.");
+  return guidance;
+}
+
+function derivePrEntryGuidance(manifest: FocusManifest): string[] {
+  const guidance: string[] = [];
+  if (manifest.wantedPaths.length > 0) {
+    guidance.push(`Focus changes on maintainer-wanted areas: ${manifest.wantedPaths.slice(0, 5).join(", ")}.`);
+  }
+  if (manifest.blockedPaths.length > 0) {
+    guidance.push(`Avoid maintainer-blocked areas: ${manifest.blockedPaths.slice(0, 5).join(", ")}.`);
+  }
+  if (manifest.preferredLabels.length > 0) {
+    guidance.push(`Apply a maintainer-preferred label to your PR: ${manifest.preferredLabels.slice(0, 3).join(", ")}.`);
+  }
+  for (const note of manifest.publicNotes) {
+    if (isFocusManifestPublicSafe(note)) guidance.push(note);
+  }
+  return [...new Set(guidance)].filter(isFocusManifestPublicSafe);
+}
+
+function lanesSummary(manifest: FocusManifest, directPrLane: ContributionLanePreference, issueDiscoveryLane: ContributionLanePreference): string {
+  if (issueDiscoveryLane === "preferred" && directPrLane === "discouraged") return "Issue-discovery is the preferred contribution mode for this repo.";
+  if (issueDiscoveryLane === "discouraged" && manifest.wantedPaths.length > 0) return "Direct PRs focused on the wanted areas are the preferred contribution mode.";
+  if (directPrLane === "preferred") return "Direct PRs on the maintainer-wanted areas are preferred.";
+  if (issueDiscoveryLane === "discouraged") return "Direct PRs are preferred; issue-discovery submissions are discouraged.";
+  return "Contribution lanes are guided by the maintainer focus manifest.";
+}
+
 // ─── Focus Manifest Policy Schema ────────────────────────────────────────────
 
 /** Preference signal for a contribution lane derived from the focus manifest. */

@@ -1068,6 +1068,7 @@ async function runCli(args) {
   if (command === "logout") return logout(options);
   if (command === "profile" || command === "profiles") return profileCommand(args.slice(1));
   if (command === "whoami") return whoami(options);
+  if (command === "config") return configCommand(options);
   if (command === "status") return status(options);
   if (command === "changelog") return changelog(options);
   if (command === "doctor") return doctor(options);
@@ -1391,6 +1392,7 @@ function printHelp() {
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]
+  gittensory-mcp config [--profile name] [--json]
   gittensory-mcp status [--profile name] [--json]
   gittensory-mcp profile list|create|switch|remove [name] [--json]
   gittensory-mcp changelog [--json]
@@ -1992,6 +1994,58 @@ function selectProfileName(currentConfig, requestedName) {
   const configured = currentConfig?.activeProfile ? normalizeProfileName(currentConfig.activeProfile) : defaultProfileName;
   if (currentConfig?.profiles?.[configured]) return configured;
   return currentConfig?.profiles?.[defaultProfileName] || configured === defaultProfileName ? defaultProfileName : configured;
+}
+
+function resolvedApiUrlSource() {
+  if (process.env.GITTENSORY_API_URL) return "environment";
+  const profileApiUrl = typeof activeProfile.apiUrl === "string" ? activeProfile.apiUrl.replace(/\/+$/, "") : undefined;
+  if (profileApiUrl && !legacyDefaultApiUrls.has(profileApiUrl)) return "profile";
+  const globalApiUrl = typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
+  if (globalApiUrl && !legacyDefaultApiUrls.has(globalApiUrl)) return "config";
+  return "default";
+}
+
+function resolvedConfigPathSource() {
+  if (process.env.GITTENSORY_CONFIG_PATH) return "GITTENSORY_CONFIG_PATH";
+  if (process.env.GITTENSORY_CONFIG_DIR) return "GITTENSORY_CONFIG_DIR";
+  if (process.env.XDG_CONFIG_HOME) return "XDG_CONFIG_HOME";
+  return "default";
+}
+
+function resolvedTokenSource() {
+  if (getEnvApiToken()) return "environment";
+  if (configuredProfileToken(activeProfileName)) return "profile";
+  return "none";
+}
+
+// Report the resolved effective configuration and where each value came from, without leaking
+// local absolute paths or token values. Distinct from `status` (health/version), `doctor`
+// (diagnostic checks), and `whoami` (session identity): this answers "what config is in effect
+// and which source supplied it?".
+function configCommand(options) {
+  const payload = {
+    apiUrl,
+    apiUrlSource: resolvedApiUrlSource(),
+    activeProfile: activeProfileName,
+    profileCount: profileList(config).length,
+    configured: existsSync(configPath),
+    configPathSource: resolvedConfigPathSource(),
+    cacheDirSource: process.env.GITTENSORY_CACHE_DIR ? "GITTENSORY_CACHE_DIR" : "default",
+    tokenConfigured: Boolean(getApiToken()),
+    tokenSource: resolvedTokenSource(),
+    sourceUpload: { default: false, supported: false },
+    profile: profilePublicState(activeProfileName),
+  };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`API URL: ${payload.apiUrl} (${payload.apiUrlSource})\n`);
+  process.stdout.write(`Active profile: ${payload.activeProfile} (${payload.profileCount} configured)\n`);
+  process.stdout.write(`Config file: ${payload.configured ? "present" : "absent"} (location: ${payload.configPathSource})\n`);
+  process.stdout.write(`Cache dir: ${payload.cacheDirSource}\n`);
+  process.stdout.write(`Token: ${payload.tokenConfigured ? `configured (${payload.tokenSource})` : "not configured"}\n`);
+  process.stdout.write("Source upload: disabled (unsupported)\n");
 }
 
 function normalizeProfileName(value) {

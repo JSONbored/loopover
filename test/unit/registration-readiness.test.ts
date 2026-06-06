@@ -161,6 +161,21 @@ describe("buildRegistrationReadiness", () => {
     expect(report.githubApp.behavior).toContain("for all PRs");
   });
 
+  it("describes a quiet public surface while keeping the opt-in gate check enabled", () => {
+    const repo = repoFor("octo/quiet-gate", configFor({ repo: "octo/quiet-gate" }));
+    const settings = settingsFor(repo.fullName, { publicSurface: "off", gateCheckMode: "enabled" });
+    const report = buildRegistrationReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings,
+      installation: healthyInstall,
+      ...signalsFor(repo, [], [], [label("bug")]),
+    });
+
+    expect(report.githubApp.behavior).toContain("stays quiet");
+    expect(report.githubApp.behavior).toContain("opt-in gate check still enabled");
+  });
+
   it("notes when the GitHub App is not installed", () => {
     const repo = repoFor("octo/uninstalled", configFor({ repo: "octo/uninstalled" }), { isInstalled: false, installationId: null });
     const report = buildRegistrationReadiness({ repoFullName: repo.fullName, repo, settings: settingsFor(repo.fullName), installation: null, ...signalsFor(repo, [], [], [label("bug")]) });

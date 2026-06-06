@@ -375,6 +375,22 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/app/self-dogfood/registration-pack",
+    responses: {
+      200: { description: "Private self-dogfood registration pack for the Gittensory repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role for maintainer-only self-dogfood report" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack",
+    responses: {
+      200: { description: "Private self-dogfood registration pack when repo matches configured Gittensory target", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role or repo is not the configured self-dogfood target" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/repos/{owner}/{repo}/onboarding-pack/preview",
     responses: {
       200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },

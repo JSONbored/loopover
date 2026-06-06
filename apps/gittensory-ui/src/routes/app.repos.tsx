@@ -18,7 +18,7 @@ export const Route = createFileRoute("/app/repos")({
 
 const LABELS: Record<Tab, string> = {
   maintainer: "Maintainer console",
-  owner: "Repo owner",
+  owner: "Registration workspace",
 };
 
 function Repos() {
@@ -31,7 +31,7 @@ function Repos() {
       <PageHeader
         eyebrow="Repositories"
         title="Maintainer & owner surfaces"
-        description="Install health, public-surface previews, registration readiness, and Gittensor config recommendations — quiet by default."
+        description="Maintainer console plus the repo-owner registration workspace for intake readiness, lane tradeoffs, and config recommendations."
       />
       <Tabs
         value={value}

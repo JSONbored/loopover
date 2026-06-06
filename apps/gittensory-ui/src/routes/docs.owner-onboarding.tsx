@@ -44,8 +44,9 @@ function OwnerOnboarding() {
       <ul>
         <li>
           <strong>Contribution lane is defined.</strong> Choose one: direct-PR lane (contributors
-          open PRs against issues), issue-discovery lane (contributors source and solve open issues),
-          or a split. Mixed posture without a documented lane produces noisy, low-signal traffic.
+          open PRs against issues), issue-discovery lane (contributors source and solve open
+          issues), or a split. Mixed posture without a documented lane produces noisy, low-signal
+          traffic.
         </li>
         <li>
           <strong>CONTRIBUTING.md is present and current.</strong> It must say what a good PR looks
@@ -68,8 +69,10 @@ function OwnerOnboarding() {
       <p>Labels drive scoring, lane filtering, and the trusted label pipeline.</p>
       <ul>
         <li>
-          <strong>At least one label is configured in <code>.gittensor.yml</code>.</strong> Without
-          configured label multipliers, scoring is flat and lane signals are weak.
+          <strong>
+            At least one label is configured in <code>.gittensor.yml</code>.
+          </strong>{" "}
+          Without configured label multipliers, scoring is flat and lane signals are weak.
         </li>
         <li>
           <strong>Labels exist on real issues.</strong> Configured labels that are never observed on
@@ -117,13 +120,15 @@ function OwnerOnboarding() {
       </p>
       <ul>
         <li>
-          <strong><code>npm run test:ci</code> passes at or above 97% coverage.</strong> This is the
-          minimum gate threshold. Aim for 98%+ locally so CI variance does not trip the gate on
-          normal PRs.
+          <strong>
+            <code>npm run test:ci</code> passes at or above 97% coverage.
+          </strong>{" "}
+          This is the minimum gate threshold. Aim for 98%+ locally so CI variance does not trip the
+          gate on normal PRs.
         </li>
         <li>
-          <strong>Branch coverage is the binding constraint.</strong> Line and statement coverage can
-          be high while branch coverage hides untested paths. Check{" "}
+          <strong>Branch coverage is the binding constraint.</strong> Line and statement coverage
+          can be high while branch coverage hides untested paths. Check{" "}
           <code>npm run test:coverage</code> locally before enabling the gate.
         </li>
         <li>
@@ -179,9 +184,8 @@ function OwnerOnboarding() {
         </li>
         <li>
           <strong>Split lane:</strong> Some contributors do PRs, others do issue discovery. This
-          works when the two activities are balanced in your{" "}
-          <code>.gittensor.yml</code> emission share config. Unbalanced split configs produce
-          misleading contributor recommendations.
+          works when the two activities are balanced in your <code>.gittensor.yml</code> emission
+          share config. Unbalanced split configs produce misleading contributor recommendations.
         </li>
       </ul>
 
@@ -194,14 +198,14 @@ function OwnerOnboarding() {
         <li>
           <strong>Public comment content is sanitized.</strong> Wallet addresses, hotkeys, coldkeys,
           raw trust scores, reward estimates, payout amounts, farming language, and private
-          reviewability details are never included. The sanitizer enforces this at the output layer —
-          but verify your label names and issue bodies do not contain this language either, as it
+          reviewability details are never included. The sanitizer enforces this at the output layer
+          — but verify your label names and issue bodies do not contain this language either, as it
           affects signal quality.
         </li>
         <li>
           <strong>Private API context stays private.</strong> The decision pack, scoring profile,
-          maintainer packet, and registration readiness report are authenticated-only. They are never
-          mirrored to public GitHub comments, issue bodies, or PR descriptions.
+          maintainer packet, and registration readiness report are authenticated-only. They are
+          never mirrored to public GitHub comments, issue bodies, or PR descriptions.
         </li>
         <li>
           <strong>Public audience mode is set correctly.</strong> Use{" "}
@@ -210,10 +214,10 @@ function OwnerOnboarding() {
           non-confirmed-miner PRs.
         </li>
         <li>
-          <strong>Comment mode matches your intent.</strong>{" "}
-          <code>detected_contributors_only</code> (default) posts only on confirmed miners.{" "}
-          <code>all_prs</code> posts on every PR that passes the other gates. Start with the default
-          and widen only if you want context on all contributor PRs.
+          <strong>Comment mode matches your intent.</strong> <code>detected_contributors_only</code>{" "}
+          (default) posts only on confirmed miners. <code>all_prs</code> posts on every PR that
+          passes the other gates. Start with the default and widen only if you want context on all
+          contributor PRs.
         </li>
       </ul>
 
@@ -233,8 +237,8 @@ function OwnerOnboarding() {
           quality. The gate narrows the field, but it does not eliminate effort on your part.
         </li>
         <li>
-          <strong>Label and config lock-in.</strong> Changing label multipliers or lane posture after
-          registration shifts contributor targeting. Do it deliberately, not frequently.
+          <strong>Label and config lock-in.</strong> Changing label multipliers or lane posture
+          after registration shifts contributor targeting. Do it deliberately, not frequently.
         </li>
         <li>
           <strong>Maintainer-cut economics.</strong> If you enable a maintainer cut, the repo

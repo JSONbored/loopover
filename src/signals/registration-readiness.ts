@@ -1,7 +1,8 @@
 import type { RegistryRepoConfig, RepositoryRecord, RepositorySettings } from "../types";
 import { nowIso } from "../utils/json";
 import type { ConfigQuality, ContributorIntakeHealth, LabelAudit, LaneAdvice, MaintainerCutReadiness, QueueHealth } from "./engine";
-import type { FocusManifest } from "./focus-manifest";
+import { compileFocusManifestPolicy, type FocusManifest } from "./focus-manifest";
+import { buildRepoOnboardingPackPreview, focusManifestPolicyToCompilerOutput, type RepoOnboardingPackPreview } from "./onboarding-pack";
 import { buildRepoPolicyReadiness, policyReadinessWarningText, type RepoPolicyReadinessReport } from "./repo-policy-readiness";
 
 export type RegistrationMode = "direct_pr" | "issue_discovery" | "split";
@@ -63,6 +64,7 @@ export type RegistrationReadinessReport = {
   docsCompleteness: { status: string; requiredDocs: string[]; note: string };
   githubApp: GithubAppBehavior;
   policyReadiness: RepoPolicyReadinessReport | null;
+  onboardingPackPreview: RepoOnboardingPackPreview | null;
   blockers: string[];
   warnings: string[];
 };
@@ -164,6 +166,13 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
           contributorIntakeHealth,
         });
 
+  const onboardingPackPreview =
+    input.focusManifest === undefined
+      ? null
+      : buildRepoOnboardingPackPreview(
+          focusManifestPolicyToCompilerOutput(compileFocusManifestPolicy(repoFullName, input.focusManifest)),
+        );
+
   const blockers = [
     ...(!isRegistered ? ["Repository is not registered in the latest Gittensory registry snapshot."] : []),
     ...(configFragile ? ["Repository config quality is fragile."] : []),
@@ -233,6 +242,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
     },
     githubApp,
     policyReadiness,
+    onboardingPackPreview,
     blockers,
     warnings,
   };

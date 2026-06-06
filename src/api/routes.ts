@@ -142,6 +142,7 @@ import {
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
 import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
+import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
 import {
   buildWeeklyValueReport,
   formatWeeklyValueReportMarkdown,
@@ -185,7 +186,12 @@ import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
-import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
+import {
+  buildGittensorConfigRecommendation,
+  buildRegistrationReadiness,
+  type InstallationHealthSummary,
+  type RegistrationReadinessReport,
+} from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
 import type {
   BountyLifecycleEventRecord,
@@ -1490,6 +1496,22 @@ export function createApp() {
   app.get("/v1/repos/:owner/:repo/gittensor-config-recommendation", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await buildGittensorConfigRecommendationResponse(c.env, fullName));
+  });
+
+  app.get("/v1/app/self-dogfood/registration-pack", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    return c.json(await buildSelfDogfoodRegistrationPackResponse(c.env));
+  });
+
+  app.get("/v1/repos/:owner/:repo/self-dogfood-registration-pack", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    if (fullName.toLowerCase() !== resolveSelfDogfoodRepoFullName(c.env).toLowerCase()) {
+      return c.json({ error: "self_dogfood_repo_only", repoFullName: resolveSelfDogfoodRepoFullName(c.env) }, 403);
+    }
+    return c.json(await buildSelfDogfoodRegistrationPackResponse(c.env));
   });
 
   app.get("/v1/repos/:owner/:repo/onboarding-pack/preview", async (c) => {
@@ -2921,6 +2943,24 @@ async function buildRegistrationReadinessResponse(env: Env, fullName: string) {
 function stripOwnerPolicyContext<T extends { ownerContext: unknown }>(policyReadiness: T): Omit<T, "ownerContext"> {
   const { ownerContext: _ownerContext, ...publicPolicyReadiness } = policyReadiness;
   return publicPolicyReadiness;
+}
+
+async function buildSelfDogfoodRegistrationPackResponse(env: Env) {
+  const fullName = resolveSelfDogfoodRepoFullName(env);
+  const [readinessPayload, recommendationPayload] = await Promise.all([
+    buildRegistrationReadinessResponse(env, fullName),
+    buildGittensorConfigRecommendationResponse(env, fullName),
+  ]);
+  const { dataQuality: _readinessQuality, ...registrationReadiness } = readinessPayload;
+  const { dataQuality: _recommendationQuality, ...gittensorConfigRecommendation } = recommendationPayload;
+  return {
+    ...buildSelfDogfoodRegistrationPack({
+      repoFullName: fullName,
+      registrationReadiness: registrationReadiness as RegistrationReadinessReport,
+      gittensorConfigRecommendation,
+    }),
+    dataQuality: _readinessQuality,
+  };
 }
 
 async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {

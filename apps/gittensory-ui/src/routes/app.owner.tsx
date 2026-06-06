@@ -12,8 +12,8 @@ function OwnerRoute() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Owner"
-        title="Repository owner surface"
-        description="Review registration readiness, config recommendations, and repo-owner signals directly."
+        title="Registration workspace"
+        description="Readiness report with direct-PR vs issue-discovery tradeoffs, maintainer economics, queue health, and suggested Gittensor config."
       />
       <OwnerPanel />
     </div>

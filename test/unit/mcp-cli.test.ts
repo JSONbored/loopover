@@ -93,6 +93,27 @@ describe("gittensory-mcp CLI", () => {
     expect(localScorer?.detail).not.toMatch(join(process.cwd(), "test/fixtures"));
   });
 
+  it("shell-quotes doctor next command values derived from local repo metadata", async () => {
+    tempDir = createPacketRepo();
+    git(tempDir, "remote", "set-url", "origin", "git@github.com:owner/repo$(touch /tmp/av_pwned).git");
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-success.mjs")}`,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    const payload = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--json"], env)) as { nextCommand: { command: string } };
+    expect(payload.nextCommand.command).toBe("gittensory-mcp preflight --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(payload.nextCommand.command).not.toContain("--repo owner/repo$(");
+
+    const humanOutput = await runAsync(["doctor", "--cwd", tempDir], env);
+    expect(humanOutput).toContain("gittensory-mcp preflight --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(humanOutput).not.toContain("--repo owner/repo$(");
+  });
+
   it("uses doctor as a first-run auth checklist when no local session is configured", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -1063,6 +1084,115 @@ describe("gittensory-mcp CLI", () => {
   it("rejects missing or unsupported completion shells", () => {
     expect(() => run(["completion"])).toThrow(/Usage: gittensory-mcp completion <bash\|zsh\|fish>/);
     expect(() => run(["completion", "powershell"])).toThrow(/Unsupported shell: powershell/);
+  });
+
+  it("reports resolved configuration provenance via config", () => {
+    const payload = JSON.parse(run(["config", "--json"])) as {
+      apiUrl: string;
+      apiUrlSource: string;
+      activeProfile: string;
+      profileCount: number;
+      configured: boolean;
+      configPathSource: string;
+      cacheDirSource: string;
+      tokenConfigured: boolean;
+      tokenSource: string;
+      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
+    };
+    // The run() harness sets GITTENSORY_CONFIG_DIR but no API URL or token.
+    expect(payload.apiUrl).toBe("https://gittensory-api.aethereal.dev");
+    expect(payload.apiUrlSource).toBe("default");
+    expect(payload.activeProfile).toBe("default");
+    expect(payload.profileCount).toBeGreaterThanOrEqual(1);
+    expect(payload.configured).toBe(false);
+    expect(payload.configPathSource).toBe("GITTENSORY_CONFIG_DIR");
+    expect(payload.cacheDirSource).toBe("default");
+    expect(payload.tokenConfigured).toBe(false);
+    expect(payload.tokenSource).toBe("none");
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: false, source: "default", supported: false });
+  });
+
+  it("attributes config values to environment overrides without leaking secrets", () => {
+    const secretDir = mkdtempSync(join(tmpdir(), "gittensory-config-secret-"));
+    try {
+      const out = run(["config"], {
+        GITTENSORY_API_URL: "https://example.test",
+        GITTENSORY_TOKEN: "super-secret-token",
+        GITTENSORY_CACHE_DIR: join(secretDir, "cache"),
+        GITTENSORY_CONFIG_DIR: secretDir,
+      });
+      expect(out).toContain("API URL: https://example.test (environment)");
+      expect(out).toContain("Token: configured (environment)");
+      expect(out).toContain("Cache dir: GITTENSORY_CACHE_DIR");
+      expect(out).toContain("Source upload: disabled (unsupported)");
+      // No token value or local absolute path may appear in output.
+      expect(out).not.toContain("super-secret-token");
+      expect(out).not.toContain(secretDir);
+    } finally {
+      rmSync(secretDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports enabled unsupported source upload environment settings via config", () => {
+    const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_UPLOAD_SOURCE: "true" })) as {
+      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
+    };
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "GITTENSORY_UPLOAD_SOURCE", supported: false });
+
+    const out = run(["config"], { GITTENSORY_UPLOAD_SOURCE: "true" });
+    expect(out).toContain("Source upload: enabled via GITTENSORY_UPLOAD_SOURCE (unsupported; unset GITTENSORY_UPLOAD_SOURCE)");
+  });
+
+  it("attributes API URL and token to a named profile from the config file", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "gittensory-config-profile-"));
+    try {
+      writeFileSync(
+        join(configDir, "config.json"),
+        JSON.stringify({
+          activeProfile: "work",
+          profiles: { work: { apiUrl: "https://profile.example", session: { token: "tok", login: "octocat", expiresAt: "2099-01-01T00:00:00Z" } } },
+        }),
+        { mode: 0o600 },
+      );
+      const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_CONFIG_DIR: configDir })) as {
+        apiUrl: string;
+        apiUrlSource: string;
+        activeProfile: string;
+        configured: boolean;
+        tokenConfigured: boolean;
+        tokenSource: string;
+        profile: { login: string };
+      };
+      expect(payload.activeProfile).toBe("work");
+      expect(payload.apiUrl).toBe("https://profile.example");
+      expect(payload.apiUrlSource).toBe("profile");
+      expect(payload.configured).toBe(true);
+      expect(payload.tokenConfigured).toBe(true);
+      expect(payload.tokenSource).toBe("profile");
+      expect(payload.profile.login).toBe("octocat");
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it("attributes API URL to a global config file reached through a config-path override", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gittensory-config-global-"));
+    const file = join(dir, "custom-config.json");
+    try {
+      writeFileSync(file, JSON.stringify({ apiUrl: "https://global.example" }), { mode: 0o600 });
+      const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_CONFIG_PATH: file, GITTENSORY_CONFIG_DIR: "" })) as {
+        apiUrl: string;
+        apiUrlSource: string;
+        configPathSource: string;
+        configured: boolean;
+      };
+      expect(payload.apiUrl).toBe("https://global.example");
+      expect(payload.apiUrlSource).toBe("config");
+      expect(payload.configPathSource).toBe("GITTENSORY_CONFIG_PATH");
+      expect(payload.configured).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

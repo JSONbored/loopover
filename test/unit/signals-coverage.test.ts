@@ -146,6 +146,28 @@ describe("signal coverage edge cases", () => {
     expect(profile.registeredRepoActivity.dominantLabels).toContain("uncached-label");
   });
 
+  it("treats malformed official snapshot repo names as absent during label dedupe", () => {
+    const snapshot = officialSnapshot();
+    snapshot.repositories[0]!.repoFullName = { malformed: true } as unknown as string;
+    snapshot.pullRequests = [{ repoFullName: "owner/readiness", number: 1, title: "Fix it", state: "MERGED", label: "snapshot-label", score: 1, baseScore: 1, tokenScore: 1 }];
+
+    const profile = buildContributorProfile(
+      "jsonbored",
+      { login: "jsonbored", topLanguages: [], source: "github" },
+      [],
+      [],
+      [
+        { login: "jsonbored", repoFullName: { malformed: true } as unknown as string, pullRequests: 1, mergedPullRequests: 0, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["malformed-stat-label"] },
+        { login: "jsonbored", repoFullName: "owner/uncached", pullRequests: 1, mergedPullRequests: 0, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["uncached-label"] },
+      ],
+      snapshot,
+    );
+
+    expect(profile.registeredRepoActivity.dominantLabels).toContain("snapshot-label");
+    expect(profile.registeredRepoActivity.dominantLabels).not.toContain("malformed-stat-label");
+    expect(profile.registeredRepoActivity.dominantLabels).toContain("uncached-label");
+  });
+
   it("separates cached outcome history, maintainer role sources, and contributor detections", () => {
     const directRepo = repo("owner/direct");
     const ownerRepo = repo("owner/project");

@@ -3,6 +3,7 @@ import {
   isFocusManifestPublicSafe,
   type FocusManifest,
   type FocusManifestLanePreference,
+  type FocusManifestPolicyContributionLane,
 } from "./focus-manifest";
 import type { RepoPolicyCompilerOutput, RepoPolicyContributionLane } from "./onboarding-pack";
 import { nowIso } from "../utils/json";
@@ -17,12 +18,16 @@ export type RepoPolicyCompilerInput = {
  * Compile a normalized focus manifest into policy output consumed by onboarding-pack generation (#277 → #248).
  */
 export function compileRepoPolicyCompilerOutput(input: RepoPolicyCompilerInput): RepoPolicyCompilerOutput {
-  const policy = compileFocusManifestPolicy(input.manifest);
+  const generatedAt = input.generatedAt ?? nowIso();
+  const policy = compileFocusManifestPolicy(input.repoFullName, input.manifest, { generatedAt });
   const contributionLanes: RepoPolicyContributionLane[] = [];
 
   if (policy.present) {
-    contributionLanes.push(buildDirectPrLane(policy.publicSafe.contributionLanes.directPrLane, policy));
-    contributionLanes.push(buildIssueDiscoveryLane(policy.publicSafe.contributionLanes.issueDiscoveryLane, policy));
+    const directPrPreferredPaths = policy.publicSafe.contributionLanes.find((l) => l.id === "direct-pr")?.preferredPaths ?? [];
+    for (const lane of policy.publicSafe.contributionLanes) {
+      if (lane.id === "direct-pr") contributionLanes.push(buildDirectPrLane(lane, policy));
+      else if (lane.id === "issue-discovery") contributionLanes.push(buildIssueDiscoveryLane(lane, policy, directPrPreferredPaths));
+    }
   }
 
   const publicReadinessWarnings = policy.authenticated.readinessWarnings.filter(isFocusManifestPublicSafe);
@@ -30,15 +35,15 @@ export function compileRepoPolicyCompilerOutput(input: RepoPolicyCompilerInput):
 
   return {
     repoFullName: input.repoFullName,
-    generatedAt: input.generatedAt ?? nowIso(),
+    generatedAt,
     contributionLanes,
     labelPolicy: {
-      preferredLabels: policy.publicSafe.labelExpectations.preferredLabels,
+      preferredLabels: policy.publicSafe.labelPolicy.preferredLabels,
       requiredLabels: [],
       discouragedLabels: [],
-      note: labelPolicyNote(policy.publicSafe.labelExpectations.linkedIssuePolicy),
+      note: labelPolicyNote(policy.publicSafe.validation.linkedIssuePolicy),
     },
-    validationExpectations: policy.publicSafe.validationExpectations.testExpectations,
+    validationExpectations: policy.publicSafe.validation.expectations,
     readinessWarnings: [
       ...publicReadinessWarnings,
       ...publicParseWarnings,
@@ -59,31 +64,32 @@ export function compileRepoPolicyCompilerOutput(input: RepoPolicyCompilerInput):
 }
 
 function buildDirectPrLane(
-  preference: FocusManifestLanePreference,
+  lane: FocusManifestPolicyContributionLane,
   policy: ReturnType<typeof compileFocusManifestPolicy>,
 ): RepoPolicyContributionLane {
   return {
     id: "direct-pr",
-    title: laneTitle("Direct pull request lane", preference),
-    summary: directPrSummary(preference, policy.publicSafe.summary),
-    preferredPaths: policy.publicSafe.contributionLanes.preferredEntryPaths,
-    discouragedPaths: policy.publicSafe.discouragedWork.blockedEntryPaths,
-    validationExpectations: policy.publicSafe.validationExpectations.testExpectations,
+    title: laneTitle("Direct pull request lane", lane.preference),
+    summary: directPrSummary(lane.preference, policy.publicSafe.summary),
+    preferredPaths: lane.preferredPaths,
+    discouragedPaths: lane.discouragedPaths,
+    validationExpectations: policy.publicSafe.validation.expectations,
     publicNotes: policy.publicSafe.entryGuidance,
   };
 }
 
 function buildIssueDiscoveryLane(
-  preference: FocusManifestLanePreference,
+  lane: FocusManifestPolicyContributionLane,
   policy: ReturnType<typeof compileFocusManifestPolicy>,
+  directPrPreferredPaths: string[],
 ): RepoPolicyContributionLane {
   return {
     id: "issue-discovery",
-    title: laneTitle("Issue discovery lane", preference),
-    summary: issueDiscoverySummary(preference, policy.publicSafe.summary),
-    preferredPaths: policy.publicSafe.contributionLanes.preferredEntryPaths,
-    discouragedPaths: policy.publicSafe.discouragedWork.blockedEntryPaths,
-    validationExpectations: policy.publicSafe.validationExpectations.testExpectations,
+    title: laneTitle("Issue discovery lane", lane.preference),
+    summary: issueDiscoverySummary(lane.preference, policy.publicSafe.summary),
+    preferredPaths: directPrPreferredPaths,
+    discouragedPaths: lane.discouragedPaths,
+    validationExpectations: policy.publicSafe.validation.expectations,
     publicNotes: policy.publicSafe.entryGuidance.filter((note) => !note.toLowerCase().includes("direct")),
   };
 }

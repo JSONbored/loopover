@@ -1066,12 +1066,12 @@ export function buildContributorProfile(
   // only fold in stat-derived dominant labels for repos that have no cached authored records --
   // otherwise a shared repo's labels are double-counted (consistent with how reposTouched dedups and
   // unlinkedOpenPullRequests maxes the same two sources).
-  const cachedLabelRepos = new Set([...authoredPullRequests, ...authoredIssues].map((record) => record.repoFullName.toLowerCase()));
+  const cachedLabelRepos = new Set([...authoredPullRequests, ...authoredIssues].map((record) => normalizedRepoName(record.repoFullName)));
   const dominantLabels = topItems(
     [
       ...authoredPullRequests.flatMap((record) => record.labels),
       ...authoredIssues.flatMap((record) => record.labels),
-      ...matchingStats.filter((stat) => !cachedLabelRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !cachedLabelRepos.has(normalizedRepoName(stat.repoFullName))).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -1122,12 +1122,12 @@ function buildGittensorContributorProfile(
     .sort();
   // The snapshot labels already cover snapshot.repositories; only fold in stat-derived dominant labels
   // for repos the snapshot does not cover, so shared repos are not double-counted.
-  const snapshotRepos = new Set(snapshot.repositories.map((repo) => repo.repoFullName.toLowerCase()));
+  const snapshotRepos = new Set(snapshot.repositories.map((repo) => normalizedRepoName(repo.repoFullName)));
   const dominantLabels = topItems(
     [
       ...snapshot.pullRequests.flatMap((pr) => (pr.label ? [pr.label] : [])),
       ...snapshot.issueLabels,
-      ...matchingStats.filter((stat) => !snapshotRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !snapshotRepos.has(normalizedRepoName(stat.repoFullName))).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -4183,6 +4183,10 @@ function sameLogin(value: string | null | undefined, login: string): boolean {
 
 function sameRepo(left: string | null | undefined, right: string | null | undefined): boolean {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function normalizedRepoName(value: unknown): string {
+  return typeof value === "string" ? value.toLowerCase() : "";
 }
 
 function topItems(items: string[], limit: number): string[] {

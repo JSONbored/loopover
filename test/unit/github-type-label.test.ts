@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyTypeLabel,
   classifyTypeLabel,
@@ -8,6 +10,7 @@ import {
   fetchReferencedIssues,
   getTypeLabelDecision,
   readCurrentLabels,
+  main,
 } from "../../scripts/github-type-label.mjs";
 
 describe("GitHub type label classifier", () => {
@@ -250,6 +253,79 @@ describe("GitHub type label classifier", () => {
 
     expect(issues).toEqual([{ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] }]);
     expect(calls).toEqual(["GET https://api.github.com/repos/JSONbored/gittensory/issues/12"]);
+  });
+
+  it("caps closing issue references before authenticated fetches", async () => {
+    const calls: string[] = [];
+    const issues = await fetchReferencedIssues({
+      repository: "JSONbored/gittensory",
+      token: "token",
+      body: "Closes #1 fixes #2 resolves #3 closes #4 fixes #5 resolves #6",
+      maxReferences: 3,
+      fetchImpl: async (input, init) => {
+        calls.push(`${init?.method ?? "GET"} ${input.toString()}`);
+        return Response.json({ number: calls.length, title: "[Feature]: accepted", labels: [{ name: "feature" }] });
+      },
+    });
+
+    expect(issues).toHaveLength(3);
+    expect(calls).toEqual([
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/1",
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/2",
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/3",
+    ]);
+  });
+
+  it("ignores missing referenced issues instead of failing the workflow", async () => {
+    const issues = await fetchReferencedIssues({
+      repository: "JSONbored/gittensory",
+      token: "token",
+      body: "Closes #12 fixes #404",
+      fetchImpl: async (input) => {
+        if (input.toString().endsWith("/issues/404")) return new Response("not found", { status: 404 });
+        return Response.json({ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] });
+      },
+    });
+
+    expect(issues).toEqual([{ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] }]);
+  });
+
+  it("does not fetch issue references for non-feature pull requests", async () => {
+    const originalEnv = { ...process.env };
+    const originalFetch = globalThis.fetch;
+    const eventDir = mkdtempSync(join(tmpdir(), "type-label-"));
+    const eventPath = join(eventDir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          number: 101,
+          title: "chore: update documentation",
+          body: "Closes #1 fixes #2 resolves #3",
+          labels: [],
+        },
+      }),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => {
+      throw new Error("fetch should not run for non-feature pull requests");
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    process.env.GITHUB_EVENT_NAME = "pull_request_target";
+    process.env.GITHUB_REPOSITORY = "JSONbored/gittensory";
+    process.env.GITHUB_TOKEN = "token";
+
+    try {
+      await main();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("type-label: skipped no-type-label");
+    } finally {
+      process.env = originalEnv;
+      globalThis.fetch = originalFetch;
+      log.mockRestore();
+      rmSync(eventDir, { recursive: true, force: true });
+    }
   });
 
   it("creates a missing auto reward label before applying it", async () => {

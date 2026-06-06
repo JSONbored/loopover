@@ -151,7 +151,7 @@ describe("Gittensor API contributor snapshots", () => {
       if (url.endsWith("/miners/123")) {
         return Response.json({
           repositories: [
-            { repositoryFullName: undefined, totalPrs: "bad", totalOpenIssues: "1", totalClosedIssues: null, isEligible: true },
+            { repositoryFullName: { malformed: true }, totalPrs: "bad", totalOpenIssues: "1", totalClosedIssues: null, isEligible: true },
             { repositoryFullName: "owner/repo", totalPrs: "3", totalMergedPrs: "2", totalOpenIssues: "0", totalClosedIssues: "0", totalScore: "bad" },
           ],
         });

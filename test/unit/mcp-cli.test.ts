@@ -1097,7 +1097,7 @@ describe("gittensory-mcp CLI", () => {
       cacheDirSource: string;
       tokenConfigured: boolean;
       tokenSource: string;
-      sourceUpload: { default: boolean; supported: boolean };
+      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
     };
     // The run() harness sets GITTENSORY_CONFIG_DIR but no API URL or token.
     expect(payload.apiUrl).toBe("https://gittensory-api.aethereal.dev");
@@ -1109,7 +1109,7 @@ describe("gittensory-mcp CLI", () => {
     expect(payload.cacheDirSource).toBe("default");
     expect(payload.tokenConfigured).toBe(false);
     expect(payload.tokenSource).toBe("none");
-    expect(payload.sourceUpload).toEqual({ default: false, supported: false });
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: false, source: "default", supported: false });
   });
 
   it("attributes config values to environment overrides without leaking secrets", () => {
@@ -1131,6 +1131,16 @@ describe("gittensory-mcp CLI", () => {
     } finally {
       rmSync(secretDir, { recursive: true, force: true });
     }
+  });
+
+  it("reports enabled unsupported source upload environment settings via config", () => {
+    const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_UPLOAD_SOURCE: "true" })) as {
+      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
+    };
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "GITTENSORY_UPLOAD_SOURCE", supported: false });
+
+    const out = run(["config"], { GITTENSORY_UPLOAD_SOURCE: "true" });
+    expect(out).toContain("Source upload: enabled via GITTENSORY_UPLOAD_SOURCE (unsupported; unset GITTENSORY_UPLOAD_SOURCE)");
   });
 
   it("attributes API URL and token to a named profile from the config file", () => {

@@ -2024,6 +2024,16 @@ function resolvedTokenSource() {
   return "none";
 }
 
+function sourceUploadState() {
+  const enabled = /^(1|true|yes)$/i.test(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false");
+  return {
+    default: false,
+    enabled,
+    source: enabled ? "GITTENSORY_UPLOAD_SOURCE" : "default",
+    supported: false,
+  };
+}
+
 // Report the resolved effective configuration and where each value came from, without leaking
 // local absolute paths or token values. Distinct from `status` (health/version), `doctor`
 // (diagnostic checks), and `whoami` (session identity): this answers "what config is in effect
@@ -2039,7 +2049,7 @@ function configCommand(options) {
     cacheDirSource: process.env.GITTENSORY_CACHE_DIR ? "GITTENSORY_CACHE_DIR" : "default",
     tokenConfigured: Boolean(getApiToken()),
     tokenSource: resolvedTokenSource(),
-    sourceUpload: { default: false, supported: false },
+    sourceUpload: sourceUploadState(),
     profile: profilePublicState(activeProfileName),
   };
   if (options.json) {
@@ -2051,7 +2061,11 @@ function configCommand(options) {
   process.stdout.write(`Config file: ${payload.configured ? "present" : "absent"} (location: ${payload.configPathSource})\n`);
   process.stdout.write(`Cache dir: ${payload.cacheDirSource}\n`);
   process.stdout.write(`Token: ${payload.tokenConfigured ? `configured (${payload.tokenSource})` : "not configured"}\n`);
-  process.stdout.write("Source upload: disabled (unsupported)\n");
+  process.stdout.write(
+    payload.sourceUpload.enabled
+      ? `Source upload: enabled via ${payload.sourceUpload.source} (unsupported; unset GITTENSORY_UPLOAD_SOURCE)\n`
+      : "Source upload: disabled (unsupported)\n",
+  );
 }
 
 function normalizeProfileName(value) {

@@ -125,7 +125,7 @@ gittensory-mcp logout --profile work
 
 Use `--profile <name>` on `login`, `logout`, `whoami`, `config`, `status`, and `doctor`, or set `GITTENSORY_PROFILE`. `logout` only clears the selected local profile unless `--all` is passed. Profile output redacts session tokens and local config paths.
 
-`gittensory-mcp config` prints the resolved effective configuration and the source that supplied each value (`environment`, `profile`, `config`, or `default`): the active API URL and its source, active profile and profile count, whether a config file is present and which environment variable steers its location, the cache-dir source, and whether a token is configured and where it came from. It never prints token values or local absolute paths. Add `--json` for machine-readable output.
+`gittensory-mcp config` prints the resolved effective configuration and the source that supplied each value (`environment`, `profile`, `config`, or `default`): the active API URL and its source, active profile and profile count, whether a config file is present and which environment variable steers its location, the cache-dir source, whether a token is configured and where it came from, and whether `GITTENSORY_UPLOAD_SOURCE` has enabled the unsupported source-upload setting. It never prints token values or local absolute paths. Add `--json` for machine-readable output.
 
 ## Base-Agent Mode
 

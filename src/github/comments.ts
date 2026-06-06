@@ -23,8 +23,9 @@ export async function createOrUpdatePrIntelligenceComment(
   repoFullName: string,
   pullNumber: number,
   body: string,
+  options: { createIfMissing?: boolean | undefined } = {},
 ): Promise<{ id: number; html_url?: string } | null> {
-  return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, pullNumber, body, PR_INTELLIGENCE_COMMENT_MARKER);
+  return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, pullNumber, body, PR_INTELLIGENCE_COMMENT_MARKER, options);
 }
 
 export async function createOrUpdateAgentCommandComment(
@@ -44,6 +45,7 @@ async function createOrUpdateIssueCommentWithMarker(
   issueNumber: number,
   body: string,
   marker: string,
+  options: { createIfMissing?: boolean | undefined } = {},
 ): Promise<{ id: number; html_url?: string } | null> {
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
@@ -68,6 +70,7 @@ async function createOrUpdateIssueCommentWithMarker(
     });
     return response.data as { id: number; html_url?: string };
   }
+  if (options.createIfMissing === false) return null;
   const response = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
     owner,
     repo,

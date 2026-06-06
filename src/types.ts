@@ -341,6 +341,8 @@ export type BountyRecord = {
   updatedAt?: string | null | undefined;
 };
 
+export type GateRuleMode = "off" | "advisory" | "block";
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
@@ -349,6 +351,10 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  linkedIssueGateMode: GateRuleMode;
+  duplicatePrGateMode: GateRuleMode;
+  qualityGateMode: GateRuleMode;
+  qualityGateMinScore?: number | null | undefined;
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;

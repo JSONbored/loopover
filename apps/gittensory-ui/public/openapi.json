@@ -7646,6 +7646,34 @@
               "off",
               "enabled"
             ]
+          },
+          "linkedIssueGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "duplicatePrGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMinScore": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [
@@ -7656,6 +7684,9 @@
           "checkRunMode",
           "checkRunDetailLevel",
           "gateCheckMode",
+          "linkedIssueGateMode",
+          "duplicatePrGateMode",
+          "qualityGateMode",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",
@@ -8187,6 +8218,34 @@
                   "off",
                   "enabled"
                 ]
+              },
+              "linkedIssueGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "duplicatePrGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMinScore": {
+                "type": "number",
+                "nullable": true
               }
             },
             "required": [
@@ -8197,6 +8256,9 @@
               "checkRunMode",
               "checkRunDetailLevel",
               "gateCheckMode",
+              "linkedIssueGateMode",
+              "duplicatePrGateMode",
+              "qualityGateMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",

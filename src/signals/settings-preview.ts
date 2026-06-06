@@ -18,9 +18,11 @@ export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
 }
 
-export function shouldPublishPrComment(settings: RepositorySettings): boolean {
+export function shouldPublishPrComment(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
   if (settings.commentMode === "off") return false;
-  return settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only";
+  if (settings.publicSurface !== "comment_and_label" && settings.publicSurface !== "comment_only") return false;
+  if (settings.commentMode === "detected_contributors_only") return minerStatus === "confirmed";
+  return true;
 }
 
 export function shouldApplyPrLabel(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
@@ -89,7 +91,7 @@ export function decidePublicSurface(input: PublicSurfaceDecisionInput): PublicSu
     if (input.minerStatus === "not_found") return skipDecision("not_official_gittensor_miner");
   }
 
-  const willComment = shouldPublishPrComment(settings);
+  const willComment = shouldPublishPrComment(settings, input.minerStatus);
   const willLabel =
     shouldApplyPrLabel(settings, input.minerStatus) ||
     (settings.publicAudienceMode === "oss_maintainer" && input.minerStatus === "not_checked" && settings.autoLabelEnabled && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "label_only"));
@@ -179,6 +181,10 @@ export type RepoSettingsPreview = {
     checkRunMode: RepositorySettings["checkRunMode"];
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
     gateCheckMode: RepositorySettings["gateCheckMode"];
+    linkedIssueGateMode: RepositorySettings["linkedIssueGateMode"];
+    duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];
+    qualityGateMode: RepositorySettings["qualityGateMode"];
+    qualityGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
     createMissingLabel: boolean;
@@ -286,6 +292,10 @@ export function buildRepoSettingsPreview(args: {
       checkRunMode: settings.checkRunMode,
       checkRunDetailLevel: settings.checkRunDetailLevel,
       gateCheckMode: settings.gateCheckMode,
+      linkedIssueGateMode: settings.linkedIssueGateMode,
+      duplicatePrGateMode: settings.duplicatePrGateMode,
+      qualityGateMode: settings.qualityGateMode,
+      qualityGateMinScore: settings.qualityGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
       createMissingLabel: settings.createMissingLabel,
@@ -316,7 +326,9 @@ function buildWarnings(settings: RepositorySettings, decision: PublicSurfaceDeci
   }
   const missing = new Set(installation.missingPermissions);
   if ((decision.willComment || decision.willLabel) && missing.has("issues")) {
-    warnings.push("Comments and labels require GitHub App permission Issues: write, which is currently missing. Set repository permission issues to write, then approve the change.");
+    warnings.push(
+      "Comments and labels use GitHub Issues endpoints and require GitHub App permission Issues: write. Set Issues to write, then approve the change.",
+    );
   }
   if (settings.checkRunMode === "enabled" && missing.has("checks")) {
     warnings.push("Check runs are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
@@ -378,7 +390,10 @@ function buildRepoInstallPreview(args: {
       status: commandAuthorizationStatus,
       label: "Command authorization",
       summary: "Public command responses require a maintainer or confirmed PR author; maintainer queue commands require owner, member, or collaborator context.",
-      action: commandAuthorizationStatus === "ready" ? "Use command previews to confirm actor and permission behavior before relying on repo commands." : "Restore Issues: write before enabling public command responses.",
+      action:
+        commandAuthorizationStatus === "ready"
+          ? "Use command previews to confirm actor and permission behavior before relying on repo commands."
+          : "Restore Issues: write before enabling public command responses.",
     },
     {
       id: "audit-behavior",
@@ -461,9 +476,16 @@ function buildRepoInstallPreview(args: {
   };
 }
 
+function writesPrPublicSurface(settings: RepositorySettings, decision: PublicSurfaceDecision): boolean {
+  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed");
+}
+
 function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {
-  const permissions = new Set(["metadata: read", "pull_requests: read"]);
-  if (decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed")) permissions.add("issues: write");
+  // PR conversation comments and PR labels are gated by GitHub on the Pull requests permission (write),
+  // matching REQUIRED_INSTALLATION_PERMISSIONS; reading PR metadata only needs read.
+  const writesPrSurface = writesPrPublicSurface(settings, decision);
+  const permissions = new Set(["metadata: read", writesPrSurface ? "pull_requests: write" : "pull_requests: read"]);
+  if (writesPrSurface) permissions.add("issues: write");
   if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
   return [...permissions];
 }
@@ -472,7 +494,9 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
   const active: string[] = [];
-  if ((decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed")) && missing.has("issues")) active.push("issues");
+  const writesPrSurface = writesPrPublicSurface(settings, decision);
+  if (writesPrSurface && missing.has("pull_requests")) active.push("pull_requests");
+  if (writesPrSurface && missing.has("issues")) active.push("issues");
   if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");
   return active;
 }

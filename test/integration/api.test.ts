@@ -1294,7 +1294,7 @@ describe("api routes", () => {
       installedReposCount: 1,
       registeredInstalledCount: 0,
       status: "needs_attention",
-      missingPermissions: ["issues"],
+      missingPermissions: ["pull_requests", "issues"],
       missingEvents: ["issue_comment"],
       permissions: { metadata: "read", pull_requests: "read" },
       events: ["issues", "pull_request", "repository"],
@@ -1312,7 +1312,7 @@ describe("api routes", () => {
       refresh: { method: string; path: string };
     };
     expect(repairBody).toMatchObject({
-      installation: { status: "needs_attention", missingPermissions: ["issues"], missingEvents: ["issue_comment"] },
+      installation: { status: "needs_attention", missingPermissions: ["pull_requests", "issues"], missingEvents: ["issue_comment"] },
       requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
       optionalPermissions: { checks: "write" },
       refresh: { method: "POST", path: "/v1/installations/777/repair/refresh" },
@@ -1338,7 +1338,7 @@ describe("api routes", () => {
       status: "needs_attention",
       missingPermissions: ["checks"],
       missingEvents: [],
-      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      permissions: { metadata: "read", pull_requests: "write", issues: "write" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:01:00.000Z",
     });
@@ -1357,7 +1357,7 @@ describe("api routes", () => {
           id: 777,
           account: { login: "JSONbored", id: 1, type: "User" },
           repository_selection: "selected",
-          permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+          permissions: { metadata: "read", pull_requests: "write", issues: "write", checks: "write" },
           events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
         });
       }
@@ -1396,6 +1396,49 @@ describe("api routes", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
     expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(8);
+  });
+
+  it("counts cached open PRs from sync states beyond the latest 500 rows", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+
+    vi.setSystemTime(new Date("2026-05-27T00:00:00.000Z"));
+    await upsertRepositoryFromGitHub(env, { name: "oldest", full_name: "entrius/oldest", private: false, owner: { login: "entrius" }, default_branch: "main" });
+    await upsertRepoSyncState(env, {
+      repoFullName: "entrius/oldest",
+      status: "success",
+      sourceKind: "github",
+      primaryLanguage: "TypeScript",
+      defaultBranch: "main",
+      isPrivate: false,
+      openIssuesCount: 0,
+      openPullRequestsCount: 7,
+      recentMergedPullRequestsCount: 0,
+      warnings: [],
+    });
+
+    vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
+    for (let index = 0; index < 500; index += 1) {
+      const name = `newer-${index}`;
+      await upsertRepositoryFromGitHub(env, { name, full_name: `entrius/${name}`, private: false, owner: { login: "entrius" }, default_branch: "main" });
+      await upsertRepoSyncState(env, {
+        repoFullName: `entrius/${name}`,
+        status: "success",
+        sourceKind: "github",
+        primaryLanguage: "TypeScript",
+        defaultBranch: "main",
+        isPrivate: false,
+        openIssuesCount: 0,
+        openPullRequestsCount: 1,
+        recentMergedPullRequestsCount: 0,
+        warnings: [],
+      });
+    }
+
+    const res = await app.request("/v1/app/maintainer-dashboard", { headers: apiHeaders(env) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
+    expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(507);
   });
 
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
@@ -2336,7 +2379,7 @@ describe("api routes", () => {
       status: "needs_attention",
       missingPermissions: ["checks"],
       missingEvents: ["pull_request_review"],
-      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      permissions: { metadata: "read", pull_requests: "write", issues: "write" },
       events: ["issues", "pull_request", "repository"],
       checkedAt: "2026-05-31T11:00:00.000Z",
     });
@@ -5321,7 +5364,7 @@ async function seedSignalData(env: Env): Promise<void> {
       id: 123,
       account: { login: "entrius", id: 1, type: "Organization" },
       repository_selection: "selected",
-      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      permissions: { metadata: "read", pull_requests: "write", issues: "write" },
       events: ["issues", "pull_request", "repository"],
     },
   });
@@ -5334,7 +5377,7 @@ async function seedSignalData(env: Env): Promise<void> {
     status: "healthy",
     missingPermissions: [],
     missingEvents: [],
-    permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+    permissions: { metadata: "read", pull_requests: "write", issues: "write" },
     events: ["issues", "pull_request", "repository"],
     checkedAt: freshAt,
   });
@@ -5515,7 +5558,7 @@ async function seedSignalData(env: Env): Promise<void> {
     status: "healthy",
     missingPermissions: [],
     missingEvents: [],
-    permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+    permissions: { metadata: "read", pull_requests: "write", issues: "write" },
     events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
     checkedAt: freshAt,
   });

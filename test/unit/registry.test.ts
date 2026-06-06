@@ -35,6 +35,16 @@ describe("registry normalization", () => {
   });
 
   it("normalizes repository-list and array payload shapes defensively", () => {
+    const fromObjectMap = normalizeRegistryPayload(
+      {
+        "JSONbored/gittensory": { emission_share: 0.03 },
+        "ignored/null": null,
+        "ignored/array": [],
+      },
+      { kind: "raw-github", url: "https://example.test/master_repositories.json" },
+      "2026-05-22T00:00:00.000Z",
+    );
+
     const fromRepositoryList = normalizeRegistryPayload(
       {
         ignored: null,
@@ -82,6 +92,7 @@ describe("registry normalization", () => {
       labelMultipliers: { bug: 1.2 },
       trustedLabelPipeline: true,
     });
+    expect(fromObjectMap.repositories.map((repo) => repo.repo)).toEqual(["JSONbored/gittensory"]);
     expect(fromArray.repositories.map((repo) => repo.repo)).toEqual(["JSONbored/gittensory", "bad/numbers"]);
     expect(fromArray.repositories.find((repo) => repo.repo === "bad/numbers")).toMatchObject({ emissionShare: 0, issueDiscoveryShare: 0.5 });
     expect(empty.repoCount).toBe(0);

@@ -43,6 +43,9 @@ gittensory-mcp cache clear
 gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
+gittensory-mcp completion bash
+gittensory-mcp completion zsh
+gittensory-mcp completion fish
 gittensory-mcp decision-pack --login jsonbored --json
 gittensory-mcp repo-decision --login jsonbored --repo we-promise/sure --json
 gittensory-mcp analyze-branch --login jsonbored --json
@@ -69,6 +72,21 @@ Add `--json` for machine-readable output:
   "apiVersion": "0.1.0",
   "node": "v22.12.0"
 }
+```
+
+### Shell completion
+
+`gittensory-mcp completion <bash|zsh|fish>` prints a tab-completion script for your shell. It completes top-level commands and the subcommands of `profile`, `cache`, and `agent`. Add `--json` to get `{ "shell": "...", "script": "..." }` for tooling.
+
+```sh
+# bash (add to ~/.bashrc)
+source <(gittensory-mcp completion bash)
+
+# zsh (add to a file on your fpath, or to ~/.zshrc)
+source <(gittensory-mcp completion zsh)
+
+# fish
+gittensory-mcp completion fish > ~/.config/fish/completions/gittensory-mcp.fish
 ```
 
 For near-term what-if scoreability, pass the situational assumptions explicitly:

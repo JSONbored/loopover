@@ -55,6 +55,15 @@ describe("repo command authorization policy", () => {
   });
 
   it("warns on malformed policy and falls back to default command roles", () => {
+    const nonObject = normalizeCommandAuthorizationPolicy("not-a-policy");
+    expect(nonObject.warnings).toEqual(["commandAuthorization must be an object; using secure defaults."]);
+    expect(nonObject.policy.default).toEqual(["maintainer", "collaborator", "confirmed_miner"]);
+
+    const defaultOnly = normalizeCommandAuthorizationPolicy({ default: ["pr_author"] });
+    expect(defaultOnly.warnings).toEqual([]);
+    expect(defaultOnly.policy.default).toEqual(["pr_author"]);
+    expect(defaultOnly.policy.commands["queue-summary"]).toEqual(["maintainer", "collaborator"]);
+
     const { policy, warnings } = normalizeCommandAuthorizationPolicy({
       default: ["unknown", "confirmed_miner"],
       commands: {

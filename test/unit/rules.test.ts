@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildIssueAdvisory, buildPullRequestAdvisory, buildRepositoryAdvisory, formatCheckRunOutput } from "../../src/rules/advisory";
+import {
+  buildIssueAdvisory,
+  buildPullRequestAdvisory,
+  buildRepositoryAdvisory,
+  evaluateGateCheck,
+  formatCheckRunOutput,
+  formatGateCheckOutput,
+} from "../../src/rules/advisory";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
 
 const repo: RepositoryRecord = {
@@ -107,6 +114,182 @@ describe("advisory rules", () => {
     const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: [otherPr] });
 
     expect(advisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+  });
+
+  it("keeps weak queue warnings advisory-only for the opt-in gate", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 12,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "contributor",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [4],
+    };
+    const otherOpenPullRequests = Array.from({ length: 10 }, (_, index): PullRequestRecord => ({
+      ...pr,
+      number: 100 + index,
+      linkedIssues: [20 + index],
+    }));
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests });
+    const gate = evaluateGateCheck(advisory);
+    const output = formatGateCheckOutput(gate);
+
+    expect(advisory.findings.map((finding) => finding.code)).toContain("busy_pr_queue");
+    expect(gate.conclusion).toBe("success");
+    expect(gate.blockers).toEqual([]);
+    expect(gate.warnings.map((finding) => finding.code)).not.toContain("busy_pr_queue");
+    expect(output.title).toBe("Gittensory Gate passed");
+    expect(output.text).toContain("No configured hard blocker");
+  });
+
+  it("maps broken evaluation state to action_required gate output", () => {
+    const advisory = buildPullRequestAdvisory(null, null);
+    const gate = evaluateGateCheck(advisory);
+    const output = formatGateCheckOutput(gate);
+
+    expect(gate.conclusion).toBe("action_required");
+    expect(gate.blockers.map((finding) => finding.code)).toEqual(["repo_not_registered", "pr_not_cached"]);
+    expect(output.title).toBe("Gittensory Gate needs app attention");
+    expect(output.text).toContain("Repository registration is unknown");
+    expect(output.text).toContain("Action: Refresh the Gittensor registry snapshot.");
+  });
+
+  it("formats and sanitizes gate blockers without leaking private scoring terms", () => {
+    const advisory = buildPullRequestAdvisory(repo, null);
+    const gate = evaluateGateCheck(
+      {
+        ...advisory,
+        findings: [
+          {
+            code: "missing_linked_issue",
+            title: "No linked issue near reward wallet trust score",
+            severity: "warning" as const,
+            detail: "Private score estimate detail.",
+          },
+        ],
+      },
+      { linkedIssueGateMode: "block" },
+    );
+    const output = formatGateCheckOutput(gate);
+
+    expect(gate.conclusion).toBe("failure");
+    expect(output.text).toContain("No linked issue near");
+    expect(output.text).not.toMatch(/reward|wallet|trust score|score estimate/i);
+  });
+
+  it("keeps missing linked issue and duplicate PR findings advisory unless their gate modes block", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 21,
+      title: "Add review panel",
+      state: "open",
+      authorLogin: "contributor",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [],
+    };
+    const missingIssueAdvisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true });
+
+    expect(evaluateGateCheck(missingIssueAdvisory).conclusion).toBe("success");
+    expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "advisory" }).conclusion).toBe("success");
+    expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "off" }).conclusion).toBe("success");
+    expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "block" }).conclusion).toBe("failure");
+
+    const linkedPr: PullRequestRecord = { ...pr, number: 22, linkedIssues: [44] };
+    const duplicateAdvisory = buildPullRequestAdvisory(repo, linkedPr, {
+      otherOpenPullRequests: [{ ...linkedPr, number: 23, linkedIssues: [44] }],
+    });
+
+    expect(duplicateAdvisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+    expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "advisory" }).conclusion).toBe("success");
+    expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "off" }).conclusion).toBe("success");
+    expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "block" }).conclusion).toBe("failure");
+  });
+
+  it("only enforces readiness score when quality gate mode is block", () => {
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName,
+      number: 24,
+      title: "Add quality panel",
+      state: "open",
+      authorLogin: "contributor",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [9],
+    });
+
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "advisory", qualityGateMinScore: 90, readinessScore: 10 }).conclusion).toBe("success");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "off", qualityGateMinScore: 90, readinessScore: 10 }).conclusion).toBe("success");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: null, readinessScore: 10 }).conclusion).toBe("success");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: null }).conclusion).toBe("success");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 90 }).conclusion).toBe("success");
+
+    const failingGate = evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 89.4 });
+    const output = formatGateCheckOutput(failingGate);
+
+    expect(failingGate.conclusion).toBe("failure");
+    expect(failingGate.blockers.map((finding) => finding.code)).toEqual(["readiness_score_below_threshold"]);
+    expect(output.text).toContain("Readiness score is below the configured threshold");
+    expect(output.text).toContain("Action: Address the short explicit PR panel actions");
+
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 101, readinessScore: -5 }).blockers[0]?.detail).toContain("0/100");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: 99, readinessScore: 102 }).conclusion).toBe("success");
+    expect(evaluateGateCheck(advisory, { qualityGateMode: "block", qualityGateMinScore: Number.NaN, readinessScore: 10 }).conclusion).toBe("success");
+  });
+
+  it("summarizes multiple configured hard blockers without swallowing advisory warnings", () => {
+    const gate = evaluateGateCheck(
+      {
+        ...buildPullRequestAdvisory(repo, null),
+        findings: [
+          { code: "missing_linked_issue", title: "No linked issue detected", severity: "warning", detail: "No linked issue." },
+          { code: "duplicate_pr_risk", title: "Linked issue overlaps another open PR", severity: "warning", detail: "Duplicate." },
+          { code: "busy_pr_queue", title: "Open PR queue is busy", severity: "warning", detail: "Queue context." },
+        ],
+      },
+      { linkedIssueGateMode: "block", duplicatePrGateMode: "block", qualityGateMode: "block", qualityGateMinScore: 90, readinessScore: 42 },
+    );
+
+    expect(gate.conclusion).toBe("failure");
+    expect(gate.summary).toBe("3 configured hard blockers found.");
+    expect(gate.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue", "duplicate_pr_risk", "readiness_score_below_threshold"]);
+    expect(gate.warnings.map((finding) => finding.code)).toEqual(["busy_pr_queue"]);
+  });
+
+  it("formats skipped and neutral Gate outputs as non-failures", () => {
+    for (const conclusion of ["neutral", "skipped"] as const) {
+      const output = formatGateCheckOutput({
+        enabled: true,
+        conclusion,
+        title: conclusion === "skipped" ? "Gittensory Gate skipped" : "Gittensory Gate neutral",
+        summary: "PR closed before full evaluation.",
+        blockers: [],
+        warnings: [],
+      });
+
+      expect(output.summary).toBe("PR closed before full evaluation.");
+      expect(output.text).toBe("Gittensory did not create a contributor-facing failure for this event.");
+    }
+  });
+
+  it("keeps defensive gate output fallback public-safe", () => {
+    const output = formatGateCheckOutput({
+      enabled: true,
+      conclusion: "failure",
+      title: "Gittensory Gate is blocking merge",
+      summary: "A configured merge-blocking issue was found.",
+      blockers: [],
+      warnings: [],
+    });
+
+    expect(output.text).toBe("A configured hard blocker was found.");
+    expect(output.text).not.toMatch(/reward|wallet|hotkey|trust score|payout|farming/i);
   });
 
   it("keeps private reviewability context out of check output", () => {

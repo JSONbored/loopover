@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/core";
 import type { Advisory, GitHubWebhookPayload } from "../types";
 import { signRs256Jwt } from "../utils/crypto";
-import { formatCheckRunOutput } from "../rules/advisory";
+import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type GateCheckConclusion, type GateCheckPolicy } from "../rules/advisory";
 
 type CheckRunResponse = {
   id: number;
@@ -19,6 +19,12 @@ type CheckRunListResponse = {
 export type CheckRunOutcome =
   | { kind: "published"; id: number; html_url?: string }
   | { kind: "permission_missing"; warning: string };
+
+export const GITTENSORY_CONTEXT_CHECK_NAME = "Gittensory Context";
+export const GITTENSORY_GATE_CHECK_NAME = "Gittensory Gate";
+
+type GitHubCheckConclusion = Advisory["conclusion"] | GateCheckConclusion | "skipped";
+type GitHubCheckStatus = "queued" | "in_progress" | "completed";
 
 export async function createInstallationToken(env: Env, installationId: number): Promise<string> {
   const jwt = await createAppJwt(env);
@@ -71,20 +77,108 @@ export async function createOrUpdateCheckRun(
   advisory: Advisory,
   detailLevel: "minimal" | "standard" | "deep" = "minimal",
 ): Promise<CheckRunOutcome | null> {
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_CONTEXT_CHECK_NAME,
+    conclusion: advisory.conclusion,
+    output: formatCheckRunOutput(advisory, detailLevel),
+  });
+}
+
+export async function createOrUpdateGateCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+  policy: GateCheckPolicy = {},
+  options: { checkRunId?: number | undefined } = {},
+): Promise<CheckRunOutcome | null> {
+  const gate = evaluateGateCheck(advisory, policy);
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_GATE_CHECK_NAME,
+    status: "completed",
+    conclusion: gate.conclusion,
+    output: formatGateCheckOutput(gate),
+    checkRunId: options.checkRunId,
+  });
+}
+
+export async function createOrUpdatePendingGateCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+): Promise<CheckRunOutcome | null> {
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_GATE_CHECK_NAME,
+    status: "in_progress",
+    output: {
+      title: "Gittensory Gate is evaluating",
+      summary: "Gittensory is running deterministic public PR hygiene checks.",
+      text: "The Gate is advisory-first unless this repository explicitly configures a rule to block merge.",
+    },
+  });
+}
+
+export async function createOrUpdateSkippedGateCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+  reason = "PR closed before full evaluation.",
+): Promise<CheckRunOutcome | null> {
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_GATE_CHECK_NAME,
+    status: "completed",
+    conclusion: "skipped",
+    output: {
+      title: "Gittensory Gate skipped",
+      summary: reason,
+      text: "Gittensory does not post late first comments on closed or merged pull requests.",
+    },
+  });
+}
+
+async function createOrUpdateNamedCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+  check: {
+    name: string;
+    status?: GitHubCheckStatus | undefined;
+    conclusion?: GitHubCheckConclusion | undefined;
+    output: { title: string; summary: string; text: string };
+    checkRunId?: number | undefined;
+  },
+): Promise<CheckRunOutcome | null> {
   if (!advisory.headSha) return null;
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   const token = await createInstallationToken(env, installationId);
   const octokit = new Octokit({ auth: token });
-  const output = formatCheckRunOutput(advisory, detailLevel);
 
   try {
+    if (check.checkRunId) {
+      const response = await octokit.request("PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
+        owner,
+        repo,
+        check_run_id: check.checkRunId,
+        name: check.name,
+        /* v8 ignore next 2 -- Exported check helpers always provide status/conclusion for known-id finalization. */
+        status: check.status ?? "completed",
+        ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+        output: check.output,
+      });
+      const data = response.data as CheckRunResponse;
+      return publishedOutcome(data);
+    }
+
     const existing = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
       owner,
       repo,
       ref: advisory.headSha,
-      check_name: "Gittensory",
+      check_name: check.name,
       filter: "latest",
       per_page: 1,
     });
@@ -94,10 +188,10 @@ export async function createOrUpdateCheckRun(
         owner,
         repo,
         check_run_id: existingCheckRun.id,
-        name: "Gittensory",
-        status: "completed",
-        conclusion: advisory.conclusion,
-        output,
+        name: check.name,
+        status: check.status ?? "completed",
+        ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+        output: check.output,
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -106,11 +200,11 @@ export async function createOrUpdateCheckRun(
     const response = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
       owner,
       repo,
-      name: "Gittensory",
+      name: check.name,
       head_sha: advisory.headSha,
-      status: "completed",
-      conclusion: advisory.conclusion,
-      output,
+      status: check.status ?? "completed",
+      ...(check.conclusion ? { conclusion: check.conclusion } : {}),
+      output: check.output,
     });
     const data = response.data as CheckRunResponse;
     return publishedOutcome(data);
@@ -132,6 +226,7 @@ function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {
 }
 
 function isCheckRunPermissionError(error: unknown): boolean {
+  /* v8 ignore next -- Octokit wraps thrown fetch values in HttpError objects before this helper sees them. */
   if (typeof error !== "object" || error === null) return false;
   const e = error as { status?: number; message?: string };
   if (e.status === 403) return true;

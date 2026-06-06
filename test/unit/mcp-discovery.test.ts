@@ -1,8 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const bin = join(process.cwd(), "packages/gittensory-mcp/bin/gittensory-mcp.js");
@@ -32,6 +35,48 @@ async function disconnect() {
   await client.close().catch(() => undefined);
   if (configDir) rmSync(configDir, { recursive: true, force: true });
 }
+
+
+describe("MCP workspace root boundaries", () => {
+  it("applies client-advertised roots to structured local status cwd requests", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "gittensory-roots-"));
+    const advertisedWorkspace = join(tempRoot, "advertised-workspace");
+    const privateRepo = join(tempRoot, "private-repo-outside-root");
+    const localConfigDir = join(tempRoot, "config");
+    mkdirSync(advertisedWorkspace, { recursive: true });
+    mkdirSync(privateRepo, { recursive: true });
+    mkdirSync(localConfigDir, { recursive: true });
+    execFileSync("git", ["init"], { cwd: privateRepo, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "security@example.com"], { cwd: privateRepo, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Security Test"], { cwd: privateRepo, stdio: "ignore" });
+
+    const rootedTransport = new StdioClientTransport({
+      command: "node",
+      args: [bin, "--stdio"],
+      env: {
+        ...process.env,
+        GITTENSORY_CONFIG_DIR: localConfigDir,
+        GITTENSORY_API_TIMEOUT_MS: "1000",
+      },
+    });
+    const rootedClient = new Client({ name: "roots-boundary-test", version: "0.0.1" }, { capabilities: { roots: {} } });
+    rootedClient.setRequestHandler(ListRootsRequestSchema, async () => ({
+      roots: [{ uri: pathToFileURL(advertisedWorkspace).href, name: "advertised-workspace" }],
+    }));
+
+    try {
+      await rootedClient.connect(rootedTransport);
+      const result = await rootedClient.callTool({ name: "gittensory_local_status_structured", arguments: { cwd: privateRepo } });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toMatchObject({
+        git: { error: "Selected workspace is outside the MCP roots exposed by the client." },
+      });
+    } finally {
+      await rootedClient.close().catch(() => undefined);
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("MCP resource discovery", () => {
   beforeEach(connect);

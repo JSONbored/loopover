@@ -15,15 +15,18 @@ import {
 } from "./engine";
 
 export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
-  return settings.publicSurface !== "off" || settings.checkRunMode === "enabled";
+  return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
 }
 
-export function shouldPublishPrComment(settings: RepositorySettings): boolean {
+export function shouldPublishPrComment(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
   if (settings.commentMode === "off") return false;
-  return settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only";
+  if (settings.publicSurface !== "comment_and_label" && settings.publicSurface !== "comment_only") return false;
+  if (settings.commentMode === "detected_contributors_only") return minerStatus === "confirmed";
+  return true;
 }
 
-export function shouldApplyPrLabel(settings: RepositorySettings): boolean {
+export function shouldApplyPrLabel(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
+  if (settings.publicAudienceMode === "oss_maintainer" && minerStatus !== "confirmed") return false;
   return settings.autoLabelEnabled && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "label_only");
 }
 
@@ -83,11 +86,15 @@ export function decidePublicSurface(input: PublicSurfaceDecisionInput): PublicSu
   if (!settings.includeMaintainerAuthors && input.authorAssociation && ["OWNER", "MEMBER", "COLLABORATOR"].includes(input.authorAssociation)) {
     return skipDecision("maintainer_author");
   }
-  if (input.minerStatus === "unavailable") return skipDecision("miner_detection_unavailable");
-  if (input.minerStatus === "not_found") return skipDecision("not_official_gittensor_miner");
+  if (settings.publicAudienceMode === "gittensor_only") {
+    if (input.minerStatus === "unavailable") return skipDecision("miner_detection_unavailable");
+    if (input.minerStatus === "not_found") return skipDecision("not_official_gittensor_miner");
+  }
 
-  const willComment = shouldPublishPrComment(settings);
-  const willLabel = shouldApplyPrLabel(settings);
+  const willComment = shouldPublishPrComment(settings, input.minerStatus);
+  const willLabel =
+    shouldApplyPrLabel(settings, input.minerStatus) ||
+    (settings.publicAudienceMode === "oss_maintainer" && input.minerStatus === "not_checked" && settings.autoLabelEnabled && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "label_only"));
   const willCheckRun = settings.checkRunMode === "enabled";
   const actions: PublicSurfaceAction[] = [
     ...(willComment ? (["comment"] as const) : []),
@@ -169,9 +176,15 @@ export type RepoSettingsPreview = {
   settings: {
     publicSurface: RepositorySettings["publicSurface"];
     commentMode: RepositorySettings["commentMode"];
+    publicAudienceMode: RepositorySettings["publicAudienceMode"];
     publicSignalLevel: RepositorySettings["publicSignalLevel"];
     checkRunMode: RepositorySettings["checkRunMode"];
     checkRunDetailLevel: RepositorySettings["checkRunDetailLevel"];
+    gateCheckMode: RepositorySettings["gateCheckMode"];
+    linkedIssueGateMode: RepositorySettings["linkedIssueGateMode"];
+    duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];
+    qualityGateMode: RepositorySettings["qualityGateMode"];
+    qualityGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
     createMissingLabel: boolean;
@@ -274,9 +287,15 @@ export function buildRepoSettingsPreview(args: {
     settings: {
       publicSurface: settings.publicSurface,
       commentMode: settings.commentMode,
+      publicAudienceMode: settings.publicAudienceMode,
       publicSignalLevel: settings.publicSignalLevel,
       checkRunMode: settings.checkRunMode,
       checkRunDetailLevel: settings.checkRunDetailLevel,
+      gateCheckMode: settings.gateCheckMode,
+      linkedIssueGateMode: settings.linkedIssueGateMode,
+      duplicatePrGateMode: settings.duplicatePrGateMode,
+      qualityGateMode: settings.qualityGateMode,
+      qualityGateMinScore: settings.qualityGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
       createMissingLabel: settings.createMissingLabel,
@@ -290,7 +309,7 @@ export function buildRepoSettingsPreview(args: {
     decision,
     previewComment,
     appliedLabel: decision.willLabel ? settings.gittensorLabel : null,
-    checkRun: decision.willCheckRun ? { willCreate: true, title: "Gittensory context posted", detailLevel: settings.checkRunDetailLevel } : null,
+    checkRun: decision.willCheckRun ? { willCreate: true, title: "Gittensory Context", detailLevel: settings.checkRunDetailLevel } : null,
     installPreview,
     warnings,
     summary: decision.skipped
@@ -307,10 +326,15 @@ function buildWarnings(settings: RepositorySettings, decision: PublicSurfaceDeci
   }
   const missing = new Set(installation.missingPermissions);
   if ((decision.willComment || decision.willLabel) && missing.has("issues")) {
-    warnings.push("Comments and labels require GitHub App permission Issues: write, which is currently missing. Set repository permission issues to write, then approve the change.");
+    warnings.push(
+      "Comments and labels use GitHub Issues endpoints and require GitHub App permission Issues: write. Set Issues to write, then approve the change.",
+    );
   }
   if (settings.checkRunMode === "enabled" && missing.has("checks")) {
     warnings.push("Check runs are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
+  }
+  if (settings.gateCheckMode === "enabled" && missing.has("checks")) {
+    warnings.push("Gate checks are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
   }
   for (const event of installation.missingEvents) {
     warnings.push(`The GitHub App is not subscribed to the ${event} webhook event; subscribe to it so Gittensory receives the relevant deliveries.`);
@@ -332,7 +356,7 @@ function buildRepoInstallPreview(args: {
   const missing = activeMissingPermissions(args.settings, args.decision, args.installation);
   const missingEvents = args.installation?.missingEvents ?? [];
   const permissionStatus: RepoInstallPreviewStatus = !args.installation || args.installation.status === "broken" ? "blocked" : missing.length > 0 || missingEvents.length > 0 || args.installation.status === "needs_attention" ? "needs_attention" : "ready";
-  const publicOutputStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" ? "needs_attention" : "ready";
+  const publicOutputStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" || args.settings.gateCheckMode === "enabled" ? "needs_attention" : "ready";
   const commandAuthorizationStatus: RepoInstallPreviewStatus = !args.installation ? "blocked" : new Set(args.installation.missingPermissions).has("issues") ? "needs_attention" : "ready";
   const manualControlStatus: RepoInstallPreviewStatus = args.settings.commentMode === "all_prs" ? "needs_attention" : "ready";
   const checklist: RepoInstallPreviewChecklistItem[] = [
@@ -350,7 +374,7 @@ function buildRepoInstallPreview(args: {
       status: publicOutputStatus,
       label: "Public outputs",
       summary: publicOutputSummary(args.decision),
-      action: publicOutputStatus === "ready" ? "Review the rendered public preview before enabling this repo." : "Review all-PR mode carefully; confirmed-miner-only output is quieter for first enablement.",
+      action: publicOutputStatus === "ready" ? "Review the rendered public preview before enabling this repo." : "Review all-PR or gate mode carefully; advisory-only output is quieter for first enablement.",
     },
     {
       id: "private-context",
@@ -366,7 +390,10 @@ function buildRepoInstallPreview(args: {
       status: commandAuthorizationStatus,
       label: "Command authorization",
       summary: "Public command responses require a maintainer or confirmed PR author; maintainer queue commands require owner, member, or collaborator context.",
-      action: commandAuthorizationStatus === "ready" ? "Use command previews to confirm actor and permission behavior before relying on repo commands." : "Restore Issues: write before enabling public command responses.",
+      action:
+        commandAuthorizationStatus === "ready"
+          ? "Use command previews to confirm actor and permission behavior before relying on repo commands."
+          : "Restore Issues: write before enabling public command responses.",
     },
     {
       id: "audit-behavior",
@@ -389,7 +416,7 @@ function buildRepoInstallPreview(args: {
       category: "manual_control",
       status: manualControlStatus,
       label: "Manual controls",
-      summary: "Public surface mode, comments, labels, check runs, maintainer-author inclusion, and linked-issue requirements remain repo-controlled settings.",
+      summary: "Public audience, public surface mode, comments, labels, context checks, gate checks, maintainer-author inclusion, and linked-issue requirements remain repo-controlled settings.",
       action: manualControlStatus === "ready" ? "Enable only the specific public surface you want after previewing it." : "Switch away from all-PR mode unless broad public output is intentional.",
     },
   ];
@@ -422,7 +449,7 @@ function buildRepoInstallPreview(args: {
       missingEvents,
       summary: permissionSummary(args.installation, missing, missingEvents),
     },
-    publicOutputs: publicOutputsFor(args.decision, args.appliedLabel),
+    publicOutputs: publicOutputsFor(args.decision, args.appliedLabel, args.settings),
     privateOnlyContext: [
       "Decision packs, blocker details, maintainer packet evidence, and scoring evidence stay authenticated-only.",
       "This preview uses cached metadata and the supplied sample PR fields; it does not upload repository source.",
@@ -449,10 +476,17 @@ function buildRepoInstallPreview(args: {
   };
 }
 
+function writesPrPublicSurface(settings: RepositorySettings, decision: PublicSurfaceDecision): boolean {
+  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed");
+}
+
 function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {
-  const permissions = new Set(["metadata: read", "pull_requests: read"]);
-  if (decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings)) permissions.add("issues: write");
-  if (decision.willCheckRun || settings.checkRunMode === "enabled") permissions.add("checks: write");
+  // PR conversation comments and PR labels are gated by GitHub on the Pull requests permission (write),
+  // matching REQUIRED_INSTALLATION_PERMISSIONS; reading PR metadata only needs read.
+  const writesPrSurface = writesPrPublicSurface(settings, decision);
+  const permissions = new Set(["metadata: read", writesPrSurface ? "pull_requests: write" : "pull_requests: read"]);
+  if (writesPrSurface) permissions.add("issues: write");
+  if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
   return [...permissions];
 }
 
@@ -460,8 +494,10 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
   const active: string[] = [];
-  if ((decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings)) && missing.has("issues")) active.push("issues");
-  if ((decision.willCheckRun || settings.checkRunMode === "enabled") && missing.has("checks")) active.push("checks");
+  const writesPrSurface = writesPrPublicSurface(settings, decision);
+  if (writesPrSurface && missing.has("pull_requests")) active.push("pull_requests");
+  if (writesPrSurface && missing.has("issues")) active.push("issues");
+  if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");
   return active;
 }
 
@@ -475,12 +511,14 @@ function permissionSummary(installation: InstallationHealthSummary | null, missi
   return "Required permissions and webhook events are ready for the previewed behavior.";
 }
 
-function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string | null): string[] {
-  if (decision.skipped) return [`No public output for this sample: ${decision.summary}`];
+function publicOutputsFor(decision: PublicSurfaceDecision, appliedLabel: string | null, settings: RepositorySettings): string[] {
+  const gateOutput = settings.gateCheckMode === "enabled" ? ["Opt-in Gittensory Gate check run."] : [];
+  if (decision.skipped) return [`No comment or label for this sample: ${decision.summary}`, ...gateOutput];
   const outputs = [
     ...(decision.willComment ? ["One sanitized sticky PR comment."] : []),
     ...(decision.willLabel ? [`Configured label "${appliedLabel ?? "gittensor"}".`] : []),
-    ...(decision.willCheckRun ? ["Minimal GitHub check run."] : []),
+    ...(decision.willCheckRun ? ["Non-blocking Gittensory Context check run."] : []),
+    ...gateOutput,
   ];
   return outputs.length > 0 ? outputs : ["No public comment, label, or check run for this sample."];
 }

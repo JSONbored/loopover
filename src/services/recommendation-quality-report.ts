@@ -21,7 +21,7 @@ export type RecommendationQualityTrendBucket = RecommendationQualityTotals & {
 };
 
 export type RecommendationQualityFailureCategory = {
-  category: "closed_without_merge" | "stale" | "ignored" | "low_confidence" | "maintainer_lane";
+  category: "closed_without_merge" | "rejected" | "stale" | "ignored" | "low_confidence" | "maintainer_lane";
   label: string;
   count: number;
   detail: string;
@@ -59,7 +59,7 @@ export type RecommendationQualityReport = {
 
 const ROLE_ORDER: RecommendationQualityRole[] = ["miner", "maintainer", "owner", "operator"];
 const POSITIVE_STATES: AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved"];
-const NEGATIVE_STATES: AgentRecommendationOutcomeState[] = ["closed", "stale", "ignored"];
+const NEGATIVE_STATES: AgentRecommendationOutcomeState[] = ["closed", "rejected", "stale", "ignored"];
 
 export async function buildRecommendationQualityReport(
   env: Env,
@@ -166,6 +166,12 @@ function failureCategoryRows(outcomes: AgentRecommendationOutcomeRecord[]): Reco
       label: "Closed without merge",
       count: outcomes.filter((outcome) => outcome.outcomeState === "closed").length,
       detail: "Recommended work reached a closed terminal state without a merge signal.",
+    },
+    {
+      category: "rejected",
+      label: "Changes requested",
+      count: outcomes.filter((outcome) => outcome.outcomeState === "rejected").length,
+      detail: "Recommended PR work received a changes-requested review signal.",
     },
     {
       category: "stale",

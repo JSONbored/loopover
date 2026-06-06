@@ -128,6 +128,8 @@ export type GitHubWebhookPayload = {
   };
   repository?: GitHubRepositoryPayload;
   repositories?: GitHubRepositoryPayload[];
+  repositories_added?: GitHubRepositoryPayload[];
+  repositories_removed?: GitHubRepositoryPayload[];
   pull_request?: GitHubPullRequestPayload;
   issue?: GitHubIssuePayload;
   comment?: GitHubIssueCommentPayload;
@@ -339,12 +341,20 @@ export type BountyRecord = {
   updatedAt?: string | null | undefined;
 };
 
+export type GateRuleMode = "off" | "advisory" | "block";
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
+  publicAudienceMode: "oss_maintainer" | "gittensor_only";
   publicSignalLevel: "minimal" | "standard";
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
+  gateCheckMode: "off" | "enabled";
+  linkedIssueGateMode: GateRuleMode;
+  duplicatePrGateMode: GateRuleMode;
+  qualityGateMode: GateRuleMode;
+  qualityGateMinScore?: number | null | undefined;
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;

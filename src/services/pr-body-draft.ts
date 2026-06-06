@@ -51,9 +51,13 @@ export const EXCLUDED_PRIVATE_PR_BODY_FIELDS = [
 // Residual private/financial terms that sanitizePublicComment does not rewrite on its own
 // (e.g. a bare "reward"/"score"/"ranking"); scrubbed to a neutral phrase as defense-in-depth.
 const RESIDUAL_PRIVATE_TERMS = /\b(reward\w*|score\w*|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability|wallet|hotkey|coldkey|mnemonic)\b/gi;
-const LOCAL_PATH_PATTERN = /(?:\/Users\/|\/home\/|\/tmp\/|[A-Za-z]:\\Users\\)[^\s"';]*/g;
+const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![:/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
+const LOCAL_PATH_PATTERN = new RegExp(LOCAL_PATH_SOURCE, "g");
 // Final guard used to drop anything that still looks unsafe after scrubbing.
-const FORBIDDEN_PR_BODY_LANGUAGE = /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Za-z]:\\Users\\/i;
+const FORBIDDEN_PR_BODY_LANGUAGE = new RegExp(
+  String.raw`\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|${LOCAL_PATH_SOURCE}`,
+  "i",
+);
 
 function sanitizeLine(line: string): string {
   return sanitizePublicComment(line)

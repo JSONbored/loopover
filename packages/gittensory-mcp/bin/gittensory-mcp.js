@@ -23,6 +23,26 @@ const decisionPackCacheMaxBytes = 512 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const cliArgs = process.argv.slice(2);
 const defaultProfileName = "default";
+// Single source of truth for shell-completion: top-level command -> its subcommands (if any).
+const CLI_COMMAND_SPEC = {
+  login: [],
+  logout: [],
+  whoami: [],
+  status: [],
+  changelog: [],
+  completion: [],
+  version: [],
+  doctor: [],
+  "init-client": [],
+  "decision-pack": [],
+  "repo-decision": [],
+  "analyze-branch": [],
+  preflight: [],
+  profile: ["list", "create", "switch", "remove"],
+  cache: ["status", "clear"],
+  agent: ["plan", "status", "explain", "packet"],
+};
+const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
@@ -571,8 +591,9 @@ server.registerTool(
   },
   async (input) => {
     let git = null;
+    const workspaceInput = await withClientWorkspaceRoots(input);
     try {
-      git = collectLocalBranchMetadata({ cwd: input.cwd ?? process.cwd(), baseRef: input.baseRef, repoFullName: input.repoFullName, login: "local" });
+      git = collectLocalBranchMetadata({ cwd: workspaceInput.cwd, baseRef: input.baseRef, repoFullName: input.repoFullName, login: "local", workspaceRoots: workspaceInput.workspaceRoots });
     } catch (error) {
       git = { error: error instanceof Error ? error.message : "local_status_failed" };
     }
@@ -1039,6 +1060,7 @@ async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
   if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
+  if (command === "completion") return completionCommand(args.slice(1));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   const options = parseOptions(args.slice(1));
@@ -1282,10 +1304,90 @@ function printVersion(options) {
   process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
 }
 
+function completionCommand(args) {
+  const shell = args[0] && !args[0].startsWith("--") ? args[0] : undefined;
+  const options = parseOptions(args.filter((arg) => arg.startsWith("--")));
+  if (!shell) throw new Error(`Usage: gittensory-mcp completion <${COMPLETION_SHELLS.join("|")}> [--json]`);
+  if (!COMPLETION_SHELLS.includes(shell)) throw new Error(`Unsupported shell: ${shell}. Supported shells: ${COMPLETION_SHELLS.join(", ")}.`);
+  const script = buildCompletionScript(shell);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify({ shell, script }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${script}\n`);
+}
+
+function buildCompletionScript(shell) {
+  const topLevel = [...Object.keys(CLI_COMMAND_SPEC), "help"];
+  const withSubcommands = Object.entries(CLI_COMMAND_SPEC).filter(([, subcommands]) => subcommands.length > 0);
+  if (shell === "bash") return buildBashCompletion(topLevel, withSubcommands);
+  if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
+  return buildFishCompletion(topLevel, withSubcommands);
+}
+
+function buildBashCompletion(topLevel, withSubcommands) {
+  const subcommandCases = withSubcommands
+    .map(([command, subcommands]) => `      ${command}) COMPREPLY=( $(compgen -W "${subcommands.join(" ")}" -- "$cur") ); return 0;;`)
+    .join("\n");
+  return `# gittensory-mcp bash completion. Add to ~/.bashrc:
+#   source <(gittensory-mcp completion bash)
+_gittensory_mcp() {
+  local cur prev cword
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  cword=\$COMP_CWORD
+  local commands="${topLevel.join(" ")}"
+  if [ "\$cword" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "\$commands --help --version" -- "$cur") )
+    return 0
+  fi
+  case "\${COMP_WORDS[1]}" in
+${subcommandCases}
+      *) COMPREPLY=( $(compgen -W "--json --login --repo --profile --base --cwd" -- "$cur") ); return 0;;
+  esac
+}
+complete -F _gittensory_mcp gittensory-mcp`;
+}
+
+function buildZshCompletion(topLevel, withSubcommands) {
+  const subcommandCases = withSubcommands
+    .map(([command, subcommands]) => `      ${command}) _values 'subcommand' ${subcommands.join(" ")} ;;`)
+    .join("\n");
+  return `#compdef gittensory-mcp
+# gittensory-mcp zsh completion. Add to your fpath, or:
+#   source <(gittensory-mcp completion zsh)
+_gittensory_mcp() {
+  local -a commands
+  commands=(${topLevel.join(" ")})
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+  case $words[2] in
+${subcommandCases}
+  esac
+}
+_gittensory_mcp "$@"`;
+}
+
+function buildFishCompletion(topLevel, withSubcommands) {
+  const topLevelLines = topLevel
+    .map((command) => `complete -c gittensory-mcp -n __fish_use_subcommand -a ${command} -d 'gittensory-mcp command'`)
+    .join("\n");
+  const subcommandLines = withSubcommands
+    .map(([command, subcommands]) => `complete -c gittensory-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
+    .join("\n");
+  return `# gittensory-mcp fish completion. Save to:
+#   ~/.config/fish/completions/gittensory-mcp.fish
+${topLevelLines}
+${subcommandLines}`;
+}
+
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
   gittensory-mcp version [--json]
+  gittensory-mcp completion bash|zsh|fish [--json]
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]
@@ -1571,6 +1673,8 @@ async function doctor(options) {
         remediation: sanitizeDiagnosticText(remediation, [options.cwd]),
       }),
     );
+  let authLogin = options.login ?? activeProfile.session?.login;
+  let repoFullName = typeof options.repo === "string" ? options.repo : undefined;
 
   let health = null;
   try {
@@ -1618,6 +1722,7 @@ async function doctor(options) {
   } else {
     try {
       const session = await apiGet("/v1/auth/session");
+      authLogin = session.login ?? authLogin;
       add("auth", "pass", `Profile ${activeProfileName} authenticated as ${session.login}; session expires ${session.expiresAt}.`);
     } catch (error) {
       add("auth", "warn", `A token is configured for profile ${activeProfileName} but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `gittensory-mcp login`.");
@@ -1645,6 +1750,7 @@ async function doctor(options) {
       repoFullName: options.repo,
       login: options.login ?? activeProfile.session?.login ?? "local",
     });
+    repoFullName = metadata.repoFullName ?? repoFullName;
     add("git_metadata", "pass", `${metadata.repoFullName} on ${metadata.branchName}; ${metadata.changedFiles.length} changed file(s).`);
   } catch (error) {
     add("git_metadata", "warn", error instanceof Error ? error.message : "git_metadata_failed", "Run from a git repo or pass --repo owner/repo.");
@@ -1678,24 +1784,145 @@ async function doctor(options) {
     add("gittensor_root", "warn", "Python gittensor scorer is configured but GITTENSOR_ROOT is unset.", "Set GITTENSOR_ROOT to a local entrius/gittensor checkout.");
   }
 
+  const statusValue = doctorStatus(checks);
+  const checklist = buildDoctorChecklist(checks, {
+    status: statusValue,
+    profileName: activeProfileName,
+    login: authLogin,
+    repoFullName,
+  });
+  const nextCommand = checklist.find((group) => group.id === "next_command")?.nextCommand;
   const payload = {
-    status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",
+    status: statusValue,
     apiUrl,
     profile: profilePublicState(activeProfileName),
     config: { configured: existsSync(configPath), activeProfile: activeProfileName, profileCount: profileList(config).length },
     decisionPackCache,
     sourceUploadSupported: false,
+    checklist,
+    nextCommand,
     checks,
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
     process.stdout.write(`Gittensory doctor: ${payload.status}\n`);
     process.stdout.write(`Profile: ${activeProfileName}\n`);
-    for (const check of checks) {
-      process.stdout.write(`- ${check.status}: ${check.name} - ${check.detail}\n`);
-      if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
+    for (const group of checklist) {
+      process.stdout.write(`\n${group.title}: ${group.status}\n`);
+      if (group.id === "next_command") {
+        process.stdout.write(`- ${group.detail}\n`);
+        if (group.nextCommand?.command) process.stdout.write(`  ${group.nextCommand.command}\n`);
+        continue;
+      }
+      for (const check of group.checks ?? []) {
+        process.stdout.write(`- ${check.status}: ${check.name} - ${check.detail}\n`);
+        if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
+      }
     }
   }
+}
+
+function doctorStatus(checks) {
+  if (checks.some((check) => check.status === "fail")) return "needs_attention";
+  if (checks.some((check) => check.status === "warn")) return "warnings";
+  return "ok";
+}
+
+function buildDoctorChecklist(checks, context) {
+  const byName = new Map(checks.map((check) => [check.name, check]));
+  const groups = doctorChecklistGroups().map((group) => {
+    const groupChecks = group.checks.map((name) => byName.get(name)).filter(Boolean);
+    return stripUndefined({
+      id: group.id,
+      title: group.title,
+      status: checklistStatus(groupChecks),
+      checks: groupChecks,
+    });
+  });
+  const nextCommand = doctorNextCommand(byName, context);
+  return [
+    ...groups,
+    stripUndefined({
+      id: "next_command",
+      title: "Next command",
+      status: context.status === "needs_attention" ? "fail" : context.status === "warnings" ? "warn" : "pass",
+      detail: nextCommand.reason,
+      nextCommand,
+    }),
+  ];
+}
+
+function doctorChecklistGroups() {
+  return [
+    { id: "auth", title: "Auth", checks: ["auth"] },
+    { id: "api_compatibility", title: "API compatibility", checks: ["api_health", "version", "api_compatibility"] },
+    { id: "local_repo_readiness", title: "Local repo readiness", checks: ["git_metadata", "client_path"] },
+    { id: "scorer_availability", title: "Scorer availability", checks: ["local_scorer", "gittensor_root"] },
+    { id: "output_safety", title: "Output safety", checks: ["source_upload", "decision_pack_cache"] },
+  ];
+}
+
+function checklistStatus(checks) {
+  if (checks.some((check) => check.status === "fail")) return "fail";
+  if (checks.some((check) => check.status === "warn")) return "warn";
+  return "pass";
+}
+
+function doctorNextCommand(byName, context) {
+  const sourceUpload = byName.get("source_upload");
+  if (sourceUpload?.status === "fail") {
+    return {
+      command: "unset GITTENSORY_UPLOAD_SOURCE",
+      reason: "Disable source upload first; the local MCP wrapper only sends metadata.",
+    };
+  }
+  const apiCompatibility = byName.get("api_compatibility");
+  if (apiCompatibility?.status === "fail") {
+    return {
+      command: apiCompatibility.remediation ?? upgradeCommand,
+      reason: "Upgrade the MCP package before relying on API-backed commands.",
+    };
+  }
+  const auth = byName.get("auth");
+  if (auth?.status === "fail") {
+    return {
+      command: `gittensory-mcp login --profile ${context.profileName}`,
+      reason: "Authenticate the active profile so doctor, plan, preflight, and packet commands can call the API.",
+    };
+  }
+  const apiHealth = byName.get("api_health");
+  if (apiHealth?.status === "fail") {
+    return {
+      command: "gittensory-mcp status --json",
+      reason: "Check API reachability before running planner or preflight commands.",
+    };
+  }
+  const version = byName.get("version");
+  if (version?.status === "warn" && version.remediation?.includes("npm install")) {
+    return {
+      command: upgradeCommand,
+      reason: "Update the MCP package so local behavior matches the current API.",
+    };
+  }
+  const gitMetadata = byName.get("git_metadata");
+  if (gitMetadata?.status === "warn") {
+    return {
+      command: "gittensory-mcp doctor --repo owner/repo --json",
+      reason: "Run doctor from a git checkout or pass the repository explicitly.",
+    };
+  }
+  const localScorer = byName.get("local_scorer");
+  if (localScorer?.status === "warn" && localScorer.remediation) {
+    const scorerSetupCommand = localScorer.remediation.startsWith("Example: ") ? localScorer.remediation.replace(/^Example:\s*/, "") : "gittensory-mcp doctor --json";
+    return {
+      command: scorerSetupCommand,
+      reason: "Configure the optional local scorer for richer private branch analysis.",
+    };
+  }
+  return {
+    command: `gittensory-mcp preflight --login ${context.login ?? "<github-login>"} --repo ${context.repoFullName ?? "owner/repo"} --json`,
+    reason: "Run branch preflight next; source upload remains disabled.",
+  };
 }
 
 function initClient(options) {

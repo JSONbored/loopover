@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { createInstallationToken, createOrUpdateCheckRun, getAppInstallation, getInstallationId } from "../../src/github/app";
+import {
+  createInstallationToken,
+  createOrUpdateCheckRun,
+  createOrUpdateGateCheckRun,
+  createOrUpdatePendingGateCheckRun,
+  createOrUpdateSkippedGateCheckRun,
+  getAppInstallation,
+  getInstallationId,
+} from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -23,7 +31,7 @@ describe("GitHub check runs", () => {
       }
       if (url.includes("/check-runs")) {
         const body = JSON.parse(String(init?.body)) as { name: string; conclusion: string; output: { title: string; text: string } };
-        expect(body.name).toBe("Gittensory");
+        expect(body.name).toBe("Gittensory Context");
         expect(body.conclusion).toBe("neutral");
         expect(body.output.title).toBe("Gittensory context posted");
         expect(body.output.text).not.toMatch(/linked issue|reviewability|reward|farming|wallet|hotkey|trust score/i);
@@ -87,7 +95,7 @@ describe("GitHub check runs", () => {
       }
       if (url.includes("/check-runs/42")) {
         const body = JSON.parse(String(init?.body)) as { name: string; conclusion: string; output: { title: string; text: string } };
-        expect(body.name).toBe("Gittensory");
+        expect(body.name).toBe("Gittensory Context");
         expect(body.conclusion).toBe("success");
         expect(body.output.title).toBe("Gittensory context checked");
         expect(body.output.text).not.toMatch(/reviewability|reward|farming|wallet|hotkey|trust score/i);
@@ -148,6 +156,161 @@ describe("GitHub check runs", () => {
 
     expect(result).toMatchObject({ kind: "permission_missing" });
     expect((result as { kind: string; warning: string }).warning).toMatch(/Checks: write/i);
+  });
+
+  it("creates a failing opt-in Gittensory Gate check for merge blockers", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { name?: string; conclusion?: string; output?: { title?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 88, html_url: "https://github.com/checks/88" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdateGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      {
+        id: "gate-advisory",
+        targetType: "pull_request",
+        targetKey: "JSONbored/gittensory#9",
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 9,
+        headSha: "gate123",
+        conclusion: "neutral",
+        severity: "warning",
+        title: "Gittensory advisory available",
+        summary: "1 advisory finding generated.",
+        findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning", detail: "No closing reference.", action: "Link the issue before merge." }],
+        generatedAt: "2026-05-22T00:00:00.000Z",
+      },
+      { linkedIssueGateMode: "block" },
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 88 });
+    expect(capturedBody).toMatchObject({
+      name: "Gittensory Gate",
+      conclusion: "failure",
+      output: { title: "Gittensory Gate is blocking merge" },
+    });
+    expect(capturedBody.output?.text).toContain("Link the issue before merge.");
+    expect(capturedBody.output?.text).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|farming/i);
+  });
+
+  it("creates an in-progress Gate check without a conclusion", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { name?: string; status?: string; conclusion?: string; output?: { title?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 89 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePendingGateCheckRun(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", gateAdvisory("pending123"));
+
+    expect(result).toMatchObject({ kind: "published", id: 89 });
+    expect(capturedBody).toMatchObject({
+      name: "Gittensory Gate",
+      status: "in_progress",
+      output: { title: "Gittensory Gate is evaluating" },
+    });
+    expect(capturedBody).not.toHaveProperty("conclusion");
+    expect(capturedBody.output?.text).toContain("advisory-first");
+  });
+
+  it("finalizes a known pending Gate check by id without listing check runs first", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    let capturedBody: { name?: string; status?: string; conclusion?: string; output?: { title?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs/456")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 456 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdateGateCheckRun(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", gateAdvisory("final123"), {}, { checkRunId: 456 });
+
+    expect(result).toEqual({ kind: "published", id: 456 });
+    expect(calls.some((call) => call.includes("/commits/final123/check-runs"))).toBe(false);
+    expect(capturedBody).toMatchObject({
+      name: "Gittensory Gate",
+      status: "completed",
+      conclusion: "success",
+      output: { title: "Gittensory Gate passed" },
+    });
+  });
+
+  it("updates an existing pending Gate check without adding a conclusion", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { status?: string; conclusion?: string } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/pending-existing/check-runs")) {
+        return Response.json({ total_count: 1, check_runs: [{ id: 333, name: "Gittensory Gate" }] });
+      }
+      if (url.includes("/check-runs/333")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 333, html_url: "https://github.com/checks/333" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePendingGateCheckRun(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", gateAdvisory("pending-existing"));
+
+    expect(result).toMatchObject({ kind: "published", id: 333, html_url: "https://github.com/checks/333" });
+    expect(capturedBody.status).toBe("in_progress");
+    expect(capturedBody).not.toHaveProperty("conclusion");
+  });
+
+  it("publishes a skipped Gate check for closed PR races", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { status?: string; conclusion?: string; output?: { title?: string; summary?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/closed123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 91, html_url: "https://github.com/checks/91" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdateSkippedGateCheckRun(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      gateAdvisory("closed123"),
+      "Merged before Gittensory finished.",
+    );
+
+    expect(result).toMatchObject({ kind: "published", id: 91 });
+    expect(capturedBody).toMatchObject({
+      status: "completed",
+      conclusion: "skipped",
+      output: {
+        title: "Gittensory Gate skipped",
+        summary: "Merged before Gittensory finished.",
+      },
+    });
+    expect(capturedBody.output?.text).toContain("does not post late first comments");
   });
 
   it("publishes check run with standard detail level and includes public-safe finding text", async () => {
@@ -256,6 +419,35 @@ describe("GitHub check runs", () => {
     await expect(createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory)).rejects.toThrow();
   });
 
+  it("rethrows non-object check-run errors", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) throw "network interrupted";
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-string-error",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#8",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 8,
+      headSha: "string-error",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    await expect(createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory)).rejects.toMatchObject({ cause: "network interrupted" });
+  });
+
   it("skips check creation when no head SHA is available", async () => {
     const result = await createOrUpdateCheckRun(createTestEnv(), 123, "JSONbored/gittensory", {
       id: "advisory-3",
@@ -362,4 +554,21 @@ async function generatePrivateKeyPem(): Promise<string> {
 function generateRsaPrivateKeyPem(): string {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   return privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+}
+
+function gateAdvisory(headSha: string): Advisory {
+  return {
+    id: `advisory-${headSha}`,
+    targetType: "pull_request",
+    targetKey: "JSONbored/gittensory#10",
+    repoFullName: "JSONbored/gittensory",
+    pullNumber: 10,
+    headSha,
+    conclusion: "success",
+    severity: "info",
+    title: "Gittensory advisory passed",
+    summary: "Pull request advisory generated.",
+    findings: [],
+    generatedAt: "2026-05-22T00:00:00.000Z",
+  };
 }

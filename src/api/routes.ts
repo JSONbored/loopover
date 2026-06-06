@@ -2227,11 +2227,12 @@ export function createApp() {
   app.get("/v1/internal/repos/:owner/:repo/contribution-policy", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const focusManifest = await loadRepoFocusManifest(c.env, fullName, { fetcher: async () => null });
+    const generatedAt = nowIso();
     return c.json({
       repoFullName: fullName,
-      generatedAt: nowIso(),
+      generatedAt,
       focusManifest,
-      policy: compileFocusManifestPolicy(focusManifest),
+      policy: compileFocusManifestPolicy(fullName, focusManifest, { generatedAt }),
     });
   });
 
@@ -2240,11 +2241,12 @@ export function createApp() {
     if (body === null) return c.json({ error: "invalid_contribution_policy_json" }, 400);
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const focusManifest = await upsertRepoFocusManifest(c.env, fullName, body, "api_record");
+    const generatedAt = nowIso();
     return c.json({
       repoFullName: fullName,
-      generatedAt: nowIso(),
+      generatedAt,
       focusManifest,
-      policy: compileFocusManifestPolicy(focusManifest),
+      policy: compileFocusManifestPolicy(fullName, focusManifest, { generatedAt }),
     });
   });
 

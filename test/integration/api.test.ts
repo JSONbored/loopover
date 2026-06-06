@@ -5157,7 +5157,12 @@ describe("api routes", () => {
       env,
     );
     expect(updated.status).toBe(200);
-    await expect(updated.json()).resolves.toMatchObject({
+    const updatedPayload = (await updated.json()) as {
+      generatedAt: string;
+      policy: { generatedAt: string; publicSafe: { contributionLanes: unknown[] } };
+    };
+    expect(updatedPayload.policy.generatedAt).toBe(updatedPayload.generatedAt);
+    expect(updatedPayload).toMatchObject({
       repoFullName: "entrius/allways-ui",
       focusManifest: {
         present: true,
@@ -5167,13 +5172,30 @@ describe("api routes", () => {
         maintainerNotes: [privateNote],
       },
       policy: {
+        repoFullName: "entrius/allways-ui",
         present: true,
         source: "api_record",
         publicSafe: {
-          contributionLanes: { directPrLane: "preferred", issueDiscoveryLane: "discouraged", preferredEntryPaths: ["src/"] },
-          discouragedWork: { blockedEntryPaths: ["dist/"], issueDiscoveryDiscouraged: true },
-          labelExpectations: { preferredLabels: ["bug"], linkedIssuePolicy: "required" },
-          validationExpectations: { testExpectations: ["Run npm run test:ci."], linkedIssueRequired: true },
+          contributionLanes: [
+            expect.objectContaining({
+              id: "direct-pr",
+              preference: "preferred",
+              preferredPaths: ["src/"],
+              discouragedPaths: ["dist/"],
+              validationExpectations: ["Run npm run test:ci."],
+              publicNotes: ["Prefer small, focused PRs."],
+            }),
+            expect.objectContaining({
+              id: "issue-discovery",
+              preference: "discouraged",
+              preferredPaths: [],
+              discouragedPaths: ["dist/"],
+            }),
+          ],
+          labelPolicy: { preferredLabels: ["bug"], required: true },
+          validation: { expectations: ["Run npm run test:ci."], linkedIssuePolicy: "required" },
+          issueDiscoveryPolicy: "discouraged",
+          publicNotes: ["Prefer small, focused PRs."],
         },
         authenticated: { maintainerContext: [privateNote] },
       },

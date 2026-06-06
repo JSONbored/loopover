@@ -1108,7 +1108,7 @@ describe("api routes", () => {
     expect(installationHealth.status).toBe(200);
     await expect(installationHealth.json()).resolves.toMatchObject({
       installationId: 123,
-      requiredPermissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
       optionalPermissions: { checks: "write" },
       permissionRemediation: expect.arrayContaining([expect.objectContaining({ permission: "issues", ok: true })]),
       repairSteps: ["No repair needed."],
@@ -1313,15 +1313,15 @@ describe("api routes", () => {
     };
     expect(repairBody).toMatchObject({
       installation: { status: "needs_attention", missingPermissions: ["pull_requests", "issues"], missingEvents: ["issue_comment"] },
-      requiredPermissions: { metadata: "read", pull_requests: "write", issues: "write" },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write" },
       optionalPermissions: { checks: "write" },
       refresh: { method: "POST", path: "/v1/installations/777/repair/refresh" },
     });
     expect(repairBody.requiredPermissions).not.toHaveProperty("checks");
     expect(repairBody.modeImpacts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "pull_requests", missing: true, optional: false })] }),
-        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "pull_requests", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true, optional: false })] }),
         expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ permission: "checks", missing: false, optional: true })] }),
       ]),
     );
@@ -1368,7 +1368,7 @@ describe("api routes", () => {
     await expect(refreshed.json()).resolves.toMatchObject({
       refreshed: true,
       installation: { status: "healthy", missingPermissions: [], missingEvents: [] },
-      requiredPermissions: { metadata: "read", pull_requests: "write", issues: "write", checks: "write" },
+      requiredPermissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
     });
   });
 
@@ -1396,6 +1396,49 @@ describe("api routes", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
     expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(8);
+  });
+
+  it("counts cached open PRs from sync states beyond the latest 500 rows", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+
+    vi.setSystemTime(new Date("2026-05-27T00:00:00.000Z"));
+    await upsertRepositoryFromGitHub(env, { name: "oldest", full_name: "entrius/oldest", private: false, owner: { login: "entrius" }, default_branch: "main" });
+    await upsertRepoSyncState(env, {
+      repoFullName: "entrius/oldest",
+      status: "success",
+      sourceKind: "github",
+      primaryLanguage: "TypeScript",
+      defaultBranch: "main",
+      isPrivate: false,
+      openIssuesCount: 0,
+      openPullRequestsCount: 7,
+      recentMergedPullRequestsCount: 0,
+      warnings: [],
+    });
+
+    vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
+    for (let index = 0; index < 500; index += 1) {
+      const name = `newer-${index}`;
+      await upsertRepositoryFromGitHub(env, { name, full_name: `entrius/${name}`, private: false, owner: { login: "entrius" }, default_branch: "main" });
+      await upsertRepoSyncState(env, {
+        repoFullName: `entrius/${name}`,
+        status: "success",
+        sourceKind: "github",
+        primaryLanguage: "TypeScript",
+        defaultBranch: "main",
+        isPrivate: false,
+        openIssuesCount: 0,
+        openPullRequestsCount: 1,
+        recentMergedPullRequestsCount: 0,
+        warnings: [],
+      });
+    }
+
+    const res = await app.request("/v1/app/maintainer-dashboard", { headers: apiHeaders(env) }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { metrics: Array<{ label: string; value: number }> };
+    expect(body.metrics.find((metric) => metric.label === "Open PRs cached")?.value).toBe(507);
   });
 
   it("serves live app dashboards, digest subscriptions, commands, and extension context", async () => {
@@ -2095,7 +2138,7 @@ describe("api routes", () => {
     );
     expect(permissionMapPreview.status).toBe(200);
     await expect(permissionMapPreview.json()).resolves.toMatchObject({
-      preview: { decision: { status: "missing_permission", skipReason: "missing_permission" }, missingPermissions: ["issues", "pull_requests"] },
+      preview: { decision: { status: "missing_permission", skipReason: "missing_permission" }, missingPermissions: ["issues"] },
     });
 
     const checksWarningPreview = await app.request(

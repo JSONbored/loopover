@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   label:
-    name: Apply type label
+    name: Apply Gittensor reward label
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -35,7 +35,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Apply deterministic type label
+      - name: Apply deterministic Gittensor reward label
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/github-type-label.mjs

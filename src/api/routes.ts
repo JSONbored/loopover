@@ -69,6 +69,7 @@ import {
   listRepoLabels,
   listRepoSyncSegments,
   listRepoSyncStates,
+  summarizeRepoSyncOpenPullRequests,
   listSignalSnapshots,
   listPullRequests,
   listRepositories,
@@ -430,6 +431,10 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
+  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   createMissingLabel: z.boolean().default(true),
@@ -829,12 +834,11 @@ export function createApp() {
     const summary = await getRoleSummaryForIdentity(c.env, identity);
     if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
 
-    const [allRepositories, allInstallations, allHealth, allRateLimits, allSyncStates] = await Promise.all([
+    const [allRepositories, allInstallations, allHealth, allRateLimits] = await Promise.all([
       listRepositories(c.env),
       listInstallations(c.env),
       listInstallationHealth(c.env),
       listLatestGitHubRateLimitObservations(c.env, 20),
-      listRepoSyncStates(c.env),
     ]);
     const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
     const scopedRepoNames = new Set(scope?.repositoryFullNames.map((repo) => repo.toLowerCase()) ?? []);
@@ -848,13 +852,10 @@ export function createApp() {
       ? allHealth.filter((record) => scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase()))
       : allHealth;
     const rateLimits = scope ? allRateLimits.filter((record) => record.repoFullName !== undefined && record.repoFullName !== null && scopedRepoNames.has(record.repoFullName.toLowerCase())) : allRateLimits;
-    // Cached open-PR count is summed across ALL in-scope repos from sync state (a single query) so the
-    // headline metric is a true global count like its siblings. The per-repo PR fetch below is capped at
+    // Cached open-PR count is aggregated across ALL in-scope repos from sync state without using the
+    // capped sync-state listing that powers previews elsewhere. The per-repo PR fetch below is capped at
     // 12 only to bound the `reviewability` preview list, not the metric.
-    const scopedRepoNameSet = new Set(repositories.map((repo) => repo.fullName.toLowerCase()));
-    const scopedSyncStates = allSyncStates.filter((state) => scopedRepoNameSet.has(state.repoFullName.toLowerCase()));
-    const totalOpenPullRequestsCached = scopedSyncStates.reduce((sum, state) => sum + Math.max(0, state.openPullRequestsCount), 0);
-    const reposWithOpenPullRequests = scopedSyncStates.filter((state) => state.openPullRequestsCount > 0).length;
+    const { totalOpenPullRequestsCached, reposWithOpenPullRequests } = await summarizeRepoSyncOpenPullRequests(c.env, repositories.map((repo) => repo.fullName));
     const openPullRequests = (
       await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
     ).flat();
@@ -1494,6 +1495,12 @@ export function createApp() {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
     if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
     const response = await buildRepoOnboardingPackPreviewForRepo(c.env, fullName, {
       refreshManifest: c.req.query("refresh") === "true",
     });
@@ -2177,6 +2184,10 @@ export function createApp() {
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
         gateCheckMode: parsed.data.gateCheckMode,
+        linkedIssueGateMode: parsed.data.linkedIssueGateMode,
+        duplicatePrGateMode: parsed.data.duplicatePrGateMode,
+        qualityGateMode: parsed.data.qualityGateMode,
+        qualityGateMinScore: parsed.data.qualityGateMinScore,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         createMissingLabel: parsed.data.createMissingLabel,
@@ -2450,8 +2461,8 @@ function buildCommandPreview(
     };
   }
 
-  if (missingPermissions.includes("issues") || missingPermissions.includes("pull_requests")) {
-    const summary = "GitHub App permissions Issues: write and Pull requests: write are required before a command response can be posted.";
+  if (missingPermissions.includes("issues")) {
+    const summary = "GitHub App permission Issues: write is required before a command response can be posted.";
     const body = sanitizePublicComment(`Gittensory preview is ready for ${target}, but ${summary}`);
     return {
       ...base,
@@ -2603,9 +2614,9 @@ function buildCommandPreviewPullRequest(
 
 function commandPreviewMissingPermissions(request: z.infer<typeof commandPreviewSchema>, installation: InstallationHealthRecord | null): string[] {
   const configured = new Set([...(installation?.missingPermissions ?? []), ...(request.sample?.missingPermissions ?? [])]);
+  configured.delete("pull_requests");
   const permissions = request.sample?.permissions ?? installation?.permissions;
   if (permissions && permissions.issues !== "write") configured.add("issues");
-  if (permissions && permissions.pull_requests !== "write") configured.add("pull_requests");
   return [...configured].sort();
 }
 
@@ -2621,8 +2632,6 @@ function commandPreviewPermissionWarnings(missingPermissions: string[]) {
       message:
         permission === "issues"
           ? "Command responses require GitHub App permission Issues: write; preview will not post while it is missing."
-          : permission === "pull_requests"
-            ? "Command responses require GitHub App permission Pull requests: write; preview will not post while it is missing."
           : `GitHub App permission ${permission}: ${requiredAccess} is missing for this preview scenario.`,
     };
   });
@@ -3363,8 +3372,13 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
+  if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoOnboardingPackPreviewPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/onboarding-pack\/preview$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

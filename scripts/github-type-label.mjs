@@ -1,7 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const TYPE_LABELS = new Set(["bug", "feature"]);
+const BUG_LABEL = "gittensor:bug";
+const FEATURE_LABEL = "gittensor:feature";
+const PRIORITY_LABEL = "gittensor:priority";
+const AUTO_TYPE_LABELS = new Set([BUG_LABEL, FEATURE_LABEL]);
+const SCORING_LABELS = new Set([BUG_LABEL, FEATURE_LABEL, PRIORITY_LABEL]);
+const FEATURE_SOURCE_LABELS = new Set(["feature", FEATURE_LABEL]);
+const LABEL_DEFINITIONS = {
+  [BUG_LABEL]: { color: "d73a4a", description: "Gittensor-scored bug fix" },
+  [FEATURE_LABEL]: { color: "0e8a16", description: "Gittensor-scored feature linked to a feature issue" },
+};
 
 export function normalizeLabels(labels) {
   if (!Array.isArray(labels)) return [];
@@ -17,19 +26,19 @@ export function normalizeLabels(labels) {
 
 export function classifyTypeLabel(title, labels = []) {
   const normalizedLabels = normalizeLabels(labels);
-  if (normalizedLabels.some((label) => TYPE_LABELS.has(label))) return null;
+  if (hasScoringLabel(normalizedLabels)) return null;
 
   const normalizedTitle = String(title ?? "").trim();
-  if (/^\[bug\]\s*:?\s*/i.test(normalizedTitle) || /^(?:fix|bug)(?:\([^)]+\))?:/i.test(normalizedTitle)) {
-    return "bug";
+  if (isBugTitle(normalizedTitle)) {
+    return BUG_LABEL;
   }
-  if (/^\[feature\]\s*:?\s*/i.test(normalizedTitle) || /^(?:feat|feature)(?:\([^)]+\))?:/i.test(normalizedTitle)) {
-    return "feature";
+  if (isFeatureTitle(normalizedTitle)) {
+    return FEATURE_LABEL;
   }
   return null;
 }
 
-export function getTypeLabelDecision(eventName, payload) {
+export function getTypeLabelDecision(eventName, payload, options = {}) {
   if (!payload || typeof payload !== "object") {
     return { action: "skip", reason: "missing-event-payload" };
   }
@@ -48,9 +57,9 @@ export function getTypeLabelDecision(eventName, payload) {
     const pullRequest = payload.pull_request;
     if (!pullRequest || typeof pullRequest !== "object") return { action: "skip", reason: "missing-pull-request" };
 
-    const label = classifyTypeLabel(pullRequest.title, pullRequest.labels);
-    if (!label) return { action: "skip", reason: "no-type-label", number: numberOrUndefined(pullRequest.number), title: stringOrEmpty(pullRequest.title) };
-    return { action: "apply", label, number: pullRequest.number, title: stringOrEmpty(pullRequest.title) };
+    const decision = classifyPullRequestLabel(pullRequest, options.issueReferences ?? []);
+    if (!decision.label) return { action: "skip", reason: decision.reason, number: numberOrUndefined(pullRequest.number), title: stringOrEmpty(pullRequest.title) };
+    return { action: "apply", label: decision.label, number: pullRequest.number, title: stringOrEmpty(pullRequest.title) };
   }
 
   return { action: "skip", reason: "unsupported-event" };
@@ -61,7 +70,7 @@ export async function applyTypeLabel({ apiUrl = "https://api.github.com", reposi
   if (!owner || !repo || extraParts.length > 0) throw new Error("GITHUB_REPOSITORY must be owner/repo");
   if (!token) throw new Error("GITHUB_TOKEN is required");
   if (!Number.isInteger(number) || number <= 0) throw new Error("Issue or pull request number must be a positive integer");
-  if (!TYPE_LABELS.has(label)) throw new Error(`Unsupported type label: ${label}`);
+  if (!AUTO_TYPE_LABELS.has(label)) throw new Error(`Unsupported type label: ${label}`);
 
   const issueLabelsUrl = `${apiUrl.replace(/\/$/, "")}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}/labels`;
   const headers = {
@@ -72,8 +81,13 @@ export async function applyTypeLabel({ apiUrl = "https://api.github.com", reposi
   };
 
   const labels = await readCurrentLabels({ issueLabelsUrl, headers, fetchImpl });
-  if (labels.some((currentLabel) => TYPE_LABELS.has(currentLabel))) {
+  if (labels.some((currentLabel) => SCORING_LABELS.has(currentLabel))) {
     return { applied: false, reason: "type-label-already-present" };
+  }
+
+  const labelReady = await ensureRepositoryLabel({ apiUrl, owner, repo, headers, label, fetchImpl });
+  if (!labelReady.created && labelReady.reason) {
+    return { applied: false, reason: labelReady.reason };
   }
 
   const response = await fetchImpl(issueLabelsUrl, {
@@ -90,6 +104,70 @@ export async function applyTypeLabel({ apiUrl = "https://api.github.com", reposi
     throw new Error(`Failed to apply ${label} to #${number}: ${response.status} ${text}`);
   }
   return { applied: true };
+}
+
+export async function ensureRepositoryLabel({ apiUrl = "https://api.github.com", owner, repo, headers, label, fetchImpl = fetch }) {
+  const definition = LABEL_DEFINITIONS[label];
+  if (!definition) return { created: false };
+
+  const baseUrl = `${apiUrl.replace(/\/$/, "")}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/labels`;
+  const labelUrl = `${baseUrl}/${encodeURIComponent(label)}`;
+  const existing = await fetchImpl(labelUrl, { method: "GET", headers });
+  if (existing.ok) return { created: false };
+
+  const existingText = await existing.text();
+  if (existing.status !== 404) {
+    if (isLabelWriteForbidden(existing.status, existingText)) return { created: false, reason: "label-write-forbidden" };
+    throw new Error(`Failed to read repository label ${label}: ${existing.status} ${existingText}`);
+  }
+
+  const created = await fetchImpl(baseUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: label, color: definition.color, description: definition.description }),
+  });
+  if (created.ok) return { created: true };
+
+  const createdText = await created.text();
+  if (/already exists|already_exists/i.test(createdText)) return { created: false };
+  if (isLabelWriteForbidden(created.status, createdText)) return { created: false, reason: "label-write-forbidden" };
+  throw new Error(`Failed to create repository label ${label}: ${created.status} ${createdText}`);
+}
+
+export function extractClosingIssueNumbers(text) {
+  const body = String(text ?? "");
+  const numbers = new Set();
+  const closingRef = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+  for (const match of body.matchAll(closingRef)) {
+    const number = Number.parseInt(match[1], 10);
+    if (Number.isSafeInteger(number) && number > 0) numbers.add(number);
+  }
+  return [...numbers];
+}
+
+export async function fetchReferencedIssues({ apiUrl = "https://api.github.com", repository, token, body, fetchImpl = fetch }) {
+  const [owner, repo, ...extraParts] = String(repository ?? "").split("/");
+  if (!owner || !repo || extraParts.length > 0) throw new Error("GITHUB_REPOSITORY must be owner/repo");
+  if (!token) throw new Error("GITHUB_TOKEN is required");
+
+  const numbers = extractClosingIssueNumbers(body);
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${token}`,
+    "x-github-api-version": "2022-11-28",
+  };
+
+  const issues = [];
+  for (const number of numbers) {
+    const issueUrl = `${apiUrl.replace(/\/$/, "")}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`;
+    const response = await fetchImpl(issueUrl, { method: "GET", headers });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to read referenced issue #${number}: ${response.status} ${text}`);
+    }
+    issues.push(await response.json());
+  }
+  return issues;
 }
 
 export async function readCurrentLabels({ issueLabelsUrl, headers, fetchImpl = fetch }) {
@@ -118,7 +196,17 @@ export async function main() {
   if (!eventPath) throw new Error("GITHUB_EVENT_PATH is required");
 
   const payload = JSON.parse(await readFile(eventPath, "utf8"));
-  const decision = getTypeLabelDecision(process.env.GITHUB_EVENT_NAME ?? "", payload);
+  const eventName = process.env.GITHUB_EVENT_NAME ?? "";
+  const issueReferences =
+    eventName === "pull_request_target"
+      ? await fetchReferencedIssues({
+          apiUrl: process.env.GITHUB_API_URL,
+          repository: process.env.GITHUB_REPOSITORY ?? "",
+          token: process.env.GITHUB_TOKEN ?? "",
+          body: payload.pull_request?.body ?? "",
+        })
+      : [];
+  const decision = getTypeLabelDecision(eventName, payload, { issueReferences });
   if (decision.action === "skip") {
     console.log(`type-label: skipped ${decision.reason}`);
     return;
@@ -144,6 +232,35 @@ function numberOrUndefined(value) {
 
 function stringOrEmpty(value) {
   return typeof value === "string" ? value : "";
+}
+
+function classifyPullRequestLabel(pullRequest, issueReferences) {
+  const normalizedLabels = normalizeLabels(pullRequest.labels);
+  if (hasScoringLabel(normalizedLabels)) return { label: null, reason: "type-label-already-present" };
+
+  const title = String(pullRequest.title ?? "").trim();
+  if (isBugTitle(title)) return { label: BUG_LABEL, reason: "" };
+  if (!isFeatureTitle(title)) return { label: null, reason: "no-type-label" };
+  if (issueReferences.some(isFeatureIssue)) return { label: FEATURE_LABEL, reason: "" };
+  return { label: null, reason: "feature-pr-missing-feature-issue" };
+}
+
+function isFeatureIssue(issue) {
+  if (!issue || typeof issue !== "object" || issue.pull_request) return false;
+  const labels = normalizeLabels(issue.labels);
+  return labels.some((label) => FEATURE_SOURCE_LABELS.has(label)) || isFeatureTitle(issue.title);
+}
+
+function hasScoringLabel(labels) {
+  return labels.some((label) => SCORING_LABELS.has(label));
+}
+
+function isBugTitle(title) {
+  return /^\[bug\]\s*:?\s*/i.test(title) || /^(?:fix|bug)(?:\([^)]+\))?:/i.test(title);
+}
+
+function isFeatureTitle(title) {
+  return /^\[feature\]\s*:?\s*/i.test(title) || /^(?:feat|feature)(?:\([^)]+\))?:/i.test(title);
 }
 
 function nextLink(linkHeader) {

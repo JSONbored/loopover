@@ -385,6 +385,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      linkedIssueGateMode: "advisory",
+      duplicatePrGateMode: "advisory",
+      qualityGateMode: "advisory",
+      qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -404,6 +408,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
+    duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
+    qualityGateMode: parseGateRuleMode(row.qualityGateMode),
+    qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
     createMissingLabel: row.createMissingLabel,
@@ -427,6 +435,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
+    linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
+    duplicatePrGateMode: settings.duplicatePrGateMode ?? "advisory",
+    qualityGateMode: settings.qualityGateMode ?? "advisory",
+    qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     createMissingLabel: settings.createMissingLabel ?? true,
@@ -448,6 +460,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
+      linkedIssueGateMode: resolved.linkedIssueGateMode,
+      duplicatePrGateMode: resolved.duplicatePrGateMode,
+      qualityGateMode: resolved.qualityGateMode,
+      qualityGateMinScore: resolved.qualityGateMinScore,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
       createMissingLabel: resolved.createMissingLabel,
@@ -468,6 +484,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
+        linkedIssueGateMode: resolved.linkedIssueGateMode,
+        duplicatePrGateMode: resolved.duplicatePrGateMode,
+        qualityGateMode: resolved.qualityGateMode,
+        qualityGateMinScore: resolved.qualityGateMinScore,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
         createMissingLabel: resolved.createMissingLabel,
@@ -541,6 +561,36 @@ export async function listRepoSyncStates(env: Env): Promise<RepoSyncStateRecord[
   const db = getDb(env.DB);
   const rows = await db.select().from(repoSyncState).orderBy(desc(repoSyncState.updatedAt)).limit(500);
   return rows.map(toRepoSyncStateRecord);
+}
+
+export async function summarizeRepoSyncOpenPullRequests(env: Env, repoFullNames?: string[]): Promise<{ totalOpenPullRequestsCached: number; reposWithOpenPullRequests: number }> {
+  const db = getDb(env.DB);
+  const aggregate = async (repoNames?: string[]) => {
+    const query = db
+      .select({
+        totalOpenPullRequestsCached: sql<number>`coalesce(sum(case when ${repoSyncState.openPullRequestsCount} > 0 then ${repoSyncState.openPullRequestsCount} else 0 end), 0)`,
+        reposWithOpenPullRequests: sql<number>`coalesce(sum(case when ${repoSyncState.openPullRequestsCount} > 0 then 1 else 0 end), 0)`,
+      })
+      .from(repoSyncState);
+    const [row] = repoNames ? await query.where(inArray(sql`lower(${repoSyncState.repoFullName})`, repoNames)) : await query;
+    return {
+      totalOpenPullRequestsCached: Number(row?.totalOpenPullRequestsCached ?? 0),
+      reposWithOpenPullRequests: Number(row?.reposWithOpenPullRequests ?? 0),
+    };
+  };
+
+  if (repoFullNames === undefined) return aggregate();
+
+  const normalizedRepoNames = Array.from(new Set(repoFullNames.map((name) => name.toLowerCase())));
+  const summary = { totalOpenPullRequestsCached: 0, reposWithOpenPullRequests: 0 };
+  for (let index = 0; index < normalizedRepoNames.length; index += 450) {
+    const chunk = normalizedRepoNames.slice(index, index + 450);
+    if (chunk.length === 0) continue;
+    const chunkSummary = await aggregate(chunk);
+    summary.totalOpenPullRequestsCached += chunkSummary.totalOpenPullRequestsCached;
+    summary.reposWithOpenPullRequests += chunkSummary.reposWithOpenPullRequests;
+  }
+  return summary;
 }
 
 export async function upsertRepoSyncSegment(env: Env, segment: RepoSyncSegmentRecord): Promise<void> {
@@ -2785,6 +2835,7 @@ export async function recordWebhookEvent(
       payloadHash: args.payloadHash,
       status: args.status,
       errorSummary: args.errorSummary,
+      receivedAt: nowIso(),
       processedAt: args.status === "processed" || args.status === "error" ? nowIso() : undefined,
     })
     .onConflictDoUpdate({
@@ -4261,6 +4312,16 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 
 function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
   return value === "enabled" ? "enabled" : "off";
+}
+
+function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMode"] {
+  if (value === "off" || value === "block") return value;
+  return "advisory";
+}
+
+function normalizeQualityGateMinScore(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {

@@ -1886,7 +1886,7 @@ function doctorNextCommand(byName, context) {
   const auth = byName.get("auth");
   if (auth?.status === "fail") {
     return {
-      command: `gittensory-mcp login --profile ${context.profileName}`,
+      command: `gittensory-mcp login --profile ${shellArg(context.profileName ?? "default")}`,
       reason: "Authenticate the active profile so doctor, plan, preflight, and packet commands can call the API.",
     };
   }
@@ -1920,9 +1920,15 @@ function doctorNextCommand(byName, context) {
     };
   }
   return {
-    command: `gittensory-mcp preflight --login ${context.login ?? "<github-login>"} --repo ${context.repoFullName ?? "owner/repo"} --json`,
+    command: `gittensory-mcp preflight --login ${shellArg(context.login ?? "<github-login>")} --repo ${shellArg(context.repoFullName ?? "owner/repo")} --json`,
     reason: "Run branch preflight next; source upload remains disabled.",
   };
+}
+
+function shellArg(value) {
+  const text = String(value ?? "");
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'"'"'`)}'`;
 }
 
 function initClient(options) {

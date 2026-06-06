@@ -120,6 +120,14 @@ describe("parseFocusManifestContent", () => {
     expect(manifest.present).toBe(false);
     expect(manifest.warnings.join(" ")).toMatch(/not valid JSON/i);
   });
+
+  it("warns when JSON content is not a mapping", () => {
+    for (const content of ['["a","b"]', '"string"']) {
+      const manifest = parseFocusManifestContent(content);
+      expect(manifest.present).toBe(false);
+      expect(manifest.warnings.join(" ")).toMatch(/must be a mapping/i);
+    }
+  });
 });
 
 describe("matchesManifestPath", () => {
@@ -364,6 +372,24 @@ describe("compileFocusManifestPolicy", () => {
     expect(publicText).not.toMatch(/reward payout|wallet seed/i);
     expect(publicText).toContain("Keep PRs focused.");
     expect(publicText).toContain("npm run test:ci");
+  });
+
+  it("skips unsafe publicNotes when entry guidance is compiled from a raw manifest", () => {
+    const policy = compileFocusManifestPolicy({
+      present: true,
+      source: "api_record",
+      wantedPaths: ["src/"],
+      blockedPaths: [],
+      preferredLabels: [],
+      linkedIssuePolicy: "optional",
+      testExpectations: [],
+      issueDiscoveryPolicy: "neutral",
+      maintainerNotes: [],
+      publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
+      warnings: [],
+    });
+    expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
+    expect(policy.publicSafe.entryGuidance.join(" ")).not.toMatch(/reward payout/i);
   });
 
   it("publicSafe.summary never contains forbidden language", () => {

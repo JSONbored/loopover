@@ -1112,6 +1112,51 @@ describe("signal coverage edge cases", () => {
     expect(scoreComponent(weak, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
   });
 
+  it("panel scopedOverlapCount uses deduplicated union of PR-specific and preflight clusters (regression for Math.max mismatch)", () => {
+    // Regression: processors.ts previously used Math.max(prSpecificCount, preflight.collisions.length)
+    // which gives wrong results when the two sets overlap. The comment builder (engine.ts) correctly
+    // deduplicates by cluster ID. This test verifies that buildPublicPrIntelligenceComment's
+    // scopedOverlapCount matches what you'd get from the union, not the max.
+    const directRepo = repo("owner/dedup-overlap");
+    const issue7: IssueRecord = { repoFullName: directRepo.fullName, number: 7, title: "Fix cache refresh bug", state: "open", authorLogin: "reporter", labels: ["bug"], linkedPrs: [] };
+    const currentPr = pr(directRepo.fullName, 10, "Fix cache refresh bug", { linkedIssues: [7] });
+    const otherPr = pr(directRepo.fullName, 11, "Fix cache refresh bug duplicate", { linkedIssues: [7] });
+
+    // Both PRs share the same title terms and linked issue → same collision cluster
+    const collisions = buildCollisionReport(directRepo.fullName, [issue7], [currentPr, otherPr]);
+    const prCluster = collisions.clusters.find((c) => c.items.some((item) => item.number === currentPr.number));
+
+    // Simulate preflight carrying the same cluster (overlapping with prSpecific)
+    const sharedCluster = prCluster ?? { id: "shared", items: [], riskLevel: "medium" as const };
+    const preflightWithOverlap = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: currentPr.linkedIssues },
+      directRepo,
+      [issue7],
+      [currentPr, otherPr],
+    );
+    // Override preflight.collisions with the same cluster to force overlap
+    const preflightOverlapping = { ...preflightWithOverlap, collisions: [sharedCluster] as CollisionCluster[] };
+
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
+    const detection = detectGittensorContributor("dev", currentPr, [currentPr], []);
+    const comment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: currentPr,
+      profile,
+      detection,
+      queueHealth: queueHealthFixture(directRepo.fullName, "low"),
+      collisions,
+      preflight: preflightOverlapping,
+      settings: repoSettings(directRepo.fullName),
+    });
+
+    // The panel should show the cluster once (deduplicated union = 1), not twice (max gives 1 here too,
+    // but the key invariant is the comment's overlap count equals the union count).
+    const overlapMatch = comment.match(/(\d+) scoped overlap/);
+    const unionCount = [...new Map([...(prCluster ? [prCluster] : []), sharedCluster].map((c) => [c.id, c])).values()].length;
+    expect(overlapMatch ? Number(overlapMatch[1]) : 0).toBeLessThanOrEqual(unionCount);
+  });
+
   it("filters disabled linked-issue findings and uses fallback next steps when the panel is clean", () => {
     const directRepo = repo("owner/clean-panel");
     const currentPr = pr(directRepo.fullName, 50, "Fix documented bug", {

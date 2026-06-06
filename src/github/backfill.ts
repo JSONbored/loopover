@@ -606,10 +606,14 @@ export async function refreshContributorActivity(
       if (pullRequestCount + issueCount === 0) continue;
 
       const openNodes = compactNodes(openPullRequests);
+      // allPullRequests, mergedPullRequests, and openPullRequests are overlapping views of the same
+      // PR set -- deduplicate by URL before extracting labels to avoid counting a PR's labels multiple times.
+      const seenUrls = new Set<string>();
+      const uniquePrNodes = [...compactNodes(allPullRequests), ...compactNodes(mergedPullRequests), ...compactNodes(openPullRequests)].filter(
+        (node) => node.url && !seenUrls.has(node.url) && seenUrls.add(node.url),
+      );
       const labelNames = [
-        ...labelsFromBucket(allPullRequests),
-        ...labelsFromBucket(mergedPullRequests),
-        ...labelsFromBucket(openPullRequests),
+        ...uniquePrNodes.flatMap((node) => (node.labels?.nodes ?? []).flatMap((label) => (label?.name ? [label.name] : []))),
         ...labelsFromBucket(authoredIssues),
       ];
       await upsertContributorRepoStat(env, {

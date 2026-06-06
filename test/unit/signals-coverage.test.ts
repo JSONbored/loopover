@@ -1237,6 +1237,42 @@ describe("signal coverage edge cases", () => {
     expect(scoreComponent(buildPublicReadinessScore({ pr: currentPr, preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] }, queueHealth: sampledNoCacheQueue }), "queue_pressure").evidence).toContain("likely-reviewable count unavailable from cached PR metadata");
   });
 
+  it("panel scopedOverlapCount uses deduplicated union of PR-specific and preflight clusters (regression for Math.max mismatch)", () => {
+    const directRepo = repo("owner/dedup-overlap");
+    const issue7: IssueRecord = { repoFullName: directRepo.fullName, number: 7, title: "Fix cache refresh bug", state: "open", authorLogin: "reporter", labels: ["bug"], linkedPrs: [] };
+    const currentPr = pr(directRepo.fullName, 10, "Fix cache refresh bug", { linkedIssues: [7] });
+    const otherPr = pr(directRepo.fullName, 11, "Fix cache refresh bug duplicate", { linkedIssues: [7] });
+
+    const collisions = buildCollisionReport(directRepo.fullName, [issue7], [currentPr, otherPr]);
+    const prCluster = collisions.clusters.find((c) => c.items.some((item) => item.number === currentPr.number));
+
+    const sharedCluster = prCluster ?? { id: "shared", items: [], riskLevel: "medium" as const };
+    const preflightWithOverlap = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: currentPr.linkedIssues },
+      directRepo,
+      [issue7],
+      [currentPr, otherPr],
+    );
+    const preflightOverlapping = { ...preflightWithOverlap, collisions: [sharedCluster] as CollisionCluster[] };
+
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []);
+    const detection = detectGittensorContributor("dev", currentPr, [currentPr], []);
+    const comment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: currentPr,
+      profile,
+      detection,
+      queueHealth: queueHealthFixture(directRepo.fullName, "low"),
+      collisions,
+      preflight: preflightOverlapping,
+      settings: repoSettings(directRepo.fullName),
+    });
+
+    const overlapMatch = comment.match(/(\d+) scoped overlap/);
+    const unionCount = [...new Map([...(prCluster ? [prCluster] : []), sharedCluster].map((c) => [c.id, c])).values()].length;
+    expect(overlapMatch ? Number(overlapMatch[1]) : 0).toBeLessThanOrEqual(unionCount);
+  });
+
   it("filters disabled linked-issue findings and uses fallback next steps when the panel is clean", () => {
     const directRepo = repo("owner/clean-panel");
     const currentPr = pr(directRepo.fullName, 50, "Fix documented bug", {

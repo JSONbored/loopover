@@ -1062,11 +1062,16 @@ export function buildContributorProfile(
       ...matchingStats.filter((stat) => stat.pullRequests > 0 || stat.issues > 0).map((stat) => stat.repoFullName),
     ]),
   ].sort();
+  // `matchingStats` and the cached authored records are overlapping views of the same activity, so
+  // only fold in stat-derived dominant labels for repos that have no cached authored records --
+  // otherwise a shared repo's labels are double-counted (consistent with how reposTouched dedups and
+  // unlinkedOpenPullRequests maxes the same two sources).
+  const cachedLabelRepos = new Set([...authoredPullRequests, ...authoredIssues].map((record) => record.repoFullName.toLowerCase()));
   const dominantLabels = topItems(
     [
       ...authoredPullRequests.flatMap((record) => record.labels),
       ...authoredIssues.flatMap((record) => record.labels),
-      ...matchingStats.flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !cachedLabelRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -1115,11 +1120,14 @@ function buildGittensorContributorProfile(
     .filter((repo) => repo.pullRequests + repo.openIssues + repo.closedIssues > 0)
     .map((repo) => repo.repoFullName)
     .sort();
+  // The snapshot labels already cover snapshot.repositories; only fold in stat-derived dominant labels
+  // for repos the snapshot does not cover, so shared repos are not double-counted.
+  const snapshotRepos = new Set(snapshot.repositories.map((repo) => repo.repoFullName.toLowerCase()));
   const dominantLabels = topItems(
     [
       ...snapshot.pullRequests.flatMap((pr) => (pr.label ? [pr.label] : [])),
       ...snapshot.issueLabels,
-      ...matchingStats.flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !snapshotRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -3533,7 +3541,11 @@ export function buildPublicPrIntelligenceComment(args: {
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
-  const scopedOverlapCount = Math.max(prCollisionClusters.length, args.preflight.collisions.length);
+  // Deduplicated union of PR-specific clusters and planned-overlap (preflight) clusters -- they are
+  // different filtered subsets of the same report, so the count must be their union, not max(), to
+  // match the related-work items rendered in the panel details below.
+  const scopedOverlapClusters = [...new Map([...prCollisionClusters, ...args.preflight.collisions].map((cluster) => [cluster.id, cluster])).values()];
+  const scopedOverlapCount = scopedOverlapClusters.length;
   const hasRelatedWork = linkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
   const linkedIssueResult = linkedIssuePanelResult(args.pr);
@@ -3613,7 +3625,7 @@ export function buildPublicPrIntelligenceComment(args: {
     ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action],
     ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."],
   ];
-  const overlapDetails = relatedWorkDetails(args.pr, prCollisionClusters, args.preflight.collisions);
+  const overlapDetails = relatedWorkDetails(args.pr, scopedOverlapClusters);
   const maintainerNotes =
     publicFindings.length > 0
       ? publicFindings.map((finding) => `- ${sanitizePanelText(finding.title)}: ${sanitizePanelText(finding.publicText ?? finding.detail)}`)
@@ -3866,8 +3878,7 @@ function gittensorMinerDashboardUrl(githubId: string): string {
   return `https://gittensor.io/miners/details?githubId=${encodeURIComponent(githubId)}`;
 }
 
-function relatedWorkDetails(pr: PullRequestRecord, prCollisionClusters: CollisionCluster[], preflightCollisions: CollisionCluster[]): string[] {
-  const clusters = [...new Map([...prCollisionClusters, ...preflightCollisions].map((cluster) => [cluster.id, cluster])).values()];
+function relatedWorkDetails(pr: PullRequestRecord, clusters: CollisionCluster[]): string[] {
   if (clusters.length === 0) return ["- PR-specific overlap: none found."];
   const summaries = clusters.slice(0, 3).map((cluster) => {
     const refs = cluster.items

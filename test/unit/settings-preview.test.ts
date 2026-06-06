@@ -116,7 +116,7 @@ describe("buildRepoSettingsPreview", () => {
     expect(preview.warnings).toHaveLength(0);
     expect(preview.installPreview).toMatchObject({
       status: "ready",
-      permissions: { status: "ready", required: expect.arrayContaining(["metadata: read", "pull_requests: read", "issues: write"]) },
+      permissions: { status: "ready", required: expect.arrayContaining(["metadata: read", "pull_requests: write", "issues: write"]) },
       publicOutputs: expect.arrayContaining(["One sanitized sticky PR comment.", 'Configured label "gittensor".']),
       checklist: expect.arrayContaining([
         expect.objectContaining({ id: "permissions", status: "ready" }),
@@ -164,6 +164,18 @@ describe("buildRepoSettingsPreview", () => {
       status: "needs_attention",
       action: expect.stringContaining("approve the missing permission"),
     });
+  });
+
+  it("explains a missing Pull requests: write permission for PR comment/label output", () => {
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings(),
+      installation: { ...healthyInstall, status: "needs_attention", missingPermissions: ["pull_requests"] },
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+    // PR comments/labels need pull_requests: write; the preview must require it and surface it as missing.
+    expect(preview.installPreview.permissions.required).toContain("pull_requests: write");
+    expect(preview.installPreview.permissions).toMatchObject({ status: "needs_attention", missing: ["pull_requests"] });
   });
 
   it("explains a missing optional Checks: write permission only when check runs are enabled", () => {

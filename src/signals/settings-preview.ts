@@ -476,9 +476,16 @@ function buildRepoInstallPreview(args: {
   };
 }
 
+function writesPrPublicSurface(settings: RepositorySettings, decision: PublicSurfaceDecision): boolean {
+  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed");
+}
+
 function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {
-  const permissions = new Set(["metadata: read", "pull_requests: read"]);
-  if (decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed")) permissions.add("issues: write");
+  // PR conversation comments and PR labels are gated by GitHub on the Pull requests permission (write),
+  // matching REQUIRED_INSTALLATION_PERMISSIONS; reading PR metadata only needs read.
+  const writesPrSurface = writesPrPublicSurface(settings, decision);
+  const permissions = new Set(["metadata: read", writesPrSurface ? "pull_requests: write" : "pull_requests: read"]);
+  if (writesPrSurface) permissions.add("issues: write");
   if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
   return [...permissions];
 }
@@ -487,7 +494,9 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
   const active: string[] = [];
-  if ((decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed")) && missing.has("issues")) active.push("issues");
+  const writesPrSurface = writesPrPublicSurface(settings, decision);
+  if (writesPrSurface && missing.has("pull_requests")) active.push("pull_requests");
+  if (writesPrSurface && missing.has("issues")) active.push("issues");
   if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");
   return active;
 }

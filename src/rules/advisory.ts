@@ -3,11 +3,31 @@ import type {
   AdvisoryConclusion,
   AdvisoryFinding,
   AdvisorySeverity,
+  GateRuleMode,
   IssueRecord,
   PullRequestRecord,
   RepositoryRecord,
 } from "../types";
 import { nowIso } from "../utils/json";
+
+export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
+
+export type GateCheckPolicy = {
+  linkedIssueGateMode?: GateRuleMode | undefined;
+  duplicatePrGateMode?: GateRuleMode | undefined;
+  qualityGateMode?: GateRuleMode | undefined;
+  qualityGateMinScore?: number | null | undefined;
+  readinessScore?: number | null | undefined;
+};
+
+export type GateCheckEvaluation = {
+  enabled: boolean;
+  conclusion: GateCheckConclusion;
+  title: string;
+  summary: string;
+  blockers: AdvisoryFinding[];
+  warnings: AdvisoryFinding[];
+};
 
 export function buildRepositoryAdvisory(repo: RepositoryRecord | null, fullName: string): Advisory {
   const findings: AdvisoryFinding[] = [];
@@ -114,6 +134,63 @@ export function formatCheckRunOutput(
   }
 
   return { title, summary, text: publicLines.join("\n") };
+}
+
+export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
+  const evaluationBlockers = advisoryResult.findings.filter((finding) => isEvaluationBlocker(finding.code));
+  const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding.code, policy));
+  const qualityBlocker = buildQualityGateBlocker(policy);
+  const blockers = [...evaluationBlockers, ...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : [])];
+  if (blockers.length === 0) {
+    return {
+      enabled: true,
+      conclusion: "success",
+      title: "Gittensory Gate passed",
+      summary: "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
+      blockers,
+      warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning"),
+    };
+  }
+  return {
+    enabled: true,
+    conclusion: evaluationBlockers.length > 0 ? "action_required" : "failure",
+    title: evaluationBlockers.length > 0 ? "Gittensory Gate needs app attention" : "Gittensory Gate is blocking merge",
+    summary:
+      evaluationBlockers.length > 0
+        ? "Gittensory cannot evaluate this PR until app or repo state is repaired."
+        : `${blockers.length} configured hard blocker${blockers.length === 1 ? "" : "s"} found.`,
+    blockers,
+    warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning" && !blockers.includes(finding)),
+  };
+}
+
+export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: string; summary: string; text: string } {
+  if (gate.conclusion === "success") {
+    return {
+      title: gate.title,
+      summary: "Gittensory Gate is advisory-first. This PR has no configured hard blocker.",
+      text: "No configured hard blocker was found. Advisory signals remain visible in the PR panel when comments are enabled.",
+    };
+  }
+  if (gate.conclusion === "neutral" || gate.conclusion === "skipped") {
+    return {
+      title: gate.title,
+      summary: gate.summary,
+      text: "Gittensory did not create a contributor-facing failure for this event.",
+    };
+  }
+  const blockerLines = gate.blockers.slice(0, 8).map((finding) => {
+    const action = finding.action ? ` Action: ${sanitizeForCheckRun(finding.action)}` : "";
+    return `- ${sanitizeForCheckRun(finding.title)}.${action}`;
+  });
+  return {
+    title: gate.title,
+    summary:
+      gate.conclusion === "action_required"
+        ? "Gittensory Gate could not evaluate this PR because app or repo state needs attention."
+        : "Gittensory Gate found a repo-configured hard blocker.",
+    text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.",
+  };
 }
 
 function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): void {
@@ -301,4 +378,37 @@ function conclusionForSeverity(severity: AdvisorySeverity, findings: AdvisoryFin
   if (severity === "warning") return "neutral";
   if (severity === "critical") return "action_required";
   return "success";
+}
+
+function isEvaluationBlocker(code: string): boolean {
+  return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached";
+}
+
+function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean {
+  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode) === "block";
+  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode) === "block";
+  return false;
+}
+
+function buildQualityGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
+  if (gateMode(policy.qualityGateMode) !== "block") return null;
+  const score = normalizeScore(policy.readinessScore);
+  const minScore = normalizeScore(policy.qualityGateMinScore);
+  if (score === null || minScore === null || score >= minScore) return null;
+  return {
+    code: "readiness_score_below_threshold",
+    severity: "warning",
+    title: "Readiness score is below the configured threshold",
+    detail: `The public readiness score is ${score}/100, below the repository threshold of ${minScore}/100.`,
+    action: "Address the short explicit PR panel actions, then re-run the gate.",
+  };
+}
+
+function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
+  return value === "off" || value === "block" ? value : "advisory";
+}
+
+function normalizeScore(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }

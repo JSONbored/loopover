@@ -15,6 +15,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getIssue,
   getRepository,
+  getRepoQueueTrendSnapshot,
   listCheckSummaries,
   listContributorRepoStats,
   listContributorIssues,
@@ -42,10 +43,12 @@ import {
   startAgentRun,
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
+import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
   buildMcpPlanningElicitationAudit,
@@ -275,6 +278,7 @@ const repoContextOutputSchema = {
   repo: z.unknown().optional(),
   lane: z.unknown().optional(),
   queueHealth: z.unknown().optional(),
+  queueTrends: z.unknown().optional(),
   collisions: z.unknown().optional(),
   configQuality: z.unknown().optional(),
   dataQuality: z.unknown().optional(),
@@ -660,6 +664,15 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_draft_pr_body",
+      {
+        description: "Draft a public-safe, copy/paste PR body from local branch metadata (changed files, tests run, linked issue, duplicate/WIP caution, branch freshness, next steps). Private scoreability/reward/trust context is excluded; source contents are not uploaded.",
+        inputSchema: localBranchAnalysisShape,
+      },
+      async (input) => this.toolResult(await this.draftPrBody(input)),
+    );
+
+    server.registerTool(
       "gittensory_compare_local_variants",
       {
         description: "Compare private local-branch analysis variants without source uploads.",
@@ -805,12 +818,13 @@ export class GittensoryMcp {
 
   private async getRepoContext(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts] = await Promise.all([
+    const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts, queueTrends] = await Promise.all([
       getRepository(this.env, fullName),
       listIssueSignalSample(this.env, fullName),
       listOpenPullRequests(this.env, fullName),
       listRecentMergedPullRequests(this.env, fullName),
       this.loadOpenQueueCounts(fullName),
+      getRepoQueueTrendSnapshot(this.env, fullName),
     ]);
     const collisions = buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
     return {
@@ -820,6 +834,7 @@ export class GittensoryMcp {
         repo,
         lane: buildLaneAdvice(repo, fullName),
         queueHealth: buildQueueHealth(repo, issues, pullRequests, collisions, queueCounts),
+        queueTrends: queueTrends?.payload ?? buildUnavailableQueueTrendReport(fullName),
         collisions,
         configQuality: buildConfigQuality(repo, issues, pullRequests, fullName),
         dataQuality: await this.loadRepoDataQuality(fullName),
@@ -1202,6 +1217,16 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory base-agent public-safe PR packet for ${input.repoFullName}.`,
       data: bundle as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async draftPrBody(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+    const analysis = await this.analyzeLocalBranch(input);
+    const draft = buildPublicPrBodyDraft(analysis);
+    // Human-readable summary carries the rendered markdown body; structured draft is returned as JSON.
+    return {
+      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; private scoreability excluded).\n\n${draft.markdown}`,
+      data: draft as unknown as Record<string, unknown>,
     };
   }
 

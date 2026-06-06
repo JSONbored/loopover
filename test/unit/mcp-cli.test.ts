@@ -50,12 +50,32 @@ describe("gittensory-mcp CLI", () => {
         GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-malformed.mjs")}`,
         GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
       }),
-    ) as { status: string; config: { configured: boolean }; checks: Array<{ name: string; status: string; detail: string; remediation?: string }> };
+    ) as {
+      status: string;
+      config: { configured: boolean };
+      checklist: Array<{ id: string; title: string; status: string; checks?: Array<{ name: string; status: string; detail: string; remediation?: string }> }>;
+      nextCommand: { command: string; reason: string };
+      checks: Array<{ name: string; status: string; detail: string; remediation?: string }>;
+    };
 
     const serialized = JSON.stringify(payload);
     expect(payload.status).toMatch(/ok|warnings/);
     expect(serialized).not.toMatch(/secret-gittensor|secret-config/);
     expect(payload.config.configured).toBe(true);
+    expect(payload.checklist).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "auth", title: "Auth", status: "pass" }),
+        expect.objectContaining({ id: "api_compatibility", title: "API compatibility", status: "pass" }),
+        expect.objectContaining({ id: "local_repo_readiness", title: "Local repo readiness", status: "pass" }),
+        expect.objectContaining({ id: "scorer_availability", title: "Scorer availability", status: "warn" }),
+        expect.objectContaining({ id: "output_safety", title: "Output safety", status: "pass" }),
+        expect.objectContaining({ id: "next_command", title: "Next command", status: "warn" }),
+      ]),
+    );
+    expect(payload.nextCommand).toMatchObject({
+      command: "gittensory-mcp doctor --json",
+      reason: expect.stringContaining("local scorer"),
+    });
     expect(payload.checks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "api_health", status: "pass" }),
@@ -71,6 +91,35 @@ describe("gittensory-mcp CLI", () => {
     const localScorer = payload.checks.find((check) => check.name === "local_scorer");
     expect(localScorer?.detail).toMatch(/malformed_json/);
     expect(localScorer?.detail).not.toMatch(join(process.cwd(), "test/fixtures"));
+  });
+
+  it("uses doctor as a first-run auth checklist when no local session is configured", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const payload = JSON.parse(
+      await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_API_TOKEN: "",
+        GITTENSORY_TOKEN: "",
+        GITTENSORY_MCP_TOKEN: "",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as {
+      status: string;
+      checklist: Array<{ id: string; status: string; checks?: Array<{ name: string; status: string }> }>;
+      nextCommand: { command: string; reason: string };
+    };
+
+    const auth = payload.checklist.find((group) => group.id === "auth");
+    expect(payload.status).toBe("needs_attention");
+    expect(auth).toMatchObject({ status: "fail" });
+    expect(auth?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "auth", status: "fail" })]));
+    expect(payload.nextCommand).toMatchObject({
+      command: "gittensory-mcp login --profile default",
+      reason: expect.stringContaining("Authenticate"),
+    });
+    expect(JSON.stringify(payload)).not.toContain(tempDir);
   });
 
   it("reports a stale global install with an exact upgrade command and npx fallback", async () => {
@@ -266,6 +315,8 @@ describe("gittensory-mcp CLI", () => {
     });
 
     const doctor = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env)) as {
+      checklist: Array<{ id: string; status: string }>;
+      nextCommand: { command: string; reason: string };
       checks: Array<{ name: string; status: string; remediation?: string }>;
     };
     expect(doctor.checks).toEqual(
@@ -277,6 +328,63 @@ describe("gittensory-mcp CLI", () => {
         }),
       ]),
     );
+    expect(doctor.checklist).toEqual(expect.arrayContaining([expect.objectContaining({ id: "api_compatibility", status: "fail" })]));
+    expect(doctor.nextCommand).toMatchObject({
+      command: "npm install -g @jsonbored/gittensory-mcp@latest",
+      reason: expect.stringContaining("Upgrade"),
+    });
+  });
+
+  it("keeps source upload unsupported and fail-closed in the doctor checklist", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const payload = JSON.parse(
+      await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        GITTENSORY_UPLOAD_SOURCE: "true",
+      }),
+    ) as {
+      sourceUploadSupported: boolean;
+      checklist: Array<{ id: string; status: string; checks?: Array<{ name: string; status: string; remediation?: string }> }>;
+      nextCommand: { command: string; reason: string };
+    };
+
+    const outputSafety = payload.checklist.find((group) => group.id === "output_safety");
+    expect(payload.sourceUploadSupported).toBe(false);
+    expect(outputSafety).toMatchObject({ status: "fail" });
+    expect(outputSafety?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source_upload", status: "fail" })]));
+    expect(payload.nextCommand).toMatchObject({
+      command: "unset GITTENSORY_UPLOAD_SOURCE",
+      reason: expect.stringContaining("metadata"),
+    });
+  });
+
+  it("points missing local repo readiness at an explicit repo-aware doctor command", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const url = await startFixtureServer();
+    const payload = JSON.parse(
+      await runAsync(["doctor", "--cwd", tempDir, "--json"], {
+        GITTENSORY_API_URL: url,
+        GITTENSORY_TOKEN: "session-token",
+        GITTENSORY_CONFIG_DIR: tempDir,
+        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      }),
+    ) as {
+      checklist: Array<{ id: string; status: string; checks?: Array<{ name: string; status: string; detail: string }> }>;
+      nextCommand: { command: string; reason: string };
+    };
+
+    const repoReadiness = payload.checklist.find((group) => group.id === "local_repo_readiness");
+    expect(repoReadiness).toMatchObject({ status: "warn" });
+    expect(repoReadiness?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "git_metadata", status: "warn" })]));
+    expect(payload.nextCommand).toMatchObject({
+      command: "gittensory-mcp doctor --repo owner/repo --json",
+      reason: expect.stringContaining("git checkout"),
+    });
+    expect(JSON.stringify(payload)).not.toContain(tempDir);
   });
 
   it("does not print configured tokens or local absolute paths in status or doctor output", async () => {
@@ -923,6 +1031,38 @@ describe("gittensory-mcp CLI", () => {
   it("guides unknown commands to --help", () => {
     expect(() => run(["bogus-command"])).toThrow(/Unknown command: bogus-command/);
     expect(() => run(["bogus-command"])).toThrow(/gittensory-mcp --help/);
+  });
+
+  it("prints shell completion scripts for bash, zsh, and fish", () => {
+    const bash = run(["completion", "bash"]);
+    expect(bash).toContain("_gittensory_mcp()");
+    expect(bash).toContain("complete -F _gittensory_mcp gittensory-mcp");
+    expect(bash).toContain("analyze-branch");
+    expect(bash).toContain("local commands=\"login logout whoami status changelog completion version doctor");
+    expect(bash).toContain("version");
+    expect(bash).toContain("plan status explain packet");
+
+    const zsh = run(["completion", "zsh"]);
+    expect(zsh).toContain("#compdef gittensory-mcp");
+    expect(zsh).toContain("_describe 'command' commands");
+    expect(zsh).toContain("commands=(login logout whoami status changelog completion version doctor");
+    expect(zsh).toContain("list create switch remove");
+
+    const fish = run(["completion", "fish"]);
+    expect(fish).toContain("complete -c gittensory-mcp");
+    expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a completion");
+    expect(fish).toContain("__fish_seen_subcommand_from agent");
+  });
+
+  it("emits completion as machine-readable json", () => {
+    const payload = JSON.parse(run(["completion", "zsh", "--json"])) as { shell: string; script: string };
+    expect(payload.shell).toBe("zsh");
+    expect(payload.script).toContain("#compdef gittensory-mcp");
+  });
+
+  it("rejects missing or unsupported completion shells", () => {
+    expect(() => run(["completion"])).toThrow(/Usage: gittensory-mcp completion <bash\|zsh\|fish>/);
+    expect(() => run(["completion", "powershell"])).toThrow(/Unsupported shell: powershell/);
   });
 });
 

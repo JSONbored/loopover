@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, not, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
@@ -36,6 +36,7 @@ import {
   recentMergedPullRequests,
   repositories,
   repoGithubTotalsSnapshots,
+  repoQueueTrendSnapshots,
   registryDriftEvents,
   repoLabels,
   repoSnapshots,
@@ -117,6 +118,7 @@ import type {
   RegistryDriftEventRecord,
   RepoLabelRecord,
   RepoGithubTotalsSnapshotRecord,
+  RepoQueueTrendSnapshotRecord,
   RepoSnapshotRecord,
   RepoSyncSegmentRecord,
   RepoSyncStateRecord,
@@ -160,30 +162,41 @@ const FRESHNESS_SIGNAL_TYPES = [
 export async function upsertInstallation(env: Env, payload: GitHubWebhookPayload): Promise<void> {
   if (!payload.installation?.id) return;
   const account = payload.installation.account;
+  const existing = await getInstallation(env, payload.installation.id);
+  const permissions =
+    payload.installation.permissions && Object.keys(payload.installation.permissions).length > 0
+      ? (payload.installation.permissions as Record<string, string>)
+      : (existing?.permissions ?? {});
+  const events = payload.installation.events && payload.installation.events.length > 0 ? payload.installation.events : (existing?.events ?? []);
+  const accountLogin = account?.login ?? existing?.accountLogin ?? "unknown";
+  const accountId = account?.id ?? existing?.accountId ?? 0;
+  const targetType = payload.installation.target_type ?? account?.type ?? existing?.targetType ?? "unknown";
+  const repositorySelection = payload.installation.repository_selection ?? existing?.repositorySelection;
+  const suspendedAt = payload.installation.suspended_at !== undefined ? payload.installation.suspended_at : (existing?.suspendedAt ?? undefined);
   const db = getDb(env.DB);
   await db
     .insert(installations)
     .values({
       id: payload.installation.id,
-      accountLogin: account?.login ?? "unknown",
-      accountId: account?.id ?? 0,
-      targetType: payload.installation.target_type ?? account?.type ?? "unknown",
-      repositorySelection: payload.installation.repository_selection,
-      permissionsJson: jsonString((payload.installation.permissions ?? {}) as Record<string, string>),
-      eventsJson: jsonString(payload.installation.events ?? []),
-      suspendedAt: payload.installation.suspended_at ?? undefined,
+      accountLogin,
+      accountId,
+      targetType,
+      repositorySelection,
+      permissionsJson: jsonString(permissions),
+      eventsJson: jsonString(events),
+      suspendedAt,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
       target: installations.id,
       set: {
-        accountLogin: account?.login ?? "unknown",
-        accountId: account?.id ?? 0,
-        targetType: payload.installation.target_type ?? account?.type ?? "unknown",
-        repositorySelection: payload.installation.repository_selection,
-        permissionsJson: jsonString((payload.installation.permissions ?? {}) as Record<string, string>),
-        eventsJson: jsonString(payload.installation.events ?? []),
-        suspendedAt: payload.installation.suspended_at ?? undefined,
+        accountLogin,
+        accountId,
+        targetType,
+        repositorySelection,
+        permissionsJson: jsonString(permissions),
+        eventsJson: jsonString(events),
+        suspendedAt,
         updatedAt: nowIso(),
       },
     });
@@ -196,6 +209,16 @@ export async function markInstallationDeleted(env: Env, installationId: number):
     .update(repositories)
     .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
     .where(eq(repositories.installationId, installationId));
+}
+
+export async function markRepositoriesRemovedFromInstallation(env: Env, installationId: number, repoFullNames: string[]): Promise<void> {
+  const names = [...new Set(repoFullNames.filter(Boolean))];
+  if (names.length === 0) return;
+  const db = getDb(env.DB);
+  await db
+    .update(repositories)
+    .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
+    .where(and(eq(repositories.installationId, installationId), inArray(repositories.fullName, names)));
 }
 
 export async function getInstallation(env: Env, installationId: number): Promise<InstallationRecord | null> {
@@ -357,9 +380,15 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     return {
       repoFullName: fullName,
       commentMode: "detected_contributors_only",
+      publicAudienceMode: "oss_maintainer",
       publicSignalLevel: "standard",
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
+      gateCheckMode: "off",
+      linkedIssueGateMode: "advisory",
+      duplicatePrGateMode: "advisory",
+      qualityGateMode: "advisory",
+      qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -374,9 +403,15 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
   return {
     repoFullName: row.repoFullName,
     commentMode: parseCommentMode(row.commentMode),
+    publicAudienceMode: parsePublicAudienceMode(row.publicAudienceMode),
     publicSignalLevel: row.publicSignalLevel === "minimal" ? "minimal" : "standard",
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
+    gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
+    duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
+    qualityGateMode: parseGateRuleMode(row.qualityGateMode),
+    qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
     createMissingLabel: row.createMissingLabel,
@@ -395,9 +430,15 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
   const resolved: RepositorySettings = {
     repoFullName: settings.repoFullName,
     commentMode: settings.commentMode ?? "detected_contributors_only",
+    publicAudienceMode: settings.publicAudienceMode ?? "oss_maintainer",
     publicSignalLevel: settings.publicSignalLevel ?? "standard",
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
+    gateCheckMode: settings.gateCheckMode ?? "off",
+    linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
+    duplicatePrGateMode: settings.duplicatePrGateMode ?? "advisory",
+    qualityGateMode: settings.qualityGateMode ?? "advisory",
+    qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     createMissingLabel: settings.createMissingLabel ?? true,
@@ -414,9 +455,15 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     .values({
       repoFullName: resolved.repoFullName,
       commentMode: resolved.commentMode,
+      publicAudienceMode: resolved.publicAudienceMode,
       publicSignalLevel: resolved.publicSignalLevel,
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
+      gateCheckMode: resolved.gateCheckMode,
+      linkedIssueGateMode: resolved.linkedIssueGateMode,
+      duplicatePrGateMode: resolved.duplicatePrGateMode,
+      qualityGateMode: resolved.qualityGateMode,
+      qualityGateMinScore: resolved.qualityGateMinScore,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
       createMissingLabel: resolved.createMissingLabel,
@@ -432,9 +479,15 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       target: repositorySettings.repoFullName,
       set: {
         commentMode: resolved.commentMode,
+        publicAudienceMode: resolved.publicAudienceMode,
         publicSignalLevel: resolved.publicSignalLevel,
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
+        gateCheckMode: resolved.gateCheckMode,
+        linkedIssueGateMode: resolved.linkedIssueGateMode,
+        duplicatePrGateMode: resolved.duplicatePrGateMode,
+        qualityGateMode: resolved.qualityGateMode,
+        qualityGateMinScore: resolved.qualityGateMinScore,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
         createMissingLabel: resolved.createMissingLabel,
@@ -508,6 +561,36 @@ export async function listRepoSyncStates(env: Env): Promise<RepoSyncStateRecord[
   const db = getDb(env.DB);
   const rows = await db.select().from(repoSyncState).orderBy(desc(repoSyncState.updatedAt)).limit(500);
   return rows.map(toRepoSyncStateRecord);
+}
+
+export async function summarizeRepoSyncOpenPullRequests(env: Env, repoFullNames?: string[]): Promise<{ totalOpenPullRequestsCached: number; reposWithOpenPullRequests: number }> {
+  const db = getDb(env.DB);
+  const aggregate = async (repoNames?: string[]) => {
+    const query = db
+      .select({
+        totalOpenPullRequestsCached: sql<number>`coalesce(sum(case when ${repoSyncState.openPullRequestsCount} > 0 then ${repoSyncState.openPullRequestsCount} else 0 end), 0)`,
+        reposWithOpenPullRequests: sql<number>`coalesce(sum(case when ${repoSyncState.openPullRequestsCount} > 0 then 1 else 0 end), 0)`,
+      })
+      .from(repoSyncState);
+    const [row] = repoNames ? await query.where(inArray(sql`lower(${repoSyncState.repoFullName})`, repoNames)) : await query;
+    return {
+      totalOpenPullRequestsCached: Number(row?.totalOpenPullRequestsCached ?? 0),
+      reposWithOpenPullRequests: Number(row?.reposWithOpenPullRequests ?? 0),
+    };
+  };
+
+  if (repoFullNames === undefined) return aggregate();
+
+  const normalizedRepoNames = Array.from(new Set(repoFullNames.map((name) => name.toLowerCase())));
+  const summary = { totalOpenPullRequestsCached: 0, reposWithOpenPullRequests: 0 };
+  for (let index = 0; index < normalizedRepoNames.length; index += 450) {
+    const chunk = normalizedRepoNames.slice(index, index + 450);
+    if (chunk.length === 0) continue;
+    const chunkSummary = await aggregate(chunk);
+    summary.totalOpenPullRequestsCached += chunkSummary.totalOpenPullRequestsCached;
+    summary.reposWithOpenPullRequests += chunkSummary.reposWithOpenPullRequests;
+  }
+  return summary;
 }
 
 export async function upsertRepoSyncSegment(env: Env, segment: RepoSyncSegmentRecord): Promise<void> {
@@ -633,6 +716,24 @@ export async function getLatestRepoGithubTotalsSnapshot(env: Env, fullName: stri
   return row ? toRepoGithubTotalsSnapshotRecord(row) : null;
 }
 
+export async function listRepoGithubTotalsSnapshotHistory(
+  env: Env,
+  fullName: string,
+  options: { sinceIso?: string | undefined; limit?: number | undefined } = {},
+): Promise<RepoGithubTotalsSnapshotRecord[]> {
+  const db = getDb(env.DB);
+  const limit = Math.max(2, Math.min(options.limit ?? 120, 240));
+  const conditions = [eq(repoGithubTotalsSnapshots.repoFullName, fullName)];
+  if (options.sinceIso) conditions.push(gte(repoGithubTotalsSnapshots.fetchedAt, options.sinceIso));
+  const rows = await db
+    .select()
+    .from(repoGithubTotalsSnapshots)
+    .where(and(...conditions))
+    .orderBy(desc(repoGithubTotalsSnapshots.fetchedAt))
+    .limit(limit);
+  return rows.map(toRepoGithubTotalsSnapshotRecord).reverse();
+}
+
 export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<RepoGithubTotalsSnapshotRecord[]> {
   const db = getDb(env.DB);
   const latestRows = await db
@@ -652,6 +753,23 @@ export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<Rep
     if (row) rows.push(row);
   }
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
+}
+
+export async function upsertRepoQueueTrendSnapshot(env: Env, snapshot: RepoQueueTrendSnapshotRecord): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .insert(repoQueueTrendSnapshots)
+    .values({ repoFullName: snapshot.repoFullName, payloadJson: jsonString(snapshot.payload), generatedAt: snapshot.generatedAt })
+    .onConflictDoUpdate({
+      target: repoQueueTrendSnapshots.repoFullName,
+      set: { payloadJson: jsonString(snapshot.payload), generatedAt: snapshot.generatedAt },
+    });
+}
+
+export async function getRepoQueueTrendSnapshot(env: Env, repoFullName: string): Promise<RepoQueueTrendSnapshotRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(repoQueueTrendSnapshots).where(eq(repoQueueTrendSnapshots.repoFullName, repoFullName)).limit(1);
+  return row ? toRepoQueueTrendSnapshotRecord(row) : null;
 }
 
 export async function upsertPullRequestDetailSyncState(env: Env, state: PullRequestDetailSyncStateRecord): Promise<void> {
@@ -2717,6 +2835,7 @@ export async function recordWebhookEvent(
       payloadHash: args.payloadHash,
       status: args.status,
       errorSummary: args.errorSummary,
+      receivedAt: nowIso(),
       processedAt: args.status === "processed" || args.status === "error" ? nowIso() : undefined,
     })
     .onConflictDoUpdate({
@@ -2852,6 +2971,14 @@ function toRepoGithubTotalsSnapshotRecord(row: typeof repoGithubTotalsSnapshots.
     rateLimitRemaining: row.rateLimitRemaining,
     rateLimitResetAt: row.rateLimitResetAt,
     payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+  };
+}
+
+function toRepoQueueTrendSnapshotRecord(row: typeof repoQueueTrendSnapshots.$inferSelect): RepoQueueTrendSnapshotRecord {
+  return {
+    repoFullName: row.repoFullName,
+    payload: parseJson<Record<string, JsonValue>>(row.payloadJson, {}),
+    generatedAt: row.generatedAt,
   };
 }
 
@@ -4170,6 +4297,10 @@ function parseCommentMode(value: string): RepositorySettings["commentMode"] {
   return "off";
 }
 
+function parsePublicAudienceMode(value: string): RepositorySettings["publicAudienceMode"] {
+  return value === "gittensor_only" ? "gittensor_only" : "oss_maintainer";
+}
+
 function parseCheckRunMode(value: string): RepositorySettings["checkRunMode"] {
   return value === "enabled" ? "enabled" : "off";
 }
@@ -4177,6 +4308,20 @@ function parseCheckRunMode(value: string): RepositorySettings["checkRunMode"] {
 function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDetailLevel"] {
   if (value === "minimal" || value === "deep") return value;
   return "standard";
+}
+
+function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
+  return value === "enabled" ? "enabled" : "off";
+}
+
+function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMode"] {
+  if (value === "off" || value === "block") return value;
+  return "advisory";
+}
+
+function normalizeQualityGateMinScore(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {

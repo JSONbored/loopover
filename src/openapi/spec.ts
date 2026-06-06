@@ -375,6 +375,15 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/repos/{owner}/{repo}/onboarding-pack/preview",
+    responses: {
+      200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role" },
+      404: { description: "Repository is not accepted or preview unavailable" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/repos/{owner}/{repo}/settings",
     responses: {
       200: { description: "Gittensory repository automation settings", content: { "application/json": { schema: RepositorySettingsSchema } } },

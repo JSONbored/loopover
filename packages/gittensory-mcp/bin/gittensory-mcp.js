@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } from "../lib/local-branch.js";
@@ -23,6 +23,26 @@ const decisionPackCacheMaxBytes = 512 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const cliArgs = process.argv.slice(2);
 const defaultProfileName = "default";
+// Single source of truth for shell-completion: top-level command -> its subcommands (if any).
+const CLI_COMMAND_SPEC = {
+  login: [],
+  logout: [],
+  whoami: [],
+  status: [],
+  changelog: [],
+  completion: [],
+  version: [],
+  doctor: [],
+  "init-client": [],
+  "decision-pack": [],
+  "repo-decision": [],
+  "analyze-branch": [],
+  preflight: [],
+  profile: ["list", "create", "switch", "remove"],
+  cache: ["status", "clear"],
+  agent: ["plan", "status", "explain", "packet"],
+};
+const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
@@ -485,6 +505,528 @@ server.registerTool(
   async (input) => toolResult("Gittensory base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
 );
 
+// ── Output schemas for structured tool responses (#291) ──────────────────────
+
+const repoContextOutputSchema = {
+  type: "object",
+  properties: {
+    repoFullName: { type: "string" },
+    lane: { type: "string" },
+    primaryLanguage: { type: ["string", "null"] },
+    openIssueCount: { type: "number" },
+    openPrCount: { type: "number" },
+  },
+  additionalProperties: true,
+};
+
+const preflightOutputSchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", enum: ["pass", "warn", "fail", "unknown"] },
+    signals: { type: "array", items: { type: "object" } },
+    summary: { type: "string" },
+  },
+  additionalProperties: true,
+};
+
+const decisionPackOutputSchema = {
+  type: "object",
+  properties: {
+    login: { type: "string" },
+    decisions: { type: "array", items: { type: "object" } },
+    cachedAt: { type: ["string", "null"] },
+  },
+  additionalProperties: true,
+};
+
+const localStatusOutputSchema = {
+  type: "object",
+  properties: {
+    apiUrl: { type: "string" },
+    package: { type: "object", properties: { name: { type: "string" }, version: { type: "string" } }, additionalProperties: true },
+    hasToken: { type: "boolean" },
+    profile: { type: "object", additionalProperties: true },
+    authLogin: { type: ["string", "null"] },
+    sessionExpiresAt: { type: ["string", "null"] },
+    sourceUploadDefault: { type: "boolean" },
+    sourceUploadSupported: { type: "boolean" },
+    git: { type: "object", additionalProperties: true },
+  },
+  additionalProperties: true,
+};
+
+const agentPlanOutputSchema = {
+  type: "object",
+  properties: {
+    login: { type: "string" },
+    actions: { type: "array", items: { type: "object" } },
+    topAction: { type: ["object", "null"] },
+  },
+  additionalProperties: true,
+};
+
+// Attach outputSchema to key tools via registerTool with zod output schemas.
+// All other tools continue to return unschematized text+structured content.
+
+server.registerTool(
+  "gittensory_local_status_structured",
+  {
+    description: "Return local Gittensory MCP status with a validated structured output schema.",
+    inputSchema: {
+      cwd: z.string().optional(),
+      baseRef: z.string().optional(),
+      repoFullName: z.string().min(3).optional(),
+    },
+    outputSchema: z.object({
+      apiUrl: z.string(),
+      package: z.object({ name: z.string(), version: z.string() }),
+      hasToken: z.boolean(),
+      profile: z.record(z.unknown()),
+      authLogin: z.string().nullable(),
+      sessionExpiresAt: z.string().nullable(),
+      sourceUploadDefault: z.boolean(),
+      sourceUploadSupported: z.boolean(),
+      git: z.record(z.unknown()),
+    }),
+  },
+  async (input) => {
+    let git = null;
+    const workspaceInput = await withClientWorkspaceRoots(input);
+    try {
+      git = collectLocalBranchMetadata({ cwd: workspaceInput.cwd, baseRef: input.baseRef, repoFullName: input.repoFullName, login: "local", workspaceRoots: workspaceInput.workspaceRoots });
+    } catch (error) {
+      git = { error: error instanceof Error ? error.message : "local_status_failed" };
+    }
+    const data = {
+      apiUrl,
+      package: { name: packageName, version: packageVersion },
+      hasToken: Boolean(getApiToken()),
+      profile: profilePublicState(activeProfileName),
+      authLogin: activeProfile.session?.login ?? null,
+      sessionExpiresAt: activeProfile.session?.expiresAt ?? null,
+      sourceUploadDefault: false,
+      sourceUploadSupported: false,
+      git: git ?? {},
+    };
+    return { content: [{ type: "text", text: `Gittensory local MCP status.\n\n${JSON.stringify(data, null, 2)}` }], structuredContent: data };
+  },
+);
+
+// ── Resources: decision-pack, doctor, compatibility, changelog (#292) ─────────
+
+server.registerResource(
+  "gittensory_changelog",
+  "gittensory://changelog",
+  {
+    title: "Gittensory MCP Changelog",
+    description: "Current CHANGELOG.md for the installed gittensory-mcp package.",
+    mimeType: "text/markdown",
+  },
+  async () => {
+    let text;
+    try {
+      text = readFileSync(changelogPath, "utf8");
+    } catch {
+      text = "Changelog not available.";
+    }
+    return { contents: [{ uri: "gittensory://changelog", mimeType: "text/markdown", text }] };
+  },
+);
+
+server.registerResource(
+  "gittensory_compatibility",
+  "gittensory://compatibility",
+  {
+    title: "Gittensory API Compatibility",
+    description: "Current API compatibility state: version, supported methods, and any deprecation notices.",
+    mimeType: "application/json",
+  },
+  async () => {
+    let data;
+    try {
+      data = await apiGet(compatibilityPath);
+    } catch {
+      data = { status: "unavailable", currentApiVersion, packageVersion };
+    }
+    return { contents: [{ uri: "gittensory://compatibility", mimeType: "application/json", text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+server.registerResource(
+  "gittensory_decision_pack",
+  new ResourceTemplate("gittensory://decision-packs/{login}", { list: undefined }),
+  {
+    title: "Gittensory Decision Pack",
+    description: "Cached private contributor decision pack for a GitHub login. Requires authentication.",
+    mimeType: "application/json",
+  },
+  async (uri, { login }) => {
+    const payload = await getDecisionPackWithCache(String(login));
+    return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }] };
+  },
+);
+
+// ── Miner planning prompts (#293) ─────────────────────────────────────────────
+
+server.registerPrompt(
+  "gittensory_miner_select_issue",
+  {
+    title: "Select Next Issue to Work On",
+    description: "Guide a contributor through selecting the best open issue to work on next, using Gittensory lane and duplicate signals. Advisory only — no GitHub writes.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+      login: z.string().min(1).describe("GitHub login of the contributor."),
+    },
+  },
+  ({ repoFullName, login }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory miner planning assistant for ${login} working on ${repoFullName}.`,
+            "",
+            "Your job is to help the contributor select the best open issue to work on next.",
+            "Use the gittensory_get_repo_context and gittensory_agent_plan_next_work tools to fetch lane and queue signals.",
+            "",
+            "Guidelines:",
+            "- Prefer issues that match the repo lane (feature, bug, docs, test, refactor, chore).",
+            "- Avoid issues with existing open PRs unless the contributor owns one of them.",
+            "- Flag duplicate or stale work before the contributor invests time.",
+            "- Summarize the top 3 candidate issues with a short rationale for each.",
+            "- Do not open, comment on, label, close, or modify any GitHub issue or PR.",
+            "- Do not predict reward amounts, payout estimates, or public scoreability rankings.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_miner_draft_pr_packet",
+  {
+    title: "Draft PR Packet for Current Branch",
+    description: "Guide a contributor through preparing a public-safe PR packet for the current branch. Advisory only — no GitHub writes.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+      login: z.string().min(1).describe("GitHub login of the contributor."),
+    },
+  },
+  ({ repoFullName, login }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory miner planning assistant for ${login} working on ${repoFullName}.`,
+            "",
+            "Your job is to help the contributor prepare a public-safe PR packet for their current branch.",
+            "Use gittensory_preflight_current_branch or gittensory_prepare_pr_packet to gather branch signals.",
+            "",
+            "Guidelines:",
+            "- Draft a title, description, and label suggestions based on the diff metadata.",
+            "- Flag any preflight warnings (duplicate work, missing linked issue, test coverage gaps).",
+            "- Keep the draft public-safe: no private scoreability data, no raw trust scores.",
+            "- Present the draft for the contributor to review and edit before opening a PR.",
+            "- Do not open, comment on, label, close, or merge any GitHub PR.",
+            "- Do not predict reward amounts or publish scoring predictions.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_miner_branch_preflight",
+  {
+    title: "Branch Preflight Check",
+    description: "Run a preflight check on the current branch and summarize blockers for the contributor. Advisory only.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+      login: z.string().min(1).describe("GitHub login of the contributor."),
+    },
+  },
+  ({ repoFullName, login }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory miner planning assistant for ${login} working on ${repoFullName}.`,
+            "",
+            "Your job is to run a branch preflight check and explain any blockers clearly.",
+            "Use gittensory_explain_local_blockers and gittensory_preflight_current_branch to fetch signals.",
+            "",
+            "Guidelines:",
+            "- List each blocker with a plain-language explanation and suggested remediation.",
+            "- Distinguish between hard blockers (will prevent merge) and soft warnings (worth fixing).",
+            "- Do not open, comment on, label, close, or merge any GitHub PR.",
+            "- Do not expose private scoreability details or raw trust scores in public-facing text.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_miner_cleanup_first",
+  {
+    title: "Cleanup-First Planning",
+    description: "Help a contributor identify stale or low-value open PRs to close before opening new work. Advisory only.",
+    argsSchema: {
+      login: z.string().min(1).describe("GitHub login of the contributor."),
+    },
+  },
+  ({ login }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory miner planning assistant for ${login}.`,
+            "",
+            "Your job is to help the contributor identify stale or low-value open PRs to close or supersede before opening new work.",
+            "Use gittensory_get_decision_pack to fetch the contributor decision pack.",
+            "",
+            "Guidelines:",
+            "- List open PRs that are stale, duplicate, or conflicting with newer work.",
+            "- Suggest which to close, which to rebase, and which to keep open.",
+            "- Summarize the expected queue pressure impact of each decision.",
+            "- Do not close, comment on, label, or merge any GitHub PR autonomously.",
+            "- Do not predict reward amounts, payout estimates, or public scoring outcomes.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+// ── Maintainer and repo-owner workflow prompts (#294) ─────────────────────────
+
+server.registerPrompt(
+  "gittensory_maintainer_queue_triage",
+  {
+    title: "Maintainer Queue Triage",
+    description: "Guide a maintainer through triaging the open PR queue using Gittensory signals. Advisory only — no GitHub writes.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+    },
+  },
+  ({ repoFullName }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory maintainer assistant for ${repoFullName}.`,
+            "",
+            "Your job is to help the maintainer triage the open PR queue.",
+            "Use gittensory_get_repo_context to fetch current lane and queue signals.",
+            "",
+            "Guidelines:",
+            "- Group PRs by: ready to review, needs changes, stale, duplicate.",
+            "- Flag PRs with missing linked issues, failing checks, or low-quality diffs.",
+            "- Suggest a review order based on lane fit and contributor history.",
+            "- Prepare review notes and questions for the maintainer to post manually.",
+            "- Do not post comments, approve, request changes, label, close, or merge any PR autonomously.",
+            "- Do not expose private scoreability details, raw trust scores, or private reviewer context.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_maintainer_review_prep",
+  {
+    title: "Maintainer Review Preparation",
+    description: "Prepare a structured review packet for a specific PR. Advisory only — no GitHub writes.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+      pullNumber: z.string().min(1).describe("PR number to prepare a review for."),
+    },
+  },
+  ({ repoFullName, pullNumber }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory maintainer assistant for ${repoFullName}.`,
+            "",
+            `Your job is to prepare a structured review packet for PR #${pullNumber}.`,
+            "Use gittensory_preflight_pr or gittensory_explain_repo_decision to fetch relevant signals.",
+            "",
+            "Guidelines:",
+            "- Summarize the PR scope, changed files, and linked issue (if any).",
+            "- List preflight signals: lane fit, duplicate risk, test coverage, queue pressure.",
+            "- Draft review questions or change requests for the maintainer to post manually.",
+            "- Keep all output public-safe: no private scoreability data or raw trust scores.",
+            "- Do not post review comments, approve, request changes, label, close, or merge the PR.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_maintainer_public_guidance",
+  {
+    title: "Maintainer Public Guidance Draft",
+    description: "Draft low-noise, public-safe guidance for a contributor based on their PR. Advisory only — no GitHub writes.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+      contributorLogin: z.string().min(1).describe("GitHub login of the contributor."),
+    },
+  },
+  ({ repoFullName, contributorLogin }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory maintainer assistant for ${repoFullName}.`,
+            "",
+            `Your job is to draft low-noise, public-safe guidance for contributor ${contributorLogin}.`,
+            "Use gittensory_get_repo_context for lane context.",
+            "",
+            "Guidelines:",
+            "- Draft a short, encouraging, actionable comment the maintainer can post manually.",
+            "- Focus on what the contributor should change, not on scoring or reward prediction.",
+            "- Keep the tone neutral and constructive — no compensation language.",
+            "- Do not mention trust scores, hotkeys, coldkeys, wallet addresses, reward estimates, or private reviewability.",
+            "- Do not post the comment autonomously — present it for the maintainer to review and post.",
+            "- Do not close, label, merge, or modify the PR autonomously.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_repo_owner_intake_readiness",
+  {
+    title: "Repo Owner Intake Readiness",
+    description: "Guide a repo owner through assessing contributor intake readiness using Gittensory signals. Advisory only.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+    },
+  },
+  ({ repoFullName }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory repo-owner assistant for ${repoFullName}.`,
+            "",
+            "Your job is to help the repo owner assess contributor intake readiness.",
+            "Use gittensory_get_repo_context to fetch lane and queue signals.",
+            "",
+            "Guidelines:",
+            "- Summarize current lane health: open issue count, PR queue pressure, merge rate.",
+            "- Flag gaps in the CONTRIBUTING.md, issue templates, or lane focus manifest.",
+            "- Recommend intake improvements the repo owner can make manually.",
+            "- Do not autonomously edit repo files, post comments, or open/close issues or PRs.",
+            "- Do not expose private scoreability data or raw trust scores publicly.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_repo_owner_focus_manifest_review",
+  {
+    title: "Repo Owner Focus Manifest Review",
+    description: "Help a repo owner review and improve their focus manifest using Gittensory policy signals. Advisory only.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+    },
+  },
+  ({ repoFullName }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory repo-owner assistant for ${repoFullName}.`,
+            "",
+            "Your job is to help the repo owner review and improve their Gittensory focus manifest.",
+            "Use gittensory_get_repo_context to fetch current policy and lane signals.",
+            "",
+            "Guidelines:",
+            "- Identify gaps or inconsistencies in the focus manifest.",
+            "- Suggest improvements to label policy, contribution lanes, and readiness criteria.",
+            "- Draft an updated manifest section for the repo owner to review and apply manually.",
+            "- Do not autonomously push changes to the repo or open PRs.",
+            "- Do not expose private scoreability data or raw trust scores.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "gittensory_repo_owner_onboarding_pack",
+  {
+    title: "Repo Owner Onboarding Pack Planning",
+    description: "Help a repo owner plan and draft an onboarding pack for new contributors. Advisory only.",
+    argsSchema: {
+      repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
+    },
+  },
+  ({ repoFullName }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `You are a Gittensory repo-owner assistant for ${repoFullName}.`,
+            "",
+            "Your job is to help the repo owner plan and draft an onboarding pack for new contributors.",
+            "Use gittensory_get_repo_context to fetch lane and policy signals.",
+            "",
+            "Guidelines:",
+            "- Draft an onboarding overview: repo purpose, contribution lanes, good-first-issue guidance.",
+            "- Suggest CONTRIBUTING.md sections, issue templates, and label conventions to add or improve.",
+            "- Keep all content public-safe: no private scoreability, raw trust, or reward prediction.",
+            "- Present the draft for the repo owner to review and apply manually.",
+            "- Do not autonomously push changes, open PRs, or post comments.",
+            "- Do not request wallet, hotkey, coldkey, private keys, or tokens.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
 await server.connect(new StdioServerTransport());
 
 async function withClientWorkspaceRoots(input) {
@@ -518,6 +1060,7 @@ async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
   if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
+  if (command === "completion") return completionCommand(args.slice(1));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   const options = parseOptions(args.slice(1));
@@ -761,10 +1304,90 @@ function printVersion(options) {
   process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
 }
 
+function completionCommand(args) {
+  const shell = args[0] && !args[0].startsWith("--") ? args[0] : undefined;
+  const options = parseOptions(args.filter((arg) => arg.startsWith("--")));
+  if (!shell) throw new Error(`Usage: gittensory-mcp completion <${COMPLETION_SHELLS.join("|")}> [--json]`);
+  if (!COMPLETION_SHELLS.includes(shell)) throw new Error(`Unsupported shell: ${shell}. Supported shells: ${COMPLETION_SHELLS.join(", ")}.`);
+  const script = buildCompletionScript(shell);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify({ shell, script }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${script}\n`);
+}
+
+function buildCompletionScript(shell) {
+  const topLevel = [...Object.keys(CLI_COMMAND_SPEC), "help"];
+  const withSubcommands = Object.entries(CLI_COMMAND_SPEC).filter(([, subcommands]) => subcommands.length > 0);
+  if (shell === "bash") return buildBashCompletion(topLevel, withSubcommands);
+  if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
+  return buildFishCompletion(topLevel, withSubcommands);
+}
+
+function buildBashCompletion(topLevel, withSubcommands) {
+  const subcommandCases = withSubcommands
+    .map(([command, subcommands]) => `      ${command}) COMPREPLY=( $(compgen -W "${subcommands.join(" ")}" -- "$cur") ); return 0;;`)
+    .join("\n");
+  return `# gittensory-mcp bash completion. Add to ~/.bashrc:
+#   source <(gittensory-mcp completion bash)
+_gittensory_mcp() {
+  local cur prev cword
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  cword=\$COMP_CWORD
+  local commands="${topLevel.join(" ")}"
+  if [ "\$cword" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "\$commands --help --version" -- "$cur") )
+    return 0
+  fi
+  case "\${COMP_WORDS[1]}" in
+${subcommandCases}
+      *) COMPREPLY=( $(compgen -W "--json --login --repo --profile --base --cwd" -- "$cur") ); return 0;;
+  esac
+}
+complete -F _gittensory_mcp gittensory-mcp`;
+}
+
+function buildZshCompletion(topLevel, withSubcommands) {
+  const subcommandCases = withSubcommands
+    .map(([command, subcommands]) => `      ${command}) _values 'subcommand' ${subcommands.join(" ")} ;;`)
+    .join("\n");
+  return `#compdef gittensory-mcp
+# gittensory-mcp zsh completion. Add to your fpath, or:
+#   source <(gittensory-mcp completion zsh)
+_gittensory_mcp() {
+  local -a commands
+  commands=(${topLevel.join(" ")})
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+  case $words[2] in
+${subcommandCases}
+  esac
+}
+_gittensory_mcp "$@"`;
+}
+
+function buildFishCompletion(topLevel, withSubcommands) {
+  const topLevelLines = topLevel
+    .map((command) => `complete -c gittensory-mcp -n __fish_use_subcommand -a ${command} -d 'gittensory-mcp command'`)
+    .join("\n");
+  const subcommandLines = withSubcommands
+    .map(([command, subcommands]) => `complete -c gittensory-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
+    .join("\n");
+  return `# gittensory-mcp fish completion. Save to:
+#   ~/.config/fish/completions/gittensory-mcp.fish
+${topLevelLines}
+${subcommandLines}`;
+}
+
 function printHelp() {
   process.stdout.write(`Usage:
   gittensory-mcp --stdio
   gittensory-mcp version [--json]
+  gittensory-mcp completion bash|zsh|fish [--json]
   gittensory-mcp login [--profile name] [--github-token <token>] [--json]
   gittensory-mcp logout [--profile name] [--all] [--json]
   gittensory-mcp whoami [--profile name] [--json]
@@ -1050,6 +1673,8 @@ async function doctor(options) {
         remediation: sanitizeDiagnosticText(remediation, [options.cwd]),
       }),
     );
+  let authLogin = options.login ?? activeProfile.session?.login;
+  let repoFullName = typeof options.repo === "string" ? options.repo : undefined;
 
   let health = null;
   try {
@@ -1097,6 +1722,7 @@ async function doctor(options) {
   } else {
     try {
       const session = await apiGet("/v1/auth/session");
+      authLogin = session.login ?? authLogin;
       add("auth", "pass", `Profile ${activeProfileName} authenticated as ${session.login}; session expires ${session.expiresAt}.`);
     } catch (error) {
       add("auth", "warn", `A token is configured for profile ${activeProfileName} but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `gittensory-mcp login`.");
@@ -1124,6 +1750,7 @@ async function doctor(options) {
       repoFullName: options.repo,
       login: options.login ?? activeProfile.session?.login ?? "local",
     });
+    repoFullName = metadata.repoFullName ?? repoFullName;
     add("git_metadata", "pass", `${metadata.repoFullName} on ${metadata.branchName}; ${metadata.changedFiles.length} changed file(s).`);
   } catch (error) {
     add("git_metadata", "warn", error instanceof Error ? error.message : "git_metadata_failed", "Run from a git repo or pass --repo owner/repo.");
@@ -1157,24 +1784,145 @@ async function doctor(options) {
     add("gittensor_root", "warn", "Python gittensor scorer is configured but GITTENSOR_ROOT is unset.", "Set GITTENSOR_ROOT to a local entrius/gittensor checkout.");
   }
 
+  const statusValue = doctorStatus(checks);
+  const checklist = buildDoctorChecklist(checks, {
+    status: statusValue,
+    profileName: activeProfileName,
+    login: authLogin,
+    repoFullName,
+  });
+  const nextCommand = checklist.find((group) => group.id === "next_command")?.nextCommand;
   const payload = {
-    status: checks.some((check) => check.status === "fail") ? "needs_attention" : checks.some((check) => check.status === "warn") ? "warnings" : "ok",
+    status: statusValue,
     apiUrl,
     profile: profilePublicState(activeProfileName),
     config: { configured: existsSync(configPath), activeProfile: activeProfileName, profileCount: profileList(config).length },
     decisionPackCache,
     sourceUploadSupported: false,
+    checklist,
+    nextCommand,
     checks,
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
     process.stdout.write(`Gittensory doctor: ${payload.status}\n`);
     process.stdout.write(`Profile: ${activeProfileName}\n`);
-    for (const check of checks) {
-      process.stdout.write(`- ${check.status}: ${check.name} - ${check.detail}\n`);
-      if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
+    for (const group of checklist) {
+      process.stdout.write(`\n${group.title}: ${group.status}\n`);
+      if (group.id === "next_command") {
+        process.stdout.write(`- ${group.detail}\n`);
+        if (group.nextCommand?.command) process.stdout.write(`  ${group.nextCommand.command}\n`);
+        continue;
+      }
+      for (const check of group.checks ?? []) {
+        process.stdout.write(`- ${check.status}: ${check.name} - ${check.detail}\n`);
+        if (check.remediation) process.stdout.write(`  ${check.remediation}\n`);
+      }
     }
   }
+}
+
+function doctorStatus(checks) {
+  if (checks.some((check) => check.status === "fail")) return "needs_attention";
+  if (checks.some((check) => check.status === "warn")) return "warnings";
+  return "ok";
+}
+
+function buildDoctorChecklist(checks, context) {
+  const byName = new Map(checks.map((check) => [check.name, check]));
+  const groups = doctorChecklistGroups().map((group) => {
+    const groupChecks = group.checks.map((name) => byName.get(name)).filter(Boolean);
+    return stripUndefined({
+      id: group.id,
+      title: group.title,
+      status: checklistStatus(groupChecks),
+      checks: groupChecks,
+    });
+  });
+  const nextCommand = doctorNextCommand(byName, context);
+  return [
+    ...groups,
+    stripUndefined({
+      id: "next_command",
+      title: "Next command",
+      status: context.status === "needs_attention" ? "fail" : context.status === "warnings" ? "warn" : "pass",
+      detail: nextCommand.reason,
+      nextCommand,
+    }),
+  ];
+}
+
+function doctorChecklistGroups() {
+  return [
+    { id: "auth", title: "Auth", checks: ["auth"] },
+    { id: "api_compatibility", title: "API compatibility", checks: ["api_health", "version", "api_compatibility"] },
+    { id: "local_repo_readiness", title: "Local repo readiness", checks: ["git_metadata", "client_path"] },
+    { id: "scorer_availability", title: "Scorer availability", checks: ["local_scorer", "gittensor_root"] },
+    { id: "output_safety", title: "Output safety", checks: ["source_upload", "decision_pack_cache"] },
+  ];
+}
+
+function checklistStatus(checks) {
+  if (checks.some((check) => check.status === "fail")) return "fail";
+  if (checks.some((check) => check.status === "warn")) return "warn";
+  return "pass";
+}
+
+function doctorNextCommand(byName, context) {
+  const sourceUpload = byName.get("source_upload");
+  if (sourceUpload?.status === "fail") {
+    return {
+      command: "unset GITTENSORY_UPLOAD_SOURCE",
+      reason: "Disable source upload first; the local MCP wrapper only sends metadata.",
+    };
+  }
+  const apiCompatibility = byName.get("api_compatibility");
+  if (apiCompatibility?.status === "fail") {
+    return {
+      command: apiCompatibility.remediation ?? upgradeCommand,
+      reason: "Upgrade the MCP package before relying on API-backed commands.",
+    };
+  }
+  const auth = byName.get("auth");
+  if (auth?.status === "fail") {
+    return {
+      command: `gittensory-mcp login --profile ${context.profileName}`,
+      reason: "Authenticate the active profile so doctor, plan, preflight, and packet commands can call the API.",
+    };
+  }
+  const apiHealth = byName.get("api_health");
+  if (apiHealth?.status === "fail") {
+    return {
+      command: "gittensory-mcp status --json",
+      reason: "Check API reachability before running planner or preflight commands.",
+    };
+  }
+  const version = byName.get("version");
+  if (version?.status === "warn" && version.remediation?.includes("npm install")) {
+    return {
+      command: upgradeCommand,
+      reason: "Update the MCP package so local behavior matches the current API.",
+    };
+  }
+  const gitMetadata = byName.get("git_metadata");
+  if (gitMetadata?.status === "warn") {
+    return {
+      command: "gittensory-mcp doctor --repo owner/repo --json",
+      reason: "Run doctor from a git checkout or pass the repository explicitly.",
+    };
+  }
+  const localScorer = byName.get("local_scorer");
+  if (localScorer?.status === "warn" && localScorer.remediation) {
+    const scorerSetupCommand = localScorer.remediation.startsWith("Example: ") ? localScorer.remediation.replace(/^Example:\s*/, "") : "gittensory-mcp doctor --json";
+    return {
+      command: scorerSetupCommand,
+      reason: "Configure the optional local scorer for richer private branch analysis.",
+    };
+  }
+  return {
+    command: `gittensory-mcp preflight --login ${context.login ?? "<github-login>"} --repo ${context.repoFullName ?? "owner/repo"} --json`,
+    reason: "Run branch preflight next; source upload remains disabled.",
+  };
 }
 
 function initClient(options) {

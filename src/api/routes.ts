@@ -38,6 +38,7 @@ import {
   getLatestScoringModelSnapshot,
   getPullRequest,
   getRepository,
+  getRepoQueueTrendSnapshot,
   getRepositorySettings,
   recordAuditEvent,
   getContributorEvidence,
@@ -68,6 +69,7 @@ import {
   listRepoLabels,
   listRepoSyncSegments,
   listRepoSyncStates,
+  summarizeRepoSyncOpenPullRequests,
   listSignalSnapshots,
   listPullRequests,
   listRepositories,
@@ -148,6 +150,7 @@ import {
 } from "../services/weekly-value-report";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import {
   buildBountyAdvisory,
@@ -179,6 +182,7 @@ import { buildPullRequestReviewability, type PullRequestReviewability } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
@@ -422,9 +426,15 @@ const agentExplainBlockersSchema = z.union([localBranchAnalysisSchema, agentPlan
 
 const repositorySettingsSchema = z.object({
   commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]).default("detected_contributors_only"),
+  publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]).default("oss_maintainer"),
   publicSignalLevel: z.enum(["minimal", "standard"]).default("standard"),
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
+  gateCheckMode: z.enum(["off", "enabled"]).default("off"),
+  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   createMissingLabel: z.boolean().default(true),
@@ -842,6 +852,10 @@ export function createApp() {
       ? allHealth.filter((record) => scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase()))
       : allHealth;
     const rateLimits = scope ? allRateLimits.filter((record) => record.repoFullName !== undefined && record.repoFullName !== null && scopedRepoNames.has(record.repoFullName.toLowerCase())) : allRateLimits;
+    // Cached open-PR count is aggregated across ALL in-scope repos from sync state without using the
+    // capped sync-state listing that powers previews elsewhere. The per-repo PR fetch below is capped at
+    // 12 only to bound the `reviewability` preview list, not the metric.
+    const { totalOpenPullRequestsCached, reposWithOpenPullRequests } = await summarizeRepoSyncOpenPullRequests(c.env, repositories.map((repo) => repo.fullName));
     const openPullRequests = (
       await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
     ).flat();
@@ -851,7 +865,7 @@ export function createApp() {
       health: health.map(enrichInstallationHealth),
       metrics: [
         { label: "Installations", value: installations.length, spark: sparklineFromCounts(installations.length, Math.max(installations.length, 1)) },
-        { label: "Open PRs cached", value: openPullRequests.length, spark: sparklineFromCounts(openPullRequests.length, Math.max(repositories.length, 1)) },
+        { label: "Open PRs cached", value: totalOpenPullRequestsCached, spark: sparklineFromCounts(reposWithOpenPullRequests, Math.max(repositories.length, 1)) },
         { label: "Install issues", value: health.filter((record) => record.status !== "healthy").length, spark: sparklineFromCounts(health.filter((record) => record.status === "healthy").length, Math.max(health.length, 1)) },
         { label: "Rate-limit events", value: rateLimits.length, spark: sparklineFromCounts(rateLimits.filter((record) => (record.remaining ?? 0) > 0).length, Math.max(rateLimits.length, 1)) },
       ],
@@ -1475,6 +1489,25 @@ export function createApp() {
   app.get("/v1/repos/:owner/:repo/gittensor-config-recommendation", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await buildGittensorConfigRecommendationResponse(c.env, fullName));
+  });
+
+  app.get("/v1/repos/:owner/:repo/onboarding-pack/preview", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    const response = await buildRepoOnboardingPackPreviewForRepo(c.env, fullName, {
+      refreshManifest: c.req.query("refresh") === "true",
+    });
+    if ("error" in response) {
+      return c.json(response, 404);
+    }
+    return c.json(response);
   });
 
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
@@ -2146,9 +2179,15 @@ export function createApp() {
       await upsertRepositorySettings(c.env, {
         repoFullName: fullName,
         commentMode: parsed.data.commentMode,
+        publicAudienceMode: parsed.data.publicAudienceMode,
         publicSignalLevel: parsed.data.publicSignalLevel,
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
+        gateCheckMode: parsed.data.gateCheckMode,
+        linkedIssueGateMode: parsed.data.linkedIssueGateMode,
+        duplicatePrGateMode: parsed.data.duplicatePrGateMode,
+        qualityGateMode: parsed.data.qualityGateMode,
+        qualityGateMinScore: parsed.data.qualityGateMinScore,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         createMissingLabel: parsed.data.createMissingLabel,
@@ -2575,6 +2614,7 @@ function buildCommandPreviewPullRequest(
 
 function commandPreviewMissingPermissions(request: z.infer<typeof commandPreviewSchema>, installation: InstallationHealthRecord | null): string[] {
   const configured = new Set([...(installation?.missingPermissions ?? []), ...(request.sample?.missingPermissions ?? [])]);
+  configured.delete("pull_requests");
   const permissions = request.sample?.permissions ?? installation?.permissions;
   if (permissions && permissions.issues !== "write") configured.add("issues");
   return [...configured].sort();
@@ -2708,7 +2748,7 @@ function buildDigestItems(args: {
 
 async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
   let burdenForecastError: unknown;
-  const [repo, snapshots, dataQuality, burdenForecast] = await Promise.all([
+  const [repo, snapshots, dataQuality, burdenForecast, queueTrends] = await Promise.all([
     getRepository(env, fullName),
     Promise.all(
       ["queue-health", "config-quality", "label-audit", "maintainer-lane", "maintainer-cut-readiness", "contributor-intake-health"].map(async (signalType) => [
@@ -2721,6 +2761,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       burdenForecastError = error;
       return null;
     }),
+    getRepoQueueTrendSnapshot(env, fullName),
   ]);
   const intelligenceDataQuality = burdenForecastError
     ? withDataQualityWarning(dataQuality, `Burden forecast unavailable for ${fullName}: ${errorMessage(burdenForecastError)}`)
@@ -2737,6 +2778,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
         },
       }
     : {};
+  const queueTrendReport = queueTrends?.payload ?? (buildUnavailableQueueTrendReport(fullName) as unknown as Record<string, never>);
   if (snapshotMap["queue-health"] && snapshotMap["config-quality"] && snapshotMap["label-audit"]) {
     return {
       status: "ready",
@@ -2746,6 +2788,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       repo,
       lane: buildLaneAdvice(repo, fullName),
       queueHealth: snapshotMap["queue-health"],
+      queueTrends: queueTrendReport,
       configQuality: snapshotMap["config-quality"],
       labelAudit: snapshotMap["label-audit"],
       maintainerLane: snapshotMap["maintainer-lane"],
@@ -2777,6 +2820,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
     repo,
     lane: buildLaneAdvice(repo, fullName),
     queueHealth,
+    queueTrends: queueTrendReport,
     collisions,
     configQuality,
     labelAudit,
@@ -3328,8 +3372,13 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
+  if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoOnboardingPackPreviewPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/onboarding-pack\/preview$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

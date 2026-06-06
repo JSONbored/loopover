@@ -43,6 +43,44 @@ describe("recommendation quality report", () => {
     expect(JSON.stringify(report)).not.toMatch(FORBIDDEN_REPORT_TERMS);
   });
 
+  it("counts rejected outcomes as negative recommendations", () => {
+    const rejectedOnly = buildRecommendationQualityReportFromOutcomes(
+      [outcome("rejected", "rejected", { actionType: "monitor_existing_pr", repo: "owner/rejected", updatedAt: "2026-05-30T00:00:00.000Z" })],
+      { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 14 },
+    );
+
+    expect(rejectedOnly).toMatchObject({
+      empty: false,
+      sparse: true,
+      totals: { total: 1, positive: 0, negative: 1, positiveRate: 0 },
+      roleSurfaces: [
+        expect.objectContaining({
+          role: "maintainer",
+          total: 1,
+          positive: 0,
+          negative: 1,
+          topRepos: [expect.objectContaining({ repoFullName: "owner/rejected", signal: "negative" })],
+        }),
+      ],
+      failureCategories: [expect.objectContaining({ category: "rejected", count: 1 })],
+    });
+    expect(rejectedOnly.trends.some((bucket) => bucket.total === 1 && bucket.negative === 1)).toBe(true);
+
+    const mixed = buildRecommendationQualityReportFromOutcomes(
+      [
+        outcome("accepted", "accepted", { repo: "owner/mixed", updatedAt: "2026-05-29T00:00:00.000Z" }),
+        outcome("mixed-rejected", "rejected", { repo: "owner/mixed", updatedAt: "2026-05-30T00:00:00.000Z" }),
+        outcome("closed", "closed", { repo: "owner/mixed", updatedAt: "2026-05-31T00:00:00.000Z" }),
+      ],
+      { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 14 },
+    );
+
+    expect(mixed).toMatchObject({
+      totals: { total: 3, positive: 1, negative: 2, positiveRate: 0.333 },
+      roleSurfaces: [expect.objectContaining({ role: "miner", total: 3, positive: 1, negative: 2 })],
+    });
+  });
+
   it("reports empty and sparse private states deterministically", () => {
     const empty = buildRecommendationQualityReportFromOutcomes([], { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 90 });
     expect(empty).toMatchObject({

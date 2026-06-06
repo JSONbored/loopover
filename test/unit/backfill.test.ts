@@ -463,17 +463,17 @@ describe("GitHub backfill", () => {
       installedReposCount: 2,
       registeredInstalledCount: 0,
       status: "needs_attention",
-      missingPermissions: ["pull_requests"],
+      missingPermissions: ["issues"],
       missingEvents: [],
-      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      permissions: { metadata: "read", pull_requests: "read", issues: "read" },
       events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
       checkedAt: "2026-05-28T00:00:00.000Z",
     });
 
     expect(repair.modeImpacts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "pull_requests", missing: true })] }),
-        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "pull_requests", missing: true })] }),
+        expect.objectContaining({ mode: "comment", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true })] }),
+        expect.objectContaining({ mode: "label", enabled: true, affectedRepoCount: 1, requiredPermissions: [expect.objectContaining({ permission: "issues", missing: true })] }),
       ]),
     );
   });

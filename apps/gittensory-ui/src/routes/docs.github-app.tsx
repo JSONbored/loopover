@@ -10,13 +10,13 @@ export const Route = createFileRoute("/docs/github-app")({
       {
         name: "description",
         content:
-          "Install the Gittensory GitHub App, choose repos, and configure the optional label / sticky comment policy.",
+          "Install the Gittensory GitHub App, choose repos, and configure sticky PR panels, advisory checks, and optional Gate enforcement.",
       },
       { property: "og:title", content: "GitHub App setup — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Install the Gittensory GitHub App, choose repos, and configure the optional label / sticky comment policy.",
+          "Install the Gittensory GitHub App, choose repos, and configure sticky PR panels, advisory checks, and optional Gate enforcement.",
       },
       { property: "og:url", content: "/docs/github-app" },
     ],
@@ -30,26 +30,50 @@ function GithubApp() {
     <DocsPage
       eyebrow="Workflows"
       title="GitHub App setup"
-      description="Install Gittensory on a repo. Nothing public changes unless you explicitly enable it."
+      description="Install Gittensory on a repo, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
     >
       <h2>Install</h2>
       <ol>
         <li>Open the Gittensory GitHub App listing.</li>
         <li>Choose the repositories you want to grant access to.</li>
-        <li>Approve the requested permissions (issues, pulls, metadata).</li>
+        <li>Approve the requested permissions (issues, pulls, checks, metadata).</li>
       </ol>
 
       <h2>Default posture</h2>
       <p>
-        Once installed, Gittensory listens but doesn't speak. There are no public check runs. No
-        comments. No labels. You're in control.
+        Gittensory is advisory-first. Public comments, labels, the Context check, and the Gate check
+        are controlled per repo. Missing issue links, non-Gittensor contributors, busy queues, and
+        weak overlap signals do not block merge by default.
       </p>
 
-      <h2>Opt-in: confirmed-miner output</h2>
+      <h2>PR panel</h2>
       <p>
-        You can enable a single configured label and one sticky sanitized comment per PR{" "}
-        <strong>only</strong> for official confirmed Gittensor miners. Everything is per-repo
-        configurable.
+        The PR panel is one sticky bot comment that updates in place. It shows a public-safe
+        readiness score, concrete signal evidence, and short actions for linked issues, related
+        work, review load, validation evidence, open PR queue, contributor context, and Gate result.
+      </p>
+
+      <h2>Checks</h2>
+      <p>
+        <strong>Gittensory Context</strong> is advisory and should not be required in branch
+        protection. <strong>Gittensory Gate</strong> is opt-in and can be made required after a repo
+        owner chooses blocking rules.
+      </p>
+
+      <h2>Gate modes</h2>
+      <p>
+        Each Gate rule supports <code>off</code>, <code>advisory</code>, or <code>block</code>.
+        Linked issue, duplicate PR, and quality-score checks default to <code>advisory</code>. The
+        quality rule only blocks when <code>qualityGateMode</code> is <code>block</code> and a
+        <code>qualityGateMinScore</code> threshold is configured.
+      </p>
+
+      <h2>Dogfood mode</h2>
+      <p>
+        For repos like <code>JSONbored/gittensory</code> and <code>awesome-claude</code>, enable PR
+        comments, labels, Context, and Gate together to test the full product surface. If another
+        maintainer agent can merge quickly, configure that agent to wait for{" "}
+        <code>Gittensory Gate</code> before merge or close.
       </p>
 
       <h2>Install diagnostics</h2>
@@ -60,7 +84,7 @@ function GithubApp() {
 
       <Callout variant="safety">
         Gittensory's GitHub App never requests source push, never stores repository contents, and
-        never writes anything public it wasn't explicitly configured to write.
+        never publishes wallet, hotkey, payout, trust, reward, or private scoring language.
       </Callout>
     </DocsPage>
   );

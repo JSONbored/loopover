@@ -758,6 +758,8 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
   return sources;
 }
 
+const PRIVATE_ASK_ACTION_EVIDENCE_SOURCES = new Set(["repo_decision"]);
+
 function askSourcesFromActionEvidence(action: AgentActionRecord): AskContributingSource[] {
   const evidence = readRecord(action.payload.recommendationEvidence);
   if (!evidence || !Array.isArray(evidence.sources)) return [];
@@ -766,16 +768,28 @@ function askSourcesFromActionEvidence(action: AgentActionRecord): AskContributin
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
       const source = raw as Record<string, unknown>;
       const name = typeof source.name === "string" ? source.name : "connected_source";
+      if (PRIVATE_ASK_ACTION_EVIDENCE_SOURCES.has(name)) return null;
       return {
         key: name,
         label: askSourceLabel(name),
         origin: name,
         generatedAt: typeof source.generatedAt === "string" ? source.generatedAt : null,
         freshness: typeof source.freshness === "string" ? source.freshness : "unknown",
-        detail: typeof source.summary === "string" ? source.summary : "Connected recommendation evidence source.",
+        detail: publicActionEvidenceSourceDetail(name),
       };
     })
     .filter((entry): entry is AskContributingSource => entry !== null);
+}
+
+function publicActionEvidenceSourceDetail(name: string): string {
+  const details: Record<string, string> = {
+    contributor_decision_pack: "Contributor decision-pack metadata was available for this cached agent run.",
+    official_contributor_stats: "Official contributor statistics metadata was available for this cached agent run.",
+    repo_outcome_history: "Repo outcome history metadata was available for this cached agent run.",
+    aggregate_outcome_quality: "Aggregate outcome-quality metadata was available for this cached agent run.",
+    open_pr_monitor: "Cached open PR and issue queue metadata was available for this cached agent run.",
+  };
+  return details[name] ?? "Connected recommendation evidence metadata was available for this cached agent run.";
 }
 
 function formatAskCitation(source: AskContributingSource): string {

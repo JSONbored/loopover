@@ -100,7 +100,7 @@ import {
   refreshInstallationHealthForInstallation,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
-import { fetchPublicContributorProfile } from "../github/public";
+import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/public";
 import {
   buildPublicAgentCommandComment,
   buildMaintainerQueueDigest,
@@ -571,6 +571,17 @@ export function createApp() {
   app.get("/v1/mcp/compatibility", (c) => c.json(buildMcpCompatibilityMetadata(nowIso())));
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
+
+  app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
+    try {
+      const stats = await fetchPublicRepoStats(c.env, c.req.param("owner"), c.req.param("repo"));
+      c.header("Cache-Control", stats.stale ? "public, max-age=60, stale-while-revalidate=3600" : "public, max-age=600, stale-while-revalidate=86400");
+      return c.json(stats);
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid_github_repo") return c.json({ error: "invalid_github_repo" }, 400);
+      return c.json({ error: "github_repo_stats_unavailable" }, 503);
+    }
+  });
 
   app.get("/v1/auth/github/start", async (c) => {
     try {
@@ -3566,6 +3577,7 @@ function toIsoQueryDate(value: string): string | undefined {
 function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
   if (path === "/v1/mcp/compatibility") return false;
+  if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   if (path.startsWith("/v1/auth/")) return false;

@@ -34,6 +34,7 @@ import {
   upsertAgentRecommendationOutcome,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
+import { clearPublicRepoStatsCacheForTests } from "../../src/github/public";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -53,6 +54,7 @@ describe("api routes", () => {
   });
 
   afterEach(() => {
+    clearPublicRepoStatsCacheForTests();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -100,6 +102,70 @@ describe("api routes", () => {
     const unauthenticatedSpec = await app.request("/openapi.json", {}, env);
     expect(unauthenticatedSpec.status).toBe(200);
     await expect(unauthenticatedSpec.json()).resolves.toMatchObject({ info: { title: "Gittensory API" } });
+  });
+
+  it("serves public GitHub repo stats without relying on browser GitHub quota", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const calls: Array<{ url: string; authorization?: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const authorization = headers.get("authorization");
+      calls.push({ url: input.toString(), ...(authorization ? { authorization } : {}) });
+      return Response.json({ full_name: "JSONbored/gittensory", html_url: "https://github.com/JSONbored/gittensory", stargazers_count: 12, forks_count: 3 });
+    });
+
+    const response = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", { headers: { origin: "https://gittensory.aethereal.dev" } }, env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://gittensory.aethereal.dev");
+    expect(response.headers.get("cache-control")).toContain("max-age=600");
+    await expect(response.json()).resolves.toMatchObject({
+      repoFullName: "JSONbored/gittensory",
+      htmlUrl: "https://github.com/JSONbored/gittensory",
+      stargazers_count: 12,
+      forks_count: 3,
+      source: "github",
+      stale: false,
+    });
+    expect(calls).toEqual([{ url: "https://api.github.com/repos/JSONbored/gittensory", authorization: "Bearer public-token" }]);
+
+    const cached = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(cached.status).toBe(200);
+    await expect(cached.json()).resolves.toMatchObject({ stargazers_count: 12, forks_count: 3, source: "cache", stale: false });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("serves stale public repo stats instead of failing during transient GitHub errors", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async () => Response.json({ full_name: "JSONbored/gittensory", html_url: "https://github.com/JSONbored/gittensory", stargazers_count: 21, forks_count: 4 }));
+
+    const fresh = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(fresh.status).toBe(200);
+
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    vi.stubGlobal("fetch", async () => Response.json({ message: "rate limited" }, { status: 403 }));
+    const stale = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(stale.status).toBe(200);
+    expect(stale.headers.get("cache-control")).toContain("max-age=60");
+    await expect(stale.json()).resolves.toMatchObject({ stargazers_count: 21, forks_count: 4, source: "stale_cache", stale: true });
+
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    const unavailable = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(unavailable.status).toBe(503);
+    await expect(unavailable.json()).resolves.toMatchObject({ error: "github_repo_stats_unavailable" });
+  });
+
+  it("rejects invalid public GitHub repo stats paths before calling GitHub", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/v1/public/github/repos/-bad/gittensory/stats", {}, env);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_github_repo" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("serves registry drift through the canonical registry change endpoint", async () => {

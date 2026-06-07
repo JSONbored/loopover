@@ -11899,6 +11899,46 @@
           "maintainerNextSteps",
           "privateSummary"
         ]
+      },
+      "PublicRepoStats": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "htmlUrl": {
+            "type": "string"
+          },
+          "stargazers_count": {
+            "type": "number"
+          },
+          "forks_count": {
+            "type": "number"
+          },
+          "fetched_at": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github",
+              "cache",
+              "stale_cache"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "htmlUrl",
+          "stargazers_count",
+          "forks_count",
+          "fetched_at",
+          "source",
+          "stale"
+        ]
       }
     },
     "parameters": {},
@@ -14487,6 +14527,46 @@
             "GittensorySessionCookie": []
           }
         ]
+      }
+    },
+    "/v1/public/github/repos/{owner}/{repo}/stats": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public GitHub repository stars/forks for website chrome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicRepoStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid GitHub repository"
+          },
+          "503": {
+            "description": "GitHub repository stats are unavailable"
+          }
+        }
       }
     }
   },

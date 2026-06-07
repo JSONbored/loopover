@@ -78,6 +78,18 @@ export const RepositorySchema = z
   })
   .openapi("Repository");
 
+export const PublicRepoStatsSchema = z
+  .object({
+    repoFullName: z.string(),
+    htmlUrl: z.string(),
+    stargazers_count: z.number(),
+    forks_count: z.number(),
+    fetched_at: z.string(),
+    source: z.enum(["github", "cache", "stale_cache"]),
+    stale: z.boolean(),
+  })
+  .openapi("PublicRepoStats");
+
 export const WorkboardItemSchema = z
   .object({
     repoFullName: z.string(),

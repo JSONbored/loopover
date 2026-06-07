@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
 import { CodeBlock, Callout } from "@/components/site/primitives";
@@ -129,6 +129,11 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
       <p>
         Each step on the right is what you see in the repo; the matching step on the left is what
         the contributor is doing privately via MCP at the same point.
+      </p>
+      <p>
+        New installations should start with <Link to="/docs/github-app">GitHub App setup</Link>:
+        install on one repo, verify installation health, preview the public panel, then decide
+        whether <strong>Gittensory Gate</strong> should become a required check.
       </p>
       <WorkflowMirror
         role="maintainer"

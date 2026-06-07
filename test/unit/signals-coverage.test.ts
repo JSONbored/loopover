@@ -1039,7 +1039,7 @@ describe("signal coverage edge cases", () => {
     expect(comment).toContain("> | Linked issue | ✅ No-issue rationale | PR body explains why no issue is linked. | No action. |");
     expect(comment).toContain("> | Review load | ❌ 8/20 |");
     expect(comment).toContain("> | Validation evidence | ❌ 5/25 | Cached preflight status is hold. | Fix blocker. |");
-    expect(comment).toContain("> | Open PR queue | ❌ 3/10 |");
+    expect(comment).toContain("> | Open PR queue | ❌ 3/10 | 16 open PR(s), 0 likely reviewable, 16 unlinked. | Expect slower review. |");
     expect(comment).toContain("> | Gate result | ⚠️ Skipped | PR closed before full evaluation. | No action. |");
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
     expect(comment).toContain("[Gittensor profile](https://gittensor.io/miners/details?githubId=49853598)");
@@ -1110,6 +1110,56 @@ describe("signal coverage edge cases", () => {
     expect(scoreComponent(weak, "validation")).toMatchObject({ score: 12, evidence: "Cached preflight status needs author follow-up." });
     expect(scoreComponent(weak, "pr_state")).toMatchObject({ score: 3, evidence: "PR state is closed.", action: "No action." });
     expect(scoreComponent(weak, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
+  });
+
+  it("keeps the public PR queue row coherent for zero and sampled queue evidence", () => {
+    const directRepo = repo("owner/queue-panel");
+    const currentPr = pr(directRepo.fullName, 43, "Fix queue display", {
+      body: "Fixes #7\n\nValidation: npm test",
+      linkedIssues: [7],
+    });
+    const preflight = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, labels: currentPr.labels, linkedIssues: currentPr.linkedIssues },
+      directRepo,
+      [],
+      [currentPr],
+    );
+    const zeroEvidenceCriticalQueue: QueueHealth = {
+      ...queueHealthFixture(directRepo.fullName, "critical"),
+      signals: {
+        ...queueHealthFixture(directRepo.fullName, "critical").signals,
+        openPullRequests: 0,
+        unlinkedPullRequests: 0,
+        stalePullRequests: 0,
+        ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 },
+        likelyReviewablePullRequests: 0,
+      },
+    };
+    const zeroScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: zeroEvidenceCriticalQueue,
+    });
+    expect(scoreComponent(zeroScore, "queue_pressure")).toMatchObject({
+      score: 10,
+      evidence: "0 open PR(s), 0 likely reviewable.",
+      action: "No action.",
+    });
+
+    const sampledQueue = buildQueueHealth(
+      directRepo,
+      [],
+      [currentPr],
+      buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      { openPullRequests: 25 },
+    );
+    const sampledScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: sampledQueue,
+    });
+    expect(scoreComponent(sampledScore, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
+    expect(scoreComponent(sampledScore, "queue_pressure").evidence).toContain("1 likely reviewable in 1 cached PR(s); full queue reviewability is sampled");
   });
 
   it("filters disabled linked-issue findings and uses fallback next steps when the panel is clean", () => {

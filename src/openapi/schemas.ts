@@ -154,6 +154,8 @@ export const QueueHealthSchema = z
         over30Days: z.number(),
       }),
       likelyReviewablePullRequests: z.number(),
+      cachedOpenPullRequests: z.number().optional(),
+      likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
     }),
     findings: z.array(FindingSchema),
   })

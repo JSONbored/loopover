@@ -755,6 +755,17 @@
               },
               "likelyReviewablePullRequests": {
                 "type": "number"
+              },
+              "cachedOpenPullRequests": {
+                "type": "number"
+              },
+              "likelyReviewablePullRequestsSource": {
+                "type": "string",
+                "enum": [
+                  "cache",
+                  "sampled_cache",
+                  "authoritative"
+                ]
               }
             },
             "required": [

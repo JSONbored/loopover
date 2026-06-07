@@ -20,7 +20,7 @@ It is not a Gittensor explorer, public leaderboard, reward-farming bot, or auton
 | MCP package | Local stdio tools for Codex, Claude Desktop, Cursor, and other MCP clients. | [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients) |
 | Web app | Operator UI, docs, API browser, roadmap, and workflow views. | [gittensory.aethereal.dev](https://gittensory.aethereal.dev/) |
 | Worker API | Protected Cloudflare Worker API with OpenAPI metadata. | [OpenAPI JSON](https://gittensory-api.aethereal.dev/openapi.json) |
-| GitHub App | Quiet maintainer automation for installed repos. | [GitHub App docs](https://gittensory.aethereal.dev/docs/github-app) |
+| GitHub App | Quiet maintainer automation for installed repos. | [Install](https://github.com/apps/gittensory/installations/new) and [setup docs](https://gittensory.aethereal.dev/docs/github-app) |
 
 ## Install MCP
 

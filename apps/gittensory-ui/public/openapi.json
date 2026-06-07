@@ -3531,6 +3531,235 @@
               "summary"
             ]
           },
+          "onboardingPackPreview": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "repoFullName": {
+                "type": "string"
+              },
+              "generatedAt": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "policy_compiler"
+                ]
+              },
+              "previewOnly": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "publicSafe": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "contributionLanes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "preferredPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "discouragedPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "validationExpectations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "publicNotes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "summary",
+                    "preferredPaths",
+                    "discouragedPaths",
+                    "validationExpectations",
+                    "publicNotes"
+                  ]
+                }
+              },
+              "labelPolicy": {
+                "type": "object",
+                "properties": {
+                  "preferredLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "requiredLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "discouragedLabels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "note": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "preferredLabels",
+                  "requiredLabels",
+                  "discouragedLabels",
+                  "note"
+                ]
+              },
+              "validationExpectations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "readinessWarnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maintainerExpectations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "publicOutputBoundaries": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "previewMarkdown": {
+                "type": "string"
+              },
+              "droppedPublicItems": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "empty",
+                        "unsafe_public_text"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "reason"
+                  ]
+                }
+              },
+              "privateOwnerContext": {
+                "type": "object",
+                "properties": {
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "includedInPublicPreview": {
+                    "type": "boolean",
+                    "enum": [
+                      false
+                    ]
+                  }
+                },
+                "required": [
+                  "itemCount",
+                  "includedInPublicPreview"
+                ]
+              },
+              "publication": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "preview_only"
+                    ]
+                  },
+                  "allowed": {
+                    "type": "boolean",
+                    "enum": [
+                      false
+                    ]
+                  },
+                  "actions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "allowed",
+                  "actions",
+                  "reason"
+                ]
+              }
+            },
+            "required": [
+              "repoFullName",
+              "generatedAt",
+              "source",
+              "previewOnly",
+              "publicSafe",
+              "contributionLanes",
+              "labelPolicy",
+              "validationExpectations",
+              "readinessWarnings",
+              "maintainerExpectations",
+              "publicOutputBoundaries",
+              "previewMarkdown",
+              "droppedPublicItems",
+              "privateOwnerContext",
+              "publication"
+            ]
+          },
           "blockers": {
             "type": "array",
             "items": {
@@ -3566,6 +3795,7 @@
           "docsCompleteness",
           "githubApp",
           "policyReadiness",
+          "onboardingPackPreview",
           "blockers",
           "warnings",
           "dataQuality"

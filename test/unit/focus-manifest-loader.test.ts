@@ -73,8 +73,9 @@ describe("focus-manifest loader", () => {
     const saved = await upsertRepoFocusManifest(env, "owner/api", { wantedPaths: ["lib/"] });
     expect(saved.present).toBe(true);
     expect(saved.source).toBe("api_record");
-    // A subsequent load (without forcing refresh) returns the persisted manifest without calling the fetcher.
+    // API-backed settings snapshots are durable and do not age out like repo-file fetch caches.
     const reloaded = await loadRepoFocusManifest(env, "owner/api", {
+      maxAgeMs: -1,
       fetcher: async () => {
         throw new Error("should not be called");
       },

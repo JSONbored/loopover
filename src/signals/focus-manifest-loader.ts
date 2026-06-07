@@ -90,8 +90,14 @@ export async function upsertRepoFocusManifest(env: Env, repoFullName: string, ra
 async function readCachedManifest(env: Env, repoFullName: string, maxAgeMs: number): Promise<FocusManifest | null> {
   const [latest] = await listSignalSnapshots(env, REPO_FOCUS_MANIFEST_SIGNAL, repoFullName);
   if (!latest) return null;
+  const manifest = parseFocusManifest(latest.payload);
+  const explicitSource =
+    latest.payload !== null && typeof latest.payload === "object" && !Array.isArray(latest.payload)
+      ? (latest.payload as Record<string, JsonValue>).source
+      : undefined;
+  if (explicitSource === "api_record") return manifest;
   if (snapshotAgeMs(latest.generatedAt) > maxAgeMs) return null;
-  return parseFocusManifest(latest.payload);
+  return manifest;
 }
 
 async function persistRepoFocusManifest(env: Env, repoFullName: string, manifest: FocusManifest): Promise<void> {

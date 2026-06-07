@@ -236,6 +236,65 @@ describe("buildRegistrationReadiness", () => {
       ]),
     );
   });
+
+  it("produces a null onboardingPackPreview when no focusManifest is provided", () => {
+    const repo = repoFor("octo/nomanifest", configFor({ repo: "octo/nomanifest" }));
+    const report = buildRegistrationReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settingsFor(repo.fullName),
+      installation: healthyInstall,
+      ...signalsFor(repo, [], [], [label("bug")]),
+    });
+
+    expect(report.onboardingPackPreview).toBeNull();
+  });
+
+  it("produces an onboardingPackPreview with public-safe lanes when a focusManifest is provided", () => {
+    const repo = repoFor("octo/manifest", configFor({ repo: "octo/manifest" }));
+    const report = buildRegistrationReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settingsFor(repo.fullName),
+      installation: healthyInstall,
+      ...signalsFor(repo, [], [], [label("bug")]),
+      focusManifest: parseFocusManifest({
+        wantedPaths: ["src/signals/"],
+        testExpectations: ["npm run test:ci"],
+        linkedIssuePolicy: "required",
+        preferredLabels: ["feature"],
+        publicNotes: ["Keep PRs focused and tied to accepted scope."],
+      }),
+    });
+
+    expect(report.onboardingPackPreview).not.toBeNull();
+    expect(report.onboardingPackPreview?.source).toBe("policy_compiler");
+    expect(report.onboardingPackPreview?.publicSafe).toBe(true);
+    expect(report.onboardingPackPreview?.previewOnly).toBe(true);
+    expect(report.onboardingPackPreview?.repoFullName).toBe("octo/manifest");
+    expect(report.onboardingPackPreview?.contributionLanes.length).toBeGreaterThan(0);
+    expect(JSON.stringify(report.onboardingPackPreview)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+  });
+
+  it("onboardingPackPreview strips unsafe public notes via the policy compiler pipeline", () => {
+    const repo = repoFor("octo/unsafe", configFor({ repo: "octo/unsafe" }));
+    const report = buildRegistrationReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settingsFor(repo.fullName),
+      installation: healthyInstall,
+      ...signalsFor(repo, [], [], [label("bug")]),
+      focusManifest: parseFocusManifest({
+        wantedPaths: ["src/"],
+        publicNotes: ["Maximize payout by contributing to wanted areas.", "Keep PRs focused."],
+      }),
+    });
+
+    const preview = report.onboardingPackPreview;
+    expect(preview).not.toBeNull();
+    expect(JSON.stringify(preview)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+    expect(JSON.stringify(preview)).not.toContain("Maximize payout");
+  });
 });
 
 describe("buildGittensorConfigRecommendation", () => {

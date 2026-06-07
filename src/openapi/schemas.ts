@@ -1841,6 +1841,53 @@ export const RegistrationReadinessSchema = z
         summary: z.string(),
       })
       .nullable(),
+    onboardingPackPreview: z
+      .object({
+        repoFullName: z.string(),
+        generatedAt: z.string(),
+        source: z.enum(["policy_compiler"]),
+        previewOnly: z.literal(true),
+        publicSafe: z.literal(true),
+        contributionLanes: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            summary: z.string(),
+            preferredPaths: z.array(z.string()),
+            discouragedPaths: z.array(z.string()),
+            validationExpectations: z.array(z.string()),
+            publicNotes: z.array(z.string()),
+          }),
+        ),
+        labelPolicy: z.object({
+          preferredLabels: z.array(z.string()),
+          requiredLabels: z.array(z.string()),
+          discouragedLabels: z.array(z.string()),
+          note: z.string().nullable(),
+        }),
+        validationExpectations: z.array(z.string()),
+        readinessWarnings: z.array(z.string()),
+        maintainerExpectations: z.array(z.string()),
+        publicOutputBoundaries: z.array(z.string()),
+        previewMarkdown: z.string(),
+        droppedPublicItems: z.array(
+          z.object({
+            field: z.string(),
+            reason: z.enum(["empty", "unsafe_public_text"]),
+          }),
+        ),
+        privateOwnerContext: z.object({
+          itemCount: z.number(),
+          includedInPublicPreview: z.literal(false),
+        }),
+        publication: z.object({
+          status: z.enum(["preview_only"]),
+          allowed: z.literal(false),
+          actions: z.array(z.string()),
+          reason: z.string(),
+        }),
+      })
+      .nullable(),
     blockers: z.array(z.string()),
     warnings: z.array(z.string()),
     dataQuality: z.record(z.string(), z.unknown()),

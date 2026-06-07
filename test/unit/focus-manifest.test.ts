@@ -241,25 +241,28 @@ describe("buildFocusManifestGuidance", () => {
 });
 
 describe("compileFocusManifestPolicy", () => {
+  const REPO = "JSONbored/gittensory";
+  const GENERATED_AT = "2026-06-03T00:00:00.000Z";
+  const opts = { generatedAt: GENERATED_AT };
+
   // ── Minimal: absent manifest ───────────────────────────────────────────
-  it("returns unconstrained policy with neutral lanes for an absent manifest", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifest(null));
+  it("returns an absent policy with empty contribution lanes for a null manifest", () => {
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest(null), opts);
     expect(policy.present).toBe(false);
+    expect(policy.repoFullName).toBe(REPO);
+    expect(policy.generatedAt).toBe(GENERATED_AT);
     expect(policy.source).toBe("none");
-    expect(policy.publicSafe.contributionLanes).toEqual({ directPrLane: "neutral", issueDiscoveryLane: "neutral", preferredEntryPaths: [] });
-    expect(policy.publicSafe.discouragedWork).toEqual({ blockedEntryPaths: [], issueDiscoveryDiscouraged: false });
-    expect(policy.publicSafe.labelExpectations).toEqual({ preferredLabels: [], linkedIssuePolicy: "optional" });
-    expect(policy.publicSafe.validationExpectations).toEqual({ testExpectations: [], linkedIssueRequired: false, linkedIssuePreferred: false });
-    expect(policy.publicSafe.entryGuidance).toEqual([]);
-    expect(policy.publicSafe.summary).toMatch(/unconstrained/i);
-    expect(policy.authenticated.readinessWarnings.length).toBeGreaterThan(0);
+    expect(policy.publicSafe.contributionLanes).toEqual([]);
+    expect(policy.publicSafe.readinessWarnings).toEqual([]);
+    expect(policy.authenticated.parseWarnings).toEqual([]);
+    expect(policy.authenticated.privateNoteCount).toBe(0);
   });
 
-  it("forwards parse warnings into authenticated.readinessWarnings for a malformed manifest", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifestContent("{ broken json"));
+  it("forwards parse warnings into authenticated.parseWarnings for a malformed manifest", () => {
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifestContent("{ broken json"), opts);
     expect(policy.present).toBe(false);
     expect(policy.authenticated.parseWarnings.join(" ")).toMatch(/not valid JSON/i);
-    expect(policy.authenticated.readinessWarnings.length).toBeGreaterThan(0);
+    expect(policy.authenticated.manifestWarningCount).toBeGreaterThan(0);
   });
 
   // ── Typical: fully specified manifest ─────────────────────────────────
@@ -275,98 +278,77 @@ describe("compileFocusManifestPolicy", () => {
       maintainerNotes: ["Internal: ping @owner before the queue processor."],
       publicNotes: ["Prefer small, focused PRs."],
     });
-    const policy = compileFocusManifestPolicy(manifest);
+    const policy = compileFocusManifestPolicy(REPO, manifest, opts);
 
     expect(policy.present).toBe(true);
     expect(policy.source).toBe("repo_file");
 
-    // contribution lanes
-    expect(policy.publicSafe.contributionLanes.directPrLane).toBe("preferred");
-    expect(policy.publicSafe.contributionLanes.issueDiscoveryLane).toBe("discouraged");
-    expect(policy.publicSafe.contributionLanes.preferredEntryPaths).toContain("src/");
+    // label policy
+    expect(policy.publicSafe.labelPolicy.preferredLabels).toContain("bug");
 
-    // discouraged work
-    expect(policy.publicSafe.discouragedWork.blockedEntryPaths).toContain("migrations/");
-    expect(policy.publicSafe.discouragedWork.issueDiscoveryDiscouraged).toBe(true);
+    // validation
+    expect(policy.publicSafe.validation.linkedIssuePolicy).toBe("required");
+    expect(policy.publicSafe.validation.expectations).toContain("unit tests for new branches");
 
-    // label expectations
-    expect(policy.publicSafe.labelExpectations.preferredLabels).toContain("bug");
-    expect(policy.publicSafe.labelExpectations.linkedIssuePolicy).toBe("required");
-
-    // validation expectations
-    expect(policy.publicSafe.validationExpectations.testExpectations).toContain("unit tests for new branches");
-    expect(policy.publicSafe.validationExpectations.linkedIssueRequired).toBe(true);
-    expect(policy.publicSafe.validationExpectations.linkedIssuePreferred).toBe(false);
-
-    // entry guidance
-    expect(policy.publicSafe.entryGuidance.join(" ")).toMatch(/src\/|bug|linked issue/i);
-    expect(policy.publicSafe.entryGuidance).toContain("Prefer small, focused PRs.");
-
-    // summary
-    expect(policy.publicSafe.summary).toMatch(/wanted areas|preferred/i);
-
-    // authenticated: maintainerNotes present and not in publicSafe
-    expect(policy.authenticated.maintainerContext).toContain("Internal: ping @owner before the queue processor.");
+    // public notes — safe note included, private note excluded
+    expect(policy.publicSafe.publicNotes).toContain("Prefer small, focused PRs.");
     expect(JSON.stringify(policy.publicSafe)).not.toMatch(/ping @owner/);
+
+    // authenticated: private note count, no maintainer text in publicSafe
+    expect(policy.authenticated.privateNoteCount).toBe(1);
+    expect(policy.authenticated.parseWarnings).toEqual([]);
   });
 
   // ── Missing-field: partial manifest ───────────────────────────────────
   it("handles a partial manifest with only linkedIssuePolicy set", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "preferred" }));
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "preferred" }), opts);
     expect(policy.present).toBe(true);
-    expect(policy.publicSafe.contributionLanes.directPrLane).toBe("preferred");
-    expect(policy.publicSafe.labelExpectations.linkedIssuePolicy).toBe("preferred");
-    expect(policy.publicSafe.validationExpectations.linkedIssueRequired).toBe(false);
-    expect(policy.publicSafe.validationExpectations.linkedIssuePreferred).toBe(true);
-    expect(policy.publicSafe.discouragedWork.blockedEntryPaths).toEqual([]);
-    expect(policy.publicSafe.discouragedWork.issueDiscoveryDiscouraged).toBe(false);
-    expect(policy.authenticated.maintainerContext).toEqual([]);
+    expect(policy.publicSafe.validation.linkedIssuePolicy).toBe("preferred");
+    expect(policy.authenticated.privateNoteCount).toBe(0);
   });
 
   it("handles a manifest with only issueDiscoveryPolicy:encouraged", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifest({ issueDiscoveryPolicy: "encouraged" }));
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ issueDiscoveryPolicy: "encouraged" }), opts);
     expect(policy.present).toBe(true);
-    expect(policy.publicSafe.contributionLanes.directPrLane).toBe("discouraged");
-    expect(policy.publicSafe.contributionLanes.issueDiscoveryLane).toBe("preferred");
-    expect(policy.publicSafe.discouragedWork.issueDiscoveryDiscouraged).toBe(false);
-    expect(policy.publicSafe.summary).toMatch(/issue.discovery is the preferred/i);
-    expect(policy.publicSafe.entryGuidance.join(" ")).toMatch(/welcomed|search for gaps/i);
+    expect(policy.publicSafe.issueDiscoveryPolicy).toBe("encouraged");
   });
 
   it("handles a manifest with only blockedPaths set", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifest({ blockedPaths: ["infra/"] }));
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ blockedPaths: ["infra/"] }), opts);
     expect(policy.present).toBe(true);
-    expect(policy.publicSafe.discouragedWork.blockedEntryPaths).toContain("infra/");
-    expect(policy.publicSafe.contributionLanes.directPrLane).toBe("neutral");
-    expect(policy.authenticated.readinessWarnings.join(" ")).toMatch(/blocked area/i);
+    expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/blocked area|pair blocked/i);
   });
 
-  it("emits a readiness warning when issue discovery is discouraged but no wanted paths are declared", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifest({ issueDiscoveryPolicy: "discouraged" }));
-    expect(policy.authenticated.readinessWarnings.join(" ")).toMatch(/limited guidance/i);
+  it("emits a readiness warning when no wanted paths or preferred labels are declared", () => {
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ issueDiscoveryPolicy: "discouraged" }), opts);
+    expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/does not define wanted paths|contribution scope may be unclear/i);
   });
 
-  it("emits a readiness warning when linked issues are required but no labels or wanted paths guide contributors", () => {
-    const policy = compileFocusManifestPolicy(parseFocusManifest({ linkedIssuePolicy: "required" }));
-    expect(policy.authenticated.readinessWarnings.join(" ")).toMatch(/linked issues are required/i);
+  it("emits a readiness warning when blocked paths exist but no wanted paths are declared", () => {
+    const policy = compileFocusManifestPolicy(REPO, parseFocusManifest({ linkedIssuePolicy: "required" }), opts);
+    expect(policy.publicSafe.readinessWarnings.join(" ")).toMatch(/does not define wanted paths|contribution scope/i);
   });
 
   // ── Public/private separation ──────────────────────────────────────────
-  it("keeps maintainerContext out of publicSafe entirely", () => {
+  it("keeps maintainer notes out of publicSafe entirely", () => {
     const policy = compileFocusManifestPolicy(
+      REPO,
       parseFocusManifest({ wantedPaths: ["src/"], maintainerNotes: ["Private queue note.", "Ping @owner privately."] }),
+      opts,
     );
-    expect(policy.authenticated.maintainerContext).toEqual(["Private queue note.", "Ping @owner privately."]);
+    expect(policy.authenticated.privateNoteCount).toBe(2);
     expect(JSON.stringify(policy.publicSafe)).not.toMatch(/Private queue note|Ping @owner/);
   });
 
   it("excludes forbidden language from all publicSafe fields even when injected via publicNotes or testExpectations", () => {
     const policy = compileFocusManifestPolicy(
+      REPO,
       parseFocusManifest({
         wantedPaths: ["src/"],
         publicNotes: ["Maximize your reward payout", "Keep PRs focused."],
         testExpectations: ["Submit wallet seed phrase proof", "npm run test:ci"],
       }),
+      opts,
     );
     const publicText = JSON.stringify(policy.publicSafe);
     expect(publicText).not.toMatch(/reward payout|wallet seed/i);
@@ -399,9 +381,9 @@ describe("compileFocusManifestPolicy", () => {
   });
 
   it("preserves source field from the manifest", () => {
-    expect(compileFocusManifestPolicy(parseFocusManifest({ wantedPaths: ["src/"] }, "repo_file")).source).toBe("repo_file");
-    expect(compileFocusManifestPolicy(parseFocusManifest({ wantedPaths: ["src/"] }, "api_record")).source).toBe("api_record");
-    expect(compileFocusManifestPolicy(parseFocusManifest(null)).source).toBe("none");
+    expect(compileFocusManifestPolicy(REPO, parseFocusManifest({ wantedPaths: ["src/"] }, "repo_file"), opts).source).toBe("repo_file");
+    expect(compileFocusManifestPolicy(REPO, parseFocusManifest({ wantedPaths: ["src/"] }, "api_record"), opts).source).toBe("api_record");
+    expect(compileFocusManifestPolicy(REPO, parseFocusManifest(null), opts).source).toBe("none");
   });
 
   // ── Property-based sanitizer ───────────────────────────────────────────
@@ -443,14 +425,13 @@ describe("compileFocusManifestPolicy", () => {
         maintainerNotes: sample(4),
         publicNotes: sample(4),
       });
-      const policy = compileFocusManifestPolicy(manifest);
+      const policy = compileFocusManifestPolicy(REPO, manifest, opts);
       const allPublicText = [
-        ...policy.publicSafe.contributionLanes.preferredEntryPaths,
-        ...policy.publicSafe.discouragedWork.blockedEntryPaths,
-        ...policy.publicSafe.labelExpectations.preferredLabels,
-        ...policy.publicSafe.validationExpectations.testExpectations,
-        ...policy.publicSafe.entryGuidance,
-        policy.publicSafe.summary,
+        ...policy.publicSafe.contributionLanes.flatMap((l) => [...l.preferredPaths, ...l.discouragedPaths, ...l.validationExpectations, ...l.publicNotes]),
+        ...policy.publicSafe.labelPolicy.preferredLabels,
+        ...policy.publicSafe.validation.expectations,
+        ...policy.publicSafe.publicNotes,
+        ...policy.publicSafe.readinessWarnings,
       ];
       expect(allPublicText.every(isFocusManifestPublicSafe)).toBe(true);
     }

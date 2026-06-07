@@ -1735,6 +1735,100 @@ describe("api routes", () => {
     });
 
     await persistSignalSnapshot(env, {
+      id: "rerun-pack-previous",
+      signalType: "contributor-decision-pack",
+      targetKey: "rerun-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "rerun-user",
+        generatedAt: "2026-05-27T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            recommendation: "watch",
+            priorityScore: 35,
+            queue: { openPullRequests: 0, openIssues: 1, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+            outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0 },
+            roleContext: { role: "contributor", maintainerLane: false },
+            scoreBlockers: [],
+          },
+        ],
+        topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", recommendation: "watch", priorityScore: 35 }],
+        pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "watch", priorityScore: 35 }],
+        cleanupFirst: [],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "complete" } },
+      } as never,
+      generatedAt: "2026-05-27T00:00:00.000Z",
+    });
+    await persistSignalSnapshot(env, {
+      id: "rerun-pack-current",
+      signalType: "contributor-decision-pack",
+      targetKey: "rerun-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "rerun-user",
+        generatedAt: "2026-05-28T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            recommendation: "pursue",
+            priorityScore: 82,
+            queue: { openPullRequests: 2, openIssues: 4, mergedPullRequests: 1, closedUnmergedPullRequests: 0 },
+            outcome: { openPullRequests: 1, mergedPullRequests: 1, closedPullRequests: 0 },
+            roleContext: { role: "contributor", maintainerLane: false },
+            scoreBlockers: [{ code: "open_pr_pressure", detail: "private scoreability must stay private" }],
+          },
+        ],
+        topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", recommendation: "pursue", priorityScore: 82 }],
+        actionPortfolio: {
+          topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", rerunWhen: "Rerun when queue changes." }],
+        },
+        pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "pursue", priorityScore: 82 }],
+        cleanupFirst: [],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "degraded" } },
+      } as never,
+      generatedAt: "2026-05-28T00:00:00.000Z",
+    });
+    const minerWithRerunReasons = await app.request("/v1/app/miner-dashboard?login=rerun-user", { headers: apiHeaders(env) }, env);
+    expect(minerWithRerunReasons.status).toBe(200);
+    const minerWithRerunReasonsBody = (await minerWithRerunReasons.json()) as {
+      nextActions: Array<{ change?: { status: string; labels: Array<{ kind: string }> }; rerunReasons?: Array<{ group: string }> }>;
+    };
+    expect(minerWithRerunReasonsBody.nextActions[0]?.change).toMatchObject({
+      status: "changed",
+      labels: expect.arrayContaining([
+        expect.objectContaining({ kind: "repo_state" }),
+        expect.objectContaining({ kind: "validation_state" }),
+        expect.objectContaining({ kind: "policy_context" }),
+      ]),
+    });
+    expect(minerWithRerunReasonsBody.nextActions[0]?.rerunReasons?.map((group) => group.group)).toEqual([
+      "repo_state",
+      "contributor_state",
+      "validation_state",
+      "policy_context",
+    ]);
+    expect(JSON.stringify(minerWithRerunReasonsBody.nextActions[0])).not.toMatch(
+      /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i,
+    );
+
+    await persistSignalSnapshot(env, {
       id: "blocker-pack",
       signalType: "contributor-decision-pack",
       targetKey: "blocker-user",
@@ -5121,6 +5215,152 @@ describe("api routes", () => {
       settings: { commandAuthorization: { defaultAllowed: ["maintainer"], commandOverrides: expect.arrayContaining([expect.objectContaining({ command: "preflight", allowedRoles: ["pr_author"] })]) } },
       commandAuthorizationPreview: { commandName: "preflight", decision: { authorized: true, reason: "allowed_pr_author", matchedRole: "pr_author" } },
     });
+  });
+
+  it("persists repo-owner contribution policy snapshots through protected internal API", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+
+    const rejected = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        body: JSON.stringify({ wantedPaths: ["src/"] }),
+      },
+      env,
+    );
+    expect(rejected.status).toBe(401);
+
+    const invalidJson = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: "{",
+      },
+      env,
+    );
+    expect(invalidJson.status).toBe(400);
+    await expect(invalidJson.json()).resolves.toEqual({ error: "invalid_contribution_policy_json" });
+
+    const privateNote = "Internal: wallet and hotkey evidence stays private.";
+    const updated = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          wantedPaths: ["src/"],
+          blockedPaths: ["dist/"],
+          preferredLabels: ["bug"],
+          linkedIssuePolicy: "required",
+          issueDiscoveryPolicy: "discouraged",
+          testExpectations: ["Run npm run test:ci."],
+          maintainerNotes: [privateNote],
+          publicNotes: ["Prefer small, focused PRs."],
+        }),
+      },
+      env,
+    );
+    expect(updated.status).toBe(200);
+    const updatedPayload = (await updated.json()) as {
+      generatedAt: string;
+      policy: { generatedAt: string; publicSafe: { contributionLanes: unknown[] } };
+    };
+    expect(updatedPayload.policy.generatedAt).toBe(updatedPayload.generatedAt);
+    expect(updatedPayload).toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      focusManifest: {
+        present: true,
+        source: "api_record",
+        wantedPaths: ["src/"],
+        blockedPaths: ["dist/"],
+        maintainerNotes: [privateNote],
+      },
+      policy: {
+        repoFullName: "entrius/allways-ui",
+        present: true,
+        source: "api_record",
+        publicSafe: {
+          contributionLanes: [
+            expect.objectContaining({
+              id: "direct-pr",
+              preference: "preferred",
+              preferredPaths: ["src/"],
+              discouragedPaths: ["dist/"],
+              validationExpectations: ["Run npm run test:ci."],
+              publicNotes: ["Prefer small, focused PRs."],
+            }),
+            expect.objectContaining({
+              id: "issue-discovery",
+              preference: "discouraged",
+              preferredPaths: [],
+              discouragedPaths: ["dist/"],
+            }),
+          ],
+          labelPolicy: { preferredLabels: ["bug"], required: true },
+          validation: { expectations: ["Run npm run test:ci."], linkedIssuePolicy: "required" },
+          issueDiscoveryPolicy: "discouraged",
+          publicNotes: ["Prefer small, focused PRs."],
+        },
+        authenticated: { maintainerContext: [privateNote] },
+      },
+    });
+
+    const readback = await app.request("/v1/internal/repos/entrius/allways-ui/contribution-policy", { headers: internalHeaders(env) }, env);
+    expect(readback.status).toBe(200);
+    await expect(readback.json()).resolves.toMatchObject({
+      policy: {
+        publicSafe: { summary: expect.stringMatching(/direct PRs/i) },
+        authenticated: { maintainerContext: [privateNote] },
+      },
+    });
+
+    const readiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(readiness.status).toBe(200);
+    const readinessPayload = (await readiness.json()) as { policyReadiness: Record<string, unknown> };
+    expect(readinessPayload.policyReadiness).toMatchObject({
+      source: "focus_manifest_policy",
+      present: true,
+    });
+    expect(readinessPayload.policyReadiness).not.toHaveProperty("ownerContext");
+    expect(JSON.stringify(readinessPayload)).not.toContain(privateNote);
+    expect(JSON.stringify(readinessPayload)).not.toMatch(/privateNoteCount|blockedPathCount|validationExpectationCount/i);
+    expect(JSON.stringify(readinessPayload)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+
+    const malformed = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          wantedPaths: "src/",
+          preferredLabels: [123, "bug"],
+          linkedIssuePolicy: "sometimes",
+          publicNotes: ["reward estimate", "Keep scope focused."],
+        }),
+      },
+      env,
+    );
+    expect(malformed.status).toBe(200);
+    const malformedPayload = (await malformed.json()) as {
+      focusManifest: { warnings: string[] };
+      policy: { publicSafe: Record<string, unknown> };
+    };
+    expect(malformedPayload.focusManifest).toMatchObject({
+      present: true,
+      wantedPaths: [],
+      preferredLabels: ["bug"],
+      linkedIssuePolicy: "optional",
+    });
+    expect(malformedPayload.focusManifest.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("wantedPaths"),
+        expect.stringContaining("preferredLabels"),
+        expect.stringContaining("linkedIssuePolicy"),
+      ]),
+    );
+    expect(JSON.stringify(malformedPayload.policy.publicSafe)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
   });
 });
 

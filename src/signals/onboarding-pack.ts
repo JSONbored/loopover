@@ -1,4 +1,4 @@
-import { isFocusManifestPublicSafe } from "./focus-manifest";
+import { isFocusManifestPublicSafe, type FocusManifestPolicy } from "./focus-manifest";
 import { nowIso } from "../utils/json";
 
 export type RepoPolicyContributionLane = {
@@ -77,6 +77,34 @@ export type RepoOnboardingPackPreview = {
     reason: string;
   };
 };
+
+/**
+ * Adapt a compiled {@link FocusManifestPolicy} into the {@link RepoPolicyCompilerOutput}
+ * shape expected by {@link buildRepoOnboardingPackPreview}.
+ */
+export function focusManifestPolicyToCompilerOutput(policy: FocusManifestPolicy): RepoPolicyCompilerOutput {
+  return {
+    repoFullName: policy.repoFullName,
+    generatedAt: policy.generatedAt,
+    contributionLanes: policy.publicSafe.contributionLanes.map((lane) => ({
+      id: lane.id,
+      title: lane.title,
+      summary: lane.summary,
+      preferredPaths: lane.preferredPaths,
+      discouragedPaths: lane.discouragedPaths,
+      validationExpectations: lane.validationExpectations,
+      publicNotes: lane.publicNotes,
+    })),
+    labelPolicy: {
+      preferredLabels: policy.publicSafe.labelPolicy.preferredLabels,
+      requiredLabels: [],
+      discouragedLabels: [],
+    },
+    validationExpectations: policy.publicSafe.validation.expectations,
+    readinessWarnings: policy.publicSafe.readinessWarnings,
+    privateOwnerContext: policy.authenticated.parseWarnings,
+  };
+}
 
 const DEFAULT_PUBLIC_OUTPUT_BOUNDARIES = [
   "Keep sensitive credentials, account secrets, compensation estimates, private maintainer evidence, and local paths out of public contribution text.",

@@ -54,7 +54,7 @@ describe("miner dashboard recommendation metadata", () => {
           {
             repoFullName: "JSONbored/gittensory",
             actionKind: "open_new_direct_pr",
-            rerunWhen: "Rerun when queue changes, not wallet hotkey scoreability reward estimate.",
+            rerunWhen: "Rerun when queue changes, not wallet hotkey scoreability reward estimate ghp_abcd1234EFGH5678ijkl.",
           },
         ],
       },

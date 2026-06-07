@@ -688,14 +688,16 @@ function buildRepoDecision(args: {
     mergedPullRequests: args.totals?.mergedPullRequestsTotal ?? args.syncState?.recentMergedPullRequestsCount ?? 0,
     closedUnmergedPullRequests: args.totals?.closedUnmergedPullRequestsTotal ?? 0,
   };
-  const baseEmissionShare = config?.emissionShare ?? 0;
   // Lane shares are a split of the OSS *mining* pool (emissionShare * OSS_EMISSION_SHARE), matching
-  // preview.ts laneMath (directPrSlice/issueDiscoverySlice) and reward-risk.ts. The raw emissionShare
-  // field stays raw (it mirrors laneMath.repoEmissionShare).
+  // preview.ts laneMath (directPrSlice/issueDiscoverySlice) and reward-risk.ts. Both shares are clamped
+  // to [0, 1] exactly as preview.ts does, since registry config is untrusted and unclamped at ingestion;
+  // without this an out-of-range issueDiscoveryShare > 1 produces a negative directPrShare.
+  const baseEmissionShare = clamp(config?.emissionShare ?? 0, 0, 1);
+  const issueDiscoveryShare = clamp(config?.issueDiscoveryShare ?? 0, 0, 1);
   const rewardUpside = {
     emissionShare: round(baseEmissionShare),
-    directPrShare: round(baseEmissionShare * ossEmissionShare * (1 - (config?.issueDiscoveryShare ?? 0))),
-    issueDiscoveryShare: round(baseEmissionShare * ossEmissionShare * (config?.issueDiscoveryShare ?? 0)),
+    directPrShare: round(baseEmissionShare * ossEmissionShare * (1 - issueDiscoveryShare)),
+    issueDiscoveryShare: round(baseEmissionShare * ossEmissionShare * issueDiscoveryShare),
     maintainerCut: round(config?.maintainerCut ?? 0),
   };
   const blockers = scoreBlockersFor(args.repo.fullName, lane.lane, args.roleContext, args.outcome);

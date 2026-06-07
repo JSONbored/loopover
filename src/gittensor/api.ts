@@ -243,7 +243,7 @@ async function buildGittensorContributorSnapshot(miner: ConfirmedGittensorMinerS
       solvedIssues: asNumber(source.totalSolvedIssues),
       validSolvedIssues: asNumber(source.totalValidSolvedIssues),
     },
-    repositories: (detail.repositories ?? []).map(toRepositoryEvaluation).filter((repo) => repo.pullRequests + repo.openIssues + repo.closedIssues > 0),
+    repositories: (detail.repositories ?? []).map(toRepositoryEvaluation).filter((repo) => repo.repoFullName && repo.pullRequests + repo.openIssues + repo.closedIssues > 0),
     pullRequests: pullRequests.map(toPullRequest).filter((pr) => pr.repoFullName && pr.number > 0),
     issueMirrorAvailable: issuesResult.status === "fulfilled",
     issues: issues.map(toIssue).filter((issue) => issue.repoFullName && issue.number > 0),

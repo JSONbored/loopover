@@ -83,6 +83,49 @@ describe("miner dashboard recommendation metadata", () => {
     expect(JSON.stringify({ change: enriched?.change, rerunReasons: enriched?.rerunReasons })).not.toMatch(FORBIDDEN_PUBLIC_CHANGE_TEXT);
   });
 
+  it("keeps every changed group in the summary even when displayed labels are truncated", () => {
+    const previous = decisionPack({
+      generatedAt: "2026-06-01T00:00:00.000Z",
+      repoDecisions: [
+        repoDecision({
+          recommendation: "watch",
+          priorityScore: 35,
+          queue: { openPullRequests: 0, openIssues: 1, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+          outcome: { openPullRequests: 0, mergedPullRequests: 1, closedPullRequests: 0 },
+          scoreBlockers: [],
+          manifestSummary: { linkedIssuePolicy: "optional", issueDiscoveryPolicy: "allowed", wantedPathCount: 1, blockedPathCount: 0 },
+        }),
+      ],
+      topActions: [action({ actionKind: "file_issue_discovery", lane: "issue-discovery", recommendation: "watch", priorityScore: 35 })],
+      dataQuality: { signalFidelity: { status: "complete" } },
+    });
+    const current = decisionPack({
+      generatedAt: "2026-06-02T00:00:00.000Z",
+      repoDecisions: [
+        repoDecision({
+          recommendation: "pursue",
+          priorityScore: 82,
+          queue: { openPullRequests: 3, openIssues: 4, mergedPullRequests: 1, closedUnmergedPullRequests: 0 },
+          outcome: { openPullRequests: 2, mergedPullRequests: 0, closedPullRequests: 1 },
+          scoreBlockers: [{ code: "open_pr_pressure" }],
+          manifestSummary: { linkedIssuePolicy: "required", issueDiscoveryPolicy: "restricted", wantedPathCount: 2, blockedPathCount: 1 },
+        }),
+      ],
+      topActions: [action({ actionKind: "open_new_direct_pr", lane: "direct-pr", recommendation: "pursue", priorityScore: 82 })],
+      dataQuality: { signalFidelity: { status: "degraded" } },
+    });
+
+    const [enriched] = buildMinerDashboardNextActions(current, previous);
+
+    // Displayed labels stay capped at CHANGE_LABEL_LIMIT, and validation/policy fall outside the cap.
+    expect(enriched?.change.labels).toHaveLength(6);
+    expect(enriched?.change.labels.map((label) => label.kind)).not.toContain("validation_state");
+    // The summary must still reflect every changed group, not just the displayed slice.
+    expect(enriched?.change.summary).toBe(
+      "Changed since the previous run: Repo state, Contributor state, Validation state, Policy/context state.",
+    );
+  });
+
   it("marks unchanged recommendations when tracked evidence is stable", () => {
     const previous = decisionPack({ generatedAt: "2026-06-01T00:00:00.000Z" });
     const current = decisionPack({ generatedAt: "2026-06-02T00:00:00.000Z" });

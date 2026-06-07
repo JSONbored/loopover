@@ -166,11 +166,11 @@ function buildRecommendationChange(args: {
   addChanged(labels, "policy_context", "Repo policy changed", manifestSummary(args.previousDecision), manifestSummary(args.currentDecision));
 
   const limited = labels.slice(0, CHANGE_LABEL_LIMIT);
-  if (limited.length === 0) {
+  if (labels.length === 0) {
     return { status: "unchanged", summary: "No tracked evidence changed since the previous run.", labels: [] };
   }
 
-  const changedGroups = [...new Set(limited.map((label) => GROUP_TITLES[label.kind]))].join(", ");
+  const changedGroups = [...new Set(labels.map((label) => GROUP_TITLES[label.kind]))].join(", ");
   return {
     status: "changed",
     summary: `Changed since the previous run: ${changedGroups}.`,

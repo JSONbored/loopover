@@ -49,6 +49,8 @@ type RepoStatsCacheEntry = {
   staleUntilMs: number;
 };
 
+const PUBLIC_REPO_STATS_OWNER = "jsonbored";
+const PUBLIC_REPO_STATS_REPO = "gittensory";
 const REPO_STATS_CACHE_TTL_MS = 1000 * 60 * 10;
 const REPO_STATS_STALE_TTL_MS = 1000 * 60 * 60 * 24;
 const repoStatsCache = new Map<string, RepoStatsCacheEntry>();
@@ -124,6 +126,7 @@ function publicRepoFullName(owner: string, repo: string): string {
   const repoName = repo.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(ownerName)) throw new Error("invalid_github_repo");
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(repoName) || repoName === "." || repoName === "..") throw new Error("invalid_github_repo");
+  if (ownerName.toLowerCase() !== PUBLIC_REPO_STATS_OWNER || repoName.toLowerCase() !== PUBLIC_REPO_STATS_REPO) throw new Error("invalid_github_repo");
   return `${ownerName}/${repoName}`;
 }
 

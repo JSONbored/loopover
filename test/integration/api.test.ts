@@ -168,6 +168,18 @@ describe("api routes", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects non-allowlisted public GitHub repo stats paths before calling GitHub", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/v1/public/github/repos/Attacker/missing-one/stats", {}, env);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_github_repo" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("serves registry drift through the canonical registry change endpoint", async () => {
     const app = createApp();
     const env = createTestEnv();

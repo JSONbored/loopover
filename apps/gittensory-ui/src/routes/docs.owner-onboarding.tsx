@@ -113,27 +113,21 @@ function OwnerOnboarding() {
         </li>
       </ul>
 
-      <h2>4. Validation commands</h2>
+      <h2>4. CI and validation</h2>
       <p>
-        The test coverage gate uses the trusted label pipeline and check-run mode to report
-        readiness. These must work before you enable gate checks.
+        Gittensory can report your repo's CI check results to miners via check-run mode. Before
+        enabling it, confirm that your own CI pipeline is in a healthy baseline state.
       </p>
       <ul>
         <li>
-          <strong>
-            <code>npm run test:ci</code> passes at or above 97% coverage.
-          </strong>{" "}
-          This is the minimum gate threshold. Aim for 98%+ locally so CI variance does not trip the
-          gate on normal PRs.
+          <strong>Your CI passes on the default branch.</strong> A repo where CI is red by default
+          will produce misleading gate-check results for miners. Fix existing failures before
+          enabling check-run mode.
         </li>
         <li>
-          <strong>Branch coverage is the binding constraint.</strong> Line and statement coverage
-          can be high while branch coverage hides untested paths. Check{" "}
-          <code>npm run test:coverage</code> locally before enabling the gate.
-        </li>
-        <li>
-          <strong>Build and lint pass cleanly.</strong> A repo where CI is red by default will
-          produce misleading gate-check results. Fix existing failures before enabling gate checks.
+          <strong>Your coverage threshold is set and enforced.</strong> If your project enforces a
+          coverage gate, configure the threshold in your own CI. Gittensory reports the pass/fail
+          result of your check runs — it does not impose a specific coverage number.
         </li>
         <li>
           <strong>Check-run mode is opt-in.</strong> You can register without enabling check runs.

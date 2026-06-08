@@ -191,6 +191,7 @@ import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
+import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
 import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import {
   buildGittensorConfigRecommendation,
@@ -462,6 +463,12 @@ const repositorySettingsSchema = z.object({
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
     })
     .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
+});
+
+const contributorIssueDraftGenerateSchema = z.object({
+  dryRun: z.boolean().optional().default(true),
+  create: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(20).optional().default(5),
 });
 
 const settingsPreviewSchema = z.object({
@@ -1545,6 +1552,33 @@ export function createApp() {
       return c.json(response, 404);
     }
     return c.json(response);
+  });
+
+  app.post("/v1/repos/:owner/:repo/contributor-issue-drafts/generate", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    const body = await c.req.json().catch(() => null);
+    if (body === null) return c.json({ error: "invalid_json" }, 400);
+    const parsed = contributorIssueDraftGenerateSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_contributor_issue_draft_request", issues: parsed.error.issues }, 400);
+    if (parsed.data.create && parsed.data.dryRun !== false) {
+      return c.json({ error: "explicit_create_requires_dry_run_false" }, 400);
+    }
+    return c.json(
+      await generateContributorIssueDrafts(c.env, fullName, {
+        dryRun: parsed.data.dryRun,
+        create: parsed.data.create,
+        limit: parsed.data.limit,
+        requestedBy: identity?.kind === "session" ? identity.actor : "api",
+      }),
+    );
   });
 
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
@@ -3454,12 +3488,17 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
+  if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
 }
 
 function isRepoOnboardingPackPreviewPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/onboarding-pack\/preview$/.test(path);
+}
+
+function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/contributor-issue-drafts\/generate$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

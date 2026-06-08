@@ -127,11 +127,38 @@ describe("api routes", () => {
       source: "github",
       stale: false,
     });
-    expect(calls).toEqual([{ url: "https://api.github.com/repos/JSONbored/gittensory", authorization: "Bearer public-token" }]);
+    expect(calls).toEqual([{ url: "https://api.github.com/repos/jsonbored/gittensory", authorization: "Bearer public-token" }]);
 
     const cached = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
     expect(cached.status).toBe(200);
     await expect(cached.json()).resolves.toMatchObject({ stargazers_count: 12, forks_count: 3, source: "cache", stale: false });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("normalizes allowlisted public GitHub repo stats casing before fetching and caching", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      calls.push(input.toString());
+      return Response.json({ stargazers_count: 8, forks_count: 2 });
+    });
+
+    const response = await app.request("/v1/public/github/repos/JsonBored/GittenSory/stats", {}, env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      repoFullName: "jsonbored/gittensory",
+      htmlUrl: "https://github.com/jsonbored/gittensory",
+      stargazers_count: 8,
+      forks_count: 2,
+      source: "github",
+      stale: false,
+    });
+    expect(calls).toEqual(["https://api.github.com/repos/jsonbored/gittensory"]);
+
+    const cached = await app.request("/v1/public/github/repos/JSONBORED/GITTENSORY/stats", {}, env);
+    expect(cached.status).toBe(200);
+    await expect(cached.json()).resolves.toMatchObject({ stargazers_count: 8, forks_count: 2, source: "cache", stale: false });
     expect(calls).toHaveLength(1);
   });
 

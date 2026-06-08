@@ -126,8 +126,10 @@ function publicRepoFullName(owner: string, repo: string): string {
   const repoName = repo.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(ownerName)) throw new Error("invalid_github_repo");
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(repoName) || repoName === "." || repoName === "..") throw new Error("invalid_github_repo");
-  if (ownerName.toLowerCase() !== PUBLIC_REPO_STATS_OWNER || repoName.toLowerCase() !== PUBLIC_REPO_STATS_REPO) throw new Error("invalid_github_repo");
-  return `${ownerName}/${repoName}`;
+  const normalizedOwnerName = ownerName.toLowerCase();
+  const normalizedRepoName = repoName.toLowerCase();
+  if (normalizedOwnerName !== PUBLIC_REPO_STATS_OWNER || normalizedRepoName !== PUBLIC_REPO_STATS_REPO) throw new Error("invalid_github_repo");
+  return `${normalizedOwnerName}/${normalizedRepoName}`;
 }
 
 async function fetchRepoStatsFromGitHub(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, repoFullName: string, nowMs: number): Promise<PublicRepoStats> {

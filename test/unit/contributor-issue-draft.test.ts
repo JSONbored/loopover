@@ -220,7 +220,7 @@ describe("contributor issue drafts", () => {
 
   it("skips duplicate drafts during generation", async () => {
     const env = createTestEnv();
-    const title = "feat(issues): address validation-gate-uncertain policy readiness for repo";
+    const title = "feat(issues): address focus-policy-missing policy readiness for repo";
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([openIssue(77, title)]);
 
     const result = await generateContributorIssueDrafts(env, "JSONbored/gittensory", { dryRun: true, limit: 1 });

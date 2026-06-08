@@ -146,7 +146,27 @@ async function validateBearerForRateLimit(c: Context<{ Bindings: Env }>, token: 
 }
 
 function clientIp(c: Context<{ Bindings: Env }>): string {
-  return c.req.header("cf-connecting-ip")?.trim() || "unknown-ip";
+  return (
+    firstUsableIp([
+      c.req.header("cf-connecting-ip"),
+      firstForwardedFor(c.req.header("x-forwarded-for")),
+      c.req.header("x-real-ip"),
+    ]) ?? "unknown-ip"
+  );
+}
+
+function firstUsableIp(candidates: Array<string | undefined>): string | undefined {
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function firstForwardedFor(header: string | undefined): string | undefined {
+  if (!header?.trim()) return undefined;
+  const first = header.split(",")[0]?.trim();
+  return first || undefined;
 }
 
 function isPreAuthRateLimitPath(path: string): boolean {

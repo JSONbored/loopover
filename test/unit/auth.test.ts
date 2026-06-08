@@ -140,17 +140,68 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys[0]).toMatch(/^normal:\/v1\/public\/github\/repos\/:owner\/:repo\/stats:ip:/);
   });
 
+  it("keys pre-auth routes by proxy fallback headers when cf-connecting-ip is absent", async () => {
+    const observedKeys: string[] = [];
+    const env = createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, observedKeys) as unknown as DurableObjectNamespace });
+
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", { "x-forwarded-for": "198.51.100.1" }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", { "x-forwarded-for": "198.51.100.2" }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).not.toBe(observedKeys[1]);
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/session:ip:/);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", { "x-forwarded-for": "198.51.100.2, 198.51.100.3" }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", { "x-forwarded-for": "198.51.100.2" }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(fakeContext(env, "/v1/auth/github/session", { "x-real-ip": "203.0.113.44" }), "strict"),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(fakeContext(env, "/v1/auth/github/session", { "x-forwarded-for": "", "x-real-ip": "   " }), "strict"),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).not.toBe(observedKeys[1]);
+    expect(observedKeys[1]).toMatch(/^strict:\/v1\/auth\/github\/session:ip:/);
+  });
+
   it("enforces route limits with session and IP keys plus retry headers", async () => {
     const env = createTestEnv();
     const noLimiter = fakeContext(env, "/v1/repos/123/pulls/456", { authorization: "Bearer session-token" });
     await expect(enforceRateLimit(noLimiter, "normal")).resolves.toBeNull();
 
+    const fallbackObservedKeys: string[] = [];
     const fallbackHeaders = fakeContext(
-      createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }) as unknown as DurableObjectNamespace }),
+      createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, fallbackObservedKeys) as unknown as DurableObjectNamespace }),
       "/v1/repos/JSONbored/gittensory",
       { "x-forwarded-for": "198.51.100.2, 198.51.100.3" },
     );
     await expect(enforceRateLimit(fallbackHeaders, "normal")).resolves.toBeNull();
+    expect(fallbackObservedKeys).toHaveLength(1);
+    expect(fallbackObservedKeys[0]).toMatch(/^normal:\/v1\/repos\/JSONbored\/gittensory:ip:/);
     expect(fallbackHeaders.res.headers.get("x-ratelimit-limit")).toBe("120");
     expect(fallbackHeaders.res.headers.get("x-ratelimit-remaining")).toBe("120");
     expect(fallbackHeaders.res.headers.get("x-ratelimit-reset")).toBeNull();

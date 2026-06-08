@@ -172,8 +172,8 @@ export function buildOpenApiSpec() {
     path: "/v1/public/github/repos/{owner}/{repo}/stats",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
-      200: { description: "Public GitHub repository stars/forks for website chrome", content: { "application/json": { schema: PublicRepoStatsSchema } } },
-      400: { description: "Invalid GitHub repository" },
+      200: { description: "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.", content: { "application/json": { schema: PublicRepoStatsSchema } } },
+      400: { description: "Invalid or non-allowlisted GitHub repository" },
       503: { description: "GitHub repository stats are unavailable" },
     },
   });

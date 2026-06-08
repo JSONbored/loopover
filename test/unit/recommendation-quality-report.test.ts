@@ -332,6 +332,7 @@ function outcome(
     targetRepoFullName: options.repo === null ? null : options.repo ?? "owner/repo",
     targetPullNumber: null,
     targetIssueNumber: null,
+    source: "inferred",
     outcomeState,
     outcomeTargetType: "repository",
     outcomeRepoFullName: options.repo === null ? null : options.repo ?? "owner/repo",

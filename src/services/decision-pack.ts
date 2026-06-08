@@ -1079,6 +1079,7 @@ function emptyRecommendationOutcomeFeedback(login: string): AgentRecommendationO
       negative: 0,
       maintainerLaneTotal: 0,
     },
+    sources: { explicit: 0, inferred: 0 },
     states: [],
     repos: [],
     maintainerLane: { total: 0, states: [] },

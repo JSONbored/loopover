@@ -378,6 +378,7 @@ describe("decision-pack service", () => {
           negative: 0,
           maintainerLaneTotal: 1,
         },
+        sources: { explicit: 1, inferred: 0 },
         states: [{ state: "accepted", count: 1 }],
         repos: [],
         maintainerLane: { total: 1, states: [{ state: "merged", count: 1 }] },

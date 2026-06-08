@@ -248,6 +248,7 @@ function baseOutcome(
     targetRepoFullName: action.targetRepoFullName,
     targetPullNumber: action.targetPullNumber,
     targetIssueNumber: action.targetIssueNumber,
+    source: "inferred",
     outcomeState: outcome.outcomeState,
     outcomeTargetType: outcome.outcomeTargetType,
     outcomeRepoFullName: outcome.outcomeRepoFullName,

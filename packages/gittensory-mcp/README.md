@@ -45,6 +45,7 @@ gittensory-mcp cache clear
 gittensory-mcp init-client --print codex
 gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
+gittensory-mcp init-client --print codex --agent-profile miner-planner
 gittensory-mcp completion bash
 gittensory-mcp completion zsh
 gittensory-mcp completion fish
@@ -143,6 +144,24 @@ The same capabilities are exposed to MCP clients as:
 - `gittensory_agent_get_run`
 - `gittensory_agent_explain_next_action`
 - `gittensory_agent_prepare_pr_packet`
+
+### Agent profiles
+
+`init-client` can print optional agent-profile instructions next to the MCP client config:
+
+```sh
+gittensory-mcp init-client --print codex --agent-profile miner-planner
+gittensory-mcp init-client --print claude --agent-profile maintainer-triage
+gittensory-mcp init-client --print cursor --agent-profile repo-owner-intake
+```
+
+Profiles are prompt instructions for the coding-agent environment, not autonomous GitHub actors:
+
+- `miner-planner` uses planner, preflight, cleanup-first, and PR-packet MCP prompts for contributor work selection.
+- `maintainer-triage` uses queue triage, review prep, and public-guidance prompts for maintainer review preparation.
+- `repo-owner-intake` uses intake-readiness, focus-manifest, and onboarding-pack prompts for repository owner setup planning.
+
+Use them when an agent should plan, explain, draft, or prepare packets from Gittensory MCP outputs. Do not use them to open PRs, post comments, label, close, merge, publish public GitHub output, ask for wallets/hotkeys/coldkeys/private keys/tokens, or upload local source contents. Public snippets must stay separated from authenticated private context.
 
 ## Environment
 

@@ -35,6 +35,19 @@ describe("burden forecast builder", () => {
     expect(forecast.forecast.duplicateTrend).toBe(4);
   });
 
+  it("classifies a small unreviewable queue as medium burden via queue-growth risk", () => {
+    const repo = repoFixture("owner/growth");
+    // 5 open PRs with no linked issues, updated 10 days ago: not recent (> horizon 7) and not stale (< 30).
+    // Low projectedReviewLoad, but queueGrowthRisk is driven up by the unreviewable count.
+    const open = Array.from({ length: 5 }, (_, index) => pr(repo.fullName, index + 1, `open ${index}`, { linkedIssues: [], updatedAt: daysAgo(10) }));
+    const forecast = buildBurdenForecast(repo, [], open, buildCollisionReport(repo.fullName, [], open), 7);
+    expect(forecast.forecast.projectedReviewLoad).toBeLessThan(25);
+    expect(forecast.forecast.queueGrowthRisk).toBeGreaterThanOrEqual(25);
+    expect(forecast.forecast.queueGrowthRisk).toBeLessThan(55);
+    // queueGrowthRisk must drive the medium tier even when projectedReviewLoad is low.
+    expect(forecast.level).toBe("medium");
+  });
+
   it("surfaces a stale PR trend in the forecast findings", () => {
     const repo = repoFixture("owner/stale");
     const stalePrs = Array.from({ length: 4 }, (_, index) => pr(repo.fullName, index + 1, `stale ${index}`, { updatedAt: daysAgo(31), linkedIssues: [] }));

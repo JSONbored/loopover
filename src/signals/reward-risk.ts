@@ -271,7 +271,7 @@ export function buildRepoRewardRisk(args: {
     queueHealth,
     collisionsHighRiskCount: collisions.summary.highRiskCount,
   });
-  const nextActions = [...new Set(actions.flatMap((action) => action.nextActions).slice(0, 8))];
+  const nextActions = [...new Set(actions.flatMap((action) => action.nextActions))].slice(0, 8);
 
   return {
     login: args.login,
@@ -369,7 +369,7 @@ export function buildContributorRewardRiskStrategy(args: {
     .filter((analysis) => analysis.actionImpact.cleanupNeeded > 0 || analysis.currentPreview.scoreEstimate.estimatedMergedScore !== analysis.afterCleanupPreview.scoreEstimate.estimatedMergedScore)
     .slice(0, 8)
     .map((analysis) => `${analysis.repoFullName}: ${analysis.actionImpact.explanation} Score preview ${analysis.actionImpact.estimatedScoreDelta}; openPrMultiplier ${analysis.actionImpact.openPrMultiplierDelta}.`);
-  const nextActions = [...new Set(topActions.flatMap((action) => action.nextActions).slice(0, 10))];
+  const nextActions = [...new Set(topActions.flatMap((action) => action.nextActions))].slice(0, 10);
   return {
     login: args.login,
     generatedAt: nowIso(),

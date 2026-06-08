@@ -14576,7 +14576,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Public GitHub repository stars/forks for website chrome",
+            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14586,7 +14586,7 @@
             }
           },
           "400": {
-            "description": "Invalid GitHub repository"
+            "description": "Invalid or non-allowlisted GitHub repository"
           },
           "503": {
             "description": "GitHub repository stats are unavailable"

@@ -17,6 +17,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_decision_pack",
   "gittensory_monitor_open_prs",
   "gittensory_explain_repo_decision",
+  "gittensory_get_scenario_summary",
   "gittensory_get_issue_quality",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",

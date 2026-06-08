@@ -668,6 +668,34 @@ describe("api routes", () => {
       },
     });
 
+    const scenarioSummary = await app.request("/v1/contributors/oktofeesh1/repos/entrius/allways-ui/scenario-summary", { headers: apiHeaders(env) }, env);
+    expect(scenarioSummary.status).toBe(200);
+    const scenarioSummaryPayload = (await scenarioSummary.json()) as {
+      status: string;
+      login: string;
+      repoFullName: string;
+      summary: {
+        advisoryOnly: boolean;
+        headline: string;
+        options: Array<{ rank: number; recommended: boolean; nextStep: string }>;
+        pendingScenarioNotes: string[];
+        pendingPullRequests: Array<{ pullNumber: number; classification: string }>;
+      };
+    };
+    expect(scenarioSummaryPayload).toMatchObject({
+      status: "ready",
+      login: "oktofeesh1",
+      repoFullName: "entrius/allways-ui",
+      summary: {
+        advisoryOnly: true,
+        headline: expect.any(String),
+        options: expect.any(Array),
+      },
+    });
+    expect(scenarioSummaryPayload.summary.options.length).toBe(3);
+    expect(scenarioSummaryPayload.summary.options.some((option) => option.recommended)).toBe(true);
+    expect(JSON.stringify(scenarioSummaryPayload.summary)).not.toMatch(/wallet|hotkey|reward estimate|payout|farming|raw trust score|scoreability/i);
+
     const agentPlan = await app.request(
       "/v1/agent/plan-next-work",
       {
@@ -3888,6 +3916,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_get_contributor_profile");
     expect(toolNames).toContain("gittensory_get_decision_pack");
     expect(toolNames).toContain("gittensory_explain_repo_decision");
+    expect(toolNames).toContain("gittensory_get_scenario_summary");
     expect(toolNames).toContain("gittensory_preflight_pr");
     expect(toolNames).toContain("gittensory_preflight_local_diff");
     expect(toolNames).toContain("gittensory_preview_local_pr_score");
@@ -4126,6 +4155,7 @@ describe("api routes", () => {
       ["gittensory_get_contributor_profile", { login: "oktofeesh1" }],
       ["gittensory_get_decision_pack", { login: "oktofeesh1" }],
       ["gittensory_explain_repo_decision", { login: "oktofeesh1", owner: "entrius", repo: "allways-ui" }],
+      ["gittensory_get_scenario_summary", { login: "oktofeesh1", owner: "entrius", repo: "allways-ui" }],
       ["gittensory_agent_plan_next_work", { login: "oktofeesh1", repoFullName: "entrius/allways-ui" }],
       [
         "gittensory_preflight_pr",

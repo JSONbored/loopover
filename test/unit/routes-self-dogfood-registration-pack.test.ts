@@ -56,3 +56,23 @@ describe("self-dogfood registration-pack route auth", () => {
     });
   });
 });
+
+describe("app-scoped self-dogfood registration-pack route", () => {
+  it("rejects unauthenticated access", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/self-dogfood/registration-pack", {}, env);
+    expect(response.status).toBe(401);
+  });
+
+  it("allows static-token access", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/self-dogfood/registration-pack", { headers: apiHeaders(env) }, env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      kind: "gittensory_self_dogfood_registration_pack",
+      repoFullName: "JSONbored/gittensory",
+    });
+  });
+});

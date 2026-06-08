@@ -203,7 +203,6 @@ import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, regi
 import type {
   BountyLifecycleEventRecord,
   ControlPanelRoleName,
-  ContributorEvidenceRecord,
   DataQuality,
   InstallationHealthRecord,
   JobMessage,
@@ -3422,35 +3421,6 @@ async function persistSignal(
   });
 }
 
-function contributorEvidenceFromProfile(profile: {
-  login: string;
-  generatedAt: string;
-  evidence: {
-    registeredRepoPullRequests: number;
-    mergedPullRequests: number;
-    openPullRequests: number;
-    stalePullRequests: number;
-    unlinkedPullRequests: number;
-    issueDiscoveryReports: number;
-    languageMatches: number;
-    credibilityAssumption: number;
-  };
-}): ContributorEvidenceRecord {
-  return {
-    login: profile.login,
-    generatedAt: profile.generatedAt,
-    payload: {
-      pullRequests: profile.evidence.registeredRepoPullRequests,
-      mergedPullRequests: profile.evidence.mergedPullRequests,
-      openPullRequests: profile.evidence.openPullRequests,
-      stalePullRequests: profile.evidence.stalePullRequests,
-      unlinkedPullRequests: profile.evidence.unlinkedPullRequests,
-      issueDiscoveryReports: profile.evidence.issueDiscoveryReports,
-      languageMatches: profile.evidence.languageMatches,
-      credibilityAssumption: profile.evidence.credibilityAssumption,
-    },
-  };
-}
 
 const EXTENSION_PULL_CONTEXT_PATH = "/v1/extension/pull-context";
 const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";

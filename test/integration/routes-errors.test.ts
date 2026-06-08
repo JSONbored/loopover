@@ -141,6 +141,19 @@ describe("api route guards and error branches", () => {
     await expect(otherOwnerPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
 
+  it("returns 404 for onboarding-pack preview of an unregistered repo", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "owner-user" });
+    vi.stubGlobal("fetch", async () => Response.json({}, { status: 404 }));
+
+    const { token } = await createSessionForGitHubUser(env, { login: "owner-user", id: 99 });
+    const cookie = `gittensory_session=${token}`;
+
+    const preview = await app.request("/v1/repos/ghost/no-such-repo/onboarding-pack/preview", { headers: { cookie } }, env);
+    expect(preview.status).toBe(404);
+    await expect(preview.json()).resolves.toMatchObject({ error: "repo_not_accepted" });
+  });
+
   it("rejects bad GitHub web OAuth callbacks without creating a browser session", async () => {
     const app = createApp();
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });

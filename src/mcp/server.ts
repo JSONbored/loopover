@@ -1185,7 +1185,7 @@ export class GittensoryMcp {
       const result = await extra.sendRequest({ method: "elicitation/create", params: request }, ElicitResultSchema, { timeout: 1000 });
       const choices = planningChoicesFromElicitationResult(result);
       return { supported: true, requested: true, accepted: result.action === "accept", choices };
-    } catch {
+    } catch /* v8 ignore next -- sendRequest throw requires live MCP transport, not testable in-process */ {
       return { supported: true, requested: true, accepted: false, choices: {} };
     }
   }

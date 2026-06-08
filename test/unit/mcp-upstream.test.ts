@@ -16,6 +16,17 @@ describe("MCP contributor access", () => {
       /Forbidden: session can only access the authenticated GitHub login/,
     );
   });
+
+  it("returns a monitor payload for the authenticated contributor", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "monitor-user" });
+    const { token } = await createSessionForGitHubUser(env, { login: "monitor-user", id: 8 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+    const mcp = new GittensoryMcp(env, identity);
+    const result = await (mcp as unknown as { monitorOpenPullRequests(login: string): Promise<{ summary: string; data: Record<string, unknown> }> }).monitorOpenPullRequests("monitor-user");
+    expect(typeof result.summary).toBe("string");
+    expect(result.data).toBeDefined();
+  });
 });
 
 describe("MCP upstream drift tool", () => {

@@ -4,6 +4,7 @@ import { compositeQueuePressureScore } from "../../src/signals/engine";
 import { upsertBurdenForecast, upsertRepositoryFromGitHub, upsertRepoQueueTrendSnapshot } from "../../src/db/repositories";
 import type { JsonValue } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { createApp } from "../../src/api/routes";
 
 // ---------------------------------------------------------------------------
 // compositeQueuePressureScore unit tests
@@ -213,6 +214,57 @@ describe("buildFederatedQueueIndex", () => {
     for (const forbidden of ["wallet", "hotkey", "trust score", "payout", "reward estimate", "farming"]) {
       expect(serialized.toLowerCase()).not.toContain(forbidden.toLowerCase());
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REST route — GET /v1/app/queue-health/federation
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/app/queue-health/federation route", () => {
+  function apiHeaders(env: ReturnType<typeof createTestEnv>): Record<string, string> {
+    return { authorization: `Bearer ${env.GITTENSORY_API_TOKEN}` };
+  }
+
+  it("returns 401 for unauthenticated requests", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/queue-health/federation", {}, env);
+    expect(response.status).toBe(401);
+  });
+
+  it("returns 200 with an empty index when no repos are registered", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/queue-health/federation", { headers: apiHeaders(env) }, env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { repoCount: number; entries: unknown[] };
+    expect(body.repoCount).toBe(0);
+    expect(body.entries).toEqual([]);
+  });
+
+  it("returns 422 for an invalid limit parameter", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/queue-health/federation?limit=0", { headers: apiHeaders(env) }, env);
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_limit" });
+  });
+
+  it("returns 422 for a non-integer limit parameter", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/queue-health/federation?limit=abc", { headers: apiHeaders(env) }, env);
+    expect(response.status).toBe(422);
+  });
+
+  it("returns 200 with a valid limit parameter", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const response = await app.request("/v1/app/queue-health/federation?limit=5", { headers: apiHeaders(env) }, env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { limitApplied: number };
+    expect(body.limitApplied).toBe(5);
   });
 });
 

@@ -157,6 +157,17 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(cached.isError).toBeFalsy();
     expect(cached.structuredContent).toMatchObject({ status: "ready", source: "snapshot", freshness: "fresh", repoFullName: "owner/cached" });
   });
+
+  it("gittensory_queue_health_federation returns a ranked index with no private financial fields", async () => {
+    const { client } = await connectTestClient();
+    const result = await client.callTool({ name: "gittensory_queue_health_federation", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(typeof data.repoCount).toBe("number");
+    expect(Array.isArray(data.entries)).toBe(true);
+    const serialized = JSON.stringify(data);
+    expect(serialized).not.toMatch(/wallet|hotkey|coldkey|trustScore|payout|reward estimate|farming/i);
+  });
 });
 
 // ── Public/private safety ─────────────────────────────────────────────────────

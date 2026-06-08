@@ -27,6 +27,10 @@ import { useSession } from "@/lib/api/session";
 import { EmptyState } from "@/components/site/state-views";
 import { useLocalStorage } from "@/lib/use-local-storage";
 import { cn } from "@/lib/utils";
+import { SnapshotReplayCard } from "@/components/site/snapshot-replay";
+import { buildSnapshotReplayView, type SnapshotReplayView } from "@/lib/snapshot-replay";
+
+type SnapshotReplayPair = { authenticated: SnapshotReplayView; publicSafe: SnapshotReplayView };
 
 const SIGNAL: Record<string, Status> = {
   ready: "ready",
@@ -58,6 +62,7 @@ interface AgentRun {
   created_at: string;
   summary?: string;
   recommendations?: string[];
+  snapshotReplays: SnapshotReplayPair[];
 }
 
 type AgentRunBundleResponse = {
@@ -81,11 +86,13 @@ type AgentRunBundle = {
     actionType: string;
     targetRepoFullName?: string | null;
     recommendation?: string | null;
+    payload?: Record<string, unknown> | undefined;
   }>;
   contextSnapshots: Array<{
     scoringModelId?: string | null;
     decisionPackVersion?: string | null;
     freshnessWarnings?: string[];
+    payload?: Record<string, unknown> | undefined;
   }>;
   summary: string;
 };
@@ -386,6 +393,24 @@ function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
     bundle.contextSnapshots[0]?.scoringModelId ??
     bundle.contextSnapshots[0]?.decisionPackVersion ??
     "live";
+  const counterfactuals = bundle.contextSnapshots.flatMap((snapshot) => {
+    const reasons = snapshot.payload?.counterfactualReasons;
+    return Array.isArray(reasons) ? reasons : [];
+  });
+  const snapshotReplays = bundle.actions
+    .map((action) => action.payload?.recommendationSnapshot)
+    .filter(
+      (snapshot): snapshot is Record<string, unknown> =>
+        typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot),
+    )
+    .map((snapshot) => ({
+      authenticated: buildSnapshotReplayView({
+        snapshot,
+        counterfactuals,
+        viewer: "authenticated",
+      }),
+      publicSafe: buildSnapshotReplayView({ snapshot, counterfactuals, viewer: "public" }),
+    }));
   return {
     id: bundle.run.id,
     source: bundle.run.surface === "github_comment" ? "github-command" : bundle.run.surface,
@@ -403,6 +428,7 @@ function mapAgentRunBundle(bundle: AgentRunBundle): AgentRun {
     created_at: bundle.run.createdAt ?? bundle.run.updatedAt ?? new Date().toISOString(),
     summary: bundle.summary,
     recommendations: bundle.actions.map((action) => action.recommendation).filter(isString),
+    snapshotReplays,
   };
 }
 
@@ -778,6 +804,24 @@ function DrawerSurface({
             ))}
           </ul>
         </div>
+
+        {run.snapshotReplays.length > 0 && (
+          <div className="space-y-2">
+            <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+              Snapshot replay
+            </div>
+            {run.snapshotReplays.map((replay) => (
+              <SnapshotReplayCard
+                key={
+                  replay.authenticated.snapshotId ??
+                  `${replay.authenticated.actionType}-${replay.authenticated.generatedAt}`
+                }
+                authenticated={replay.authenticated}
+                publicSafe={replay.publicSafe}
+              />
+            ))}
+          </div>
+        )}
       </motion.div>
 
       <footer className="border-t border-border p-4">

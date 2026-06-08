@@ -154,6 +154,17 @@ describe("api route guards and error branches", () => {
     await expect(preview.json()).resolves.toMatchObject({ error: "repo_not_accepted" });
   });
 
+  it("blocks a non-admin session from accessing non-app, non-onboarding routes (canSessionAccessPath false)", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    const { token } = await createSessionForGitHubUser(env, { login: "plain-user", id: 50 });
+    const sessionHeaders = { authorization: `Bearer ${token}` };
+
+    const response = await app.request("/v1/repos/owner/repo", { headers: sessionHeaders }, env);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "insufficient_role" });
+  });
+
   it("rejects bad GitHub web OAuth callbacks without creating a browser session", async () => {
     const app = createApp();
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });

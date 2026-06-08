@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildWorkboard } from "../../src/api/workboard";
 import { normalizeGittBountySnapshot } from "../../src/bounties/ingest";
-import { fetchPublicContributorProfile } from "../../src/github/public";
+import { clearPublicRepoStatsCacheForTests, fetchPublicContributorProfile, fetchPublicRepoStats } from "../../src/github/public";
 import { jsonString, normalizeRepoFullName, parseJson, repoParts } from "../../src/utils/json";
 import type { IssueRecord, RepositoryRecord } from "../../src/types";
 
@@ -122,5 +122,26 @@ describe("small adapters and normalizers", () => {
 
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
     await expect(fetchPublicContributorProfile("missing")).resolves.toMatchObject({ login: "missing", source: "unavailable", topLanguages: [] });
+  });
+});
+
+describe("fetchPublicRepoStats edge cases", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearPublicRepoStatsCacheForTests();
+  });
+
+  it("throws on dot-dot repo name", async () => {
+    const env = { GITHUB_PUBLIC_TOKEN: "token" } as Pick<Env, "GITHUB_PUBLIC_TOKEN">;
+    await expect(fetchPublicRepoStats(env, "JSONbored", "..")).rejects.toThrow("invalid_github_repo");
+  });
+
+  it("falls back to path-derived repoFullName and htmlUrl when GitHub omits them", async () => {
+    const env = { GITHUB_PUBLIC_TOKEN: "token" } as Pick<Env, "GITHUB_PUBLIC_TOKEN">;
+    vi.stubGlobal("fetch", async () => Response.json({ stargazers_count: 7, forks_count: 2 }));
+    const stats = await fetchPublicRepoStats(env, "JSONbored", "gittensory");
+    expect(stats.repoFullName).toBe("JSONbored/gittensory");
+    expect(stats.htmlUrl).toBe("https://github.com/JSONbored/gittensory");
+    expect(stats.stargazers_count).toBe(7);
   });
 });

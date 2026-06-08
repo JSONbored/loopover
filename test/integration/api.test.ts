@@ -193,6 +193,7 @@ describe("api routes", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: "invalid_github_repo" });
     expect(fetchMock).not.toHaveBeenCalled();
+
   });
 
   it("rejects non-allowlisted public GitHub repo stats paths before calling GitHub", async () => {

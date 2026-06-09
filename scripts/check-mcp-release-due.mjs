@@ -83,6 +83,11 @@ async function upsertIssue(report) {
   if (!token) throw new Error("GITHUB_TOKEN is required for --upsert-issue");
   const [owner, repo] = repository.split("/");
   if (!owner || !repo) throw new Error(`Invalid GITHUB_REPOSITORY: ${repository}`);
+  const issuesEnabled = await checkIssuesEnabled({ owner, repo, token });
+  if (!issuesEnabled) {
+    process.stderr.write("Issues are disabled in this repository — skipping issue upsert.\n");
+    return;
+  }
 
   const issue = buildMcpReleaseIssue(report);
   const existingIssue = await findExistingIssue({ owner, repo, token });
@@ -131,6 +136,20 @@ export function isReleaseWatchIssue(issue) {
     typeof issue.body === "string" &&
     issue.body.includes(MCP_RELEASE_DUE_MARKER)
   );
+}
+
+async function checkIssuesEnabled({ owner, repo, token }) {
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "user-agent": "gittensory-mcp-release-watch",
+      "x-github-api-version": "2022-11-28",
+    },
+  });
+  if (!response.ok) return false;
+  const payload = await response.json();
+  return payload.has_issues === true;
 }
 
 async function githubRequest({ token, method, path, body }) {

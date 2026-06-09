@@ -6,7 +6,9 @@ import {
   loadRepoFocusManifests,
   upsertRepoFocusManifest,
   REPO_FOCUS_MANIFEST_MAX_AGE_MS,
+  REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS,
 } from "../../src/signals/focus-manifest-loader";
+import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../src/signals/focus-manifest";
 
 describe("focus-manifest loader", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -84,18 +86,28 @@ describe("focus-manifest loader", () => {
     expect(reloaded.source).toBe("api_record");
   });
 
-  it("bulk-loads manifests for many repos in parallel", async () => {
+  it("bulk-loads manifests for many repos with a concurrency cap", async () => {
     const env = createTestEnv();
-    const fetcher = async (repoFullName: string) =>
-      repoFullName === "owner/a"
+    let active = 0;
+    let maxActive = 0;
+    const fetcher = async (repoFullName: string) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return repoFullName === "owner/a"
         ? JSON.stringify({ wantedPaths: ["src/"] })
         : repoFullName === "owner/b"
           ? JSON.stringify({ blockedPaths: ["dist/"] })
           : null;
-    const map = await loadRepoFocusManifests(env, ["owner/a", "owner/b", "owner/c"], { fetcher });
+    };
+    const repos = ["owner/a", "owner/b", "owner/c", "owner/d", "owner/e", "owner/f"];
+    const map = await loadRepoFocusManifests(env, repos, { fetcher });
     expect(map.get("owner/a")?.wantedPaths).toEqual(["src/"]);
     expect(map.get("owner/b")?.blockedPaths).toEqual(["dist/"]);
     expect(map.get("owner/c")?.present).toBe(false);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS);
   });
 
   it("rejects an invalid repoFullName from the public fetcher without throwing", async () => {
@@ -114,6 +126,44 @@ describe("focus-manifest loader", () => {
     const text = await fetchRepoFocusManifestFile("owner/repo");
     expect(text).toBe('{"wantedPaths":["src/"]}');
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not read public manifest responses when Content-Length is too large", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const stringUrl = String(url);
+      if (stringUrl.endsWith("/.gittensory.json")) {
+        return new Response('{"wantedPaths":["too-large/"]}', {
+          status: 200,
+          headers: { "content-length": String(MAX_FOCUS_MANIFEST_BYTES + 1) },
+        });
+      }
+      return new Response('{"wantedPaths":["src/"]}', { status: 200 });
+    });
+    const text = await fetchRepoFocusManifestFile("owner/repo");
+    expect(text).toBe('{"wantedPaths":["src/"]}');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts public manifest streams that grow beyond the byte cap", async () => {
+    const oversizedChunk = new Uint8Array(MAX_FOCUS_MANIFEST_BYTES + 1);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(oversizedChunk);
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    expect(await fetchRepoFocusManifestFile("owner/repo")).toBeNull();
+  });
+
+  it("rejects oversized raw manifest content before JSON parsing", () => {
+    const manifest = parseFocusManifestContent(`{ "wantedPaths": ["${"a".repeat(MAX_FOCUS_MANIFEST_BYTES)}"] }`);
+    expect(manifest.present).toBe(false);
+    expect(manifest.warnings.join(" ")).toMatch(/exceeded/);
   });
 
   it("returns null when every candidate path responds non-ok", async () => {

@@ -57,6 +57,7 @@ export type FocusManifestGuidance = {
 
 const MAX_LIST_ITEMS = 200;
 const MAX_ITEM_LENGTH = 300;
+export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 
 const EMPTY_MANIFEST: FocusManifest = {
   present: false,
@@ -173,6 +174,9 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
  */
 export function parseFocusManifestContent(content: string | null | undefined, source: FocusManifestSource = "repo_file"): FocusManifest {
   if (content === undefined || content === null || content.trim() === "") return emptyManifest(source);
+  if (content.length > MAX_FOCUS_MANIFEST_BYTES || new TextEncoder().encode(content).byteLength > MAX_FOCUS_MANIFEST_BYTES) {
+    return emptyManifest(source, [`Manifest content exceeded ${MAX_FOCUS_MANIFEST_BYTES} bytes; ignoring it and falling back to deterministic signals.`]);
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);

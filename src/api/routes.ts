@@ -1086,6 +1086,11 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_command_feedback", issues: parsed.error.issues }, 400);
     const answer = await getAgentCommandAnswer(c.env, parsed.data.answerId);
     if (!answer) return c.json({ error: "command_answer_not_found" }, 404);
+    const repo = await getRepository(c.env, answer.repoFullName);
+    if (identity.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, answer.repoFullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
     const actorLogin = identity.actor;
     await recordAgentCommandFeedback(c.env, {
       answerId: answer.id,

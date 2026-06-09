@@ -1803,6 +1803,53 @@ describe("api routes", () => {
     );
     expect(forbiddenVictimPreview.status).toBe(403);
     await expect(forbiddenVictimPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    await upsertAgentCommandAnswer(ownerEnv, {
+      id: "owned-app-feedback",
+      repoFullName: "repo-owner/owned-repo",
+      issueNumber: 7,
+      command: "plan-next-work",
+      requestCommentId: 700,
+      responseCommentId: 701,
+      responseUrl: "https://github.com/repo-owner/owned-repo/pull/7#issuecomment-701",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    await upsertAgentCommandAnswer(ownerEnv, {
+      id: "victim-app-feedback",
+      repoFullName: "victim-org/secret-repo",
+      issueNumber: 42,
+      command: "plan-next-work",
+      requestCommentId: 4200,
+      responseCommentId: 4201,
+      responseUrl: "https://github.com/victim-org/secret-repo/pull/42#issuecomment-4201",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    const ownerRepoFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ answerId: "owned-app-feedback", vote: "useful" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerRepoFeedback.status).toBe(200);
+    const forbiddenVictimFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ answerId: "victim-app-feedback", vote: "not_useful" }),
+      },
+      ownerEnv,
+    );
+    expect(forbiddenVictimFeedback.status).toBe(403);
+    await expect(forbiddenVictimFeedback.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const { token: operatorToken } = await createSessionForGitHubUser(ownerEnv, { login: "jsonbored", id: 1 });
     const operatorVictimPreview = await app.request(
       "/v1/app/commands/preview",

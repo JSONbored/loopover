@@ -540,6 +540,43 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(observedNote).not.toMatch(/6 pending|user-supplied/);
   });
 
+  it("derives the open-PR threshold from established merged history, not the planned PR's own tokens", () => {
+    // No merged history, but a large planned PR (totalTokenScore 900) and 3 open PRs.
+    const noHistory = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 900,
+        sourceLines: 50,
+        openPrCount: 3,
+        credibility: 1,
+        existingContributorTokenScore: 0,
+      },
+    });
+    // The planned PR's own 900 tokens must NOT inflate its own threshold: base 2 + floor(0/300) = 2.
+    expect(noHistory.gates.openPrThreshold).toBe(2);
+    expect(noHistory.scoreEstimate.openPrMultiplier).toBe(0); // 3 > 2 -> open-PR spam gate blocks
+
+    // Established merged-history token score DOES raise the allowance: 2 + floor(900/300) = 5.
+    const withHistory = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 900,
+        sourceLines: 50,
+        openPrCount: 3,
+        credibility: 1,
+        existingContributorTokenScore: 900,
+      },
+    });
+    expect(withHistory.gates.openPrThreshold).toBe(5);
+    expect(withHistory.scoreEstimate.openPrMultiplier).toBe(1); // 3 <= 5 -> passes
+  });
+
   it("warns on metadata-only weak previews without using public reward or wallet language", () => {
     const preview = buildScorePreview({
       repo: null,

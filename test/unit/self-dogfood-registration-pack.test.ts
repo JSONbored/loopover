@@ -163,6 +163,7 @@ function readinessFixture(overrides: Partial<RegistrationReadinessReport> = {}):
       warnings: ["GitHub App is not installed on this repo; maintainers will not get any automated assistance."],
     },
     policyReadiness: null,
+    onboardingPackPreview: null,
     blockers: [],
     warnings: [],
     ...overrides,
@@ -224,22 +225,49 @@ describe("resolveSelfDogfoodRepoFullName", () => {
 });
 
 describe("buildSelfDogfoodRegistrationPack", () => {
-  it("ready fixture recommends direct-PR-first with actionable areas", () => {
+  it("excellent fixture recommends a bounded issue-discovery lane, matching the config recommendation", () => {
     const repo = repoFor("octo/ready", configFor({ repo: "octo/ready" }));
     const issues: IssueRecord[] = [{ repoFullName: repo.fullName, number: 4, title: "Fix flaky cache test", state: "open", labels: ["bug"], linkedPrs: [] }];
     const pack = packFromRepo(repo, issues);
 
+    // Config/intake are excellent, so the recommendation is "split" (a bounded issue-discovery lane).
+    // directPrFirst must follow that recommendation, not the repo's current direct-PR lane.
+    expect(pack.gittensorConfigRecommendation.recommended.participationMode).toBe("split");
     expect(pack).toMatchObject({
       kind: "gittensory_self_dogfood_registration_pack",
       privateOnly: true,
       advisoryOnly: true,
-      directPrFirst: true,
+      directPrFirst: false,
       registrationReadiness: { ready: true, recommendedRegistrationMode: "direct_pr" },
     });
-    expect(pack.actionableAreas.some((area) => area.area === "direct_pr" && area.status === "ready")).toBe(true);
+    expect(pack.contributorLaneStrategy).toMatch(/bounded issue-discovery lane/i);
     expect(pack.maintainerEconomicsNote).toMatch(/maintainer-economics/i);
     expect(pack.minerScoreabilityNote).toMatch(/scoreability/i);
     expect(pack.rerunHint).toMatch(/Rerun this pack/i);
+  });
+
+  it("keeps direct-PR-first when the recommendation is direct_pr even if the repo is currently issue-discovery", () => {
+    // Repo is currently registered for issue discovery (recommendedRegistrationMode), but degraded config/
+    // intake make the recommendation revert to direct_pr. The lane strategy must match the recommendation.
+    const pack = buildSelfDogfoodRegistrationPack({
+      repoFullName: "octo/reverting",
+      registrationReadiness: readinessFixture({ recommendedRegistrationMode: "issue_discovery" }),
+      gittensorConfigRecommendation: recommendationFixture({
+        recommended: {
+          participationMode: "direct_pr",
+          issueDiscoveryShare: 0,
+          directPrShare: 1,
+          maintainerCut: 0,
+          requireLinkedIssue: false,
+          labelMultipliers: "start_without_trusted_label_multipliers",
+          publicSurface: "comment_and_label",
+          confirmedMinerLabel: "gittensor",
+        },
+      }),
+    });
+
+    expect(pack.directPrFirst).toBe(true);
+    expect(pack.contributorLaneStrategy).toMatch(/direct-PR-first/i);
   });
 
   it("not-ready fixture surfaces registration blockers", () => {

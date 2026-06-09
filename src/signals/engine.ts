@@ -86,6 +86,8 @@ export type QueueHealth = {
       over30Days: number;
     };
     likelyReviewablePullRequests: number;
+    cachedOpenPullRequests?: number | undefined;
+    likelyReviewablePullRequestsSource?: "cache" | "sampled_cache" | "authoritative" | undefined;
   };
   findings: SignalFinding[];
   rankedPullRequests?: {
@@ -99,6 +101,7 @@ export type QueueHealth = {
 export type QueueSignalCounts = {
   openIssues?: number | undefined;
   openPullRequests?: number | undefined;
+  likelyReviewablePullRequests?: number | undefined;
 };
 
 export type ConfigQuality = {
@@ -844,10 +847,13 @@ export function buildQueueHealth(
   const openPullRequests = pullRequests.filter((pr) => pr.state === "open");
   const openIssueCount = Math.max(openIssues.length, countOverrides.openIssues ?? 0);
   const openPullRequestCount = Math.max(openPullRequests.length, countOverrides.openPullRequests ?? 0);
+  const likelyReviewablePullRequestsSource =
+    countOverrides.likelyReviewablePullRequests !== undefined ? "authoritative" : openPullRequestCount > openPullRequests.length ? "sampled_cache" : "cache";
   const unlinkedPullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length === 0);
   const stalePullRequests = openPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) >= 14);
   const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAssociation(pr.authorAssociation));
-  const likelyReviewablePullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length > 0 && daysSince(pr.updatedAt ?? pr.createdAt) < 30).length;
+  const cachedLikelyReviewablePullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length > 0 && daysSince(pr.updatedAt ?? pr.createdAt) < 30).length;
+  const likelyReviewablePullRequests = Math.min(openPullRequestCount, Math.max(cachedLikelyReviewablePullRequests, countOverrides.likelyReviewablePullRequests ?? 0));
   const ageBuckets = {
     under7Days: openPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) < 7).length,
     days7To30: openPullRequests.filter((pr) => {
@@ -910,6 +916,8 @@ export function buildQueueHealth(
       collisionClusters: collisions.summary.clusterCount,
       ageBuckets,
       likelyReviewablePullRequests,
+      cachedOpenPullRequests: openPullRequests.length,
+      likelyReviewablePullRequestsSource,
     },
     findings,
   };
@@ -1066,12 +1074,12 @@ export function buildContributorProfile(
   // only fold in stat-derived dominant labels for repos that have no cached authored records --
   // otherwise a shared repo's labels are double-counted (consistent with how reposTouched dedups and
   // unlinkedOpenPullRequests maxes the same two sources).
-  const cachedLabelRepos = new Set([...authoredPullRequests, ...authoredIssues].map((record) => record.repoFullName.toLowerCase()));
+  const cachedLabelRepos = new Set([...authoredPullRequests, ...authoredIssues].map((record) => normalizedRepoName(record.repoFullName)));
   const dominantLabels = topItems(
     [
       ...authoredPullRequests.flatMap((record) => record.labels),
       ...authoredIssues.flatMap((record) => record.labels),
-      ...matchingStats.filter((stat) => !cachedLabelRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !cachedLabelRepos.has(normalizedRepoName(stat.repoFullName))).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -1122,12 +1130,12 @@ function buildGittensorContributorProfile(
     .sort();
   // The snapshot labels already cover snapshot.repositories; only fold in stat-derived dominant labels
   // for repos the snapshot does not cover, so shared repos are not double-counted.
-  const snapshotRepos = new Set(snapshot.repositories.map((repo) => repo.repoFullName.toLowerCase()));
+  const snapshotRepos = new Set(snapshot.repositories.map((repo) => normalizedRepoName(repo.repoFullName)));
   const dominantLabels = topItems(
     [
       ...snapshot.pullRequests.flatMap((pr) => (pr.label ? [pr.label] : [])),
       ...snapshot.issueLabels,
-      ...matchingStats.filter((stat) => !snapshotRepos.has(stat.repoFullName.toLowerCase())).flatMap((stat) => stat.dominantLabels),
+      ...matchingStats.filter((stat) => !snapshotRepos.has(normalizedRepoName(stat.repoFullName))).flatMap((stat) => stat.dominantLabels),
     ],
     8,
   );
@@ -2944,7 +2952,7 @@ export function buildBurdenForecast(
   const stalePrs = openPrs.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) > 30).length;
   const projectedReviewLoad = clamp(openPrs.length * 3 + updatedRecently * 2 + collisions.summary.highRiskCount * 4 + stalePrs, 0, 100);
   const queueGrowthRisk = clamp((openPrs.length - queueHealth.signals.likelyReviewablePullRequests) * 5 + collisions.summary.clusterCount * 7, 0, 100);
-  const level = projectedReviewLoad >= 80 || queueGrowthRisk >= 80 ? "critical" : projectedReviewLoad >= 55 || queueGrowthRisk >= 55 ? "high" : projectedReviewLoad >= 25 ? "medium" : "low";
+  const level = projectedReviewLoad >= 80 || queueGrowthRisk >= 80 ? "critical" : projectedReviewLoad >= 55 || queueGrowthRisk >= 55 ? "high" : projectedReviewLoad >= 25 || queueGrowthRisk >= 25 ? "medium" : "low";
   const findings: SignalFinding[] = [
     ...(queueGrowthRisk >= 55
       ? [
@@ -3450,7 +3458,7 @@ export function buildPublicReadinessScore(args: {
   const scopedOverlapCount = args.scopedOverlapCount ?? 0;
   const reviewLoadScore = reviewLoadComponentScore(args.preflight.reviewBurden);
   const validation = validationComponent(args.pr, args.preflight);
-  const queueScore = queuePressureComponentScore(args.queueHealth.level);
+  const queuePressure = queuePressureComponent(args.queueHealth);
   const components: PublicReadinessScore["components"] = [
     {
       key: "traceability",
@@ -3505,10 +3513,10 @@ export function buildPublicReadinessScore(args: {
     {
       key: "queue_pressure",
       label: "Open PR queue",
-      score: queueScore,
-      max: 10,
-      evidence: `${args.queueHealth.signals.openPullRequests} open PR(s), ${args.queueHealth.signals.likelyReviewablePullRequests} likely reviewable.`,
-      action: queueScore >= 8 ? "No action." : "Expect slower review.",
+      score: queuePressure.score,
+      max: queuePressure.max,
+      evidence: queuePressure.evidence,
+      action: queuePressure.action,
     },
   ];
   return {
@@ -3821,10 +3829,39 @@ function validationComponent(pr: PullRequestRecord, preflight: PreflightResult):
   return { score: 12, evidence: "Cached preflight status needs author follow-up.", action: "Add validation note." };
 }
 
-function queuePressureComponentScore(level: QueueHealth["level"]): number {
-  if (level === "low") return 10;
-  if (level === "medium") return 8;
-  if (level === "high") return 5;
+function queuePressureComponent(queueHealth: QueueHealth): { score: number; max: 10; evidence: string; action: string } {
+  const signals = queueHealth.signals;
+  const openPullRequests = Math.max(0, signals.openPullRequests);
+  const cachedOpenPullRequests = Math.max(0, signals.cachedOpenPullRequests ?? signals.ageBuckets.under7Days + signals.ageBuckets.days7To30 + signals.ageBuckets.over30Days);
+  const likelyReviewablePullRequests = Math.max(0, Math.min(openPullRequests, signals.likelyReviewablePullRequests));
+  const sampledLikelyReviewable = signals.likelyReviewablePullRequestsSource === "sampled_cache" || (signals.likelyReviewablePullRequestsSource === undefined && cachedOpenPullRequests < openPullRequests);
+  const score = queuePressureScore(openPullRequests);
+  const likelyEvidence =
+    openPullRequests === 0
+      ? "0 likely reviewable"
+      : sampledLikelyReviewable
+        ? cachedOpenPullRequests > 0
+          ? `${likelyReviewablePullRequests} likely reviewable in ${cachedOpenPullRequests} cached PR(s); full queue reviewability is sampled`
+          : "likely-reviewable count unavailable from cached PR metadata"
+        : `${likelyReviewablePullRequests} likely reviewable`;
+  const detailParts = [
+    `${openPullRequests} open PR(s)`,
+    likelyEvidence,
+    signals.stalePullRequests > 0 ? `${signals.stalePullRequests} stale` : undefined,
+    signals.unlinkedPullRequests > 0 ? `${signals.unlinkedPullRequests} unlinked` : undefined,
+  ].filter(Boolean);
+  return {
+    score,
+    max: 10,
+    evidence: `${detailParts.join(", ")}.`,
+    action: score >= 8 ? "No action." : "Expect slower review.",
+  };
+}
+
+function queuePressureScore(openPullRequests: number): number {
+  if (openPullRequests <= 4) return 10;
+  if (openPullRequests <= 8) return 8;
+  if (openPullRequests <= 13) return 5;
   return 3;
 }
 
@@ -4183,6 +4220,10 @@ function sameLogin(value: string | null | undefined, login: string): boolean {
 
 function sameRepo(left: string | null | undefined, right: string | null | undefined): boolean {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function normalizedRepoName(value: unknown): string {
+  return typeof value === "string" ? value.toLowerCase() : "";
 }
 
 function topItems(items: string[], limit: number): string[] {

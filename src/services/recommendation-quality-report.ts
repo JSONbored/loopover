@@ -1,8 +1,10 @@
 import { listAgentRecommendationOutcomes } from "../db/repositories";
-import type { AgentActionType, AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, JsonValue, ProductUsageRole } from "../types";
+import type { AgentActionType, AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, AgentSurface, JsonValue, ProductUsageRole } from "../types";
 import { nowIso } from "../utils/json";
 
 export type RecommendationQualityRole = Extract<ProductUsageRole, "miner" | "maintainer" | "owner" | "operator">;
+export type RecommendationQualityLane = "contributor" | "maintainer";
+export type RecommendationQualitySurface = AgentSurface | "unknown";
 
 export type RecommendationQualityTotals = {
   total: number;
@@ -27,6 +29,16 @@ export type RecommendationQualityFailureCategory = {
   detail: string;
 };
 
+export type RecommendationQualityRollup = {
+  role: RecommendationQualityRole;
+  surface: RecommendationQualitySurface;
+  lane: RecommendationQualityLane;
+  outcomeCategory: AgentRecommendationOutcomeState;
+  periodStart: string;
+  periodEnd: string;
+  count: number;
+};
+
 export type RecommendationQualityRoleSurface = RecommendationQualityTotals & {
   role: RecommendationQualityRole;
   label: string;
@@ -48,6 +60,7 @@ export type RecommendationQualityReport = {
   totals: RecommendationQualityTotals;
   trends: RecommendationQualityTrendBucket[];
   failureCategories: RecommendationQualityFailureCategory[];
+  rollups: RecommendationQualityRollup[];
   roleSurfaces: RecommendationQualityRoleSurface[];
   warnings: string[];
   publicExport: {
@@ -84,6 +97,7 @@ export function buildRecommendationQualityReportFromOutcomes(
   const roleSurfaces = ROLE_ORDER.map((role) => roleSurface(role, sorted.filter((outcome) => roleForOutcome(outcome) === role))).filter((surface) => surface.total > 0 || surface.maintainerLaneTotal > 0);
   const failureCategories = failureCategoryRows(sorted);
   const trends = trendBuckets(sorted, options.generatedAt, options.windowDays);
+  const rollups = qualityRollups(sorted, options.generatedAt, options.windowDays);
   const sparse = totals.total > 0 && totals.total < 5;
   const warnings = [
     ...(totals.total === 0 ? ["No recommendation outcomes have been evaluated in this window."] : []),
@@ -102,6 +116,7 @@ export function buildRecommendationQualityReportFromOutcomes(
     totals,
     trends,
     failureCategories,
+    rollups,
     roleSurfaces,
     warnings,
     publicExport: {
@@ -206,22 +221,83 @@ function trendBuckets(
   generatedAt: string,
   windowDays: number,
 ): RecommendationQualityTrendBucket[] {
+  return trendPeriods(generatedAt, windowDays).map((period) => {
+    const bucketOutcomes = outcomes.filter((outcome) => {
+      const timestamp = Date.parse(outcomeTimestamp(outcome));
+      return Number.isFinite(timestamp) && timestamp >= period.startMs && timestamp <= period.endMs;
+    });
+    return {
+      periodStart: period.periodStart,
+      periodEnd: period.periodEnd,
+      ...qualityTotals(bucketOutcomes),
+    };
+  });
+}
+
+function qualityRollups(
+  outcomes: AgentRecommendationOutcomeRecord[],
+  generatedAt: string,
+  windowDays: number,
+): RecommendationQualityRollup[] {
+  const periods = trendPeriods(generatedAt, windowDays);
+  const byKey = new Map<string, RecommendationQualityRollup>();
+  for (const outcome of outcomes) {
+    const timestamp = Date.parse(outcomeTimestamp(outcome));
+    if (!Number.isFinite(timestamp)) continue;
+    const period = periods.find((candidate) => timestamp >= candidate.startMs && (candidate.last ? timestamp <= candidate.endMs : timestamp < candidate.endMs));
+    if (!period) continue;
+    const role = roleForOutcome(outcome);
+    const surface = surfaceForOutcome(outcome);
+    const lane = laneForOutcome(outcome);
+    const outcomeCategory = outcome.outcomeState;
+    const key = [period.periodStart, period.periodEnd, role, surface, lane, outcomeCategory].join("|");
+    const existing = byKey.get(key);
+    byKey.set(key, {
+      role,
+      surface,
+      lane,
+      outcomeCategory,
+      periodStart: period.periodStart,
+      periodEnd: period.periodEnd,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+  return [...byKey.values()].sort(
+    (left, right) =>
+      left.periodStart.localeCompare(right.periodStart) ||
+      roleSortValue(left.role) - roleSortValue(right.role) ||
+      left.surface.localeCompare(right.surface) ||
+      left.lane.localeCompare(right.lane) ||
+      left.outcomeCategory.localeCompare(right.outcomeCategory),
+  );
+}
+
+function trendPeriods(
+  generatedAt: string,
+  windowDays: number,
+): Array<{ periodStart: string; periodEnd: string; startMs: number; endMs: number; last: boolean }> {
   const bucketCount = Math.min(6, Math.max(1, Math.ceil(windowDays / 7)));
   const now = Date.parse(generatedAt);
   const bucketMs = Math.max(1, Math.ceil((windowDays * 24 * 60 * 60 * 1000) / bucketCount));
   return Array.from({ length: bucketCount }, (_, index) => {
     const periodStartMs = now - bucketMs * (bucketCount - index);
     const periodEndMs = index === bucketCount - 1 ? now : periodStartMs + bucketMs;
-    const bucketOutcomes = outcomes.filter((outcome) => {
-      const timestamp = Date.parse(outcomeTimestamp(outcome));
-      return Number.isFinite(timestamp) && timestamp >= periodStartMs && timestamp <= periodEndMs;
-    });
     return {
       periodStart: new Date(periodStartMs).toISOString(),
       periodEnd: new Date(periodEndMs).toISOString(),
-      ...qualityTotals(bucketOutcomes),
+      startMs: periodStartMs,
+      endMs: periodEndMs,
+      last: index === bucketCount - 1,
     };
   });
+}
+
+function surfaceForOutcome(outcome: AgentRecommendationOutcomeRecord): RecommendationQualitySurface {
+  return outcome.surface ?? "unknown";
+}
+
+function laneForOutcome(outcome: AgentRecommendationOutcomeRecord): RecommendationQualityLane {
+  return outcome.maintainerLane ? "maintainer" : "contributor";
 }
 
 function roleForOutcome(outcome: AgentRecommendationOutcomeRecord): RecommendationQualityRole {
@@ -267,6 +343,10 @@ function roleLabel(role: RecommendationQualityRole): string {
   if (role === "maintainer") return "Maintainer guidance";
   if (role === "owner") return "Repo-owner guidance";
   return "Operator guidance";
+}
+
+function roleSortValue(role: RecommendationQualityRole): number {
+  return ROLE_ORDER.indexOf(role);
 }
 
 function signalFor(totals: RecommendationQualityTotals): "positive" | "negative" | "mixed" {

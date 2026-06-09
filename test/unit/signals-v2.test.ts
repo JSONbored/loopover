@@ -151,12 +151,15 @@ describe("v2 signal builders", () => {
     const sampledIssues = issues.slice(0, 1);
     const sampledPullRequests = pullRequests.slice(0, 1);
     const report = buildCollisionReport(repo.fullName, sampledIssues, sampledPullRequests, []);
-    const health = buildQueueHealth(repo, sampledIssues, sampledPullRequests, report, { openIssues: 2912, openPullRequests: 169 });
+    const health = buildQueueHealth(repo, sampledIssues, sampledPullRequests, report, { openIssues: 2912, openPullRequests: 169, likelyReviewablePullRequests: 42 });
     const intake = buildContributorIntakeHealth(repo, sampledIssues, sampledPullRequests, repo.fullName, report, { openIssues: 2912, openPullRequests: 169 });
     const lane = buildMaintainerLaneReport(repo, sampledIssues, sampledPullRequests, repo.fullName, report, { openIssues: 2912, openPullRequests: 169 });
 
     expect(health.signals.openIssues).toBe(2912);
     expect(health.signals.openPullRequests).toBe(169);
+    expect(health.signals.likelyReviewablePullRequests).toBe(42);
+    expect(health.signals.cachedOpenPullRequests).toBe(1);
+    expect(health.signals.likelyReviewablePullRequestsSource).toBe("authoritative");
     expect(intake.queueHealth.signals.openIssues).toBe(2912);
     expect(lane.queueHealth.signals.openPullRequests).toBe(169);
   });
@@ -170,6 +173,7 @@ describe("v2 signal builders", () => {
     expect(issueOnly.signals.openPullRequests).toBe(pullRequests.length);
     expect(prOnly.signals.openIssues).toBe(issues.length);
     expect(prOnly.signals.openPullRequests).toBe(25);
+    expect(prOnly.signals.likelyReviewablePullRequestsSource).toBe("sampled_cache");
   });
 
   it("adds queue age buckets and likely-reviewable counts", () => {

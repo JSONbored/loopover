@@ -6,6 +6,7 @@ describe("OpenAPI contract", () => {
     const spec = buildOpenApiSpec();
     expect(spec.paths["/health"]).toBeDefined();
     expect(spec.paths["/v1/mcp/compatibility"]).toBeDefined();
+    expect(spec.paths["/v1/public/github/repos/{owner}/{repo}/stats"]).toBeDefined();
     expect(spec.paths["/v1/registry/snapshot"]).toBeDefined();
     expect(spec.paths["/v1/registry/changes"]).toBeDefined();
     expect(spec.paths["/v1/readiness"]).toBeDefined();
@@ -84,6 +85,7 @@ describe("OpenAPI contract", () => {
 
     expect(spec.components?.schemas?.ContributorProfile).toBeDefined();
     expect(spec.components?.schemas?.McpCompatibility).toBeDefined();
+    expect(spec.components?.schemas?.PublicRepoStats).toBeDefined();
     expect(spec.components?.schemas?.ContributorDecisionPack).toBeDefined();
     expect(spec.components?.schemas?.DecisionPackRefreshNeeded).toBeDefined();
     expect(spec.components?.schemas?.RepoDecisionResponse).toBeDefined();
@@ -118,6 +120,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.securitySchemes?.GittensorySessionCookie).toBeDefined();
     expect(spec.paths["/health"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/mcp/compatibility"]?.get?.security).toBeUndefined();
+    expect(spec.paths["/v1/public/github/repos/{owner}/{repo}/stats"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/github/start"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/repos"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
     expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);

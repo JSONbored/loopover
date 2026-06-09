@@ -44,7 +44,7 @@ type GittensorMinerDetailResponse = GittensorMinerSummaryResponse & {
 };
 
 type GittensorRepositoryEvaluationResponse = {
-  repositoryFullName?: string;
+  repositoryFullName?: unknown;
   totalOpenPrs?: number | string;
   totalClosedPrs?: number | string;
   totalMergedPrs?: number | string;
@@ -243,7 +243,7 @@ async function buildGittensorContributorSnapshot(miner: ConfirmedGittensorMinerS
       solvedIssues: asNumber(source.totalSolvedIssues),
       validSolvedIssues: asNumber(source.totalValidSolvedIssues),
     },
-    repositories: (detail.repositories ?? []).map(toRepositoryEvaluation).filter((repo) => repo.pullRequests + repo.openIssues + repo.closedIssues > 0),
+    repositories: (detail.repositories ?? []).map(toRepositoryEvaluation).filter((repo) => repo.repoFullName && repo.pullRequests + repo.openIssues + repo.closedIssues > 0),
     pullRequests: pullRequests.map(toPullRequest).filter((pr) => pr.repoFullName && pr.number > 0),
     issueMirrorAvailable: issuesResult.status === "fulfilled",
     issues: issues.map(toIssue).filter((issue) => issue.repoFullName && issue.number > 0),
@@ -264,7 +264,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 function toRepositoryEvaluation(repo: GittensorRepositoryEvaluationResponse): GittensorContributorSnapshot["repositories"][number] {
   return {
-    repoFullName: repo.repositoryFullName ?? "",
+    repoFullName: asString(repo.repositoryFullName),
     pullRequests: asNumber(repo.totalPrs),
     mergedPullRequests: asNumber(repo.totalMergedPrs),
     openPullRequests: asNumber(repo.totalOpenPrs),
@@ -304,6 +304,10 @@ function toIssue(issue: NonNullable<GittensorMinerIssuesResponse["issues"]>[numb
     solvedByPullRequest: issue.solved_by_pr ?? null,
     labels: (issue.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])),
   };
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
 }
 
 function asNumber(value: unknown, fallback = 0): number {

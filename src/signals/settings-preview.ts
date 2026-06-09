@@ -477,15 +477,15 @@ function buildRepoInstallPreview(args: {
 }
 
 function writesPrPublicSurface(settings: RepositorySettings, decision: PublicSurfaceDecision): boolean {
-  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed");
+  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings, "confirmed") || shouldApplyPrLabel(settings, "confirmed");
 }
 
 function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {
-  // PR conversation comments and PR labels are gated by GitHub on the Pull requests permission (write),
-  // matching REQUIRED_INSTALLATION_PERMISSIONS; reading PR metadata only needs read.
-  const writesPrSurface = writesPrPublicSurface(settings, decision);
-  const permissions = new Set(["metadata: read", writesPrSurface ? "pull_requests: write" : "pull_requests: read"]);
-  if (writesPrSurface) permissions.add("issues: write");
+  // PR conversation comments and PR labels use GitHub Issues endpoints, so they require issues:write, not
+  // pull_requests:write -- the app only reads PRs. This matches REQUIRED_INSTALLATION_PERMISSIONS
+  // (pull_requests: read) and avoids asking maintainers for broader PR-write scope than the app uses.
+  const permissions = new Set(["metadata: read", "pull_requests: read"]);
+  if (writesPrPublicSurface(settings, decision)) permissions.add("issues: write");
   if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
   return [...permissions];
 }
@@ -494,9 +494,8 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
   const active: string[] = [];
-  const writesPrSurface = writesPrPublicSurface(settings, decision);
-  if (writesPrSurface && missing.has("pull_requests")) active.push("pull_requests");
-  if (writesPrSurface && missing.has("issues")) active.push("issues");
+  // Comment/label output is gated on issues:write (Issues endpoints), not pull_requests:write.
+  if (writesPrPublicSurface(settings, decision) && missing.has("issues")) active.push("issues");
   if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");
   return active;
 }

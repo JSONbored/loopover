@@ -491,6 +491,7 @@ export const agentRecommendationOutcomes = sqliteTable(
     targetRepoFullName: text("target_repo_full_name"),
     targetPullNumber: integer("target_pull_number"),
     targetIssueNumber: integer("target_issue_number"),
+    source: text("source").notNull().default("inferred"),
     surface: text("surface"),
     snapshotId: text("snapshot_id"),
     outcomeState: text("outcome_state").notNull(),
@@ -510,6 +511,7 @@ export const agentRecommendationOutcomes = sqliteTable(
   (table) => ({
     action: uniqueIndex("agent_recommendation_outcomes_action_unique").on(table.actionId),
     actorState: index("agent_recommendation_outcomes_actor_state_idx").on(table.actorLogin, table.outcomeState, table.updatedAt),
+    actorSource: index("agent_recommendation_outcomes_actor_source_idx").on(table.actorLogin, table.source, table.updatedAt),
     target: index("agent_recommendation_outcomes_target_idx").on(table.targetRepoFullName, table.targetPullNumber, table.targetIssueNumber),
     maintainer: index("agent_recommendation_outcomes_maintainer_idx").on(table.actorLogin, table.maintainerLane, table.updatedAt),
   }),

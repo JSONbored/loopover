@@ -43,6 +43,69 @@ describe("recommendation quality report", () => {
     expect(JSON.stringify(report)).not.toMatch(FORBIDDEN_REPORT_TERMS);
   });
 
+  it("rolls up private quality by role, surface, lane, outcome category, and time bucket", () => {
+    const report = buildRecommendationQualityReportFromOutcomes(
+      [
+        outcome("miner-api-accepted", "accepted", {
+          surface: "api",
+          metadata: { role: "miner" },
+          updatedAt: "2026-05-20T00:00:00.000Z",
+        }),
+        outcome("miner-mcp-stale", "stale", {
+          surface: "mcp",
+          metadata: { role: "miner" },
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        }),
+        outcome("miner-maintainer-rejected", "rejected", {
+          surface: "github_comment",
+          metadata: { role: "miner" },
+          maintainerLane: true,
+          updatedAt: "2026-05-29T00:00:00.000Z",
+        }),
+        outcome("outside-window", "merged", {
+          surface: "api",
+          metadata: { role: "miner" },
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        }),
+      ],
+      { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 14 },
+    );
+
+    expect(report.rollups).toEqual([
+      {
+        role: "miner",
+        surface: "api",
+        lane: "contributor",
+        outcomeCategory: "accepted",
+        periodStart: "2026-05-18T00:00:00.000Z",
+        periodEnd: "2026-05-25T00:00:00.000Z",
+        count: 1,
+      },
+      {
+        role: "miner",
+        surface: "github_comment",
+        lane: "maintainer",
+        outcomeCategory: "rejected",
+        periodStart: "2026-05-25T00:00:00.000Z",
+        periodEnd: "2026-06-01T00:00:00.000Z",
+        count: 1,
+      },
+      {
+        role: "miner",
+        surface: "mcp",
+        lane: "contributor",
+        outcomeCategory: "stale",
+        periodStart: "2026-05-25T00:00:00.000Z",
+        periodEnd: "2026-06-01T00:00:00.000Z",
+        count: 1,
+      },
+    ]);
+    expect(report.rollups.filter((rollup) => rollup.role === "miner" && rollup.surface === "github_comment")).toEqual([
+      expect.objectContaining({ lane: "maintainer", outcomeCategory: "rejected", count: 1 }),
+    ]);
+    expect(JSON.stringify(report.rollups)).not.toMatch(FORBIDDEN_REPORT_TERMS);
+  });
+
   it("counts rejected outcomes as negative recommendations", () => {
     const rejectedOnly = buildRecommendationQualityReportFromOutcomes(
       [outcome("rejected", "rejected", { actionType: "monitor_existing_pr", repo: "owner/rejected", updatedAt: "2026-05-30T00:00:00.000Z" })],
@@ -238,6 +301,10 @@ describe("recommendation quality report", () => {
       windowDays: 1,
       totals: { total: 0 },
     });
+    await expect(buildRecommendationQualityReport(env, { now: "2026-06-01T00:00:00.000Z" })).resolves.toMatchObject({
+      windowDays: 90,
+      totals: { total: 0 },
+    });
   });
 });
 
@@ -246,6 +313,7 @@ function outcome(
   outcomeState: AgentRecommendationOutcomeRecord["outcomeState"],
   options: {
     actionType?: AgentRecommendationOutcomeRecord["actionType"];
+    surface?: AgentRecommendationOutcomeRecord["surface"];
     repo?: string | null;
     updatedAt?: string;
     reason?: string;
@@ -260,9 +328,11 @@ function outcome(
     runId: `run:${id}`,
     actorLogin: "dev",
     actionType: options.actionType ?? "choose_next_work",
+    surface: options.surface ?? null,
     targetRepoFullName: options.repo === null ? null : options.repo ?? "owner/repo",
     targetPullNumber: null,
     targetIssueNumber: null,
+    source: "inferred",
     outcomeState,
     outcomeTargetType: "repository",
     outcomeRepoFullName: options.repo === null ? null : options.repo ?? "owner/repo",

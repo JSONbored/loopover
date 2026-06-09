@@ -44,6 +44,7 @@ import {
   PullRequestReviewIntelligenceSchema,
   PullRequestReviewabilitySchema,
   PreflightResultSchema,
+  PublicRepoStatsSchema,
   QueueHealthSchema,
   ReadinessSchema,
   RegistryChangeReportSchema,
@@ -82,6 +83,7 @@ export function buildOpenApiSpec() {
   registry.register("McpCompatibility", McpCompatibilitySchema);
   registry.register("RegistrySnapshot", RegistrySnapshotSchema);
   registry.register("Repository", RepositorySchema);
+  registry.register("PublicRepoStats", PublicRepoStatsSchema);
   registry.register("Advisory", AdvisorySchema);
   registry.register("ActionPortfolio", ActionPortfolioSchema);
   registry.register("WorkboardItem", WorkboardItemSchema);
@@ -163,6 +165,16 @@ export function buildOpenApiSpec() {
     path: "/v1/mcp/compatibility",
     responses: {
       200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/github/repos/{owner}/{repo}/stats",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: { description: "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.", content: { "application/json": { schema: PublicRepoStatsSchema } } },
+      400: { description: "Invalid or non-allowlisted GitHub repository" },
+      503: { description: "GitHub repository stats are unavailable" },
     },
   });
   registry.registerPath({
@@ -396,6 +408,15 @@ export function buildOpenApiSpec() {
       200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role" },
       404: { description: "Repository is not accepted or preview unavailable" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate",
+    responses: {
+      200: { description: "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Invalid request or explicit create without dryRun false" },
+      403: { description: "Insufficient role" },
     },
   });
   registry.registerPath({
@@ -869,7 +890,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
 }
 
 function isProtectedPath(path: string): boolean {
-  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility") return false;
+  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/github/repos/{owner}/{repo}/stats") return false;
   if (path.startsWith("/v1/auth/")) return path === "/v1/auth/extension/session";
   if (path === "/v1/github/webhook") return false;
   return path.startsWith("/v1/");

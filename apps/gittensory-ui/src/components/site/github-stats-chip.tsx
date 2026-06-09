@@ -4,6 +4,7 @@ import { Github, Star, GitFork, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
+import { getApiOrigin } from "@/lib/api/origin";
 import { apiFetch, notifyApiFailure, notifyApiRecovered } from "@/lib/api/request";
 
 const REPO = "jsonbored/gittensory";
@@ -35,10 +36,9 @@ function writeCache(stats: RepoStats) {
 
 async function fetchRepo(): Promise<RepoStats> {
   const result = await apiFetch<{ stargazers_count?: number; forks_count?: number }>(
-    `https://api.github.com/repos/${REPO}`,
+    `${getApiOrigin()}/v1/public/github/repos/jsonbored/gittensory/stats`,
     {
       label: "GitHub stats",
-      headers: { Accept: "application/vnd.github+json" },
       timeoutMs: 6000,
       silentStatus: true, // GitHub failures shouldn't poison the Gittensory API status pill
     },

@@ -303,10 +303,12 @@ function computeScoreCore(
   const changesRequestedCount = nonNegative(input.changesRequestedCount);
   const reviewPenaltyMultiplier = clamp(1 - changesRequestedCount * constant(constants, "REVIEW_PENALTY_RATE", 0.15), 0, 1);
   const openPrCount = nonNegative(input.openPrCount);
+  // The concurrency allowance is earned from the contributor's established merged-history token
+  // score; the planned PR's own tokens (totalTokenScore) must not inflate its own open-PR threshold.
   const openPrThreshold = Math.min(
     constant(constants, "MAX_OPEN_PR_THRESHOLD", 30),
     constant(constants, "EXCESSIVE_PR_PENALTY_BASE_THRESHOLD", 2) +
-      Math.floor((nonNegative(input.existingContributorTokenScore) + totalTokenScore) / constant(constants, "OPEN_PR_THRESHOLD_TOKEN_SCORE", 300)),
+      Math.floor(nonNegative(input.existingContributorTokenScore) / constant(constants, "OPEN_PR_THRESHOLD_TOKEN_SCORE", 300)),
   );
   const openPrMultiplier = openPrCount <= openPrThreshold ? 1 : 0;
   const estimatedMergedScore = roundScore(baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier);

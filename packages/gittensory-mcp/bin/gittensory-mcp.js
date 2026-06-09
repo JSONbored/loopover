@@ -43,6 +43,51 @@ const CLI_COMMAND_SPEC = {
   agent: ["plan", "status", "explain", "packet"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
+const AGENT_PROFILE_IDS = ["miner-planner", "maintainer-triage", "repo-owner-intake"];
+const AGENT_PROFILES = {
+  "miner-planner": {
+    id: "miner-planner",
+    title: "Miner planner",
+    audience: "contributors choosing and preparing Gittensor OSS work",
+    purpose: "Plan cleanup-first work, run branch preflight, explain blockers, and prepare public-safe PR packets.",
+    recommendedPrompts: ["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_cleanup_first", "gittensory_miner_draft_pr_packet"],
+    recommendedTools: ["gittensory_agent_plan_next_work", "gittensory_preflight_current_branch", "gittensory_agent_prepare_pr_packet"],
+    boundaries: [
+      "Human-approved only: plan, explain, draft, and prepare packets; do not open PRs, post comments, label, close, merge, or publish public GitHub output.",
+      "Use public-safe summaries for copyable text and keep authenticated decision-pack context out of public GitHub text.",
+      "Do not request wallets, hotkeys, coldkeys, private keys, GitHub tokens, or local source contents.",
+    ],
+    whenNotToUse: "Do not use this profile to chase compensation, predict public scores, or automate submissions without maintainer review.",
+  },
+  "maintainer-triage": {
+    id: "maintainer-triage",
+    title: "Maintainer queue triage",
+    audience: "maintainers preparing low-noise queue and PR review context",
+    purpose: "Summarize queue risk, prepare review notes, and draft public guidance for human review.",
+    recommendedPrompts: ["gittensory_maintainer_queue_triage", "gittensory_maintainer_review_prep", "gittensory_maintainer_public_guidance"],
+    recommendedTools: ["gittensory_get_repo_context", "gittensory_get_burden_forecast", "gittensory_preflight_pr"],
+    boundaries: [
+      "Human-approved only: prepare summaries and draft guidance; do not post comments, label, close, merge, or edit contributor work.",
+      "Keep private review context, raw trust context, and authenticated-only evidence out of public snippets.",
+      "Do not request wallets, hotkeys, coldkeys, private keys, GitHub tokens, or local source contents.",
+    ],
+    whenNotToUse: "Do not use this profile as an autonomous maintainer bot or for public ranking, public scoring, or compensation claims.",
+  },
+  "repo-owner-intake": {
+    id: "repo-owner-intake",
+    title: "Repo-owner intake",
+    audience: "repository owners preparing intake readiness and onboarding plans",
+    purpose: "Review registration readiness, focus manifests, docs/onboarding gaps, and manual setup actions.",
+    recommendedPrompts: ["gittensory_repo_owner_intake_readiness", "gittensory_repo_owner_focus_manifest_review", "gittensory_repo_owner_onboarding_pack"],
+    recommendedTools: ["gittensory_get_repo_context", "gittensory_get_issue_quality"],
+    boundaries: [
+      "Human-approved only: review, explain, and draft setup plans; do not push config, label issues, post comments, close issues, or publish public output.",
+      "Separate public readiness guidance from private maintainer or authenticated owner context.",
+      "Do not request wallets, hotkeys, coldkeys, private keys, GitHub tokens, or local source contents.",
+    ],
+    whenNotToUse: "Do not use this profile to bypass owner approval, auto-register repositories, or publish policy changes automatically.",
+  },
+};
 const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
@@ -1344,7 +1389,7 @@ _gittensory_mcp() {
   fi
   case "\${COMP_WORDS[1]}" in
 ${subcommandCases}
-      *) COMPREPLY=( $(compgen -W "--json --login --repo --profile --base --cwd" -- "$cur") ); return 0;;
+      *) COMPREPLY=( $(compgen -W "--json --login --repo --profile --agent-profile --base --cwd" -- "$cur") ); return 0;;
   esac
 }
 complete -F _gittensory_mcp gittensory-mcp`;
@@ -1398,7 +1443,7 @@ function printHelp() {
   gittensory-mcp changelog [--json]
   gittensory-mcp doctor [--profile name] [--cwd path] [--json]
   gittensory-mcp cache status|clear [--json]
-  gittensory-mcp init-client --print codex|claude|cursor|mcp [--json]
+  gittensory-mcp init-client --print codex|claude|cursor|mcp [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
   gittensory-mcp decision-pack --login <github-login> [--json]
   gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--json]
@@ -1888,7 +1933,7 @@ function doctorNextCommand(byName, context) {
   const auth = byName.get("auth");
   if (auth?.status === "fail") {
     return {
-      command: `gittensory-mcp login --profile ${context.profileName}`,
+      command: `gittensory-mcp login --profile ${shellArg(context.profileName ?? "default")}`,
       reason: "Authenticate the active profile so doctor, plan, preflight, and packet commands can call the API.",
     };
   }
@@ -1922,9 +1967,15 @@ function doctorNextCommand(byName, context) {
     };
   }
   return {
-    command: `gittensory-mcp preflight --login ${context.login ?? "<github-login>"} --repo ${context.repoFullName ?? "owner/repo"} --json`,
+    command: `gittensory-mcp preflight --login ${shellArg(context.login ?? "<github-login>")} --repo ${shellArg(context.repoFullName ?? "owner/repo")} --json`,
     reason: "Run branch preflight next; source upload remains disabled.",
   };
+}
+
+function shellArg(value) {
+  const text = String(value ?? "");
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'"'"'`)}'`;
 }
 
 function initClient(options) {
@@ -1932,19 +1983,49 @@ function initClient(options) {
   if (!client) throw new Error("Pass --print codex, --print claude, --print cursor, or --print mcp.");
   const command = options.command ?? "gittensory-mcp";
   const snippet = clientSnippet(client, command);
+  const agentProfile = resolveAgentProfile(options.agentProfile);
   const payload = {
     client,
     command,
     args: ["--stdio"],
     snippet,
+    agentProfile,
     notes: [
       "Run `gittensory-mcp login` before starting the MCP client.",
       "Use an absolute command path if the client does not inherit your shell PATH.",
       "This command prints config only; it does not edit client files.",
+      ...(agentProfile ? [`Use the ${agentProfile.title} profile instructions as the agent system/developer prompt; keep all GitHub writes human-approved.`] : []),
     ],
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  else process.stdout.write(`${snippet}\n`);
+  else process.stdout.write(agentProfile ? `${snippet}\n\n${formatAgentProfile(agentProfile)}\n` : `${snippet}\n`);
+}
+
+function resolveAgentProfile(profileId) {
+  if (!profileId) return null;
+  const id = String(profileId).trim().toLowerCase();
+  const profile = AGENT_PROFILES[id];
+  if (!profile) throw new Error(`Unsupported agent profile: ${profileId}. Use ${AGENT_PROFILE_IDS.join(", ")}.`);
+  return profile;
+}
+
+function formatAgentProfile(profile) {
+  return [
+    `# Gittensory agent profile: ${profile.title}`,
+    `Audience: ${profile.audience}`,
+    `Purpose: ${profile.purpose}`,
+    "",
+    "Recommended MCP prompts:",
+    ...profile.recommendedPrompts.map((name) => `- ${name}`),
+    "",
+    "Recommended MCP tools:",
+    ...profile.recommendedTools.map((name) => `- ${name}`),
+    "",
+    "Safety boundaries:",
+    ...profile.boundaries.map((boundary) => `- ${boundary}`),
+    "",
+    `When not to use: ${profile.whenNotToUse}`,
+  ].join("\n");
 }
 
 function getApiToken() {
@@ -2018,6 +2099,16 @@ function resolvedTokenSource() {
   return "none";
 }
 
+function sourceUploadState() {
+  const enabled = /^(1|true|yes)$/i.test(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false");
+  return {
+    default: false,
+    enabled,
+    source: enabled ? "GITTENSORY_UPLOAD_SOURCE" : "default",
+    supported: false,
+  };
+}
+
 // Report the resolved effective configuration and where each value came from, without leaking
 // local absolute paths or token values. Distinct from `status` (health/version), `doctor`
 // (diagnostic checks), and `whoami` (session identity): this answers "what config is in effect
@@ -2033,7 +2124,7 @@ function configCommand(options) {
     cacheDirSource: process.env.GITTENSORY_CACHE_DIR ? "GITTENSORY_CACHE_DIR" : "default",
     tokenConfigured: Boolean(getApiToken()),
     tokenSource: resolvedTokenSource(),
-    sourceUpload: { default: false, supported: false },
+    sourceUpload: sourceUploadState(),
     profile: profilePublicState(activeProfileName),
   };
   if (options.json) {
@@ -2045,7 +2136,11 @@ function configCommand(options) {
   process.stdout.write(`Config file: ${payload.configured ? "present" : "absent"} (location: ${payload.configPathSource})\n`);
   process.stdout.write(`Cache dir: ${payload.cacheDirSource}\n`);
   process.stdout.write(`Token: ${payload.tokenConfigured ? `configured (${payload.tokenSource})` : "not configured"}\n`);
-  process.stdout.write("Source upload: disabled (unsupported)\n");
+  process.stdout.write(
+    payload.sourceUpload.enabled
+      ? `Source upload: enabled via ${payload.sourceUpload.source} (unsupported; unset GITTENSORY_UPLOAD_SOURCE)\n`
+      : "Source upload: disabled (unsupported)\n",
+  );
 }
 
 function normalizeProfileName(value) {

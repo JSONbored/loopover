@@ -19,7 +19,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/env.d.ts"],
+      exclude: ["src/env.d.ts", "apps/**"],
       thresholds: {
         lines: 97,
         functions: 97,

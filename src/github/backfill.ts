@@ -523,8 +523,16 @@ export async function backfillOpenPullRequestDetails(
     });
   });
   const refreshedDetailStates = await listPullRequestDetailSyncStates(env, repo.fullName);
+  const refreshedStateByPull = new Map(refreshedDetailStates.map((state) => [state.pullNumber, state.status]));
   const completedCount = refreshedDetailStates.filter((state) => openPullNumbers.has(state.pullNumber) && state.status === "complete").length;
-  const nextCursor = batch.length < incompleteOpenPullRequests.length ? 0 : undefined;
+  // Only keep cursoring over the oldest incomplete PRs if this batch actually shrank the incomplete
+  // list. The cursor is fixed at 0, so a full batch of persistently-"partial" PRs (e.g. repeated
+  // detail-fetch failures) never completes and never drops out; without this guard `nextCursor` would
+  // stay 0 and re-queue the identical failing batch forever, starving every later PR. Stop as "partial"
+  // when no progress is made; a later backfill run can retry once the transient failures clear.
+  const incompleteAfter = openPullRequests.filter((pr) => refreshedStateByPull.get(pr.number) !== "complete").length;
+  const madeProgress = incompleteAfter < incompleteOpenPullRequests.length;
+  const nextCursor = batch.length < incompleteOpenPullRequests.length && madeProgress ? 0 : undefined;
   const status: RepoSyncSegmentRecord["status"] = nextCursor !== undefined ? "running" : completedCount >= openPullRequests.length ? "complete" : "partial";
   await Promise.all(
     (["pull_request_files", "pull_request_reviews", "check_summaries"] as const).map((segment) =>

@@ -1817,6 +1817,46 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("stops PR detail backfill instead of re-queuing forever when a full batch makes no progress", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    for (let number = 1; number <= 13; number += 1) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number,
+        title: `PR ${number}`,
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: `sha-${number}` },
+        labels: [],
+        body: "",
+      });
+    }
+    // Every PR's file sync fails on both GraphQL and REST, so all 13 stay "partial" and the front-12
+    // batch never completes. Without a progress guard nextCursor would stay 0 and re-queue forever.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return new Response("graphql failure", { status: 503 });
+      if (url.includes("/pulls/") && url.includes("/files")) return new Response("file failure", { status: 503 });
+      if (url.includes("/pulls/") && url.includes("/reviews")) return Response.json([]);
+      if (url.includes("/commits/") && url.includes("/check-runs")) return Response.json({ check_runs: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    const firstBatch = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "light", cursor: 0 });
+
+    expect(firstBatch.status).toBe("partial");
+    expect(firstBatch.nextCursor).toBeUndefined();
+    expect(sent).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "backfill-pr-details" })]));
+  });
+
   it("records segment partial, hard error, and GitHub rate-limit states from paged fetches", async () => {
     for (const [mode, responseStatus] of [
       ["partial-after-page", 500],

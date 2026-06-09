@@ -57,10 +57,14 @@ Do not open PRs for:
 
 Every PR should include:
 
+- A Conventional Commit-style title in the form `type(scope): short summary`.
 - A clear summary of what changed and why.
 - A linked issue or a short explanation for why no issue is needed.
 - The exact validation commands run from the repo root.
-- Screenshots or a short screen recording for visible UI changes.
+- JPG/JPEG or PNG screenshot evidence for visible UI, frontend, docs, or extension changes,
+  attached in the PR description as organized, captioned, clickable thumbnails. SVG screenshots
+  are not accepted as review evidence, and recordings are supplemental rather than a replacement
+  for screenshots. Do not commit review-only screenshots or recordings to the repository.
 - API/OpenAPI/MCP contract notes for schema or behavior changes.
 - Migration, deploy, secret, or Cloudflare configuration notes when relevant.
 - Security/privacy notes for auth, cookies, CORS, GitHub App output, user identity, or contributor
@@ -140,6 +144,18 @@ Frontend:
 - Signed-in app state comes from `GET /v1/auth/session`; do not restore app login through
   localStorage bearer tokens.
 - API Try It may still support manual bearer-token testing.
+- Visible UI changes need a `Screenshots` or `UI Evidence` section in the PR description. Use
+  GitHub-hosted JPG/JPEG or PNG screenshots only; SVG screenshots are not accepted as review
+  evidence. Recordings can be included as supplemental context, but screenshots are still expected
+  for visual review.
+- Arrange screenshots in a small table or grid with a short state/title such as "Loaded state",
+  "Empty state", "Error state", "Mobile layout", or "PR sidebar". Each screenshot should be a small
+  thumbnail that links to the full-size upload. Use HTML thumbnails like
+  `<a href="FULL_URL.jpg"><img src="FULL_URL.jpg" alt="Loaded state" width="240"></a>` instead of
+  large raw Markdown images.
+- Prefer annotated screenshots with a colored box, outline, arrow, or highlighter showing the
+  changed area. Do not commit review-only screenshots, recordings, or `docs/review-evidence/**`
+  files unless they are real product assets.
 
 Cloudflare/deploy:
 
@@ -175,3 +191,9 @@ fix(ui): restore signed-out app empty state
 test(mcp): cover compatibility fallback
 docs(contributing): clarify review gates
 ```
+
+Use one of these types: `feat`, `fix`, `test`, `docs`, `refactor`, `build`, `ci`, `chore`, or
+`revert`. Keep the scope lowercase and specific, such as `api`, `ui`, `mcp`, `extension`, `auth`,
+`github`, `signals`, `data`, `docs`, or `release`. Avoid vague scopes or summaries such as
+`misc`, `general`, `updates`, `update stuff`, or `small tweaks`. Do not end PR titles with a
+trailing period. Release PR titles must use `chore(release): <version>`.

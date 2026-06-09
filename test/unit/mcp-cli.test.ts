@@ -34,6 +34,52 @@ describe("gittensory-mcp CLI", () => {
     expect(generic.snippet).toBe(claude.snippet);
   });
 
+  it("prints human-approved agent profile instructions for supported MCP clients", () => {
+    const payload = JSON.parse(run(["init-client", "--print", "codex", "--agent-profile", "miner-planner", "--json"])) as {
+      agentProfile: {
+        id: string;
+        title: string;
+        recommendedPrompts: string[];
+        recommendedTools: string[];
+        boundaries: string[];
+        whenNotToUse: string;
+      };
+      notes: string[];
+    };
+
+    expect(payload.agentProfile).toMatchObject({
+      id: "miner-planner",
+      title: "Miner planner",
+      recommendedPrompts: expect.arrayContaining(["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_draft_pr_packet"]),
+      recommendedTools: expect.arrayContaining(["gittensory_agent_plan_next_work", "gittensory_agent_prepare_pr_packet"]),
+    });
+    expect(payload.agentProfile.boundaries.join("\n")).toMatch(/do not open PRs|do not.*post comments|do not.*tokens|local source contents/i);
+    expect(payload.notes.join("\n")).toMatch(/human-approved/i);
+    expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|[A-Z0-9_]*TOKEN=|PRIVATE_KEY=/);
+
+    const plain = run(["init-client", "--print", "claude", "--agent-profile", "repo-owner-intake"]);
+    expect(plain).toContain('"mcpServers"');
+    expect(plain).toContain("Gittensory agent profile: Repo-owner intake");
+    expect(plain).toContain("gittensory_repo_owner_intake_readiness");
+    expect(plain).toMatch(/do not.*publish public output/i);
+  });
+
+  it("supports all documented agent profiles without changing MCP server config", () => {
+    for (const profile of ["miner-planner", "maintainer-triage", "repo-owner-intake"]) {
+      const payload = JSON.parse(run(["init-client", "--print", "mcp", "--agent-profile", profile, "--json"])) as {
+        args: string[];
+        snippet: string;
+        agentProfile: { id: string; boundaries: string[]; whenNotToUse: string };
+      };
+
+      expect(payload.args).toEqual(["--stdio"]);
+      expect(payload.snippet).toContain('"args": [');
+      expect(payload.agentProfile.id).toBe(profile);
+      expect(payload.agentProfile.boundaries.join("\n")).toMatch(/Human-approved only/i);
+      expect(payload.agentProfile.whenNotToUse).not.toMatch(/wallet|hotkey|coldkey|token/i);
+    }
+  });
+
   it("runs doctor against a local health/session fixture", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -91,6 +137,27 @@ describe("gittensory-mcp CLI", () => {
     const localScorer = payload.checks.find((check) => check.name === "local_scorer");
     expect(localScorer?.detail).toMatch(/malformed_json/);
     expect(localScorer?.detail).not.toMatch(join(process.cwd(), "test/fixtures"));
+  });
+
+  it("shell-quotes doctor next command values derived from local repo metadata", async () => {
+    tempDir = createPacketRepo();
+    git(tempDir, "remote", "set-url", "origin", "git@github.com:owner/repo$(touch /tmp/av_pwned).git");
+    const url = await startFixtureServer();
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+      GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-success.mjs")}`,
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+
+    const payload = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--json"], env)) as { nextCommand: { command: string } };
+    expect(payload.nextCommand.command).toBe("gittensory-mcp preflight --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(payload.nextCommand.command).not.toContain("--repo owner/repo$(");
+
+    const humanOutput = await runAsync(["doctor", "--cwd", tempDir], env);
+    expect(humanOutput).toContain("gittensory-mcp preflight --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(humanOutput).not.toContain("--repo owner/repo$(");
   });
 
   it("uses doctor as a first-run auth checklist when no local session is configured", async () => {
@@ -1009,6 +1076,10 @@ describe("gittensory-mcp CLI", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });
 
+  it("rejects unsupported agent profiles", () => {
+    expect(() => run(["init-client", "--print", "codex", "--agent-profile", "autopilot"])).toThrow(/Unsupported agent profile/);
+  });
+
   it("reports the package version via version, --version, and -v", () => {
     const expected = "@jsonbored/gittensory-mcp/0.4.0";
     for (const flag of ["version", "--version", "-v"]) {
@@ -1076,7 +1147,7 @@ describe("gittensory-mcp CLI", () => {
       cacheDirSource: string;
       tokenConfigured: boolean;
       tokenSource: string;
-      sourceUpload: { default: boolean; supported: boolean };
+      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
     };
     // The run() harness sets GITTENSORY_CONFIG_DIR but no API URL or token.
     expect(payload.apiUrl).toBe("https://gittensory-api.aethereal.dev");
@@ -1088,7 +1159,7 @@ describe("gittensory-mcp CLI", () => {
     expect(payload.cacheDirSource).toBe("default");
     expect(payload.tokenConfigured).toBe(false);
     expect(payload.tokenSource).toBe("none");
-    expect(payload.sourceUpload).toEqual({ default: false, supported: false });
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: false, source: "default", supported: false });
   });
 
   it("attributes config values to environment overrides without leaking secrets", () => {
@@ -1110,6 +1181,16 @@ describe("gittensory-mcp CLI", () => {
     } finally {
       rmSync(secretDir, { recursive: true, force: true });
     }
+  });
+
+  it("reports enabled unsupported source upload environment settings via config", () => {
+    const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_UPLOAD_SOURCE: "true" })) as {
+      sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
+    };
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "GITTENSORY_UPLOAD_SOURCE", supported: false });
+
+    const out = run(["config"], { GITTENSORY_UPLOAD_SOURCE: "true" });
+    expect(out).toContain("Source upload: enabled via GITTENSORY_UPLOAD_SOURCE (unsupported; unset GITTENSORY_UPLOAD_SOURCE)");
   });
 
   it("attributes API URL and token to a named profile from the config file", () => {

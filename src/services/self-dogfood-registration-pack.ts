@@ -44,9 +44,11 @@ export function buildSelfDogfoodRegistrationPack(args: {
   gittensorConfigRecommendation: GittensorConfigRecommendation;
 }): SelfDogfoodRegistrationPack {
   const { registrationReadiness: readiness, gittensorConfigRecommendation: recommendation } = args;
-  const issueDiscoveryReady =
-    readiness.issueDiscoveryReadiness.ready && readiness.issueDiscoveryReadiness.recommendation === "enabled";
-  const directPrFirst = !issueDiscoveryReady && readiness.recommendedRegistrationMode !== "issue_discovery";
+  // Keep the lane strategy consistent with the config recommendation shown in the same pack: direct-PR-first
+  // exactly when the recommendation advises direct_pr (issue-discovery share 0). Deriving this from the
+  // readiness report's current-lane mode instead contradicts the recommendation when a repo is currently
+  // registered for issue-discovery/split but the recommendation advises reverting to direct-PR.
+  const directPrFirst = recommendation.recommended.participationMode === "direct_pr";
 
   return {
     kind: "gittensory_self_dogfood_registration_pack",

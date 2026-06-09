@@ -151,7 +151,7 @@ describe("Gittensor API contributor snapshots", () => {
       if (url.endsWith("/miners/123")) {
         return Response.json({
           repositories: [
-            { repositoryFullName: undefined, totalPrs: "bad", totalOpenIssues: "1", totalClosedIssues: null, isEligible: true },
+            { repositoryFullName: { malformed: true }, totalPrs: "bad", totalOpenIssues: "1", totalClosedIssues: null, isEligible: true },
             { repositoryFullName: "owner/repo", totalPrs: "3", totalMergedPrs: "2", totalOpenIssues: "0", totalClosedIssues: "0", totalScore: "bad" },
           ],
         });
@@ -177,11 +177,11 @@ describe("Gittensor API contributor snapshots", () => {
       issues: [],
       issueLabels: ["bug"],
       pullRequests: [expect.objectContaining({ repoFullName: "owner/repo", number: 7, title: "Fix it", score: 0, baseScore: 1 })],
-      repositories: [
-        expect.objectContaining({ repoFullName: "", pullRequests: 0, openIssues: 1, closedIssues: 0 }),
-        expect.objectContaining({ repoFullName: "owner/repo", pullRequests: 3, mergedPullRequests: 2, totalScore: 0 }),
-      ],
+      repositories: [expect.objectContaining({ repoFullName: "owner/repo", pullRequests: 3, mergedPullRequests: 2, totalScore: 0 })],
     });
+    // The malformed-name repo (empty repoFullName) must be dropped, like the PR/issue lists, so it cannot
+    // leak into reposTouched / evidenceScore.
+    expect(snapshot?.repositories.map((repo) => repo.repoFullName)).toEqual(["owner/repo"]);
   });
 
   it("returns null when the miner list has no matching GitHub identity", async () => {

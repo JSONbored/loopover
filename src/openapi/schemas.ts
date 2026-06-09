@@ -78,6 +78,18 @@ export const RepositorySchema = z
   })
   .openapi("Repository");
 
+export const PublicRepoStatsSchema = z
+  .object({
+    repoFullName: z.string(),
+    htmlUrl: z.string(),
+    stargazers_count: z.number(),
+    forks_count: z.number(),
+    fetched_at: z.string(),
+    source: z.enum(["github", "cache", "stale_cache"]),
+    stale: z.boolean(),
+  })
+  .openapi("PublicRepoStats");
+
 export const WorkboardItemSchema = z
   .object({
     repoFullName: z.string(),
@@ -154,6 +166,8 @@ export const QueueHealthSchema = z
         over30Days: z.number(),
       }),
       likelyReviewablePullRequests: z.number(),
+      cachedOpenPullRequests: z.number().optional(),
+      likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
     }),
     findings: z.array(FindingSchema),
   })
@@ -1584,7 +1598,7 @@ export const ContributorStrategySchema = z
 
 export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]).openapi("DecisionPackFreshness");
 
-export const AgentRecommendationOutcomeStateSchema = z.enum(["accepted", "ignored", "stale", "merged", "closed", "improved"]).openapi("AgentRecommendationOutcomeState");
+export const AgentRecommendationOutcomeStateSchema = z.enum(["accepted", "rejected", "ignored", "stale", "merged", "closed", "improved"]).openapi("AgentRecommendationOutcomeState");
 
 export const AgentRecommendationOutcomeStateBucketSchema = z
   .object({
@@ -1598,6 +1612,7 @@ export const AgentRecommendationOutcomeRepoSummarySchema = z
     repoFullName: z.string(),
     total: z.number(),
     accepted: z.number(),
+    rejected: z.number(),
     ignored: z.number(),
     stale: z.number(),
     merged: z.number(),
@@ -1619,6 +1634,7 @@ export const AgentRecommendationOutcomeSummarySchema = z
     totals: z.object({
       total: z.number(),
       accepted: z.number(),
+      rejected: z.number(),
       ignored: z.number(),
       stale: z.number(),
       merged: z.number(),
@@ -1627,6 +1643,10 @@ export const AgentRecommendationOutcomeSummarySchema = z
       positive: z.number(),
       negative: z.number(),
       maintainerLaneTotal: z.number(),
+    }),
+    sources: z.object({
+      explicit: z.number(),
+      inferred: z.number(),
     }),
     states: z.array(AgentRecommendationOutcomeStateBucketSchema),
     repos: z.array(AgentRecommendationOutcomeRepoSummarySchema),
@@ -1839,6 +1859,53 @@ export const RegistrationReadinessSchema = z
           }),
         ),
         summary: z.string(),
+      })
+      .nullable(),
+    onboardingPackPreview: z
+      .object({
+        repoFullName: z.string(),
+        generatedAt: z.string(),
+        source: z.enum(["policy_compiler"]),
+        previewOnly: z.literal(true),
+        publicSafe: z.literal(true),
+        contributionLanes: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            summary: z.string(),
+            preferredPaths: z.array(z.string()),
+            discouragedPaths: z.array(z.string()),
+            validationExpectations: z.array(z.string()),
+            publicNotes: z.array(z.string()),
+          }),
+        ),
+        labelPolicy: z.object({
+          preferredLabels: z.array(z.string()),
+          requiredLabels: z.array(z.string()),
+          discouragedLabels: z.array(z.string()),
+          note: z.string().nullable(),
+        }),
+        validationExpectations: z.array(z.string()),
+        readinessWarnings: z.array(z.string()),
+        maintainerExpectations: z.array(z.string()),
+        publicOutputBoundaries: z.array(z.string()),
+        previewMarkdown: z.string(),
+        droppedPublicItems: z.array(
+          z.object({
+            field: z.string(),
+            reason: z.enum(["empty", "unsafe_public_text"]),
+          }),
+        ),
+        privateOwnerContext: z.object({
+          itemCount: z.number(),
+          includedInPublicPreview: z.literal(false),
+        }),
+        publication: z.object({
+          status: z.enum(["preview_only"]),
+          allowed: z.literal(false),
+          actions: z.array(z.string()),
+          reason: z.string(),
+        }),
       })
       .nullable(),
     blockers: z.array(z.string()),

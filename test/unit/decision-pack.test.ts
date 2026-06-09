@@ -136,6 +136,29 @@ describe("decision-pack service", () => {
     expect(overridden.directPrShare).toBeCloseTo(0.04 * 0.8, 10); // 0.032
   });
 
+  it("clamps out-of-range registry shares so lane shares never go negative (matches preview.ts)", () => {
+    const outsideRole = { maintainerLane: false } as any;
+    // Registry config is untrusted and unclamped at ingestion. An out-of-range issueDiscoveryShare > 1
+    // must clamp to 1 (as preview.ts laneMath does) rather than produce a negative directPrShare.
+    const outOfRange = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/out-of-range", 0.01, 1.5),
+      roleContext: outsideRole,
+      outcome: undefined,
+    }).rewardUpside;
+    expect(outOfRange.directPrShare).toBe(0); // 0.01 * 0.9 * (1 - clamp(1.5,0,1)) = 0, never negative
+    expect(outOfRange.directPrShare).toBeGreaterThanOrEqual(0);
+    expect(outOfRange.issueDiscoveryShare).toBeCloseTo(0.01 * 0.9 * 1, 10); // 0.009
+
+    // A negative issueDiscoveryShare clamps to 0, keeping the full slice on the direct-PR lane.
+    const negative = __decisionPackInternals.buildRepoDecision({
+      repo: repo("owner/negative", 0.01, -0.5),
+      roleContext: outsideRole,
+      outcome: undefined,
+    }).rewardUpside;
+    expect(negative.issueDiscoveryShare).toBe(0);
+    expect(negative.directPrShare).toBeCloseTo(0.01 * 0.9 * 1, 10); // 0.009
+  });
+
   it("feeds repo outcome patterns into repo decisions without inflating maintainer-lane evidence", () => {
     const outsideRole = { maintainerLane: false } as any;
     const maintainerRole = { maintainerLane: true } as any;
@@ -355,6 +378,7 @@ describe("decision-pack service", () => {
           negative: 0,
           maintainerLaneTotal: 1,
         },
+        sources: { explicit: 1, inferred: 0 },
         states: [{ state: "accepted", count: 1 }],
         repos: [],
         maintainerLane: { total: 1, states: [{ state: "merged", count: 1 }] },

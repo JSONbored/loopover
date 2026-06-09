@@ -61,6 +61,7 @@ import type {
   AgentContextSnapshotRecord,
   AgentRecommendationOutcomeConfidence,
   AgentRecommendationOutcomeRecord,
+  AgentRecommendationOutcomeSource,
   AgentRecommendationOutcomeState,
   AgentRecommendationOutcomeSummary,
   AgentRecommendationOutcomeTargetType,
@@ -1738,6 +1739,14 @@ function recommendationOutcomeTotals(
   };
 }
 
+function recommendationOutcomeSources(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["sources"] {
+  const explicit = outcomes.filter((outcome) => outcome.source === "explicit").length;
+  return {
+    explicit,
+    inferred: outcomes.length - explicit,
+  };
+}
+
 function summarizeRecommendationOutcomeRepos(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["repos"] {
   const byRepo = new Map<string, AgentRecommendationOutcomeRecord[]>();
   for (const outcome of outcomes) {
@@ -2648,6 +2657,10 @@ export async function listAgentContextSnapshots(env: Env, runId: string): Promis
 }
 
 export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentRecommendationOutcomeRecord): Promise<AgentRecommendationOutcomeRecord> {
+  const source = normalizeAgentRecommendationOutcomeSource(outcome.source);
+  const existing = source === "inferred" ? await getAgentRecommendationOutcome(env, outcome.actionId) : null;
+  if (existing?.source === "explicit") return existing;
+
   const now = outcome.updatedAt ?? nowIso();
   const values = {
     id: outcome.id ?? `outcome:${outcome.actionId}`,
@@ -2660,6 +2673,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
     targetRepoFullName: outcome.targetRepoFullName ? boundedString(outcome.targetRepoFullName, 200) : null,
     targetPullNumber: outcome.targetPullNumber ?? null,
     targetIssueNumber: outcome.targetIssueNumber ?? null,
+    source,
     outcomeState: outcome.outcomeState,
     outcomeTargetType: outcome.outcomeTargetType,
     outcomeRepoFullName: outcome.outcomeRepoFullName ? boundedString(outcome.outcomeRepoFullName, 200) : null,
@@ -2687,6 +2701,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
         targetRepoFullName: values.targetRepoFullName,
         targetPullNumber: values.targetPullNumber,
         targetIssueNumber: values.targetIssueNumber,
+        source: values.source,
         outcomeState: values.outcomeState,
         outcomeTargetType: values.outcomeTargetType,
         outcomeRepoFullName: values.outcomeRepoFullName,
@@ -2744,11 +2759,13 @@ export async function getAgentRecommendationOutcomeSummary(
   const maintainerStates = outcomeStateBuckets(maintainer);
   const repos = summarizeRecommendationOutcomeRepos(outcomes);
   const totals = recommendationOutcomeTotals(nonMaintainer, maintainer.length);
+  const sources = recommendationOutcomeSources(nonMaintainer);
   return {
     login: actorLogin,
     generatedAt,
     windowDays,
     totals,
+    sources,
     states,
     repos,
     maintainerLane: {
@@ -3448,6 +3465,7 @@ function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutco
     targetRepoFullName: row.targetRepoFullName,
     targetPullNumber: row.targetPullNumber,
     targetIssueNumber: row.targetIssueNumber,
+    source: parseAgentRecommendationOutcomeSource(row.source),
     outcomeState: parseAgentRecommendationOutcomeState(row.outcomeState),
     outcomeTargetType: parseAgentRecommendationOutcomeTargetType(row.outcomeTargetType),
     outcomeRepoFullName: row.outcomeRepoFullName,
@@ -4280,6 +4298,14 @@ function parseAgentSafetyClass(value: string): AgentSafetyClass {
 function parseAgentRecommendationOutcomeState(value: string): AgentRecommendationOutcomeState {
   if (value === "accepted" || value === "rejected" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
   return "ignored";
+}
+
+function normalizeAgentRecommendationOutcomeSource(value: AgentRecommendationOutcomeSource | null | undefined): AgentRecommendationOutcomeSource {
+  return value === "explicit" ? "explicit" : "inferred";
+}
+
+function parseAgentRecommendationOutcomeSource(value: string): AgentRecommendationOutcomeSource {
+  return value === "explicit" ? "explicit" : "inferred";
 }
 
 function parseAgentRecommendationOutcomeTargetType(value: string): AgentRecommendationOutcomeTargetType {

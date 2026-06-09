@@ -1647,12 +1647,17 @@ export function createApp() {
   });
 
   app.post("/v1/repos/:owner/:repo/settings-preview", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const body = (await c.req.json().catch(() => null)) ?? {};
     const parsed = settingsPreviewSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_settings_preview_request", issues: parsed.error.issues }, 400);
-    const [repo, settings, issues, pullRequests] = await Promise.all([
-      getRepository(c.env, fullName),
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const unauthorized = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (unauthorized) return unauthorized;
+    }
+    const [settings, issues, pullRequests] = await Promise.all([
       getRepositorySettings(c.env, fullName),
       listIssues(c.env, fullName),
       listPullRequests(c.env, fullName),
@@ -3564,10 +3569,15 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
   if (isIssueQualityPath(path)) return true;
+  if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoSettingsPreviewPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/settings-preview$/.test(path);
 }
 
 function isRepoOnboardingPackPreviewPath(path: string): boolean {

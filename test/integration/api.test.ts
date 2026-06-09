@@ -1841,6 +1841,20 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    const ownerSettingsPreview = await app.request(
+      "/v1/repos/repo-owner/owned-repo/settings-preview",
+      { method: "POST", headers: ownerHeaders, body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed" } }) },
+      ownerEnv,
+    );
+    expect(ownerSettingsPreview.status).toBe(200);
+    await expect(ownerSettingsPreview.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
+    const forbiddenVictimSettingsPreview = await app.request(
+      "/v1/repos/victim-org/secret-repo/settings-preview",
+      { method: "POST", headers: ownerHeaders, body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed" } }) },
+      ownerEnv,
+    );
+    expect(forbiddenVictimSettingsPreview.status).toBe(403);
+    await expect(forbiddenVictimSettingsPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const ownerWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: ownerHeaders }, ownerEnv);
     expect(ownerWeeklyReport.status).toBe(200);
     const ownerWeeklyReportBody = await ownerWeeklyReport.json();

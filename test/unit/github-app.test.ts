@@ -226,7 +226,7 @@ describe("GitHub check runs", () => {
       output: { title: "Gittensory Gate is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
-    expect(capturedBody.output?.text).toContain("advisory-first");
+    expect(capturedBody.output?.text).toContain("preserves legacy linked-issue and duplicate-PR blockers");
   });
 
   it("finalizes a known pending Gate check by id without listing check runs first", async () => {

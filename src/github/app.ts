@@ -114,7 +114,7 @@ export async function createOrUpdatePendingGateCheckRun(
     output: {
       title: "Gittensory Gate is evaluating",
       summary: "Gittensory is running deterministic public PR hygiene checks.",
-      text: "The Gate is advisory-first unless this repository explicitly configures a rule to block merge.",
+      text: "The Gate preserves legacy linked-issue and duplicate-PR blockers unless this repository explicitly sets those rules to advisory or off.",
     },
   });
 }

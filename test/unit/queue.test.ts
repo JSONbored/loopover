@@ -690,7 +690,7 @@ describe("queue processors", () => {
     );
   });
 
-  it("publishes an opt-in gate check without requiring comment output", async () => {
+  it("publishes an opt-in gate check without requiring comment output while preserving linked-issue blockers", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -728,7 +728,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ name: "Gittensory Gate", status: "completed", conclusion: "success", output: { title: "Gittensory Gate passed" } });
+        expect(body).toMatchObject({ name: "Gittensory Gate", status: "completed", conclusion: "failure", output: { title: "Gittensory Gate is blocking merge" } });
         calls.gateChecks += 1;
         return Response.json({ id: 900 });
       }

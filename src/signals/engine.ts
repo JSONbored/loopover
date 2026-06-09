@@ -2812,11 +2812,13 @@ function buildIssueLinkageRecord(
   linkedPrs: PullRequestRecord[],
   linkedMergedPrs: RecentMergedPullRequestRecord[],
 ): IssueLinkageRecord {
+  const verifiedMergedPrs = linkedPrs.filter((pr) => pr.linkedIssues.includes(issue.number) && (pr.mergedAt || pr.state === "merged"));
+  const verifiedRecentMergedPrs = linkedMergedPrs.filter((pr) => pr.linkedIssues.includes(issue.number));
   const solvedByPullRequests = [
     ...new Set([
       ...(lifecycleEntry?.solvedByPullRequests ?? []),
-      ...linkedPrs.filter((pr) => pr.mergedAt || pr.state === "merged").map((pr) => pr.number),
-      ...linkedMergedPrs.map((pr) => pr.number),
+      ...verifiedMergedPrs.map((pr) => pr.number),
+      ...verifiedRecentMergedPrs.map((pr) => pr.number),
     ]),
   ].sort((left, right) => left - right);
   const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
@@ -2865,8 +2867,8 @@ function classifyIssueDiscoveryLifecycle(
   recentMergedPullRequests: RecentMergedPullRequestRecord[],
   lane: LaneAdvice,
 ): IssueDiscoveryLifecycleReport["states"][number] {
-  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
+  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
   const solvedByPullRequests = [...new Set([...linkedOpenPrs.filter((pr) => pr.mergedAt || pr.state === "merged").map((pr) => pr.number), ...linkedMergedPrs.map((pr) => pr.number)])].sort(
     (left, right) => left - right,
   );

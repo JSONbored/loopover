@@ -26,6 +26,8 @@ describe("product usage events", () => {
       repoFullName: "oktofeesh1/private-tool",
       targetKey: "Oktofeesh1:private-tool#136",
       outcome: "success",
+      clientName: "Oktofeesh1-mcp",
+      clientVersion: "0.3.0+Oktofeesh1",
       metadata: { command: "packet", viewer: "Oktofeesh1", nested: { note: "for oktofeesh1" } },
     });
 
@@ -43,6 +45,8 @@ describe("product usage events", () => {
       route: "/v1/app/commands/preview",
       repoFullName: "<redacted-actor>/private-tool",
       targetKey: "<redacted-actor>:private-tool#136",
+      clientName: "<redacted-actor>-mcp",
+      clientVersion: "0.3.0+<redacted-actor>",
       metadata: { command: "packet", viewer: "<redacted-actor>", nested: { note: "for <redacted-actor>" } },
     });
     expect(JSON.stringify(row)).not.toMatch(/Oktofeesh1|gts_session_secret/i);

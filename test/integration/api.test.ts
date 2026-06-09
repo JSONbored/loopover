@@ -4912,12 +4912,12 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.4.0" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-<redacted-actor>-cli", clientVersion: "0.4.0" }),
         expect.objectContaining({
           surface: "mcp",
           eventName: "mcp_tool_called",
           outcome: "success",
-          clientName: "gittensory-mcp-cli",
+          clientName: "gittensory-<redacted-actor>-cli",
           clientVersion: "0.4.0",
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",

@@ -1145,8 +1145,8 @@ export async function recordProductUsageEvent(
     targetKey: redactProductUsageActor(boundedProductUsageField(event.targetKey, 256), actorRedactor),
     outcome: normalizeProductUsageOutcome(event.outcome),
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
-    clientName: boundedProductUsageField(event.clientName, 80),
-    clientVersion: boundedProductUsageField(event.clientVersion, 80),
+    clientName: redactProductUsageActor(boundedProductUsageField(event.clientName, 80), actorRedactor),
+    clientVersion: redactProductUsageActor(boundedProductUsageField(event.clientVersion, 80), actorRedactor),
     metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
@@ -4063,7 +4063,13 @@ function isProductUsageUsefulMaintainerEvent(event: ProductUsageEventRecord): bo
 }
 
 function mcpClientVersionForEvent(event: ProductUsageEventRecord): string {
-  return event.clientVersion ?? productUsageMetadataString(event, "packageVersion") ?? "unknown";
+  return aggregateMcpClientVersion(event.clientVersion ?? productUsageMetadataString(event, "packageVersion"));
+}
+
+function aggregateMcpClientVersion(version: string | null | undefined): string {
+  if (!version) return "unknown";
+  const semver = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+.*)?$/.exec(version.trim());
+  return semver?.[1] ?? "unknown";
 }
 
 function mcpCompatibilityStatusForEvent(event: ProductUsageEventRecord): "current" | "stale" | "incompatible" | "unknown" {

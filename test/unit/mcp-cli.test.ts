@@ -1106,7 +1106,10 @@ describe("gittensory-mcp CLI", () => {
   });
 
   it("rejects unsupported agent profiles", () => {
-    expect(() => run(["init-client", "--print", "codex", "--agent-profile", "autopilot"])).toThrow(/Unsupported agent profile/);
+    for (const profile of ["autopilot", "__proto__", "constructor"]) {
+      expect(() => run(["init-client", "--print", "codex", "--agent-profile", profile])).toThrow(/Unsupported agent profile/);
+      expect(() => run(["init-client", "--print", "codex", "--agent-profile", profile, "--json"])).toThrow(/Unsupported agent profile/);
+    }
   });
 
   it("reports the package version via version, --version, and -v", () => {

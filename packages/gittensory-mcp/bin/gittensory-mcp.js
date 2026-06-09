@@ -2004,9 +2004,8 @@ function initClient(options) {
 function resolveAgentProfile(profileId) {
   if (!profileId) return null;
   const id = String(profileId).trim().toLowerCase();
-  const profile = AGENT_PROFILES[id];
-  if (!profile) throw new Error(`Unsupported agent profile: ${profileId}. Use ${AGENT_PROFILE_IDS.join(", ")}.`);
-  return profile;
+  if (!Object.hasOwn(AGENT_PROFILES, id)) throw new Error(`Unsupported agent profile: ${profileId}. Use ${AGENT_PROFILE_IDS.join(", ")}.`);
+  return AGENT_PROFILES[id];
 }
 
 function formatAgentProfile(profile) {

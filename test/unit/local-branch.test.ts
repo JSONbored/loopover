@@ -1092,6 +1092,31 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score|\/Users\/example/i);
   });
 
+  it("removes Windows home paths from public PR packet title and validation lines", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        title: "Fix cache failure from C:\\Users\\alice\\workspace",
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 2, status: "modified" }],
+        validation: [
+          { command: "npm test C:\\Users\\alice\\workspace\\cache.log", status: "passed", summary: "log at C:\\Users\\alice\\workspace\\cache.log" },
+        ],
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.markdown).toContain("## Validation");
+    expect(analysis.prPacket.markdown).not.toMatch(/C:\\Users\\alice/i);
+  });
+
   it("removes snake_case private signals from public PR packet markdown", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

@@ -890,7 +890,18 @@ describe("gittensory-mcp CLI", () => {
     git(tempDir, "commit", "-m", "initial commit");
     git(tempDir, "checkout", "-b", "codex/public-safe-pr-packets");
 
-    for (const unsafePhrase of ["score: 1.15", "reward estimate", "wallet address", "hotkey id", "raw-trust: 0.7", "private-reviewability: ready", "raw_trust: 0.7", "private_reviewability: ready", "trust_score: 0.4"]) {
+    for (const unsafePhrase of [
+      "score: 1.15",
+      "reward estimate",
+      "wallet address",
+      "hotkey id",
+      "raw-trust: 0.7",
+      "private-reviewability: ready",
+      "raw_trust: 0.7",
+      "private_reviewability: ready",
+      "trust_score: 0.4",
+      "log path C:\\Users\\alice\\workspace\\raw.log",
+    ]) {
       if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
       server = null;
       const url = await startFixtureServer({ packetMarkdown: `# Public-safe PR packet\n\n- ${unsafePhrase}\n` });

@@ -92,7 +92,10 @@ function sanitizeMinerCommand(command: string): string {
       (_, prefix) => `${prefix}<local-path>`,
     )
     .replace(
-      /\b(?:wallet|hotkey|coldkey|mnemonic|raw[-_\s]?trust|private[-_\s]?reviewability|trust[-_\s]?score)\b(?:\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"'`,;)]+))?/gi,
+      // Only redact actual `term=value` / `term: value` secret leakage. The assignment is required so
+      // that legitimate login/repo names containing these words (e.g. a repo named "wallet-adapter" or
+      // login "trust-score" -- already validated upstream) are not corrupted into broken commands.
+      /\b(?:wallet|hotkey|coldkey|mnemonic|raw[-_\s]?trust|private[-_\s]?reviewability|trust[-_\s]?score)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"'`,;)]+)/gi,
       "[redacted]",
     );
 }

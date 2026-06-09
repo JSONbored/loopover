@@ -423,6 +423,35 @@ describe("recommendation outcome feedback", () => {
     expect(
       classifyRecommendationOutcome({
         ...base,
+        action: action(run, 7, { targetRepoFullName: "owner/rejected-clean-pr", targetPullNumber: 207 }),
+        pullRequests: [
+          prRecord(207, "owner/rejected-clean-pr", {
+            updatedAt: "2026-05-10T00:00:00.000Z",
+            reviewDecision: "CHANGES_REQUESTED",
+            mergeableState: "clean",
+          }),
+        ],
+        issues: [],
+      }),
+    ).toMatchObject({
+      outcomeState: "rejected",
+      outcomeTargetType: "pull_request",
+      outcomePullNumber: 207,
+      metadata: { reviewDecision: "CHANGES_REQUESTED", mergeableState: "clean" },
+    });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 8, { targetRepoFullName: "owner/approved-lowercase-pr", targetPullNumber: 208 }),
+        pullRequests: [prRecord(208, "owner/approved-lowercase-pr", { updatedAt: "2026-05-10T00:00:00.000Z", reviewDecision: "approved" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "improved", outcomePullNumber: 208 });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
         action: action(run, 1, { targetRepoFullName: "owner/merged-pr", targetPullNumber: 201 }),
         pullRequests: [prRecord(201, "owner/merged-pr", { state: "closed", mergedAt: "2026-05-05T00:00:00.000Z", updatedAt: "2026-05-05T00:00:00.000Z" })],
         issues: [],

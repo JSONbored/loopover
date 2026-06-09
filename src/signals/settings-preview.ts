@@ -494,6 +494,7 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
   const active: string[] = [];
+  if (missing.has("pull_requests")) active.push("pull_requests");
   // Comment/label output is gated on issues:write (Issues endpoints), not pull_requests:write.
   if (writesPrPublicSurface(settings, decision) && missing.has("issues")) active.push("issues");
   if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");

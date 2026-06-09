@@ -178,7 +178,6 @@ import {
 } from "../signals/engine";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
-import { buildContributorRepoScenarioSummary } from "../services/contributor-repo-scenario-summary";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
@@ -1671,14 +1670,6 @@ export function createApp() {
       decision,
       dataQuality: pack.dataQuality,
     });
-  });
-
-  app.get("/v1/contributors/:login/repos/:owner/:repo/scenario-summary", async (c) => {
-    const login = c.req.param("login");
-    const unauthorized = await requireContributorAccess(c, login);
-    if (unauthorized) return unauthorized;
-    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    return c.json(await buildContributorRepoScenarioSummary(c.env, login, fullName));
   });
 
   app.post("/v1/preflight/pr", async (c) => {

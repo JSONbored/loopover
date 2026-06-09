@@ -22,7 +22,6 @@ import {
   ContributorPatternReportSchema,
   ContributorDecisionPackSchema,
   ContributorOpenPrMonitorSchema,
-  ContributorRepoScenarioSummaryResponseSchema,
   ContributorRewardRiskStrategySchema,
   ContributorProfileSchema,
   ContributorScoringProfileSchema,
@@ -44,7 +43,6 @@ import {
   PullRequestMaintainerPacketSchema,
   PullRequestReviewIntelligenceSchema,
   PullRequestReviewabilitySchema,
-  PublicScenarioSummarySchema,
   PreflightResultSchema,
   QueueHealthSchema,
   ReadinessSchema,
@@ -447,16 +445,6 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Repo-specific contributor decision from decision pack. May carry freshness 'stale' or 'rebuilding'.", content: { "application/json": { schema: RepoDecisionResponseSchema } } },
       202: { description: "Decision pack snapshot is missing; a background rebuild has been requested", content: { "application/json": { schema: DecisionPackRefreshNeededSchema } } },
-    },
-  });
-  registry.registerPath({
-    method: "get",
-    path: "/v1/contributors/{login}/repos/{owner}/{repo}/scenario-summary",
-    responses: {
-      200: {
-        description: "Public-safe contributor/repo scenario summary from cached metadata and advisory simulators.",
-        content: { "application/json": { schema: ContributorRepoScenarioSummaryResponseSchema } },
-      },
     },
   });
   registry.registerPath({

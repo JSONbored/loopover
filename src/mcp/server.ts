@@ -72,7 +72,6 @@ import {
   buildRegistryChangeReport,
   buildRoleContext,
 } from "../signals/engine";
-import { buildContributorRepoScenarioSummary } from "../services/contributor-repo-scenario-summary";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -338,14 +337,6 @@ const explainRepoDecisionOutputSchema = {
   dataQuality: z.unknown().optional(),
 };
 
-const scenarioSummaryOutputSchema = {
-  status: z.string().optional(),
-  login: z.string().optional(),
-  repoFullName: z.string().optional(),
-  generatedAt: z.string().optional(),
-  summary: z.unknown().optional(),
-};
-
 const registryChangesOutputSchema = {
   generatedAt: z.string().optional(),
   currentSnapshotId: z.string().optional(),
@@ -512,17 +503,6 @@ export class GittensoryMcp {
         outputSchema: explainRepoDecisionOutputSchema,
       },
       async (input) => this.toolResult(await this.explainRepoDecision(input)),
-    );
-
-    server.registerTool(
-      "gittensory_get_scenario_summary",
-      {
-        description:
-          "Return a public-safe contributor/repo scenario summary with ranked strategy options, eligibility notes, and pending PR context from cached metadata.",
-        inputSchema: loginRepoShape,
-        outputSchema: scenarioSummaryOutputSchema,
-      },
-      async (input) => this.toolResult(await this.getScenarioSummary(input)),
     );
 
     server.registerTool(
@@ -993,16 +973,6 @@ export class GittensoryMcp {
         decision,
         dataQuality: pack.dataQuality,
       },
-    };
-  }
-
-  private async getScenarioSummary(input: { login: string; owner: string; repo: string }): Promise<ToolPayload> {
-    this.requireContributorAccess(input.login);
-    const fullName = `${input.owner}/${input.repo}`;
-    const response = await buildContributorRepoScenarioSummary(this.env, input.login, fullName);
-    return {
-      summary: response.summary.headline,
-      data: response as unknown as Record<string, unknown>,
     };
   }
 

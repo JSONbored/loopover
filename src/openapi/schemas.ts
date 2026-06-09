@@ -336,57 +336,6 @@ export const ContributorOpenPrMonitorSchema = z
   })
   .openapi("ContributorOpenPrMonitor");
 
-export const RenderedScenarioOptionSchema = z
-  .object({
-    rank: z.number(),
-    label: z.string(),
-    rationale: z.string(),
-    obstacles: z.array(z.string()),
-    assumptions: z.array(z.string()),
-    nextStep: z.string(),
-    recommended: z.boolean(),
-  })
-  .openapi("RenderedScenarioOption");
-
-export const RenderedPendingPullRequestSchema = z
-  .object({
-    pullNumber: z.number(),
-    classification: z.string(),
-    notes: z.array(z.string()),
-  })
-  .openapi("RenderedPendingPullRequest");
-
-export const PublicScenarioSummarySchema = z
-  .object({
-    repoFullName: z.string(),
-    generatedAt: z.string(),
-    advisoryOnly: z.literal(true),
-    notAutonomousPrBot: z.literal(true),
-    notPublicScoring: z.literal(true),
-    headline: z.string(),
-    options: z.array(RenderedScenarioOptionSchema),
-    eligibilityNotes: z.array(z.string()),
-    blockerNotes: z.array(z.string()),
-    pendingScenarioNotes: z.array(z.string()),
-    pendingPullRequests: z.array(RenderedPendingPullRequestSchema),
-    dataClassification: z.object({
-      facts: z.array(z.string()),
-      assumptions: z.array(z.string()),
-      unavailableSignals: z.array(z.string()),
-    }),
-  })
-  .openapi("PublicScenarioSummary");
-
-export const ContributorRepoScenarioSummaryResponseSchema = z
-  .object({
-    status: z.literal("ready"),
-    login: z.string(),
-    repoFullName: z.string(),
-    generatedAt: z.string(),
-    summary: PublicScenarioSummarySchema,
-  })
-  .openapi("ContributorRepoScenarioSummaryResponse");
-
 export const ContributorOpportunitySchema = z
   .object({
     repoFullName: z.string(),

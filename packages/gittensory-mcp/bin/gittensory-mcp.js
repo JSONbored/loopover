@@ -28,6 +28,7 @@ const CLI_COMMAND_SPEC = {
   login: [],
   logout: [],
   whoami: [],
+  config: [],
   status: [],
   changelog: [],
   completion: [],

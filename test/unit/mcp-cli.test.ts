@@ -1141,18 +1141,19 @@ describe("gittensory-mcp CLI", () => {
     expect(bash).toContain("_gittensory_mcp()");
     expect(bash).toContain("complete -F _gittensory_mcp gittensory-mcp");
     expect(bash).toContain("analyze-branch");
-    expect(bash).toContain("local commands=\"login logout whoami status changelog completion version doctor");
+    expect(bash).toContain("local commands=\"login logout whoami config status changelog completion version doctor");
     expect(bash).toContain("version");
     expect(bash).toContain("plan status explain packet");
 
     const zsh = run(["completion", "zsh"]);
     expect(zsh).toContain("#compdef gittensory-mcp");
     expect(zsh).toContain("_describe 'command' commands");
-    expect(zsh).toContain("commands=(login logout whoami status changelog completion version doctor");
+    expect(zsh).toContain("commands=(login logout whoami config status changelog completion version doctor");
     expect(zsh).toContain("list create switch remove");
 
     const fish = run(["completion", "fish"]);
     expect(fish).toContain("complete -c gittensory-mcp");
+    expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a config");
     expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a completion");
     expect(fish).toContain("__fish_seen_subcommand_from agent");
   });

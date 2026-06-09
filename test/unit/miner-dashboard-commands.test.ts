@@ -88,4 +88,24 @@ describe("miner dashboard command actions", () => {
       /\/Users|\/home|wallet|hotkey|raw trust|private reviewability/i,
     );
   });
+
+  it("keeps legitimate repo/login names that contain sensitive words", () => {
+    const commands = buildMinerCommandActions({
+      login: "trust-score",
+      repoFullName: "metamask/wallet-adapter",
+    });
+
+    const preflight = commands.find((command) => command.id === "preflight");
+    expect(preflight).toMatchObject({
+      command:
+        "gittensory-mcp preflight --login trust-score --repo metamask/wallet-adapter --base origin/main --json",
+      copyable: true,
+      state: "ready",
+    });
+    // The real names survive; nothing is redacted out of a runnable command.
+    expect(preflight?.command).not.toContain("[redacted]");
+
+    const plan = commands.find((command) => command.id === "plan");
+    expect(plan).toMatchObject({ command: "gittensory-mcp agent plan --login trust-score --json", copyable: true });
+  });
 });

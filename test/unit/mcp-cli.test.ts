@@ -34,6 +34,52 @@ describe("gittensory-mcp CLI", () => {
     expect(generic.snippet).toBe(claude.snippet);
   });
 
+  it("prints human-approved agent profile instructions for supported MCP clients", () => {
+    const payload = JSON.parse(run(["init-client", "--print", "codex", "--agent-profile", "miner-planner", "--json"])) as {
+      agentProfile: {
+        id: string;
+        title: string;
+        recommendedPrompts: string[];
+        recommendedTools: string[];
+        boundaries: string[];
+        whenNotToUse: string;
+      };
+      notes: string[];
+    };
+
+    expect(payload.agentProfile).toMatchObject({
+      id: "miner-planner",
+      title: "Miner planner",
+      recommendedPrompts: expect.arrayContaining(["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_draft_pr_packet"]),
+      recommendedTools: expect.arrayContaining(["gittensory_agent_plan_next_work", "gittensory_agent_prepare_pr_packet"]),
+    });
+    expect(payload.agentProfile.boundaries.join("\n")).toMatch(/do not open PRs|do not.*post comments|do not.*tokens|local source contents/i);
+    expect(payload.notes.join("\n")).toMatch(/human-approved/i);
+    expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|[A-Z0-9_]*TOKEN=|PRIVATE_KEY=/);
+
+    const plain = run(["init-client", "--print", "claude", "--agent-profile", "repo-owner-intake"]);
+    expect(plain).toContain('"mcpServers"');
+    expect(plain).toContain("Gittensory agent profile: Repo-owner intake");
+    expect(plain).toContain("gittensory_repo_owner_intake_readiness");
+    expect(plain).toMatch(/do not.*publish public output/i);
+  });
+
+  it("supports all documented agent profiles without changing MCP server config", () => {
+    for (const profile of ["miner-planner", "maintainer-triage", "repo-owner-intake"]) {
+      const payload = JSON.parse(run(["init-client", "--print", "mcp", "--agent-profile", profile, "--json"])) as {
+        args: string[];
+        snippet: string;
+        agentProfile: { id: string; boundaries: string[]; whenNotToUse: string };
+      };
+
+      expect(payload.args).toEqual(["--stdio"]);
+      expect(payload.snippet).toContain('"args": [');
+      expect(payload.agentProfile.id).toBe(profile);
+      expect(payload.agentProfile.boundaries.join("\n")).toMatch(/Human-approved only/i);
+      expect(payload.agentProfile.whenNotToUse).not.toMatch(/wallet|hotkey|coldkey|token/i);
+    }
+  });
+
   it("runs doctor against a local health/session fixture", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -1028,6 +1074,10 @@ describe("gittensory-mcp CLI", () => {
 
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
+  });
+
+  it("rejects unsupported agent profiles", () => {
+    expect(() => run(["init-client", "--print", "codex", "--agent-profile", "autopilot"])).toThrow(/Unsupported agent profile/);
   });
 
   it("reports the package version via version, --version, and -v", () => {

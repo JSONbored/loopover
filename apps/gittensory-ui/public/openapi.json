@@ -11964,6 +11964,91 @@
           "source",
           "stale"
         ]
+      },
+      "FederatedRepoEntry": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "burdenScore": {
+            "type": "number"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "compositeScore": {
+            "type": "number"
+          },
+          "stalePullRequestRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "pullRequestGrowth7d": {
+            "type": "number",
+            "nullable": true
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "burdenScore",
+          "level",
+          "compositeScore",
+          "stalePullRequestRate",
+          "pullRequestGrowth7d",
+          "freshness",
+          "summary"
+        ]
+      },
+      "FederatedQueueIndex": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "repoCount": {
+            "type": "number"
+          },
+          "limitApplied": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "computed"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FederatedRepoEntry"
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "repoCount",
+          "limitApplied",
+          "source",
+          "entries"
+        ]
       }
     },
     "parameters": {},
@@ -14592,6 +14677,49 @@
             "description": "GitHub repository stats are unavailable"
           }
         }
+      }
+    },
+    "/v1/app/queue-health/federation": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked cross-repo queue pressure index (operator only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FederatedQueueIndex"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient role — operator access required"
+          },
+          "422": {
+            "description": "Invalid limit parameter"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
       }
     }
   },

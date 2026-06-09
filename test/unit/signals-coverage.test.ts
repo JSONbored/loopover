@@ -1176,6 +1176,30 @@ describe("signal coverage edge cases", () => {
       action: "No action.",
     });
 
+    const staleQueuePullRequests = [44, 45, 46, 47].map((number) =>
+      pr(directRepo.fullName, number, `Stale unlinked queue item ${number}`, {
+        updatedAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+    const criticalBurdenQueue = buildQueueHealth(
+      directRepo,
+      [],
+      staleQueuePullRequests,
+      buildCollisionReport(directRepo.fullName, [], staleQueuePullRequests),
+    );
+    expect(criticalBurdenQueue).toMatchObject({ level: "critical", burdenScore: 100 });
+
+    const criticalBurdenScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: criticalBurdenQueue,
+    });
+    expect(scoreComponent(criticalBurdenScore, "queue_pressure")).toMatchObject({
+      score: 3,
+      evidence: "4 open PR(s), 0 likely reviewable, 4 stale, 4 unlinked.",
+      action: "Expect slower review.",
+    });
+
     const sampledQueue = buildQueueHealth(
       directRepo,
       [],

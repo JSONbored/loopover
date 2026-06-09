@@ -3844,7 +3844,7 @@ function queuePressureComponent(queueHealth: QueueHealth): { score: number; max:
   const cachedOpenPullRequests = Math.max(0, signals.cachedOpenPullRequests ?? signals.ageBuckets.under7Days + signals.ageBuckets.days7To30 + signals.ageBuckets.over30Days);
   const likelyReviewablePullRequests = Math.max(0, Math.min(openPullRequests, signals.likelyReviewablePullRequests));
   const sampledLikelyReviewable = signals.likelyReviewablePullRequestsSource === "sampled_cache" || (signals.likelyReviewablePullRequestsSource === undefined && cachedOpenPullRequests < openPullRequests);
-  const score = queuePressureScore(openPullRequests);
+  const score = queuePressureScore(queueHealth, openPullRequests);
   const likelyEvidence =
     openPullRequests === 0
       ? "0 likely reviewable"
@@ -3867,10 +3867,22 @@ function queuePressureComponent(queueHealth: QueueHealth): { score: number; max:
   };
 }
 
-function queuePressureScore(openPullRequests: number): number {
+function queuePressureScore(queueHealth: QueueHealth, openPullRequests: number): number {
+  if (openPullRequests === 0) return 10;
+  return Math.min(queuePressureOpenPullRequestScore(openPullRequests), queuePressureLevelScore(queueHealth.level));
+}
+
+function queuePressureOpenPullRequestScore(openPullRequests: number): number {
   if (openPullRequests <= 4) return 10;
   if (openPullRequests <= 8) return 8;
   if (openPullRequests <= 13) return 5;
+  return 3;
+}
+
+function queuePressureLevelScore(level: QueueHealth["level"]): number {
+  if (level === "low") return 10;
+  if (level === "medium") return 8;
+  if (level === "high") return 5;
   return 3;
 }
 

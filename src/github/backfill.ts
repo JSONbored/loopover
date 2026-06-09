@@ -2019,7 +2019,9 @@ async function githubJsonWithHeaders<T>(
   await recordGitHubResponse(env, repoFullName, path, response, "rest");
   if (response.status === 404 && token && token === env.GITHUB_PUBLIC_TOKEN) {
     response = await fetch(url, { headers: githubRestHeaders() });
-    if (response.status !== 403) await recordGitHubResponse(env, repoFullName, path, response, "rest");
+    // Do not persist unauthenticated fallback rate-limit headers into the shared REST backoff state.
+    // GitHub's unauthenticated REST bucket is capped below LOW_REST_RATE_LIMIT_REMAINING, so recording
+    // successful fallback responses can incorrectly stall later token-backed segment jobs.
   }
   if (!response.ok) {
     const body = await response.text();

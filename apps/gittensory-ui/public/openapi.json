@@ -313,6 +313,46 @@
           "isPrivate"
         ]
       },
+      "PublicRepoStats": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "htmlUrl": {
+            "type": "string"
+          },
+          "stargazers_count": {
+            "type": "number"
+          },
+          "forks_count": {
+            "type": "number"
+          },
+          "fetched_at": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github",
+              "cache",
+              "stale_cache"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "htmlUrl",
+          "stargazers_count",
+          "forks_count",
+          "fetched_at",
+          "source",
+          "stale"
+        ]
+      },
       "Advisory": {
         "type": "object",
         "properties": {
@@ -2346,6 +2386,9 @@
               "accepted": {
                 "type": "number"
               },
+              "rejected": {
+                "type": "number"
+              },
               "ignored": {
                 "type": "number"
               },
@@ -2369,9 +2412,6 @@
               },
               "maintainerLaneTotal": {
                 "type": "number"
-              },
-              "rejected": {
-                "type": "number"
               }
             },
             "required": [
@@ -2386,6 +2426,21 @@
               "positive",
               "negative",
               "maintainerLaneTotal"
+            ]
+          },
+          "sources": {
+            "type": "object",
+            "properties": {
+              "explicit": {
+                "type": "number"
+              },
+              "inferred": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "explicit",
+              "inferred"
             ]
           },
           "states": {
@@ -2420,21 +2475,6 @@
           },
           "privateSummary": {
             "type": "string"
-          },
-          "sources": {
-            "type": "object",
-            "properties": {
-              "explicit": {
-                "type": "number"
-              },
-              "inferred": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "explicit",
-              "inferred"
-            ]
           }
         },
         "required": [
@@ -2488,6 +2528,9 @@
           "accepted": {
             "type": "number"
           },
+          "rejected": {
+            "type": "number"
+          },
           "ignored": {
             "type": "number"
           },
@@ -2524,9 +2567,6 @@
               "mixed",
               "neutral"
             ]
-          },
-          "rejected": {
-            "type": "number"
           }
         },
         "required": [
@@ -7839,6 +7879,34 @@
               "enabled"
             ]
           },
+          "linkedIssueGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "duplicatePrGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMinScore": {
+            "type": "number",
+            "nullable": true
+          },
           "autoLabelEnabled": {
             "type": "boolean"
           },
@@ -7911,34 +7979,6 @@
           },
           "updatedAt": {
             "type": "string",
-            "nullable": true
-          },
-          "linkedIssueGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "duplicatePrGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "qualityGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "qualityGateMinScore": {
-            "type": "number",
             "nullable": true
           }
         },
@@ -8422,6 +8462,34 @@
                   "enabled"
                 ]
               },
+              "linkedIssueGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "duplicatePrGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMinScore": {
+                "type": "number",
+                "nullable": true
+              },
               "autoLabelEnabled": {
                 "type": "boolean"
               },
@@ -8484,34 +8552,6 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
-              },
-              "linkedIssueGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "duplicatePrGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "qualityGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "qualityGateMinScore": {
-                "type": "number",
-                "nullable": true
               }
             },
             "required": [
@@ -11600,6 +11640,91 @@
           "report"
         ]
       },
+      "FederatedRepoEntry": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "burdenScore": {
+            "type": "number"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "compositeScore": {
+            "type": "number"
+          },
+          "stalePullRequestRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "pullRequestGrowth7d": {
+            "type": "number",
+            "nullable": true
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "burdenScore",
+          "level",
+          "compositeScore",
+          "stalePullRequestRate",
+          "pullRequestGrowth7d",
+          "freshness",
+          "summary"
+        ]
+      },
+      "FederatedQueueIndex": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "repoCount": {
+            "type": "number"
+          },
+          "limitApplied": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "computed"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FederatedRepoEntry"
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "repoCount",
+          "limitApplied",
+          "source",
+          "entries"
+        ]
+      },
       "ContributorScoringProfile": {
         "type": "object",
         "properties": {
@@ -11924,131 +12049,6 @@
           "maintainerNextSteps",
           "privateSummary"
         ]
-      },
-      "PublicRepoStats": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "htmlUrl": {
-            "type": "string"
-          },
-          "stargazers_count": {
-            "type": "number"
-          },
-          "forks_count": {
-            "type": "number"
-          },
-          "fetched_at": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "github",
-              "cache",
-              "stale_cache"
-            ]
-          },
-          "stale": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "htmlUrl",
-          "stargazers_count",
-          "forks_count",
-          "fetched_at",
-          "source",
-          "stale"
-        ]
-      },
-      "FederatedRepoEntry": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "burdenScore": {
-            "type": "number"
-          },
-          "level": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high",
-              "critical"
-            ]
-          },
-          "compositeScore": {
-            "type": "number"
-          },
-          "stalePullRequestRate": {
-            "type": "number",
-            "nullable": true
-          },
-          "pullRequestGrowth7d": {
-            "type": "number",
-            "nullable": true
-          },
-          "freshness": {
-            "type": "string",
-            "enum": [
-              "fresh",
-              "stale"
-            ]
-          },
-          "summary": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "burdenScore",
-          "level",
-          "compositeScore",
-          "stalePullRequestRate",
-          "pullRequestGrowth7d",
-          "freshness",
-          "summary"
-        ]
-      },
-      "FederatedQueueIndex": {
-        "type": "object",
-        "properties": {
-          "generatedAt": {
-            "type": "string"
-          },
-          "repoCount": {
-            "type": "number"
-          },
-          "limitApplied": {
-            "type": "number"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "snapshot",
-              "computed"
-            ]
-          },
-          "entries": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FederatedRepoEntry"
-            }
-          }
-        },
-        "required": [
-          "generatedAt",
-          "repoCount",
-          "limitApplied",
-          "source",
-          "entries"
-        ]
       }
     },
     "parameters": {},
@@ -12095,6 +12095,46 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/public/github/repos/{owner}/{repo}/stats": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicRepoStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or non-allowlisted GitHub repository"
+          },
+          "503": {
+            "description": "GitHub repository stats are unavailable"
           }
         }
       }
@@ -12866,6 +12906,39 @@
           },
           "404": {
             "description": "Repository is not accepted or preview unavailable"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or explicit create without dryRun false"
+          },
+          "403": {
+            "description": "Insufficient role"
           }
         },
         "security": [
@@ -13710,6 +13783,49 @@
           },
           "401": {
             "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/app/queue-health/federation": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked cross-repo queue pressure index (operator only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FederatedQueueIndex"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Insufficient role — operator access required"
+          },
+          "422": {
+            "description": "Invalid limit parameter"
           }
         },
         "security": [
@@ -14627,110 +14743,6 @@
           },
           "401": {
             "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/public/github/repos/{owner}/{repo}/stats": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicRepoStats"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid or non-allowlisted GitHub repository"
-          },
-          "503": {
-            "description": "GitHub repository stats are unavailable"
-          }
-        }
-      }
-    },
-    "/v1/app/queue-health/federation": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "limit",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Ranked cross-repo queue pressure index (operator only)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FederatedQueueIndex"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Insufficient role — operator access required"
-          },
-          "422": {
-            "description": "Invalid limit parameter"
-    "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request or explicit create without dryRun false"
-          },
-          "403": {
-            "description": "Insufficient role"
           }
         },
         "security": [

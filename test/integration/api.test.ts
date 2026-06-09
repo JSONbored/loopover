@@ -3553,6 +3553,45 @@ describe("api routes", () => {
     expect(body).not.toContain("SECRET roadmap PR title");
     expect(body).not.toContain("SECRET-LAUNCH-CODE");
     expect(body).not.toContain("confidential-roadmap");
+
+    const allowedMcpContext = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "allowed-session-repo-context",
+          method: "tools/call",
+          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "allowed" } },
+        }),
+      },
+      env,
+    );
+    expect(allowedMcpContext.status).toBe(200);
+    await expect(mcpJson(allowedMcpContext)).resolves.toMatchObject({ result: { structuredContent: { repoFullName: "target-org/allowed" } } });
+
+    const siblingMcpContext = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "forbidden-session-repo-context",
+          method: "tools/call",
+          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "secret" } },
+        }),
+      },
+      env,
+    );
+    expect(siblingMcpContext.status).toBe(200);
+    const siblingMcpBody = await siblingMcpContext.text();
+    expect(siblingMcpBody).toContain("Forbidden");
+    expect(siblingMcpBody).toContain("session cannot access this repository");
+    expect(siblingMcpBody).not.toContain("SECRET roadmap PR title");
+    expect(siblingMcpBody).not.toContain("SECRET-LAUNCH-CODE");
+    expect(siblingMcpBody).not.toContain("confidential-roadmap");
   });
 
   it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {

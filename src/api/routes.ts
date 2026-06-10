@@ -1572,6 +1572,36 @@ export function createApp() {
     return c.json(await buildGittensorConfigRecommendationResponse(c.env, fullName));
   });
 
+  app.get("/v1/repos/:owner/:repo/focus-manifest", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    const manifest = await loadRepoFocusManifest(c.env, fullName, { refresh: c.req.query("refresh") === "true" });
+    return c.json({ repoFullName: fullName, manifest, policy: compileFocusManifestPolicy(manifest) });
+  });
+
+  app.put("/v1/repos/:owner/:repo/focus-manifest", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    const body = await c.req.json().catch(() => null);
+    if (body === null) return c.json({ error: "invalid_json" }, 400);
+    const manifest = await upsertRepoFocusManifest(c.env, fullName, body, "api_record");
+    return c.json({ repoFullName: fullName, manifest, policy: compileFocusManifestPolicy(manifest) });
+  });
+
   app.get("/v1/app/self-dogfood/registration-pack", async (c) => {
     const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
     if (forbidden) return forbidden;
@@ -3571,6 +3601,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isIssueQualityPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
+  if (isRepoFocusManifestPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
@@ -3590,6 +3621,10 @@ function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
 
 function isIssueQualityPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/issue-quality$/.test(path);
+}
+
+function isRepoFocusManifestPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/focus-manifest$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

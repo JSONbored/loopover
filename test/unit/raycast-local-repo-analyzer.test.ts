@@ -111,6 +111,37 @@ describe("Raycast local repo analyzer", () => {
     expect(calls.map((call) => call.split(" ")[0]).join("\n")).not.toMatch(/^(cat|show|grep|archive)$/m);
   });
 
+  it("rejects inferred base refs that could be parsed as git options", () => {
+    const { git, calls } = fakeGit({
+      "symbolic-ref --short refs/remotes/origin/HEAD": "origin/--output=/tmp/gittensory-owned\n",
+    });
+
+    expect(() =>
+      collectRaycastLocalRepoMetadata({
+        cwd: "/tmp/private-checkout",
+        login: "jsonbored",
+        repoFullName: "JSONbored/gittensory",
+        git,
+      }),
+    ).toThrow(/unsafe git baseRef/i);
+    expect(calls).toEqual(["symbolic-ref --short refs/remotes/origin/HEAD"]);
+  });
+
+  it("rejects explicit base refs that could be parsed as git options", () => {
+    const git = vi.fn<RaycastGitRunner>();
+
+    expect(() =>
+      collectRaycastLocalRepoMetadata({
+        cwd: "/tmp/private-checkout",
+        login: "jsonbored",
+        repoFullName: "JSONbored/gittensory",
+        baseRef: "--output=/tmp/gittensory-owned",
+        git,
+      }),
+    ).toThrow(/unsafe git baseRef/i);
+    expect(git).not.toHaveBeenCalled();
+  });
+
   it("rejects source upload mode before running git", () => {
     const git = vi.fn<RaycastGitRunner>();
 

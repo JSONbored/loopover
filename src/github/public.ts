@@ -11,6 +11,16 @@ export type PublicContributorProfile = {
   source: "github" | "unavailable";
 };
 
+export type PublicRepoStats = {
+  repoFullName: string;
+  htmlUrl: string;
+  stargazers_count: number;
+  forks_count: number;
+  fetched_at: string;
+  source: "github" | "cache" | "stale_cache";
+  stale: boolean;
+};
+
 type GitHubUserResponse = {
   login: string;
   name?: string | null;
@@ -25,6 +35,25 @@ type GitHubUserResponse = {
 type GitHubRepoResponse = {
   language?: string | null;
 };
+
+type GitHubPublicRepoResponse = {
+  full_name?: string;
+  html_url?: string;
+  stargazers_count?: number;
+  forks_count?: number;
+};
+
+type RepoStatsCacheEntry = {
+  stats: PublicRepoStats;
+  freshUntilMs: number;
+  staleUntilMs: number;
+};
+
+const PUBLIC_REPO_STATS_OWNER = "jsonbored";
+const PUBLIC_REPO_STATS_REPO = "gittensory";
+const REPO_STATS_CACHE_TTL_MS = 1000 * 60 * 10;
+const REPO_STATS_STALE_TTL_MS = 1000 * 60 * 60 * 24;
+const repoStatsCache = new Map<string, RepoStatsCacheEntry>();
 
 export async function fetchPublicContributorProfile(login: string): Promise<PublicContributorProfile> {
   const safeLogin = encodeURIComponent(login);
@@ -69,4 +98,63 @@ export async function fetchPublicContributorProfile(login: string): Promise<Publ
       source: "unavailable",
     };
   }
+}
+
+export async function fetchPublicRepoStats(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, owner: string, repo: string): Promise<PublicRepoStats> {
+  const repoFullName = publicRepoFullName(owner, repo);
+  const cacheKey = repoFullName.toLowerCase();
+  const nowMs = Date.now();
+  const cached = repoStatsCache.get(cacheKey);
+  if (cached && cached.freshUntilMs > nowMs) return { ...cached.stats, source: "cache", stale: false };
+
+  try {
+    const stats = await fetchRepoStatsFromGitHub(env, repoFullName, nowMs);
+    repoStatsCache.set(cacheKey, { stats, freshUntilMs: nowMs + REPO_STATS_CACHE_TTL_MS, staleUntilMs: nowMs + REPO_STATS_STALE_TTL_MS });
+    return stats;
+  } catch (error) {
+    if (cached && cached.staleUntilMs > nowMs) return { ...cached.stats, source: "stale_cache", stale: true };
+    throw error;
+  }
+}
+
+export function clearPublicRepoStatsCacheForTests(): void {
+  repoStatsCache.clear();
+}
+
+function publicRepoFullName(owner: string, repo: string): string {
+  const ownerName = owner.trim();
+  const repoName = repo.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(ownerName)) throw new Error("invalid_github_repo");
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(repoName) || repoName === "." || repoName === "..") throw new Error("invalid_github_repo");
+  const normalizedOwnerName = ownerName.toLowerCase();
+  const normalizedRepoName = repoName.toLowerCase();
+  if (normalizedOwnerName !== PUBLIC_REPO_STATS_OWNER || normalizedRepoName !== PUBLIC_REPO_STATS_REPO) throw new Error("invalid_github_repo");
+  return `${normalizedOwnerName}/${normalizedRepoName}`;
+}
+
+async function fetchRepoStatsFromGitHub(env: Pick<Env, "GITHUB_PUBLIC_TOKEN">, repoFullName: string, nowMs: number): Promise<PublicRepoStats> {
+  const [owner, repo] = repoFullName.split("/") as [string, string];
+  const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      "user-agent": "gittensory/0.1",
+      "x-github-api-version": "2022-11-28",
+      ...(env.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
+    },
+  });
+  if (!response.ok) throw new Error(`github_repo_stats_unavailable:${response.status}`);
+  const body = (await response.json()) as GitHubPublicRepoResponse;
+  return {
+    repoFullName: typeof body.full_name === "string" && body.full_name ? body.full_name : repoFullName,
+    htmlUrl: typeof body.html_url === "string" && body.html_url ? body.html_url : `https://github.com/${repoFullName}`,
+    stargazers_count: finiteCount(body.stargazers_count),
+    forks_count: finiteCount(body.forks_count),
+    fetched_at: new Date(nowMs).toISOString(),
+    source: "github",
+    stale: false,
+  };
+}
+
+function finiteCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
 }

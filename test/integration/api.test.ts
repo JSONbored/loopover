@@ -34,6 +34,7 @@ import {
   upsertAgentRecommendationOutcome,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
+import { clearPublicRepoStatsCacheForTests } from "../../src/github/public";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -53,6 +54,7 @@ describe("api routes", () => {
   });
 
   afterEach(() => {
+    clearPublicRepoStatsCacheForTests();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -100,6 +102,109 @@ describe("api routes", () => {
     const unauthenticatedSpec = await app.request("/openapi.json", {}, env);
     expect(unauthenticatedSpec.status).toBe(200);
     await expect(unauthenticatedSpec.json()).resolves.toMatchObject({ info: { title: "Gittensory API" } });
+  });
+
+  it("serves public GitHub repo stats without relying on browser GitHub quota", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const calls: Array<{ url: string; authorization?: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const authorization = headers.get("authorization");
+      calls.push({ url: input.toString(), ...(authorization ? { authorization } : {}) });
+      return Response.json({ full_name: "JSONbored/gittensory", html_url: "https://github.com/JSONbored/gittensory", stargazers_count: 12, forks_count: 3 });
+    });
+
+    const response = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", { headers: { origin: "https://gittensory.aethereal.dev" } }, env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://gittensory.aethereal.dev");
+    expect(response.headers.get("cache-control")).toContain("max-age=600");
+    await expect(response.json()).resolves.toMatchObject({
+      repoFullName: "JSONbored/gittensory",
+      htmlUrl: "https://github.com/JSONbored/gittensory",
+      stargazers_count: 12,
+      forks_count: 3,
+      source: "github",
+      stale: false,
+    });
+    expect(calls).toEqual([{ url: "https://api.github.com/repos/jsonbored/gittensory", authorization: "Bearer public-token" }]);
+
+    const cached = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(cached.status).toBe(200);
+    await expect(cached.json()).resolves.toMatchObject({ stargazers_count: 12, forks_count: 3, source: "cache", stale: false });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("normalizes allowlisted public GitHub repo stats casing before fetching and caching", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      calls.push(input.toString());
+      return Response.json({ stargazers_count: 8, forks_count: 2 });
+    });
+
+    const response = await app.request("/v1/public/github/repos/JsonBored/GittenSory/stats", {}, env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      repoFullName: "jsonbored/gittensory",
+      htmlUrl: "https://github.com/jsonbored/gittensory",
+      stargazers_count: 8,
+      forks_count: 2,
+      source: "github",
+      stale: false,
+    });
+    expect(calls).toEqual(["https://api.github.com/repos/jsonbored/gittensory"]);
+
+    const cached = await app.request("/v1/public/github/repos/JSONBORED/GITTENSORY/stats", {}, env);
+    expect(cached.status).toBe(200);
+    await expect(cached.json()).resolves.toMatchObject({ stargazers_count: 8, forks_count: 2, source: "cache", stale: false });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("serves stale public repo stats instead of failing during transient GitHub errors", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    vi.stubGlobal("fetch", async () => Response.json({ full_name: "JSONbored/gittensory", html_url: "https://github.com/JSONbored/gittensory", stargazers_count: 21, forks_count: 4 }));
+
+    const fresh = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(fresh.status).toBe(200);
+
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    vi.stubGlobal("fetch", async () => Response.json({ message: "rate limited" }, { status: 403 }));
+    const stale = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(stale.status).toBe(200);
+    expect(stale.headers.get("cache-control")).toContain("max-age=60");
+    await expect(stale.json()).resolves.toMatchObject({ stargazers_count: 21, forks_count: 4, source: "stale_cache", stale: true });
+
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    const unavailable = await app.request("/v1/public/github/repos/JSONbored/gittensory/stats", {}, env);
+    expect(unavailable.status).toBe(503);
+    await expect(unavailable.json()).resolves.toMatchObject({ error: "github_repo_stats_unavailable" });
+  });
+
+  it("rejects invalid public GitHub repo stats paths before calling GitHub", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/v1/public/github/repos/-bad/gittensory/stats", {}, env);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_github_repo" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-allowlisted public GitHub repo stats paths before calling GitHub", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/v1/public/github/repos/Attacker/missing-one/stats", {}, env);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "invalid_github_repo" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("serves registry drift through the canonical registry change endpoint", async () => {
@@ -883,6 +988,100 @@ describe("api routes", () => {
     );
     expect(invalidRepoContext.status).toBe(200);
 
+    const boundedQueuePr = {
+      number: 1,
+      author: "alice",
+      authorRole: "contributor",
+      isConfirmedMiner: true,
+      linkedIssue: { qualityScore: 0.9 },
+      checksStatus: "passing",
+      isStale: false,
+      additions: 50,
+      deletions: 10,
+      title: "Fix cache",
+      body: "Fixes #1",
+      duplicateCandidates: [],
+      createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+      lastUpdatedAt: new Date(Date.now() - 3600000).toISOString(),
+    };
+
+    const tooManyQueuePRs = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({ pullRequests: Array.from({ length: 251 }, (_, index) => ({ ...boundedQueuePr, number: index + 1 })) }),
+      },
+      env,
+    );
+    expect(tooManyQueuePRs.status).toBe(400);
+
+    const oversizedQueueFields = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          pullRequests: [
+            {
+              ...boundedQueuePr,
+              author: "a".repeat(101),
+              title: "t".repeat(301),
+              body: "b".repeat(4001),
+              duplicateCandidates: Array.from({ length: 26 }, (_, index) => index + 1),
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(oversizedQueueFields.status).toBe(400);
+
+    const oversizedQueuePayload = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: { ...internalHeaders(env), "content-length": "1048577" },
+        body: JSON.stringify({}),
+      },
+      env,
+    );
+    expect(oversizedQueuePayload.status).toBe(413);
+    await expect(oversizedQueuePayload.json()).resolves.toMatchObject({ error: "payload_too_large", maxBytes: 1048576 });
+
+    const oversizedQueueStream = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: "x".repeat(1048577),
+      },
+      env,
+    );
+    expect(oversizedQueueStream.status).toBe(413);
+    await expect(oversizedQueueStream.json()).resolves.toMatchObject({ error: "payload_too_large", maxBytes: 1048576 });
+
+    const invalidQueueContentLength = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: { ...internalHeaders(env), "content-length": "not-a-number" },
+        body: JSON.stringify({ pullRequests: [boundedQueuePr] }),
+      },
+      env,
+    );
+    expect(invalidQueueContentLength.status).toBe(200);
+
+    const missingQueueBody = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+      },
+      env,
+    );
+    expect(missingQueueBody.status).toBe(400);
+
     const localBranchAnalysis = await app.request(
       "/v1/local/branch-analysis",
       {
@@ -1146,6 +1345,7 @@ describe("api routes", () => {
           totalTokenScore: 60,
           sourceLines: 40,
           openPrCount: 1,
+          duplicateRiskCount: 2,
         }),
       },
       env,
@@ -1154,7 +1354,12 @@ describe("api routes", () => {
     await expect(scorePreview.json()).resolves.toMatchObject({
       repoFullName: "entrius/allways-ui",
       targetType: "planned_pr",
-      result: { privateOnly: true, scoringModelSnapshotId: "scoring-1" },
+      input: { duplicateRiskCount: 2 },
+      result: {
+        privateOnly: true,
+        scoringModelSnapshotId: "scoring-1",
+        blockedBy: expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk", severity: "reducer" })]),
+      },
     });
     const noContributorScorePreview = await app.request(
       "/v1/scoring/preview",
@@ -1246,6 +1451,11 @@ describe("api routes", () => {
       repoFullName: "entrius/allways-ui",
       report: { repoFullName: "entrius/allways-ui", issues: expect.any(Array) },
     });
+
+    const { token: unrelatedIssueQualityToken } = await createSessionForGitHubUser(env, { login: "unrelated-user", id: 404 });
+    const forbiddenIssueQuality = await app.request("/v1/repos/entrius/allways-ui/issue-quality", { headers: { authorization: `Bearer ${unrelatedIssueQualityToken}` } }, env);
+    expect(forbiddenIssueQuality.status).toBe(403);
+    await expect(forbiddenIssueQuality.json()).resolves.toMatchObject({ error: "forbidden_repo" });
 
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "entrius/uncached", private: false, owner: { login: "entrius" }, default_branch: "main" });
     const computedIssueQuality = await app.request("/v1/repos/entrius/uncached/issue-quality", { headers: apiHeaders(env) }, env);
@@ -1631,6 +1841,20 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    const ownerSettingsPreview = await app.request(
+      "/v1/repos/repo-owner/owned-repo/settings-preview",
+      { method: "POST", headers: ownerHeaders, body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed" } }) },
+      ownerEnv,
+    );
+    expect(ownerSettingsPreview.status).toBe(200);
+    await expect(ownerSettingsPreview.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
+    const forbiddenVictimSettingsPreview = await app.request(
+      "/v1/repos/victim-org/secret-repo/settings-preview",
+      { method: "POST", headers: ownerHeaders, body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed" } }) },
+      ownerEnv,
+    );
+    expect(forbiddenVictimSettingsPreview.status).toBe(403);
+    await expect(forbiddenVictimSettingsPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const ownerWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: ownerHeaders }, ownerEnv);
     expect(ownerWeeklyReport.status).toBe(200);
     const ownerWeeklyReportBody = await ownerWeeklyReport.json();
@@ -1693,6 +1917,53 @@ describe("api routes", () => {
     );
     expect(forbiddenVictimPreview.status).toBe(403);
     await expect(forbiddenVictimPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    await upsertAgentCommandAnswer(ownerEnv, {
+      id: "owned-app-feedback",
+      repoFullName: "repo-owner/owned-repo",
+      issueNumber: 7,
+      command: "plan-next-work",
+      requestCommentId: 700,
+      responseCommentId: 701,
+      responseUrl: "https://github.com/repo-owner/owned-repo/pull/7#issuecomment-701",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    await upsertAgentCommandAnswer(ownerEnv, {
+      id: "victim-app-feedback",
+      repoFullName: "victim-org/secret-repo",
+      issueNumber: 42,
+      command: "plan-next-work",
+      requestCommentId: 4200,
+      responseCommentId: 4201,
+      responseUrl: "https://github.com/victim-org/secret-repo/pull/42#issuecomment-4201",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    const ownerRepoFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ answerId: "owned-app-feedback", vote: "useful" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerRepoFeedback.status).toBe(200);
+    const forbiddenVictimFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ answerId: "victim-app-feedback", vote: "not_useful" }),
+      },
+      ownerEnv,
+    );
+    expect(forbiddenVictimFeedback.status).toBe(403);
+    await expect(forbiddenVictimFeedback.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const { token: operatorToken } = await createSessionForGitHubUser(ownerEnv, { login: "jsonbored", id: 1 });
     const operatorVictimPreview = await app.request(
       "/v1/app/commands/preview",
@@ -1733,6 +2004,100 @@ describe("api routes", () => {
       repoFit: expect.any(Array),
       mcp: expect.objectContaining({ snapshot: "scoring-1" }),
     });
+
+    await persistSignalSnapshot(env, {
+      id: "rerun-pack-previous",
+      signalType: "contributor-decision-pack",
+      targetKey: "rerun-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "rerun-user",
+        generatedAt: "2026-05-27T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            recommendation: "watch",
+            priorityScore: 35,
+            queue: { openPullRequests: 0, openIssues: 1, mergedPullRequests: 0, closedUnmergedPullRequests: 0 },
+            outcome: { openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0 },
+            roleContext: { role: "contributor", maintainerLane: false },
+            scoreBlockers: [],
+          },
+        ],
+        topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", recommendation: "watch", priorityScore: 35 }],
+        pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "watch", priorityScore: 35 }],
+        cleanupFirst: [],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "complete" } },
+      } as never,
+      generatedAt: "2026-05-27T00:00:00.000Z",
+    });
+    await persistSignalSnapshot(env, {
+      id: "rerun-pack-current",
+      signalType: "contributor-decision-pack",
+      targetKey: "rerun-user",
+      payload: {
+        status: "ready",
+        source: "computed",
+        login: "rerun-user",
+        generatedAt: "2026-05-28T00:00:00.000Z",
+        stale: false,
+        freshness: "fresh",
+        rebuildEnqueued: false,
+        scoringModelSnapshotId: "scoring-1",
+        repoDecisions: [
+          {
+            repoFullName: "JSONbored/gittensory",
+            recommendation: "pursue",
+            priorityScore: 82,
+            queue: { openPullRequests: 2, openIssues: 4, mergedPullRequests: 1, closedUnmergedPullRequests: 0 },
+            outcome: { openPullRequests: 1, mergedPullRequests: 1, closedPullRequests: 0 },
+            roleContext: { role: "contributor", maintainerLane: false },
+            scoreBlockers: [{ code: "open_pr_pressure", detail: "private scoreability must stay private" }],
+          },
+        ],
+        topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", recommendation: "pursue", priorityScore: 82 }],
+        actionPortfolio: {
+          topActions: [{ repoFullName: "JSONbored/gittensory", actionKind: "open_new_direct_pr", rerunWhen: "Rerun when queue changes." }],
+        },
+        pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "pursue", priorityScore: 82 }],
+        cleanupFirst: [],
+        avoidRepos: [],
+        maintainerLaneRepos: [],
+        scoreBlockers: [],
+        dataQuality: { signalFidelity: { status: "degraded" } },
+      } as never,
+      generatedAt: "2026-05-28T00:00:00.000Z",
+    });
+    const minerWithRerunReasons = await app.request("/v1/app/miner-dashboard?login=rerun-user", { headers: apiHeaders(env) }, env);
+    expect(minerWithRerunReasons.status).toBe(200);
+    const minerWithRerunReasonsBody = (await minerWithRerunReasons.json()) as {
+      nextActions: Array<{ change?: { status: string; labels: Array<{ kind: string }> }; rerunReasons?: Array<{ group: string }> }>;
+    };
+    expect(minerWithRerunReasonsBody.nextActions[0]?.change).toMatchObject({
+      status: "changed",
+      labels: expect.arrayContaining([
+        expect.objectContaining({ kind: "repo_state" }),
+        expect.objectContaining({ kind: "validation_state" }),
+        expect.objectContaining({ kind: "policy_context" }),
+      ]),
+    });
+    expect(minerWithRerunReasonsBody.nextActions[0]?.rerunReasons?.map((group) => group.group)).toEqual([
+      "repo_state",
+      "contributor_state",
+      "validation_state",
+      "policy_context",
+    ]);
+    expect(JSON.stringify(minerWithRerunReasonsBody.nextActions[0])).not.toMatch(
+      /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i,
+    );
 
     await persistSignalSnapshot(env, {
       id: "blocker-pack",
@@ -1983,9 +2348,11 @@ describe("api routes", () => {
       runId: "api-quality-run",
       actorLogin: "quality-user",
       actionType: "prepare_pr_packet",
+      surface: "api",
       targetRepoFullName: "JSONbored/gittensory",
       targetPullNumber: null,
       targetIssueNumber: null,
+      source: "inferred",
       outcomeState: "merged",
       outcomeTargetType: "pull_request",
       outcomeRepoFullName: "JSONbored/gittensory",
@@ -2018,6 +2385,9 @@ describe("api routes", () => {
         visibility: "operator_only",
         publicExport: expect.objectContaining({ available: false }),
         totals: expect.objectContaining({ total: 1, positive: 1, negative: 0 }),
+        rollups: expect.arrayContaining([
+          expect.objectContaining({ role: "miner", surface: "api", lane: "contributor", outcomeCategory: "merged", count: 1 }),
+        ]),
         roleSurfaces: expect.arrayContaining([expect.objectContaining({ role: "miner", positive: 1 })]),
       }),
     });
@@ -3344,6 +3714,45 @@ describe("api routes", () => {
     expect(body).not.toContain("SECRET roadmap PR title");
     expect(body).not.toContain("SECRET-LAUNCH-CODE");
     expect(body).not.toContain("confidential-roadmap");
+
+    const allowedMcpContext = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "allowed-session-repo-context",
+          method: "tools/call",
+          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "allowed" } },
+        }),
+      },
+      env,
+    );
+    expect(allowedMcpContext.status).toBe(200);
+    await expect(mcpJson(allowedMcpContext)).resolves.toMatchObject({ result: { structuredContent: { repoFullName: "target-org/allowed" } } });
+
+    const siblingMcpContext = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "forbidden-session-repo-context",
+          method: "tools/call",
+          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "secret" } },
+        }),
+      },
+      env,
+    );
+    expect(siblingMcpContext.status).toBe(200);
+    const siblingMcpBody = await siblingMcpContext.text();
+    expect(siblingMcpBody).toContain("Forbidden");
+    expect(siblingMcpBody).toContain("session cannot access this repository");
+    expect(siblingMcpBody).not.toContain("SECRET roadmap PR title");
+    expect(siblingMcpBody).not.toContain("SECRET-LAUNCH-CODE");
+    expect(siblingMcpBody).not.toContain("confidential-roadmap");
   });
 
   it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {
@@ -3945,6 +4354,39 @@ describe("api routes", () => {
     expect(callPayload.result.structuredContent.repoFullName).toBe("entrius/allways-ui");
     expect(callPayload.result.content[0]?.text).not.toMatch(/reward|farming/i);
 
+    const scorePreviewCall = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "score-preview-duplicate-risk",
+          method: "tools/call",
+          params: {
+            name: "gittensory_preview_local_pr_score",
+            arguments: {
+              repoFullName: "entrius/allways-ui",
+              targetKey: "mcp-duplicate-risk",
+              sourceTokenScore: 40,
+              totalTokenScore: 60,
+              sourceLines: 42,
+              duplicateRiskCount: 2,
+            },
+          },
+        }),
+      },
+      env,
+    );
+    expect(scorePreviewCall.status).toBe(200);
+    const scorePreviewPayload = (await mcpJson(scorePreviewCall)) as {
+      result: { structuredContent: { input: { duplicateRiskCount?: number }; result: { blockedBy: Array<{ code: string; severity: string }> } } };
+    };
+    expect(scorePreviewPayload.result.structuredContent.input.duplicateRiskCount).toBe(2);
+    expect(scorePreviewPayload.result.structuredContent.result.blockedBy).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk", severity: "reducer" })]),
+    );
+
     const noTotalsContext = await app.request(
       "/mcp",
       {
@@ -4523,12 +4965,12 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.4.0" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-<redacted-actor>-cli", clientVersion: "0.4.0" }),
         expect.objectContaining({
           surface: "mcp",
           eventName: "mcp_tool_called",
           outcome: "success",
-          clientName: "gittensory-mcp-cli",
+          clientName: "gittensory-<redacted-actor>-cli",
           clientVersion: "0.4.0",
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",
@@ -5121,6 +5563,152 @@ describe("api routes", () => {
       settings: { commandAuthorization: { defaultAllowed: ["maintainer"], commandOverrides: expect.arrayContaining([expect.objectContaining({ command: "preflight", allowedRoles: ["pr_author"] })]) } },
       commandAuthorizationPreview: { commandName: "preflight", decision: { authorized: true, reason: "allowed_pr_author", matchedRole: "pr_author" } },
     });
+  });
+
+  it("persists repo-owner contribution policy snapshots through protected internal API", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+
+    const rejected = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        body: JSON.stringify({ wantedPaths: ["src/"] }),
+      },
+      env,
+    );
+    expect(rejected.status).toBe(401);
+
+    const invalidJson = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: "{",
+      },
+      env,
+    );
+    expect(invalidJson.status).toBe(400);
+    await expect(invalidJson.json()).resolves.toEqual({ error: "invalid_contribution_policy_json" });
+
+    const privateNote = "Internal: wallet and hotkey evidence stays private.";
+    const updated = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          wantedPaths: ["src/"],
+          blockedPaths: ["dist/"],
+          preferredLabels: ["bug"],
+          linkedIssuePolicy: "required",
+          issueDiscoveryPolicy: "discouraged",
+          testExpectations: ["Run npm run test:ci."],
+          maintainerNotes: [privateNote],
+          publicNotes: ["Prefer small, focused PRs."],
+        }),
+      },
+      env,
+    );
+    expect(updated.status).toBe(200);
+    const updatedPayload = (await updated.json()) as {
+      generatedAt: string;
+      policy: { generatedAt: string; publicSafe: { contributionLanes: unknown[] } };
+    };
+    expect(updatedPayload.policy.generatedAt).toBe(updatedPayload.generatedAt);
+    expect(updatedPayload).toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      focusManifest: {
+        present: true,
+        source: "api_record",
+        wantedPaths: ["src/"],
+        blockedPaths: ["dist/"],
+        maintainerNotes: [privateNote],
+      },
+      policy: {
+        repoFullName: "entrius/allways-ui",
+        present: true,
+        source: "api_record",
+        publicSafe: {
+          contributionLanes: [
+            expect.objectContaining({
+              id: "direct-pr",
+              preference: "preferred",
+              preferredPaths: ["src/"],
+              discouragedPaths: ["dist/"],
+              validationExpectations: ["Run npm run test:ci."],
+              publicNotes: ["Prefer small, focused PRs."],
+            }),
+            expect.objectContaining({
+              id: "issue-discovery",
+              preference: "discouraged",
+              preferredPaths: [],
+              discouragedPaths: ["dist/"],
+            }),
+          ],
+          labelPolicy: { preferredLabels: ["bug"], required: true },
+          validation: { expectations: ["Run npm run test:ci."], linkedIssuePolicy: "required" },
+          issueDiscoveryPolicy: "discouraged",
+          publicNotes: ["Prefer small, focused PRs."],
+        },
+        authenticated: { maintainerContext: [privateNote] },
+      },
+    });
+
+    const readback = await app.request("/v1/internal/repos/entrius/allways-ui/contribution-policy", { headers: internalHeaders(env) }, env);
+    expect(readback.status).toBe(200);
+    await expect(readback.json()).resolves.toMatchObject({
+      policy: {
+        publicSafe: { summary: expect.stringMatching(/direct PRs/i) },
+        authenticated: { maintainerContext: [privateNote] },
+      },
+    });
+
+    const readiness = await app.request("/v1/repos/entrius/allways-ui/registration-readiness", { headers: apiHeaders(env) }, env);
+    expect(readiness.status).toBe(200);
+    const readinessPayload = (await readiness.json()) as { policyReadiness: Record<string, unknown> };
+    expect(readinessPayload.policyReadiness).toMatchObject({
+      source: "focus_manifest_policy",
+      present: true,
+    });
+    expect(readinessPayload.policyReadiness).not.toHaveProperty("ownerContext");
+    expect(JSON.stringify(readinessPayload)).not.toContain(privateNote);
+    expect(JSON.stringify(readinessPayload)).not.toMatch(/privateNoteCount|blockedPathCount|validationExpectationCount/i);
+    expect(JSON.stringify(readinessPayload)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+
+    const malformed = await app.request(
+      "/v1/internal/repos/entrius/allways-ui/contribution-policy",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          wantedPaths: "src/",
+          preferredLabels: [123, "bug"],
+          linkedIssuePolicy: "sometimes",
+          publicNotes: ["reward estimate", "Keep scope focused."],
+        }),
+      },
+      env,
+    );
+    expect(malformed.status).toBe(200);
+    const malformedPayload = (await malformed.json()) as {
+      focusManifest: { warnings: string[] };
+      policy: { publicSafe: Record<string, unknown> };
+    };
+    expect(malformedPayload.focusManifest).toMatchObject({
+      present: true,
+      wantedPaths: [],
+      preferredLabels: ["bug"],
+      linkedIssuePolicy: "optional",
+    });
+    expect(malformedPayload.focusManifest.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("wantedPaths"),
+        expect.stringContaining("preferredLabels"),
+        expect.stringContaining("linkedIssuePolicy"),
+      ]),
+    );
+    expect(JSON.stringify(malformedPayload.policy.publicSafe)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
   });
 });
 

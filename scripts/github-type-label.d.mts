@@ -42,12 +42,13 @@ export function ensureRepositoryLabel(options: {
   label: TypeLabel;
   fetchImpl?: typeof fetch;
 }): Promise<{ created: boolean; reason?: string }>;
-export function extractClosingIssueNumbers(text: unknown): number[];
+export function extractClosingIssueNumbers(text: unknown, options?: { maxCount?: number }): number[];
 export function fetchReferencedIssues(options: {
   apiUrl?: string;
   repository: string;
   token: string;
   body: unknown;
+  maxReferences?: number;
   fetchImpl?: typeof fetch;
 }): Promise<IssueReference[]>;
 export function applyTypeLabel(options: {

@@ -109,7 +109,8 @@ export function routeClassForPath(path: string): RateLimitClass {
     path.includes("/internal/jobs/generate-signal-snapshots") ||
     path.includes("/internal/jobs/build-contributor-decision-packs") ||
     path.includes("/internal/jobs/refresh-upstream-drift") ||
-    path.includes("/internal/jobs/file-upstream-drift-issues")
+    path.includes("/internal/jobs/file-upstream-drift-issues") ||
+    path.includes("/internal/queue-intelligence")
   ) {
     return "expensive";
   }
@@ -117,7 +118,10 @@ export function routeClassForPath(path: string): RateLimitClass {
 }
 
 async function rateLimitKey(c: Context<{ Bindings: Env }>, routeClass: RateLimitClass): Promise<string> {
-  const pathGroup = c.req.path.replace(/\/\d+(?=\/|$)/g, "/:number").replace(/\/[^/]+\/[^/]+\/pulls\//, "/:owner/:repo/pulls/");
+  const pathGroup = c.req.path
+    .replace(/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/, "/v1/public/github/repos/:owner/:repo/stats")
+    .replace(/\/\d+(?=\/|$)/g, "/:number")
+    .replace(/\/[^/]+\/[^/]+\/pulls\//, "/:owner/:repo/pulls/");
   const identity = await rateLimitIdentity(c);
   return `${routeClass}:${pathGroup}:${identity}`;
 }

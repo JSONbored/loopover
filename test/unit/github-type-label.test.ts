@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyTypeLabel,
   classifyTypeLabel,
@@ -8,6 +10,7 @@ import {
   fetchReferencedIssues,
   getTypeLabelDecision,
   readCurrentLabels,
+  main,
 } from "../../scripts/github-type-label.mjs";
 
 describe("GitHub type label classifier", () => {
@@ -55,12 +58,13 @@ describe("GitHub type label classifier", () => {
     ).toMatchObject({ action: "skip", reason: "issue-is-pull-request" });
   });
 
-  it("applies bug labels to pull_request_target payloads directly", () => {
+  it("applies bug labels to trusted pull_request_target payloads", () => {
     expect(
       getTypeLabelDecision("pull_request_target", {
         pull_request: {
           number: 42,
           title: "fix(mcp): repair metadata boundary checks",
+          author_association: "MEMBER",
           labels: [{ name: "size:S" }],
         },
       }),
@@ -72,11 +76,52 @@ describe("GitHub type label classifier", () => {
     });
   });
 
+  it("skips labels for untrusted fork pull_request_target payloads", () => {
+    expect(
+      getTypeLabelDecision("pull_request_target", {
+        pull_request: {
+          number: 42,
+          title: "fix(mcp): repair metadata boundary checks",
+          author_association: "NONE",
+          head: { repo: { full_name: "driveby/gittensory", fork: true } },
+          base: { repo: { full_name: "JSONbored/gittensory" } },
+          labels: [{ name: "size:S" }],
+        },
+      }),
+    ).toEqual({
+      action: "skip",
+      reason: "untrusted-pull-request-author",
+      number: 42,
+      title: "fix(mcp): repair metadata boundary checks",
+    });
+  });
+
+  it("applies labels for same-repository pull_request_target payloads", () => {
+    expect(
+      getTypeLabelDecision("pull_request_target", {
+        pull_request: {
+          number: 44,
+          title: "fix(mcp): repair metadata boundary checks",
+          author_association: "NONE",
+          head: { repo: { full_name: "JSONbored/gittensory" } },
+          base: { repo: { full_name: "JSONbored/gittensory" } },
+          labels: [{ name: "size:S" }],
+        },
+      }),
+    ).toEqual({
+      action: "apply",
+      label: "gittensor:bug",
+      number: 44,
+      title: "fix(mcp): repair metadata boundary checks",
+    });
+  });
+
   it("requires a linked feature issue before labeling feature pull requests", () => {
     const payload = {
       pull_request: {
         number: 43,
         title: "feat(mcp): add metadata boundary checks",
+        author_association: "COLLABORATOR",
         labels: [{ name: "size:S" }],
       },
     };
@@ -105,7 +150,7 @@ describe("GitHub type label classifier", () => {
 
     expect(workflow).toMatch(/pull_request_target:/);
     expect(workflow).toMatch(/issues:\s+write/);
-    expect(workflow).toMatch(/pull-requests:\s+write/);
+    expect(workflow).not.toMatch(/pull-requests:\s+write/);
     expect(workflow).toContain("Checkout base branch");
     expect(workflow).toContain("ref: ${{ github.event.repository.default_branch }}");
     expect(workflow).toContain("persist-credentials: false");
@@ -250,6 +295,121 @@ describe("GitHub type label classifier", () => {
 
     expect(issues).toEqual([{ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] }]);
     expect(calls).toEqual(["GET https://api.github.com/repos/JSONbored/gittensory/issues/12"]);
+  });
+
+  it("caps closing issue references before authenticated fetches", async () => {
+    const calls: string[] = [];
+    const issues = await fetchReferencedIssues({
+      repository: "JSONbored/gittensory",
+      token: "token",
+      body: "Closes #1 fixes #2 resolves #3 closes #4 fixes #5 resolves #6",
+      maxReferences: 3,
+      fetchImpl: async (input, init) => {
+        calls.push(`${init?.method ?? "GET"} ${input.toString()}`);
+        return Response.json({ number: calls.length, title: "[Feature]: accepted", labels: [{ name: "feature" }] });
+      },
+    });
+
+    expect(issues).toHaveLength(3);
+    expect(calls).toEqual([
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/1",
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/2",
+      "GET https://api.github.com/repos/JSONbored/gittensory/issues/3",
+    ]);
+  });
+
+  it("ignores missing referenced issues instead of failing the workflow", async () => {
+    const issues = await fetchReferencedIssues({
+      repository: "JSONbored/gittensory",
+      token: "token",
+      body: "Closes #12 fixes #404",
+      fetchImpl: async (input) => {
+        if (input.toString().endsWith("/issues/404")) return new Response("not found", { status: 404 });
+        return Response.json({ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] });
+      },
+    });
+
+    expect(issues).toEqual([{ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] }]);
+  });
+
+  it("does not fetch issue references for untrusted fork pull requests", async () => {
+    const originalEnv = { ...process.env };
+    const originalFetch = globalThis.fetch;
+    const eventDir = mkdtempSync(join(tmpdir(), "type-label-"));
+    const eventPath = join(eventDir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          number: 102,
+          title: "feat(mcp): add metadata boundary checks",
+          author_association: "NONE",
+          head: { repo: { full_name: "driveby/gittensory", fork: true } },
+          base: { repo: { full_name: "JSONbored/gittensory" } },
+          body: "Closes #12",
+          labels: [],
+        },
+      }),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => {
+      throw new Error("fetch should not run for untrusted fork pull requests");
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    process.env.GITHUB_EVENT_NAME = "pull_request_target";
+    process.env.GITHUB_REPOSITORY = "JSONbored/gittensory";
+    process.env.GITHUB_TOKEN = "token";
+
+    try {
+      await main();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("type-label: skipped untrusted-pull-request-author");
+    } finally {
+      process.env = originalEnv;
+      globalThis.fetch = originalFetch;
+      log.mockRestore();
+      rmSync(eventDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fetch issue references for non-feature pull requests", async () => {
+    const originalEnv = { ...process.env };
+    const originalFetch = globalThis.fetch;
+    const eventDir = mkdtempSync(join(tmpdir(), "type-label-"));
+    const eventPath = join(eventDir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          number: 101,
+          title: "chore: update documentation",
+          author_association: "MEMBER",
+          body: "Closes #1 fixes #2 resolves #3",
+          labels: [],
+        },
+      }),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => {
+      throw new Error("fetch should not run for non-feature pull requests");
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    process.env.GITHUB_EVENT_NAME = "pull_request_target";
+    process.env.GITHUB_REPOSITORY = "JSONbored/gittensory";
+    process.env.GITHUB_TOKEN = "token";
+
+    try {
+      await main();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("type-label: skipped no-type-label");
+    } finally {
+      process.env = originalEnv;
+      globalThis.fetch = originalFetch;
+      log.mockRestore();
+      rmSync(eventDir, { recursive: true, force: true });
+    }
   });
 
   it("creates a missing auto reward label before applying it", async () => {

@@ -4,6 +4,7 @@
 
 ## Scope
 
+- [ ] The PR title follows `type(scope): short summary` Conventional Commit format, for example `fix(api): restore profile access checks`.
 - [ ] This PR is focused and does not mix unrelated backend, UI, MCP, docs, dependency, and deploy changes.
 - [ ] This follows `CONTRIBUTING.md` and does not reintroduce GitHub Pages, VitePress, `site/`, or `CNAME`.
 - [ ] I linked an issue, or this is small enough that the summary explains why an issue is not needed.
@@ -35,8 +36,17 @@ If any required check was skipped, explain why:
 - [ ] Auth, cookie, CORS, GitHub App, Cloudflare, or session changes include negative-path tests.
 - [ ] API/OpenAPI/MCP behavior is updated and tested where needed.
 - [ ] UI changes use live API data or real empty/error/loading states, not production mock/demo fallbacks.
-- [ ] Visible UI changes include screenshots or a short recording.
+- [ ] Visible UI changes include a `UI Evidence` section below with JPG/JPEG or PNG screenshots arranged as organized, captioned, clickable thumbnails. SVG screenshots are not used as review evidence. Review-only screenshots or recordings are not committed to the repository.
 - [ ] Public docs/changelogs are updated where needed; changelogs are only edited for release-prep PRs.
+
+## UI Evidence
+
+Required for visible UI, frontend, docs, or extension changes. Attach GitHub-hosted JPG/JPEG or PNG screenshots here; SVG screenshots are not accepted as review evidence. Use a compact table/grid of clickable thumbnails with a short state/title such as "Loaded state", "Empty state", "Error state", "Mobile layout", or "PR sidebar". Prefer annotated screenshots with a colored box, outline, arrow, or highlighter showing what changed. Recordings can be supplemental, but screenshots are still expected for visual review. Do not commit review-only screenshots, recordings, or `docs/review-evidence/**` files.
+
+| State / title                         | JPG/PNG evidence                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Loaded state                          | `<a href="FULL_URL.png"><img src="FULL_URL.png" alt="Loaded state" width="240"></a>` |
+| Empty/error/mobile state, if relevant |                                                                                      |
 
 ## Notes
 

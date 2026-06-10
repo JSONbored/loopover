@@ -35,6 +35,19 @@ describe("burden forecast builder", () => {
     expect(forecast.forecast.duplicateTrend).toBe(4);
   });
 
+  it("classifies a small unreviewable queue as medium burden via queue-growth risk", () => {
+    const repo = repoFixture("owner/growth");
+    // 5 open PRs with no linked issues, updated 10 days ago: not recent (> horizon 7) and not stale (< 30).
+    // Low projectedReviewLoad, but queueGrowthRisk is driven up by the unreviewable count.
+    const open = Array.from({ length: 5 }, (_, index) => pr(repo.fullName, index + 1, `open ${index}`, { linkedIssues: [], updatedAt: daysAgo(10) }));
+    const forecast = buildBurdenForecast(repo, [], open, buildCollisionReport(repo.fullName, [], open), 7);
+    expect(forecast.forecast.projectedReviewLoad).toBeLessThan(25);
+    expect(forecast.forecast.queueGrowthRisk).toBeGreaterThanOrEqual(25);
+    expect(forecast.forecast.queueGrowthRisk).toBeLessThan(55);
+    // queueGrowthRisk must drive the medium tier even when projectedReviewLoad is low.
+    expect(forecast.level).toBe("medium");
+  });
+
   it("surfaces a stale PR trend in the forecast findings", () => {
     const repo = repoFixture("owner/stale");
     const stalePrs = Array.from({ length: 4 }, (_, index) => pr(repo.fullName, index + 1, `stale ${index}`, { updatedAt: daysAgo(31), linkedIssues: [] }));
@@ -48,6 +61,23 @@ describe("loadOrComputeBurdenForecastResponse", () => {
   it("returns null when the repo is unknown", async () => {
     const env = createTestEnv();
     const response = await loadOrComputeBurdenForecastResponse(env, "ghost/missing");
+    expect(response).toBeNull();
+  });
+
+  it("does not expose an orphaned cached forecast for an unknown repo", async () => {
+    const env = createTestEnv();
+    await upsertBurdenForecast(env, {
+      repoFullName: "ghost/private-repo",
+      payload: {
+        repoFullName: "ghost/private-repo",
+        level: "critical",
+        summary: "orphaned private queue fixture",
+      } as unknown as Record<string, JsonValue>,
+      generatedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    const response = await loadOrComputeBurdenForecastResponse(env, "ghost/private-repo");
+
     expect(response).toBeNull();
   });
 
@@ -92,6 +122,13 @@ describe("loadOrComputeBurdenForecastResponse", () => {
 
   it("treats malformed cached forecast timestamps as stale", async () => {
     const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, {
+      name: "malformed-time",
+      full_name: "owner/malformed-time",
+      private: false,
+      owner: { login: "owner" },
+      default_branch: "main",
+    });
     await upsertBurdenForecast(env, {
       repoFullName: "owner/malformed-time",
       payload: { repoFullName: "owner/malformed-time", level: "medium", summary: "bad timestamp fixture" } as unknown as Record<string, JsonValue>,

@@ -688,14 +688,16 @@ function buildRepoDecision(args: {
     mergedPullRequests: args.totals?.mergedPullRequestsTotal ?? args.syncState?.recentMergedPullRequestsCount ?? 0,
     closedUnmergedPullRequests: args.totals?.closedUnmergedPullRequestsTotal ?? 0,
   };
-  const baseEmissionShare = config?.emissionShare ?? 0;
   // Lane shares are a split of the OSS *mining* pool (emissionShare * OSS_EMISSION_SHARE), matching
-  // preview.ts laneMath (directPrSlice/issueDiscoverySlice) and reward-risk.ts. The raw emissionShare
-  // field stays raw (it mirrors laneMath.repoEmissionShare).
+  // preview.ts laneMath (directPrSlice/issueDiscoverySlice) and reward-risk.ts. Both shares are clamped
+  // to [0, 1] exactly as preview.ts does, since registry config is untrusted and unclamped at ingestion;
+  // without this an out-of-range issueDiscoveryShare > 1 produces a negative directPrShare.
+  const baseEmissionShare = clamp(config?.emissionShare ?? 0, 0, 1);
+  const issueDiscoveryShare = clamp(config?.issueDiscoveryShare ?? 0, 0, 1);
   const rewardUpside = {
     emissionShare: round(baseEmissionShare),
-    directPrShare: round(baseEmissionShare * ossEmissionShare * (1 - (config?.issueDiscoveryShare ?? 0))),
-    issueDiscoveryShare: round(baseEmissionShare * ossEmissionShare * (config?.issueDiscoveryShare ?? 0)),
+    directPrShare: round(baseEmissionShare * ossEmissionShare * (1 - issueDiscoveryShare)),
+    issueDiscoveryShare: round(baseEmissionShare * ossEmissionShare * issueDiscoveryShare),
     maintainerCut: round(config?.maintainerCut ?? 0),
   };
   const blockers = scoreBlockersFor(args.repo.fullName, lane.lane, args.roleContext, args.outcome);
@@ -735,8 +737,6 @@ function buildRepoDecision(args: {
   const manifestSummary = manifest && manifest.present ? buildRepoDecisionManifestSummary(manifest) : undefined;
   const manifestReasons = manifest && manifest.present ? buildRepoDecisionManifestReasons(manifest) : { whyThisHelps: [], nextActions: [], publicNextActions: [], riskReasons: [] };
   const repoOutcomePatterns = summarizeRepoOutcomePatterns(args.repoOutcomePatterns);
-  const outcomeRiskLines = args.roleContext.maintainerLane ? [] : (repoOutcomePatterns?.riskPatterns ?? []).slice(0, 2).map((pattern) => pattern.detail);
-  const outcomeSuccessLines = recommendation === "pursue" ? (repoOutcomePatterns?.successPatterns ?? []).slice(0, 1).map((pattern) => pattern.detail) : [];
   const recommendationFeedbackRiskLines = args.roleContext.maintainerLane ? [] : recommendationFeedbackRiskReasons(recommendationFeedback);
   const recommendationFeedbackSuccessLines = recommendationFeedbackWhyThisHelps(recommendationFeedback);
   const tradeoffSummary = buildRepoDecisionTradeoffSummary({
@@ -749,8 +749,8 @@ function buildRepoDecision(args: {
     manifestSummary,
     blockers,
   });
-  const finalRiskReasons = [...new Set([...riskReasons, ...manifestReasons.riskReasons, ...outcomeRiskLines, ...recommendationFeedbackRiskLines])];
-  const finalWhyThisHelps = [...new Set([...whyThisHelpsFor(recommendation, copyContext), ...manifestReasons.whyThisHelps, ...outcomeSuccessLines, ...recommendationFeedbackSuccessLines])];
+  const finalRiskReasons = [...new Set([...riskReasons, ...manifestReasons.riskReasons, ...recommendationFeedbackRiskLines])];
+  const finalWhyThisHelps = [...new Set([...whyThisHelpsFor(recommendation, copyContext), ...manifestReasons.whyThisHelps, ...recommendationFeedbackSuccessLines])];
   const finalNextActions = [...new Set([...nextActionsFor(recommendation, copyContext), ...manifestReasons.nextActions])];
   const finalPublicNextActions = [...new Set([...publicNextActionsFor(recommendation, copyContext), ...manifestReasons.publicNextActions])];
   const counterfactualReasons = buildRepoDecisionCounterfactualReasons({
@@ -1077,6 +1077,7 @@ function emptyRecommendationOutcomeFeedback(login: string): AgentRecommendationO
       negative: 0,
       maintainerLaneTotal: 0,
     },
+    sources: { explicit: 0, inferred: 0 },
     states: [],
     repos: [],
     maintainerLane: { total: 0, states: [] },

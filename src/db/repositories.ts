@@ -61,6 +61,7 @@ import type {
   AgentContextSnapshotRecord,
   AgentRecommendationOutcomeConfidence,
   AgentRecommendationOutcomeRecord,
+  AgentRecommendationOutcomeSource,
   AgentRecommendationOutcomeState,
   AgentRecommendationOutcomeSummary,
   AgentRecommendationOutcomeTargetType,
@@ -385,8 +386,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
-      linkedIssueGateMode: "advisory",
-      duplicatePrGateMode: "advisory",
+      linkedIssueGateMode: "block",
+      duplicatePrGateMode: "block",
       qualityGateMode: "advisory",
       qualityGateMinScore: null,
       autoLabelEnabled: true,
@@ -435,8 +436,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
-    linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
-    duplicatePrGateMode: settings.duplicatePrGateMode ?? "advisory",
+    linkedIssueGateMode: settings.linkedIssueGateMode ?? "block",
+    duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
     qualityGateMode: settings.qualityGateMode ?? "advisory",
     qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
@@ -1144,8 +1145,8 @@ export async function recordProductUsageEvent(
     targetKey: redactProductUsageActor(boundedProductUsageField(event.targetKey, 256), actorRedactor),
     outcome: normalizeProductUsageOutcome(event.outcome),
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
-    clientName: boundedProductUsageField(event.clientName, 80),
-    clientVersion: boundedProductUsageField(event.clientVersion, 80),
+    clientName: redactProductUsageActor(boundedProductUsageField(event.clientName, 80), actorRedactor),
+    clientVersion: redactProductUsageActor(boundedProductUsageField(event.clientVersion, 80), actorRedactor),
     metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
@@ -1735,6 +1736,14 @@ function recommendationOutcomeTotals(
     positive: accepted + merged + improved,
     negative: closed + rejected + stale + ignored,
     maintainerLaneTotal,
+  };
+}
+
+function recommendationOutcomeSources(outcomes: AgentRecommendationOutcomeRecord[]): AgentRecommendationOutcomeSummary["sources"] {
+  const explicit = outcomes.filter((outcome) => outcome.source === "explicit").length;
+  return {
+    explicit,
+    inferred: outcomes.length - explicit,
   };
 }
 
@@ -2648,6 +2657,10 @@ export async function listAgentContextSnapshots(env: Env, runId: string): Promis
 }
 
 export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentRecommendationOutcomeRecord): Promise<AgentRecommendationOutcomeRecord> {
+  const source = normalizeAgentRecommendationOutcomeSource(outcome.source);
+  const existing = source === "inferred" ? await getAgentRecommendationOutcome(env, outcome.actionId) : null;
+  if (existing?.source === "explicit") return existing;
+
   const now = outcome.updatedAt ?? nowIso();
   const values = {
     id: outcome.id ?? `outcome:${outcome.actionId}`,
@@ -2660,6 +2673,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
     targetRepoFullName: outcome.targetRepoFullName ? boundedString(outcome.targetRepoFullName, 200) : null,
     targetPullNumber: outcome.targetPullNumber ?? null,
     targetIssueNumber: outcome.targetIssueNumber ?? null,
+    source,
     outcomeState: outcome.outcomeState,
     outcomeTargetType: outcome.outcomeTargetType,
     outcomeRepoFullName: outcome.outcomeRepoFullName ? boundedString(outcome.outcomeRepoFullName, 200) : null,
@@ -2687,6 +2701,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
         targetRepoFullName: values.targetRepoFullName,
         targetPullNumber: values.targetPullNumber,
         targetIssueNumber: values.targetIssueNumber,
+        source: values.source,
         outcomeState: values.outcomeState,
         outcomeTargetType: values.outcomeTargetType,
         outcomeRepoFullName: values.outcomeRepoFullName,
@@ -2744,11 +2759,13 @@ export async function getAgentRecommendationOutcomeSummary(
   const maintainerStates = outcomeStateBuckets(maintainer);
   const repos = summarizeRecommendationOutcomeRepos(outcomes);
   const totals = recommendationOutcomeTotals(nonMaintainer, maintainer.length);
+  const sources = recommendationOutcomeSources(nonMaintainer);
   return {
     login: actorLogin,
     generatedAt,
     windowDays,
     totals,
+    sources,
     states,
     repos,
     maintainerLane: {
@@ -3448,6 +3465,7 @@ function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutco
     targetRepoFullName: row.targetRepoFullName,
     targetPullNumber: row.targetPullNumber,
     targetIssueNumber: row.targetIssueNumber,
+    source: parseAgentRecommendationOutcomeSource(row.source),
     outcomeState: parseAgentRecommendationOutcomeState(row.outcomeState),
     outcomeTargetType: parseAgentRecommendationOutcomeTargetType(row.outcomeTargetType),
     outcomeRepoFullName: row.outcomeRepoFullName,
@@ -4045,7 +4063,13 @@ function isProductUsageUsefulMaintainerEvent(event: ProductUsageEventRecord): bo
 }
 
 function mcpClientVersionForEvent(event: ProductUsageEventRecord): string {
-  return event.clientVersion ?? productUsageMetadataString(event, "packageVersion") ?? "unknown";
+  return aggregateMcpClientVersion(event.clientVersion ?? productUsageMetadataString(event, "packageVersion"));
+}
+
+function aggregateMcpClientVersion(version: string | null | undefined): string {
+  if (!version) return "unknown";
+  const semver = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+.*)?$/.exec(version.trim());
+  return semver?.[1] ?? "unknown";
 }
 
 function mcpCompatibilityStatusForEvent(event: ProductUsageEventRecord): "current" | "stale" | "incompatible" | "unknown" {
@@ -4280,6 +4304,14 @@ function parseAgentSafetyClass(value: string): AgentSafetyClass {
 function parseAgentRecommendationOutcomeState(value: string): AgentRecommendationOutcomeState {
   if (value === "accepted" || value === "rejected" || value === "ignored" || value === "stale" || value === "merged" || value === "closed" || value === "improved") return value;
   return "ignored";
+}
+
+function normalizeAgentRecommendationOutcomeSource(value: AgentRecommendationOutcomeSource | null | undefined): AgentRecommendationOutcomeSource {
+  return value === "explicit" ? "explicit" : "inferred";
+}
+
+function parseAgentRecommendationOutcomeSource(value: string): AgentRecommendationOutcomeSource {
+  return value === "explicit" ? "explicit" : "inferred";
 }
 
 function parseAgentRecommendationOutcomeTargetType(value: string): AgentRecommendationOutcomeTargetType {

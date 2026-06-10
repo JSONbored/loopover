@@ -113,7 +113,8 @@ gittensory-mcp preflight --login your-login --json`}
       <ol>
         <li>
           <strong>Install the GitHub App.</strong> Choose repositories and approve permissions —
-          default posture is silence. See <Link to="/docs/github-app">GitHub App setup</Link>.
+          default posture is silence. Start with the{" "}
+          <Link to="/docs/github-app">GitHub App first-10-minutes checklist</Link>.
         </li>
         <li>
           <strong>Configure settings.</strong> Opt in to at most one configured label and one sticky
@@ -122,7 +123,8 @@ gittensory-mcp preflight --login your-login --json`}
         </li>
         <li>
           <strong>Preview the public surface.</strong> Dry-run what would be written to GitHub
-          without mutating state.
+          without mutating state. Keep <strong>Gittensory Context</strong> advisory; require{" "}
+          <strong>Gittensory Gate</strong> only after blocking rules are explicitly configured.
           <CodeBlock
             lang="http"
             code={`POST /v1/repos/:owner/:repo/settings-preview

@@ -22,32 +22,34 @@ export type BurdenForecastResponse = {
 };
 
 export async function loadOrComputeBurdenForecastResponse(env: Env, fullName: string): Promise<BurdenForecastResponse | null> {
-  const cached = await getBurdenForecast(env, fullName);
+  const repo = await getRepository(env, fullName);
+  if (!repo) return null;
+
+  const repoFullName = repo.fullName;
+  const cached = await getBurdenForecast(env, repoFullName);
   if (cached) {
     const ageMs = forecastAgeMs(cached.generatedAt);
     return {
       status: "ready",
       source: "snapshot",
-      repoFullName: fullName,
+      repoFullName,
       generatedAt: cached.generatedAt,
       ageSeconds: Math.max(0, Math.floor(ageMs / 1000)),
       freshness: ageMs > BURDEN_FORECAST_MAX_AGE_MS ? "stale" : "fresh",
       report: cached.payload as unknown as BurdenForecast,
     };
   }
-  const repo = await getRepository(env, fullName);
-  if (!repo) return null;
   const [issues, pullRequests, recentMergedPullRequests] = await Promise.all([
-    listIssueSignalSample(env, fullName),
-    listOpenPullRequests(env, fullName),
-    listRecentMergedPullRequests(env, fullName),
+    listIssueSignalSample(env, repoFullName),
+    listOpenPullRequests(env, repoFullName),
+    listRecentMergedPullRequests(env, repoFullName),
   ]);
-  const collisions = buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
+  const collisions = buildCollisionReport(repoFullName, issues, pullRequests, recentMergedPullRequests);
   const report = buildBurdenForecast(repo, issues, pullRequests, collisions, 30);
   return {
     status: "ready",
     source: "computed",
-    repoFullName: fullName,
+    repoFullName,
     generatedAt: report.generatedAt,
     ageSeconds: 0,
     freshness: "fresh",

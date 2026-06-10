@@ -1,7 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
 import { DocsPage } from "@/components/site/docs-page";
-import { Callout } from "@/components/site/primitives";
+import { CodeBlock, Callout } from "@/components/site/primitives";
+
+const GITHUB_APP_INSTALL_URL = "https://github.com/apps/gittensory/installations/new";
 
 export const Route = createFileRoute("/docs/github-app")({
   head: () => ({
@@ -33,10 +35,58 @@ function GithubApp() {
       description="Install Gittensory on a repo, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
     >
       <h2>Install</h2>
+      <p>
+        The hosted deployment uses the GitHub App slug <code>gittensory</code>. Start from{" "}
+        <a href={GITHUB_APP_INSTALL_URL} target="_blank" rel="noreferrer">
+          the GitHub App install flow
+        </a>
+        , then choose only the repositories you want Gittensory to see.
+      </p>
       <ol>
-        <li>Open the Gittensory GitHub App listing.</li>
-        <li>Choose the repositories you want to grant access to.</li>
-        <li>Approve the requested permissions (issues, pulls, checks, metadata).</li>
+        <li>Open the install flow and pick the owning account.</li>
+        <li>
+          Choose selected repositories instead of all repositories unless you are onboarding an org.
+        </li>
+        <li>
+          Approve <code>Metadata: read</code>, <code>Pull requests: read</code>, and{" "}
+          <code>Issues: write</code>. Enable <code>Checks: write</code> when Context or Gate check
+          runs are enabled.
+        </li>
+        <li>
+          Keep webhook events enabled for <code>issues</code>, <code>issue_comment</code>,{" "}
+          <code>pull_request</code>, and <code>repository</code>.
+        </li>
+      </ol>
+
+      <h2>First 10 minutes</h2>
+      <ol>
+        <li>Install the app on one test repository first.</li>
+        <li>
+          Confirm the installation appears in the private API, then open its health record.
+          <CodeBlock
+            lang="http"
+            code={`GET /v1/installations
+GET /v1/installations/:id/health
+GET /v1/installations/:id/repair`}
+          />
+        </li>
+        <li>
+          Check repo readiness before enabling public output.
+          <CodeBlock lang="http" code={`GET /v1/repos/:owner/:repo/registration-readiness`} />
+        </li>
+        <li>
+          Preview the exact public surface without posting to GitHub.
+          <CodeBlock
+            lang="http"
+            code={`POST /v1/repos/:owner/:repo/settings-preview
+# body: sample PR fields + desired comment/check/gate settings`}
+          />
+        </li>
+        <li>
+          Leave <strong>Gittensory Context</strong> advisory while you tune copy and settings. Make{" "}
+          <strong>Gittensory Gate</strong> required only after the repo explicitly enables blocking
+          rules.
+        </li>
       </ol>
 
       <h2>Default posture</h2>
@@ -59,6 +109,12 @@ function GithubApp() {
         protection. <strong>Gittensory Gate</strong> is opt-in and can be made required after a repo
         owner chooses blocking rules.
       </p>
+      <p>
+        Branch protection should require <strong>Gittensory Gate</strong> only after the repo has
+        verified installation health, previewed the public panel, and configured at least one{" "}
+        <code>block</code> rule. Do not require <strong>Gittensory Context</strong>; it is there to
+        inform reviewers, not stop merges.
+      </p>
 
       <h2>Gate modes</h2>
       <p>
@@ -80,6 +136,17 @@ function GithubApp() {
       <p>
         After installing, verify your install health from the API. The readiness endpoint separates
         service health from data quality.
+      </p>
+      <p>
+        If the install route changes, check the deployed <code>GITHUB_APP_SLUG</code> before
+        publishing setup copy. For the hosted app, the expected slug is <code>gittensory</code>.
+      </p>
+
+      <p>
+        New maintainers should continue with{" "}
+        <Link to="/docs/maintainer-workflow">Maintainer workflow</Link> or the{" "}
+        <Link to="/docs/beta-onboarding">beta onboarding checklist</Link> after the health endpoint
+        reports clean permissions and events.
       </p>
 
       <Callout variant="safety">

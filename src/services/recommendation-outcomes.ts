@@ -248,6 +248,7 @@ function baseOutcome(
     targetRepoFullName: action.targetRepoFullName,
     targetPullNumber: action.targetPullNumber,
     targetIssueNumber: action.targetIssueNumber,
+    source: "inferred",
     outcomeState: outcome.outcomeState,
     outcomeTargetType: outcome.outcomeTargetType,
     outcomeRepoFullName: outcome.outcomeRepoFullName,
@@ -279,12 +280,29 @@ function pullRequestOutcomeState(
   const mergedAt = timestamp(pr.mergedAt);
   if ((Number.isFinite(mergedAt) && mergedAt >= actionAt) || (!pr.mergedAt && pr.state === "merged" && updatedAt >= actionAt)) return "merged";
   if (pr.state === "closed" && updatedAt >= actionAt) return "closed";
-  const positiveOpenSignal = pr.reviewDecision === "APPROVED" || pr.mergeableState === "clean";
-  if (action.targetPullNumber && positiveOpenSignal && updatedAt >= actionAt) return "improved";
-  if (action.targetPullNumber && pr.reviewDecision === "CHANGES_REQUESTED" && updatedAt >= actionAt) return "rejected";
+  if (action.targetPullNumber && updatedAt >= actionAt) {
+    if (hasChangesRequestedReview(pr)) return "rejected";
+    if (hasPositiveOpenPullRequestSignal(pr)) return "improved";
+  }
   if (createdAt >= actionAt || updatedAt > actionAt) return "accepted";
   if (actionAgeMs >= staleAfterMs) return "stale";
   return "ignored";
+}
+
+function hasChangesRequestedReview(pr: PullRequestRecord): boolean {
+  return normalizedReviewDecision(pr) === "CHANGES_REQUESTED";
+}
+
+function hasPositiveOpenPullRequestSignal(pr: PullRequestRecord): boolean {
+  return normalizedReviewDecision(pr) === "APPROVED" || normalizedMergeableState(pr) === "clean";
+}
+
+function normalizedReviewDecision(pr: PullRequestRecord): string | null {
+  return pr.reviewDecision ? pr.reviewDecision.toUpperCase() : null;
+}
+
+function normalizedMergeableState(pr: PullRequestRecord): string | null {
+  return pr.mergeableState ? pr.mergeableState.toLowerCase() : null;
 }
 
 function issueOutcomeState(issue: IssueRecord, actionAt: number, actionAgeMs: number, staleAfterMs: number): AgentRecommendationOutcomeState {

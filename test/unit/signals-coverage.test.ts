@@ -34,6 +34,7 @@ import {
   buildPullRequestReviewability,
   buildRepoRewardRisk,
 } from "../../src/signals/reward-risk";
+import { PREFLIGHT_LIMITS } from "../../src/signals/preflight-limits";
 import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
   ContributorRepoStatRecord,
@@ -143,6 +144,28 @@ describe("signal coverage edge cases", () => {
     );
     expect(profile.registeredRepoActivity.dominantLabels).toContain("real-label");
     expect(profile.registeredRepoActivity.dominantLabels).not.toContain("stat-only-label");
+    expect(profile.registeredRepoActivity.dominantLabels).toContain("uncached-label");
+  });
+
+  it("treats malformed official snapshot repo names as absent during label dedupe", () => {
+    const snapshot = officialSnapshot();
+    snapshot.repositories[0]!.repoFullName = { malformed: true } as unknown as string;
+    snapshot.pullRequests = [{ repoFullName: "owner/readiness", number: 1, title: "Fix it", state: "MERGED", label: "snapshot-label", score: 1, baseScore: 1, tokenScore: 1 }];
+
+    const profile = buildContributorProfile(
+      "jsonbored",
+      { login: "jsonbored", topLanguages: [], source: "github" },
+      [],
+      [],
+      [
+        { login: "jsonbored", repoFullName: { malformed: true } as unknown as string, pullRequests: 1, mergedPullRequests: 0, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["malformed-stat-label"] },
+        { login: "jsonbored", repoFullName: "owner/uncached", pullRequests: 1, mergedPullRequests: 0, openPullRequests: 0, issues: 0, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["uncached-label"] },
+      ],
+      snapshot,
+    );
+
+    expect(profile.registeredRepoActivity.dominantLabels).toContain("snapshot-label");
+    expect(profile.registeredRepoActivity.dominantLabels).not.toContain("malformed-stat-label");
     expect(profile.registeredRepoActivity.dominantLabels).toContain("uncached-label");
   });
 
@@ -582,6 +605,35 @@ describe("signal coverage edge cases", () => {
     expect(preflight.findings.map((finding) => finding.code)).not.toContain("possible_duplicate_work");
   });
 
+  it("bounds preflight body scanning for linked issue extraction", () => {
+    const directRepo = repo("owner/direct");
+    const linkedInsideLimit = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bounded body scan",
+        body: `Fixes #99 ${"x".repeat(PREFLIGHT_LIMITS.bodyChars + 100)}`,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+    const linkedPastLimit = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bounded body scan",
+        body: `${"x".repeat(PREFLIGHT_LIMITS.bodyChars)} Fixes #100`,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+
+    expect(linkedInsideLimit.linkedIssues).toContain(99);
+    expect(linkedPastLimit.linkedIssues).not.toContain(100);
+  });
+
   it("sanitizes public PR comments and supports minimal public signal level", () => {
     const directRepo = repo("owner/direct");
     const prRecord = pr(directRepo.fullName, 55, "Fix cache", { authorLogin: "miner", linkedIssues: [] });
@@ -1017,7 +1069,7 @@ describe("signal coverage edge cases", () => {
     expect(comment).toContain("> | Linked issue | ✅ No-issue rationale | PR body explains why no issue is linked. | No action. |");
     expect(comment).toContain("> | Review load | ❌ 8/20 |");
     expect(comment).toContain("> | Validation evidence | ❌ 5/25 | Cached preflight status is hold. | Fix blocker. |");
-    expect(comment).toContain("> | Open PR queue | ❌ 3/10 |");
+    expect(comment).toContain("> | Open PR queue | ❌ 3/10 | 16 open PR(s), 0 likely reviewable, 16 unlinked. | Expect slower review. |");
     expect(comment).toContain("> | Gate result | ⚠️ Skipped | PR closed before full evaluation. | No action. |");
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
     expect(comment).toContain("[Gittensor profile](https://gittensor.io/miners/details?githubId=49853598)");
@@ -1088,6 +1140,80 @@ describe("signal coverage edge cases", () => {
     expect(scoreComponent(weak, "validation")).toMatchObject({ score: 12, evidence: "Cached preflight status needs author follow-up." });
     expect(scoreComponent(weak, "pr_state")).toMatchObject({ score: 3, evidence: "PR state is closed.", action: "No action." });
     expect(scoreComponent(weak, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
+  });
+
+  it("keeps the public PR queue row coherent for zero and sampled queue evidence", () => {
+    const directRepo = repo("owner/queue-panel");
+    const currentPr = pr(directRepo.fullName, 43, "Fix queue display", {
+      body: "Fixes #7\n\nValidation: npm test",
+      linkedIssues: [7],
+    });
+    const preflight = buildPreflightResult(
+      { repoFullName: directRepo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, labels: currentPr.labels, linkedIssues: currentPr.linkedIssues },
+      directRepo,
+      [],
+      [currentPr],
+    );
+    const zeroEvidenceCriticalQueue: QueueHealth = {
+      ...queueHealthFixture(directRepo.fullName, "critical"),
+      signals: {
+        ...queueHealthFixture(directRepo.fullName, "critical").signals,
+        openPullRequests: 0,
+        unlinkedPullRequests: 0,
+        stalePullRequests: 0,
+        ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 },
+        likelyReviewablePullRequests: 0,
+      },
+    };
+    const zeroScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: zeroEvidenceCriticalQueue,
+    });
+    expect(scoreComponent(zeroScore, "queue_pressure")).toMatchObject({
+      score: 10,
+      evidence: "0 open PR(s), 0 likely reviewable.",
+      action: "No action.",
+    });
+
+    const staleQueuePullRequests = [44, 45, 46, 47].map((number) =>
+      pr(directRepo.fullName, number, `Stale unlinked queue item ${number}`, {
+        updatedAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+    const criticalBurdenQueue = buildQueueHealth(
+      directRepo,
+      [],
+      staleQueuePullRequests,
+      buildCollisionReport(directRepo.fullName, [], staleQueuePullRequests),
+    );
+    expect(criticalBurdenQueue).toMatchObject({ level: "critical", burdenScore: 100 });
+
+    const criticalBurdenScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: criticalBurdenQueue,
+    });
+    expect(scoreComponent(criticalBurdenScore, "queue_pressure")).toMatchObject({
+      score: 3,
+      evidence: "4 open PR(s), 0 likely reviewable, 4 stale, 4 unlinked.",
+      action: "Expect slower review.",
+    });
+
+    const sampledQueue = buildQueueHealth(
+      directRepo,
+      [],
+      [currentPr],
+      buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      { openPullRequests: 25 },
+    );
+    const sampledScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: sampledQueue,
+    });
+    expect(scoreComponent(sampledScore, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
+    expect(scoreComponent(sampledScore, "queue_pressure").evidence).toContain("1 likely reviewable in 1 cached PR(s); full queue reviewability is sampled");
   });
 
   it("filters disabled linked-issue findings and uses fallback next steps when the panel is clean", () => {

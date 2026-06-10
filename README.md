@@ -9,20 +9,42 @@
 
 Gittensory is a deterministic control plane for Gittensor OSS contribution work.
 
-It gives contributors and maintainers structured signals before work turns into noisy PRs: official Gittensor context, repo queue health, collision risk, branch preflight, scoreability, maintainer packet context, and public-safe PR guidance.
+It helps contributors plan cleaner work, helps maintainers review with less public noise, and keeps private scoring, wallet, hotkey, and reviewability context out of public GitHub output.
 
-It is not a Gittensor explorer, public leaderboard, reward-farming bot, or autonomous PR agent.
+It is not a Gittensor explorer, public leaderboard, reward-farming bot, wallet dashboard, or autonomous PR agent.
 
-## Product Map
+## Privacy Boundary
 
-| Surface | What it is | Start here |
-| --- | --- | --- |
-| MCP package | Local stdio tools for Codex, Claude Desktop, Cursor, and other MCP clients. | [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients) |
-| Web app | Operator UI, docs, API browser, roadmap, and workflow views. | [gittensory.aethereal.dev](https://gittensory.aethereal.dev/) |
-| Worker API | Protected Cloudflare Worker API with OpenAPI metadata. | [OpenAPI JSON](https://gittensory-api.aethereal.dev/openapi.json) |
-| GitHub App | Quiet maintainer automation for installed repos. | [GitHub App docs](https://gittensory.aethereal.dev/docs/github-app) |
+Gittensory keeps sensitive context private by default.
 
-## Install MCP
+- MCP local branch analysis sends metadata, not source contents.
+- Public GitHub comments never include wallet, hotkey, reward estimate, private ranking, raw trust score, or reviewability context.
+- Optional AI summaries receive compact deterministic signal bundles, not raw source code.
+- Maintainer packets and scoring context stay on protected API/MCP surfaces.
+
+See [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-security) for the full boundary.
+
+## Start Here
+
+| Audience                  | Start                                                                    | Useful next links                                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Miners and contributors   | [Quickstart](https://gittensory.aethereal.dev/docs/quickstart)           | [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients), [Miner workflow](https://gittensory.aethereal.dev/docs/miner-workflow), [Scoreability](https://gittensory.aethereal.dev/docs/scoreability) |
+| Maintainers               | [GitHub App](https://gittensory.aethereal.dev/docs/github-app)           | [Maintainer workflow](https://gittensory.aethereal.dev/docs/maintainer-workflow), [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-security)                                                  |
+| Repo owners and operators | [Beta onboarding](https://gittensory.aethereal.dev/docs/beta-onboarding) | [Upstream drift](https://gittensory.aethereal.dev/docs/upstream-drift), [Troubleshooting](https://gittensory.aethereal.dev/docs/troubleshooting), [Roadmap](https://gittensory.aethereal.dev/roadmap)             |
+| Agent authors             | [Agents](https://gittensory.aethereal.dev/agents)                        | [API browser](https://gittensory.aethereal.dev/api), [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients)                                                                                        |
+
+## Surfaces
+
+| Surface           | Link                                                                                                                               |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Website           | [gittensory.aethereal.dev](https://gittensory.aethereal.dev/)                                                                      |
+| Docs              | [gittensory.aethereal.dev/docs](https://gittensory.aethereal.dev/docs)                                                             |
+| MCP package       | [@jsonbored/gittensory-mcp](https://www.npmjs.com/package/@jsonbored/gittensory-mcp)                                               |
+| API               | [API browser](https://gittensory.aethereal.dev/api) and [OpenAPI JSON](https://gittensory-api.aethereal.dev/openapi.json)          |
+| GitHub App        | [Install](https://github.com/apps/gittensory/installations/new) and [setup docs](https://gittensory.aethereal.dev/docs/github-app) |
+| Browser extension | [Extension page](https://gittensory.aethereal.dev/extension)                                                                       |
+
+## MCP Install
 
 ```sh
 npm install -g @jsonbored/gittensory-mcp@latest
@@ -39,6 +61,8 @@ gittensory-mcp init-client --print claude
 gittensory-mcp init-client --print cursor
 ```
 
+For full editor setup and stdio configuration, use [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients).
+
 Run base-agent commands:
 
 ```sh
@@ -46,26 +70,6 @@ gittensory-mcp agent plan --login jsonbored --json
 gittensory-mcp agent packet --login jsonbored --json
 gittensory-mcp agent status <run-id> --json
 ```
-
-## What It Helps With
-
-| For contributors | For maintainers |
-| --- | --- |
-| Pick cleaner repos and issues before opening work. | See private reviewability and queue context without public noise. |
-| Preflight local branches without uploading source contents. | Keep GitHub App output public-safe and low-volume. |
-| Understand score blockers, collision risk, and PR cleanup order. | Detect lane, label, config, sync, and maintainer-friction problems. |
-| Draft better public PR packets from deterministic signals. | Separate useful Gittensor work from review-load churn. |
-
-## Privacy Boundary
-
-Gittensory keeps sensitive context private by default.
-
-- MCP local branch analysis sends metadata, not source contents.
-- Public GitHub comments never include wallet, hotkey, reward estimate, private ranking, raw trust score, or reviewability context.
-- Optional AI summaries receive compact deterministic signal bundles, not raw source code.
-- Maintainer packets and scoring context are protected API/MCP surfaces.
-
-See [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-security) for the full boundary.
 
 ## Local Development
 
@@ -75,15 +79,6 @@ npm run cf-typegen
 npm run db:migrate:local
 npm run dev
 ```
-
-Frontend:
-
-```sh
-npm run ui:dev
-npm run ui:build
-```
-
-Normal validation:
 
 ```sh
 npm run test:ci
@@ -96,19 +91,20 @@ npm run test:release
 npm run test:release:mcp
 ```
 
-## Links
+Frontend:
 
-| Need | Link |
-| --- | --- |
-| Docs | [gittensory.aethereal.dev/docs](https://gittensory.aethereal.dev/docs) |
-| Quickstart | [docs/quickstart](https://gittensory.aethereal.dev/docs/quickstart) |
-| Branch analysis | [docs/branch-analysis](https://gittensory.aethereal.dev/docs/branch-analysis) |
-| Scoreability | [docs/scoreability](https://gittensory.aethereal.dev/docs/scoreability) |
-| Troubleshooting | [docs/troubleshooting](https://gittensory.aethereal.dev/docs/troubleshooting) |
-| API | [openapi.json](https://gittensory-api.aethereal.dev/openapi.json) |
-| npm | [@jsonbored/gittensory-mcp](https://www.npmjs.com/package/@jsonbored/gittensory-mcp) |
+```sh
+npm run ui:dev
+npm run ui:build
+```
+
+## Project Links
+
+| Need         | Link                               |
+| ------------ | ---------------------------------- |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Security | [SECURITY.md](SECURITY.md) |
-| Support | [SUPPORT.md](SUPPORT.md) |
+| Security     | [SECURITY.md](SECURITY.md)         |
+| Support      | [SUPPORT.md](SUPPORT.md)           |
+| Changelog    | [CHANGELOG.md](CHANGELOG.md)       |
 
 Normal feature/fix PRs do not edit changelogs. Changelogs are release-prep artifacts.

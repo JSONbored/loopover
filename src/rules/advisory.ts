@@ -385,8 +385,8 @@ function isEvaluationBlocker(code: string): boolean {
 }
 
 function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean {
-  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode) === "block";
-  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode) === "block";
+  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "block") === "block";
+  if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block") === "block";
   return false;
 }
 

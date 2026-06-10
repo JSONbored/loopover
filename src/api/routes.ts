@@ -100,7 +100,7 @@ import {
   refreshInstallationHealthForInstallation,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
-import { fetchPublicContributorProfile } from "../github/public";
+import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/public";
 import {
   buildPublicAgentCommandComment,
   buildMaintainerQueueDigest,
@@ -128,9 +128,15 @@ import {
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildAndPersistContributorDecisionPack,
+  CONTRIBUTOR_DECISION_PACK_SIGNAL,
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
 } from "../services/decision-pack";
+import {
+  buildMinerDashboardNextActions,
+  buildMinerDashboardRepoFit,
+  previousDecisionPackFromSnapshots,
+} from "../services/miner-dashboard-recommendations";
 import {
   buildStaticControlPanelRoleSummary,
   loadControlPanelAccessScope,
@@ -142,6 +148,7 @@ import {
   MINIMUM_SUPPORTED_MCP_VERSION,
 } from "../services/mcp-compatibility";
 import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
+import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
 import {
   buildWeeklyValueReport,
   formatWeeklyValueReportMarkdown,
@@ -152,6 +159,7 @@ import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -181,10 +189,17 @@ import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-mo
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
-import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { compileFocusManifestPolicy } from "../signals/focus-manifest";
+import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
+import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
 import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
-import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type InstallationHealthSummary } from "../signals/registration-readiness";
+import {
+  buildGittensorConfigRecommendation,
+  buildRegistrationReadiness,
+  type InstallationHealthSummary,
+  type RegistrationReadinessReport,
+} from "../signals/registration-readiness";
 import { fileUpstreamDriftIssues, loadUpstreamStatus, refreshUpstreamDrift, registryHyperparameterDriftWarningsForRepo } from "../upstream/ruleset";
 import type {
   BountyLifecycleEventRecord,
@@ -242,6 +257,44 @@ async function recordRouteProductUsage(
   }).catch(() => undefined);
 }
 
+const QUEUE_INTELLIGENCE_MAX_BODY_BYTES = 1024 * 1024;
+const QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS = 250;
+const QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH = 100;
+const QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH = 300;
+const QUEUE_INTELLIGENCE_MAX_BODY_LENGTH = 4000;
+const QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES = 25;
+
+function parsePositiveInt(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+async function readRequestBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {
+  const stream = request.body;
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
+
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
 const PR_VISIBILITY_SKIP_REASONS = [
@@ -254,21 +307,21 @@ const PR_VISIBILITY_SKIP_REASONS = [
 ] as const satisfies readonly PublicSurfaceSkipReason[];
 
 const preflightSchema = z.object({
-  repoFullName: z.string().min(3),
-  contributorLogin: z.string().min(1).optional(),
-  title: z.string().min(1),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  changedFiles: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  tests: z.array(z.string()).optional(),
-  authorAssociation: z.string().optional(),
+  repoFullName: z.string().min(3).max(PREFLIGHT_LIMITS.repoFullNameChars),
+  contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
+  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
+  changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  linkedIssues: z.array(z.number().int().positive()).max(PREFLIGHT_LIMITS.linkedIssues).optional(),
+  tests: z.array(z.string().max(PREFLIGHT_LIMITS.testChars)).max(PREFLIGHT_LIMITS.tests).optional(),
+  authorAssociation: z.string().max(PREFLIGHT_LIMITS.authorAssociationChars).optional(),
 });
 
 const localDiffPreflightSchema = preflightSchema.extend({
   changedLineCount: z.number().int().min(0).optional(),
-  testFiles: z.array(z.string()).optional(),
-  commitMessage: z.string().optional(),
+  testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
 });
 
 const skippedPrAuditQuerySchema = z
@@ -384,6 +437,7 @@ const scorePreviewSchema = z.object({
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
+  duplicateRiskCount: z.number().int().min(0).optional(),
   fixedBaseScore: z.number().min(0).optional(),
   metadataOnly: z.boolean().default(false),
   pendingMergedPrCount: z.number().int().min(0).optional(),
@@ -431,8 +485,8 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
-  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
-  duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("block"),
+  duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("block"),
   qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
@@ -449,6 +503,12 @@ const repositorySettingsSchema = z.object({
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
     })
     .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
+});
+
+const contributorIssueDraftGenerateSchema = z.object({
+  dryRun: z.boolean().optional().default(true),
+  create: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(20).optional().default(5),
 });
 
 const settingsPreviewSchema = z.object({
@@ -558,6 +618,17 @@ export function createApp() {
   app.get("/v1/mcp/compatibility", (c) => c.json(buildMcpCompatibilityMetadata(nowIso())));
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
+
+  app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
+    try {
+      const stats = await fetchPublicRepoStats(c.env, c.req.param("owner"), c.req.param("repo"));
+      c.header("Cache-Control", stats.stale ? "public, max-age=60, stale-while-revalidate=3600" : "public, max-age=600, stale-while-revalidate=86400");
+      return c.json(stats);
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid_github_repo") return c.json({ error: "invalid_github_repo" }, 400);
+      return c.json({ error: "github_repo_stats_unavailable" }, 503);
+    }
+  });
 
   app.get("/v1/auth/github/start", async (c) => {
     try {
@@ -788,11 +859,12 @@ export function createApp() {
     if (!login) return c.json({ error: "login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
-    const [serving, scoring, upstreamDrift, runs] = await Promise.all([
+    const [serving, scoring, upstreamDrift, runs, decisionPackSnapshots] = await Promise.all([
       loadContributorDecisionPackForServing(c.env, login),
       getLatestScoringModelSnapshot(c.env),
       loadUpstreamStatus(c.env),
       listAgentRunsForActor(c.env, login, 5),
+      listSignalSnapshots(c.env, CONTRIBUTOR_DECISION_PACK_SIGNAL, login),
     ]);
     if (serving.kind === "needs_refresh") {
       return c.json({
@@ -808,21 +880,17 @@ export function createApp() {
       });
     }
     const pack = serving.pack;
+    const previousPack = previousDecisionPackFromSnapshots(pack, decisionPackSnapshots);
     return c.json({
       status: "ready",
       login,
       generatedAt: pack.generatedAt,
       source: pack.source,
       freshness: pack.freshness,
-      nextActions: pack.topActions ?? [],
+      nextActions: buildMinerDashboardNextActions(pack, previousPack),
       blockers: groupDecisionPackBlockers(pack.scoreBlockers ?? []),
       projections: buildProjectionRows(pack),
-      repoFit: [
-        ...(pack.pursueRepos ?? []).map((repo) => ({ ...repo, lane: "pursue" })),
-        ...(pack.cleanupFirst ?? []).map((repo) => ({ ...repo, lane: "cleanup-first" })),
-        ...(pack.maintainerLaneRepos ?? []).map((repo) => ({ ...repo, lane: "maintainer-lane" })),
-        ...(pack.avoidRepos ?? []).map((repo) => ({ ...repo, lane: "avoid" })),
-      ],
+      repoFit: buildMinerDashboardRepoFit(pack, previousPack),
       dataQuality: pack.dataQuality,
       mcp: { snapshot: scoring?.id ?? null, drift: upstreamDrift.status, lastRun: runs[0]?.updatedAt ?? null },
     });
@@ -1058,6 +1126,11 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_command_feedback", issues: parsed.error.issues }, 400);
     const answer = await getAgentCommandAnswer(c.env, parsed.data.answerId);
     if (!answer) return c.json({ error: "command_answer_not_found" }, 404);
+    const repo = await getRepository(c.env, answer.repoFullName);
+    if (identity.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, answer.repoFullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
     const actorLogin = identity.actor;
     await recordAgentCommandFeedback(c.env, {
       answerId: answer.id,
@@ -1476,6 +1549,14 @@ export function createApp() {
 
   app.get("/v1/repos/:owner/:repo/issue-quality", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific repo guards. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const repo = identity.kind === "session" ? await getRepository(c.env, fullName) : null;
+    if (identity.kind === "session") {
+      const forbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (forbidden) return forbidden;
+    }
     const response = await buildIssueQualityResponse(c.env, fullName);
     if (!response) return c.json({ error: "issue_quality_not_found", repoFullName: fullName }, 404);
     return c.json(response);
@@ -1489,6 +1570,29 @@ export function createApp() {
   app.get("/v1/repos/:owner/:repo/gittensor-config-recommendation", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await buildGittensorConfigRecommendationResponse(c.env, fullName));
+  });
+
+  app.get("/v1/app/self-dogfood/registration-pack", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const fullName = resolveSelfDogfoodRepoFullName(c.env);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    return c.json(await buildSelfDogfoodRegistrationPackResponse(c.env));
+  });
+
+  app.get("/v1/repos/:owner/:repo/self-dogfood-registration-pack", async (c) => {
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    if (fullName.toLowerCase() !== resolveSelfDogfoodRepoFullName(c.env).toLowerCase()) {
+      return c.json({ error: "self_dogfood_repo_only", repoFullName: resolveSelfDogfoodRepoFullName(c.env) }, 403);
+    }
+    return c.json(await buildSelfDogfoodRegistrationPackResponse(c.env));
   });
 
   app.get("/v1/repos/:owner/:repo/onboarding-pack/preview", async (c) => {
@@ -1510,18 +1614,50 @@ export function createApp() {
     return c.json(response);
   });
 
+  app.post("/v1/repos/:owner/:repo/contributor-issue-drafts/generate", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    const body = await c.req.json().catch(() => null);
+    if (body === null) return c.json({ error: "invalid_json" }, 400);
+    const parsed = contributorIssueDraftGenerateSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_contributor_issue_draft_request", issues: parsed.error.issues }, 400);
+    if (parsed.data.create && parsed.data.dryRun !== false) {
+      return c.json({ error: "explicit_create_requires_dry_run_false" }, 400);
+    }
+    return c.json(
+      await generateContributorIssueDrafts(c.env, fullName, {
+        dryRun: parsed.data.dryRun,
+        create: parsed.data.create,
+        limit: parsed.data.limit,
+        requestedBy: identity?.kind === "session" ? identity.actor : "api",
+      }),
+    );
+  });
+
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     return c.json(await getRepositorySettings(c.env, fullName));
   });
 
   app.post("/v1/repos/:owner/:repo/settings-preview", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const body = (await c.req.json().catch(() => null)) ?? {};
     const parsed = settingsPreviewSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_settings_preview_request", issues: parsed.error.issues }, 400);
-    const [repo, settings, issues, pullRequests] = await Promise.all([
-      getRepository(c.env, fullName),
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const unauthorized = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (unauthorized) return unauthorized;
+    }
+    const [settings, issues, pullRequests] = await Promise.all([
       getRepositorySettings(c.env, fullName),
       listIssues(c.env, fullName),
       listPullRequests(c.env, fullName),
@@ -2134,13 +2270,29 @@ export function createApp() {
   });
 
   app.post("/v1/internal/queue-intelligence", async (c) => {
-    const body = await c.req.json().catch(() => null);
-    if (!body || !Array.isArray(body.pullRequests)) {
+    const contentLength = parsePositiveInt(c.req.header("content-length"));
+    if (contentLength !== null && contentLength > QUEUE_INTELLIGENCE_MAX_BODY_BYTES) {
+      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_MAX_BODY_BYTES }, 413);
+    }
+
+    const rawBody = await readRequestBodyWithLimit(c.req.raw, QUEUE_INTELLIGENCE_MAX_BODY_BYTES);
+    if (rawBody === null) {
+      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_MAX_BODY_BYTES }, 413);
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      body = null;
+    }
+    if (!body || typeof body !== "object" || !Array.isArray((body as { pullRequests?: unknown }).pullRequests)) {
       return c.json({ error: "invalid_request", detail: "pullRequests array required" }, 400);
     }
+    const queueBody = body as { pullRequests: unknown[]; repoContext?: unknown };
     const prSchema = z.object({
       number: z.number().int().positive(),
-      author: z.string(),
+      author: z.string().max(QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH),
       authorRole: z.enum(["first-time", "contributor", "maintainer"] as [AuthorRole, ...AuthorRole[]]),
       isConfirmedMiner: z.boolean(),
       linkedIssue: z.object({ qualityScore: z.number().min(0).max(1) }).nullable(),
@@ -2148,9 +2300,9 @@ export function createApp() {
       isStale: z.boolean(),
       additions: z.number().int().nonnegative(),
       deletions: z.number().int().nonnegative(),
-      title: z.string(),
-      body: z.string(),
-      duplicateCandidates: z.array(z.number().int().positive()),
+      title: z.string().max(QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH),
+      body: z.string().max(QUEUE_INTELLIGENCE_MAX_BODY_LENGTH),
+      duplicateCandidates: z.array(z.number().int().positive()).max(QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES),
       createdAt: z.string().datetime(),
       lastUpdatedAt: z.string().datetime(),
     });
@@ -2159,10 +2311,10 @@ export function createApp() {
       avgReviewTimeDays: z.number().nonnegative(),
       maintainerWorkload: z.number().min(0).max(1),
     });
-    const prsResult = z.array(prSchema).safeParse(body.pullRequests);
+    const prsResult = z.array(prSchema).max(QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS).safeParse(queueBody.pullRequests);
     if (!prsResult.success) return c.json({ error: "invalid_request", issues: prsResult.error.issues }, 400);
-    const repoContext = repoContextSchema.safeParse(body.repoContext).success
-      ? repoContextSchema.parse(body.repoContext)
+    const repoContext = repoContextSchema.safeParse(queueBody.repoContext).success
+      ? repoContextSchema.parse(queueBody.repoContext)
       : { totalOpenPRs: 0, avgReviewTimeDays: 0, maintainerWorkload: 0 };
     const result = await analyzePRQueue(prsResult.data, repoContext);
     const recommendations: Record<number, string> = {};
@@ -2199,6 +2351,32 @@ export function createApp() {
         commandAuthorization: normalizeCommandAuthorizationPolicy(parsed.data.commandAuthorization).policy,
       }),
     );
+  });
+
+  app.get("/v1/internal/repos/:owner/:repo/contribution-policy", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const focusManifest = await loadRepoFocusManifest(c.env, fullName, { fetcher: async () => null });
+    const generatedAt = nowIso();
+    return c.json({
+      repoFullName: fullName,
+      generatedAt,
+      focusManifest,
+      policy: compileFocusManifestPolicy(fullName, focusManifest, { generatedAt }),
+    });
+  });
+
+  app.post("/v1/internal/repos/:owner/:repo/contribution-policy", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (body === null) return c.json({ error: "invalid_contribution_policy_json" }, 400);
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const focusManifest = await upsertRepoFocusManifest(c.env, fullName, body, "api_record");
+    const generatedAt = nowIso();
+    return c.json({
+      repoFullName: fullName,
+      generatedAt,
+      focusManifest,
+      policy: compileFocusManifestPolicy(fullName, focusManifest, { generatedAt }),
+    });
   });
 
   return app;
@@ -2898,6 +3076,24 @@ function stripOwnerPolicyContext<T extends { ownerContext: unknown }>(policyRead
   return publicPolicyReadiness;
 }
 
+async function buildSelfDogfoodRegistrationPackResponse(env: Env) {
+  const fullName = resolveSelfDogfoodRepoFullName(env);
+  const [readinessPayload, recommendationPayload] = await Promise.all([
+    buildRegistrationReadinessResponse(env, fullName),
+    buildGittensorConfigRecommendationResponse(env, fullName),
+  ]);
+  const { dataQuality: _readinessQuality, ...registrationReadiness } = readinessPayload;
+  const { dataQuality: _recommendationQuality, ...gittensorConfigRecommendation } = recommendationPayload;
+  return {
+    ...buildSelfDogfoodRegistrationPack({
+      repoFullName: fullName,
+      registrationReadiness: registrationReadiness as RegistrationReadinessReport,
+      gittensorConfigRecommendation,
+    }),
+    dataQuality: _readinessQuality,
+  };
+}
+
 async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {
   /* v8 ignore start -- Config recommendation route-level shaping over covered signal helpers. */
   const intelligence = await buildRepoIntelligenceResponse(env, fullName);
@@ -3372,13 +3568,28 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
+  if (isIssueQualityPath(path)) return true;
+  if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
+  if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
 }
 
+function isRepoSettingsPreviewPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/settings-preview$/.test(path);
+}
+
 function isRepoOnboardingPackPreviewPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/onboarding-pack\/preview$/.test(path);
+}
+
+function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/contributor-issue-drafts\/generate$/.test(path);
+}
+
+function isIssueQualityPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/issue-quality$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
@@ -3496,6 +3707,7 @@ function toIsoQueryDate(value: string): string | undefined {
 function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
   if (path === "/v1/mcp/compatibility") return false;
+  if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   if (path.startsWith("/v1/auth/")) return false;

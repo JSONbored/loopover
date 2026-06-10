@@ -7,6 +7,7 @@ const PRIORITY_LABEL = "gittensor:priority";
 const AUTO_TYPE_LABELS = new Set([BUG_LABEL, FEATURE_LABEL]);
 const SCORING_LABELS = new Set([BUG_LABEL, FEATURE_LABEL, PRIORITY_LABEL]);
 const FEATURE_SOURCE_LABELS = new Set(["feature", FEATURE_LABEL]);
+const MAX_CLOSING_ISSUE_REFERENCES = 5;
 const LABEL_DEFINITIONS = {
   [BUG_LABEL]: { color: "d73a4a", description: "Gittensor-scored bug fix" },
   [FEATURE_LABEL]: { color: "0e8a16", description: "Gittensor-scored feature linked to a feature issue" },
@@ -56,6 +57,9 @@ export function getTypeLabelDecision(eventName, payload, options = {}) {
   if (eventName === "pull_request_target") {
     const pullRequest = payload.pull_request;
     if (!pullRequest || typeof pullRequest !== "object") return { action: "skip", reason: "missing-pull-request" };
+    if (!isTrustedPullRequestForLabeling(pullRequest)) {
+      return { action: "skip", reason: "untrusted-pull-request-author", number: numberOrUndefined(pullRequest.number), title: stringOrEmpty(pullRequest.title) };
+    }
 
     const decision = classifyPullRequestLabel(pullRequest, options.issueReferences ?? []);
     if (!decision.label) return { action: "skip", reason: decision.reason, number: numberOrUndefined(pullRequest.number), title: stringOrEmpty(pullRequest.title) };
@@ -134,23 +138,27 @@ export async function ensureRepositoryLabel({ apiUrl = "https://api.github.com",
   throw new Error(`Failed to create repository label ${label}: ${created.status} ${createdText}`);
 }
 
-export function extractClosingIssueNumbers(text) {
+export function extractClosingIssueNumbers(text, { maxCount = MAX_CLOSING_ISSUE_REFERENCES } = {}) {
   const body = String(text ?? "");
+  const limit = Number.isInteger(maxCount) && maxCount > 0 ? maxCount : 0;
+  if (limit === 0) return [];
+
   const numbers = new Set();
   const closingRef = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
   for (const match of body.matchAll(closingRef)) {
     const number = Number.parseInt(match[1], 10);
     if (Number.isSafeInteger(number) && number > 0) numbers.add(number);
+    if (numbers.size >= limit) break;
   }
   return [...numbers];
 }
 
-export async function fetchReferencedIssues({ apiUrl = "https://api.github.com", repository, token, body, fetchImpl = fetch }) {
+export async function fetchReferencedIssues({ apiUrl = "https://api.github.com", repository, token, body, maxReferences = MAX_CLOSING_ISSUE_REFERENCES, fetchImpl = fetch }) {
   const [owner, repo, ...extraParts] = String(repository ?? "").split("/");
   if (!owner || !repo || extraParts.length > 0) throw new Error("GITHUB_REPOSITORY must be owner/repo");
   if (!token) throw new Error("GITHUB_TOKEN is required");
 
-  const numbers = extractClosingIssueNumbers(body);
+  const numbers = extractClosingIssueNumbers(body, { maxCount: maxReferences });
   const headers = {
     accept: "application/vnd.github+json",
     authorization: `Bearer ${token}`,
@@ -163,6 +171,7 @@ export async function fetchReferencedIssues({ apiUrl = "https://api.github.com",
     const response = await fetchImpl(issueUrl, { method: "GET", headers });
     if (!response.ok) {
       const text = await response.text();
+      if (response.status === 404) continue;
       throw new Error(`Failed to read referenced issue #${number}: ${response.status} ${text}`);
     }
     issues.push(await response.json());
@@ -197,15 +206,14 @@ export async function main() {
 
   const payload = JSON.parse(await readFile(eventPath, "utf8"));
   const eventName = process.env.GITHUB_EVENT_NAME ?? "";
-  const issueReferences =
-    eventName === "pull_request_target"
-      ? await fetchReferencedIssues({
-          apiUrl: process.env.GITHUB_API_URL,
-          repository: process.env.GITHUB_REPOSITORY ?? "",
-          token: process.env.GITHUB_TOKEN ?? "",
-          body: payload.pull_request?.body ?? "",
-        })
-      : [];
+  const issueReferences = shouldFetchReferencedIssues(eventName, payload)
+    ? await fetchReferencedIssues({
+        apiUrl: process.env.GITHUB_API_URL,
+        repository: process.env.GITHUB_REPOSITORY ?? "",
+        token: process.env.GITHUB_TOKEN ?? "",
+        body: payload.pull_request?.body ?? "",
+      })
+    : [];
   const decision = getTypeLabelDecision(eventName, payload, { issueReferences });
   if (decision.action === "skip") {
     console.log(`type-label: skipped ${decision.reason}`);
@@ -232,6 +240,24 @@ function numberOrUndefined(value) {
 
 function stringOrEmpty(value) {
   return typeof value === "string" ? value : "";
+}
+
+function shouldFetchReferencedIssues(eventName, payload) {
+  if (eventName !== "pull_request_target") return false;
+  const pullRequest = payload?.pull_request;
+  if (!pullRequest || typeof pullRequest !== "object") return false;
+  if (!isTrustedPullRequestForLabeling(pullRequest)) return false;
+  if (hasScoringLabel(normalizeLabels(pullRequest.labels))) return false;
+  return isFeatureTitle(String(pullRequest.title ?? "").trim());
+}
+
+function isTrustedPullRequestForLabeling(pullRequest) {
+  const association = String(pullRequest.author_association ?? "").toUpperCase();
+  if (["OWNER", "MEMBER", "COLLABORATOR"].includes(association)) return true;
+
+  const headRepository = pullRequest.head?.repo?.full_name;
+  const baseRepository = pullRequest.base?.repo?.full_name;
+  return typeof headRepository === "string" && headRepository.length > 0 && headRepository === baseRepository;
 }
 
 function classifyPullRequestLabel(pullRequest, issueReferences) {

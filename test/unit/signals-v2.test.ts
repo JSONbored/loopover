@@ -151,12 +151,15 @@ describe("v2 signal builders", () => {
     const sampledIssues = issues.slice(0, 1);
     const sampledPullRequests = pullRequests.slice(0, 1);
     const report = buildCollisionReport(repo.fullName, sampledIssues, sampledPullRequests, []);
-    const health = buildQueueHealth(repo, sampledIssues, sampledPullRequests, report, { openIssues: 2912, openPullRequests: 169 });
+    const health = buildQueueHealth(repo, sampledIssues, sampledPullRequests, report, { openIssues: 2912, openPullRequests: 169, likelyReviewablePullRequests: 42 });
     const intake = buildContributorIntakeHealth(repo, sampledIssues, sampledPullRequests, repo.fullName, report, { openIssues: 2912, openPullRequests: 169 });
     const lane = buildMaintainerLaneReport(repo, sampledIssues, sampledPullRequests, repo.fullName, report, { openIssues: 2912, openPullRequests: 169 });
 
     expect(health.signals.openIssues).toBe(2912);
     expect(health.signals.openPullRequests).toBe(169);
+    expect(health.signals.likelyReviewablePullRequests).toBe(42);
+    expect(health.signals.cachedOpenPullRequests).toBe(1);
+    expect(health.signals.likelyReviewablePullRequestsSource).toBe("authoritative");
     expect(intake.queueHealth.signals.openIssues).toBe(2912);
     expect(lane.queueHealth.signals.openPullRequests).toBe(169);
   });
@@ -170,6 +173,7 @@ describe("v2 signal builders", () => {
     expect(issueOnly.signals.openPullRequests).toBe(pullRequests.length);
     expect(prOnly.signals.openIssues).toBe(issues.length);
     expect(prOnly.signals.openPullRequests).toBe(25);
+    expect(prOnly.signals.likelyReviewablePullRequestsSource).toBe("sampled_cache");
   });
 
   it("adds queue age buckets and likely-reviewable counts", () => {
@@ -520,6 +524,28 @@ describe("v2 signal builders", () => {
     );
     expect(lifecycle.states.map((state) => [state.number, state.state])).toEqual(expect.arrayContaining([[23, "valid_solved"], [24, "duplicate"], [25, "closed_not_solved"]]));
 
+    const selfSolvedLifecycle = buildIssueDiscoveryLifecycleReport(
+      { ...repo, registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.5 } },
+      [{ repoFullName: repo.fullName, number: 26, title: "Self solved", state: "closed", authorLogin: "selfdev", body: "I will fix this.", labels: [], linkedPrs: [46] }],
+      [
+        {
+          repoFullName: repo.fullName,
+          number: 46,
+          title: "Fix self solved report",
+          state: "merged",
+          mergedAt: "2026-05-01T00:00:00.000Z",
+          linkedIssues: [26],
+          labels: ["bug"],
+          authorLogin: "selfdev",
+          body: "Fixes #26",
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        },
+      ],
+      repo.fullName,
+    );
+    expect(selfSolvedLifecycle.states[0]).toMatchObject({ number: 26, state: "solved", solvedByPullRequests: [46] });
+    expect(selfSolvedLifecycle.states[0]?.reasons.join(" ")).toMatch(/not valid issue-discovery evidence/);
+
     const unverifiedMentionLifecycle = buildIssueDiscoveryLifecycleReport(
       { ...repo, registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.5 } },
       [{ repoFullName: repo.fullName, number: 26, title: "Mentioned PR", state: "closed", body: "Maybe PR #123 helps.", labels: [], linkedPrs: [123] }],
@@ -781,6 +807,29 @@ describe("v2 signal builders", () => {
     expect(t.openPullRequests).toBe(1); // the stranger's 5 open PRs are excluded
   });
 
+  it("uses aggregate repo-stat issues for cache-only outcome totals when issue rows are absent", () => {
+    const docsRepo: RepositoryRecord = {
+      fullName: "acme/docs",
+      owner: "acme",
+      name: "docs",
+      isInstalled: true,
+      isRegistered: true,
+      isPrivate: false,
+      defaultBranch: "main",
+      registryConfig: { repo: "acme/docs", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, trustedLabelPipeline: false, maintainerCut: 0, raw: {} },
+    };
+    const repoStats: ContributorRepoStatRecord[] = [
+      { login: "statdev", repoFullName: "acme/docs", pullRequests: 0, mergedPullRequests: 0, openPullRequests: 0, issues: 7, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["docs"] },
+    ];
+    const profile = buildContributorProfile("statdev", { login: "statdev", topLanguages: ["Markdown"], source: "github" }, [], [], repoStats);
+    const history = buildContributorOutcomeHistory({ login: "statdev", profile, repositories: [docsRepo], pullRequests: [], issues: [], repoStats });
+
+    expect(profile.registeredRepoActivity.issues).toBe(7);
+    expect(history.repoOutcomes.find((entry) => entry.repoFullName === "acme/docs")).toMatchObject({ issues: 7, openIssues: 0, closedIssues: 7 });
+    expect(history.totals).toMatchObject({ issues: 7, openIssues: 0, closedIssues: 7 });
+    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName === "acme/docs")?.cached).toMatchObject({ issues: 7, openIssues: 0, closedIssues: 7 });
+  });
+
   it("derives solved and valid-solved issue-discovery counts from cache when official data is absent", () => {
     const mkRepo = (fullName: string, issueDiscoveryShare: number): RepositoryRecord => {
       const [owner, name] = fullName.split("/") as [string, string];
@@ -818,7 +867,7 @@ describe("v2 signal builders", () => {
       body: `Fixes #${issueNumber}`,
       updatedAt: "2026-05-21T00:00:00.000Z",
     });
-    // acme/widgets is an issue-discovery lane (valid_solved); acme/tools is direct-PR (solved).
+    // acme/widgets is an issue-discovery lane, but self-solved loops only get solved credit; acme/tools is direct-PR (solved).
     const repositories = [mkRepo("acme/widgets", 1), mkRepo("acme/tools", 0)];
     const poisonedIssue: IssueRecord = {
       ...mkIssue("acme/widgets", 9, 102),
@@ -840,12 +889,12 @@ describe("v2 signal builders", () => {
     // Without the cache fallback these were hardcoded to 0 even though the contributor's own
     // merged PRs solved their issues. Open issues with only contributor-controlled issue-body
     // PR text must not inflate the cached solved evidence.
-    expect(discovery).toMatchObject({ solvedIssues: 1, validSolvedIssues: 1, openIssues: 1 });
+    expect(discovery).toMatchObject({ solvedIssues: 1, validSolvedIssues: 0, openIssues: 1 });
     expect(direct).toMatchObject({ solvedIssues: 1, validSolvedIssues: 0 });
     expect(history.totals.solvedIssues).toBe(2);
-    expect(history.totals.validSolvedIssues).toBe(1);
-    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName === "acme/widgets")?.cached).toMatchObject({ solvedIssues: 1, validSolvedIssues: 1, openIssues: 1 });
-    expect(discovery?.strengths.join(" ")).toMatch(/valid solved issue-discovery report/);
+    expect(history.totals.validSolvedIssues).toBe(0);
+    expect(history.reconciliation?.repos.find((entry) => entry.repoFullName === "acme/widgets")?.cached).toMatchObject({ solvedIssues: 1, validSolvedIssues: 0, openIssues: 1 });
+    expect(discovery?.strengths.join(" ")).not.toMatch(/valid solved issue-discovery report/);
   });
 
   it("keeps cached reconciliation stats separate from official profile counts", () => {

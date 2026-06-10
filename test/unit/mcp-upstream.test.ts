@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { authenticatePrivateToken, createSessionForGitHubUser } from "../../src/auth/security";
-import { persistUpstreamRulesetSnapshot, upsertUpstreamDriftReport } from "../../src/db/repositories";
+import { persistSignalSnapshot, persistUpstreamRulesetSnapshot, upsertBounty, upsertRepositoryFromGitHub, upsertUpstreamDriftReport } from "../../src/db/repositories";
 import { GittensoryMcp } from "../../src/mcp/server";
 import type { UpstreamDriftReportRecord, UpstreamRulesetSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -15,6 +15,54 @@ describe("MCP contributor access", () => {
     await expect((mcp as unknown as { monitorOpenPullRequests(login: string): Promise<unknown> }).monitorOpenPullRequests("victim")).rejects.toThrow(
       /Forbidden: session can only access the authenticated GitHub login/,
     );
+  });
+
+  it("blocks session actors from issue-quality reports for inaccessible repos", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim/private-repo", private: true, owner: { login: "victim" }, default_branch: "main" });
+    await persistSignalSnapshot(env, {
+      id: "private-issue-quality",
+      signalType: "issue-quality",
+      targetKey: "victim/private-repo",
+      repoFullName: "victim/private-repo",
+      payload: {
+        repoFullName: "victim/private-repo",
+        generatedAt: "2026-05-25T00:00:00.000Z",
+        lane: { lane: "issue_discovery" },
+        issues: [{ number: 1, title: "SECRET private issue", status: "ready", score: 90, reasons: [], warnings: [] }],
+        summary: "fixture",
+      },
+      generatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+
+    const payload = await (new GittensoryMcp(env, identity) as unknown as { getIssueQuality(input: { owner: string; repo: string }): Promise<{ data: Record<string, unknown> }> }).getIssueQuality({ owner: "victim", repo: "private-repo" });
+
+    expect(payload.data).toEqual({ status: "forbidden", repoFullName: "victim/private-repo" });
+    expect(JSON.stringify(payload)).not.toContain("SECRET private issue");
+  });
+
+  it("does not reveal inaccessible bounty ids through advisory errors", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim/private-repo", private: true, owner: { login: "victim" }, default_branch: "main" });
+    await upsertBounty(env, {
+      id: "secret-bounty",
+      repoFullName: "victim/private-repo",
+      issueNumber: 7,
+      status: "Open",
+      amountText: "5.0000",
+      sourceUrl: "contract://issues/7",
+      payload: { title: "SECRET bounty" },
+    });
+    const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+    const mcp = new GittensoryMcp(env, identity) as unknown as { getBountyAdvisory(id: string): Promise<unknown> };
+
+    await expect(mcp.getBountyAdvisory("missing-bounty")).rejects.toThrow("Bounty not found.");
+    await expect(mcp.getBountyAdvisory("secret-bounty")).rejects.toThrow("Bounty not found.");
   });
 });
 

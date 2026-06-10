@@ -1,14 +1,21 @@
-const target = matchPullRequestTarget(location.pathname);
+const target = matchGitHubPageTarget(location.pathname);
 
-if (target) {
+if (target?.kind === "pull_request") {
   mountOverlay(target);
 }
 
-function matchPullRequestTarget(pathname) {
-  const match = String(pathname ?? "").match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/);
+function matchGitHubPageTarget(pathname) {
+  const match = String(pathname ?? "").match(/^\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)(?:\/|$)/);
   if (!match) return null;
-  const [, owner, repo, pullNumber] = match;
-  return { owner, repo, pullNumber: Number(pullNumber) };
+  const [, owner, repo, surface, number] = match;
+  if (surface === "pull") return { kind: "pull_request", owner, repo, pullNumber: Number(number) };
+  return { kind: "issue", owner, repo, issueNumber: Number(number) };
+}
+
+function matchPullRequestTarget(pathname) {
+  const target = matchGitHubPageTarget(pathname);
+  if (target?.kind !== "pull_request") return null;
+  return { owner: target.owner, repo: target.repo, pullNumber: target.pullNumber };
 }
 
 function mountOverlay(target) {
@@ -176,6 +183,7 @@ function renderActions(body, actions) {
 
 if (globalThis.__GITTENSORY_EXTENSION_TEST__) {
   globalThis.__gittensoryContentInternals = {
+    matchGitHubPageTarget,
     matchPullRequestTarget,
     renderPullContext,
     renderSection,

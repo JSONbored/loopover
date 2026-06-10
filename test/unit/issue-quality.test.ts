@@ -171,6 +171,24 @@ describe("issue quality reports", () => {
     });
   });
 
+  it("does not treat issue-body PR mentions as solved lifecycle evidence", () => {
+    const repo = issueDiscoveryRepo("owner/untrusted-issue-pr-mention");
+    const poisoned = issue(repo.fullName, 7, "Unsolved report mentions unrelated PR", {
+      body: "Detailed report with reproduction steps, but it only says PR #123 looks related.",
+      linkedPrs: [123],
+    });
+    const unrelatedMergedPr = recentMergedPr(repo.fullName, 123, "Unrelated merged work", { linkedIssues: [] });
+
+    const lifecycle = buildIssueDiscoveryLifecycleReport(repo, [poisoned], [], repo.fullName, [unrelatedMergedPr]);
+    expect(lifecycle.states[0]).toMatchObject({ number: 7, state: "open", solvedByPullRequests: [] });
+
+    const quality = buildIssueQualityReport(repo, [poisoned], [], repo.fullName, [], undefined, [unrelatedMergedPr]);
+    expect(quality.issues[0]).toMatchObject({
+      lifecycle: "open",
+      linkage: { status: "plausible", solvedByPullRequests: [] },
+    });
+  });
+
   it("records raw, validated, and closed-not-solved linkage states separately", () => {
     const repo = issueDiscoveryRepo("owner/linkage");
     const raw = issue(repo.fullName, 1, "Raw issue", { body: "x".repeat(220) });

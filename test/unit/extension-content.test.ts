@@ -5,9 +5,22 @@ import { describe, expect, it, vi } from "vitest";
 const contentScript = readFileSync("apps/gittensory-extension/content.js", "utf8");
 
 describe("extension content script", () => {
-  it("matches only GitHub pull request routes", () => {
+  it("detects GitHub pull request and issue routes while only mounting pull overlays", () => {
     const internals = loadContentInternals();
 
+    expect(internals.matchGitHubPageTarget("/JSONbored/gittensory/pull/146")).toEqual({
+      kind: "pull_request",
+      owner: "JSONbored",
+      repo: "gittensory",
+      pullNumber: 146,
+    });
+    expect(internals.matchGitHubPageTarget("/JSONbored/gittensory/issues/145")).toEqual({
+      kind: "issue",
+      owner: "JSONbored",
+      repo: "gittensory",
+      issueNumber: 145,
+    });
+    expect(internals.matchGitHubPageTarget("/JSONbored/gittensory/pulls")).toBeNull();
     expect(internals.matchPullRequestTarget("/JSONbored/gittensory/pull/146")).toEqual({
       owner: "JSONbored",
       repo: "gittensory",
@@ -76,6 +89,9 @@ function loadContentInternals() {
   const vmContext = createContext(context);
   new Script(contentScript).runInContext(vmContext);
   return vmContext.__gittensoryContentInternals as {
+    matchGitHubPageTarget: (
+      pathname: string,
+    ) => { kind: "pull_request"; owner: string; repo: string; pullNumber: number } | { kind: "issue"; owner: string; repo: string; issueNumber: number } | null;
     matchPullRequestTarget: (pathname: string) => { owner: string; repo: string; pullNumber: number } | null;
     renderPullContext: (payload: unknown) => string;
   };

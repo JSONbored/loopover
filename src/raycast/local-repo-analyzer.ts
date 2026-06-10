@@ -76,7 +76,8 @@ export function collectRaycastLocalRepoMetadata(input: {
     throw new Error("Raycast branch analysis supports metadata-only mode; source upload mode is rejected.");
   }
   const git = input.git ?? gitLines;
-  const baseRef = input.baseRef ?? git(input.cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])[0]?.replace(/^origin\//, "") ?? "main";
+  const rawBaseRef = input.baseRef ?? git(input.cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])[0]?.replace(/^origin\//, "") ?? "main";
+  const baseRef = validateSafeBaseRef(rawBaseRef);
   const remoteUrl = git(input.cwd, ["config", "--get", "remote.origin.url"])[0] ?? "";
   const repoFullName = input.repoFullName ?? parseGitHubRemote(remoteUrl);
   if (!repoFullName) throw new Error("Could not infer repoFullName from the git remote; pass repoFullName explicitly.");
@@ -198,6 +199,13 @@ async function postJson(
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(errorFromPayload(payload, response));
   return payload;
+}
+
+function validateSafeBaseRef(baseRef: string): string {
+  if (!baseRef || baseRef.startsWith("-")) {
+    throw new Error("Unsafe git baseRef; pass a branch or ref name that does not begin with '-'.");
+  }
+  return baseRef;
 }
 
 function collectChangedFiles(cwd: string, baseRef: string, git: RaycastGitRunner): RaycastChangedFileMetadata[] {

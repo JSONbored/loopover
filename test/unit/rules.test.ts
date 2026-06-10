@@ -181,7 +181,7 @@ describe("advisory rules", () => {
     expect(output.text).not.toMatch(/reward|wallet|trust score|score estimate/i);
   });
 
-  it("keeps missing linked issue and duplicate PR findings advisory unless their gate modes block", () => {
+  it("keeps legacy Gate blockers by default while honoring explicit advisory or off modes", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,
       number: 21,
@@ -195,7 +195,7 @@ describe("advisory rules", () => {
     };
     const missingIssueAdvisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true });
 
-    expect(evaluateGateCheck(missingIssueAdvisory).conclusion).toBe("success");
+    expect(evaluateGateCheck(missingIssueAdvisory).conclusion).toBe("failure");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "off" }).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "block" }).conclusion).toBe("failure");
@@ -206,6 +206,7 @@ describe("advisory rules", () => {
     });
 
     expect(duplicateAdvisory.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+    expect(evaluateGateCheck(duplicateAdvisory).conclusion).toBe("failure");
     expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "off" }).conclusion).toBe("success");
     expect(evaluateGateCheck(duplicateAdvisory, { duplicatePrGateMode: "block" }).conclusion).toBe("failure");

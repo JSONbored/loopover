@@ -34,6 +34,10 @@ const maintainerRole: RoleContext = {
   guidance: "maintainer",
 };
 
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString();
+}
+
 function pr(overrides: Partial<PullRequestRecord> & Pick<PullRequestRecord, "number">): PullRequestRecord {
   return {
     repoFullName: "entrius/allways-ui",
@@ -42,8 +46,8 @@ function pr(overrides: Partial<PullRequestRecord> & Pick<PullRequestRecord, "num
     authorLogin: "miner-a",
     labels: [],
     linkedIssues: [1],
-    createdAt: "2026-05-20T00:00:00.000Z",
-    updatedAt: "2026-05-27T00:00:00.000Z",
+    createdAt: daysAgo(3),
+    updatedAt: daysAgo(2),
     ...overrides,
   };
 }

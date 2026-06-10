@@ -70,6 +70,12 @@ export type LinkedIssueMultiplierContext = {
   warnings?: string[] | undefined;
 };
 
+const PROJECTED_SOLVED_BY_PULL_REQUEST_VALIDATION = Symbol("projectedSolvedByPullRequestValidation");
+
+type ProjectedLinkedIssueMultiplierContext = LinkedIssueMultiplierContext & {
+  [PROJECTED_SOLVED_BY_PULL_REQUEST_VALIDATION]?: true;
+};
+
 export type LinkedIssueMultiplierDecision = {
   mode: "none" | "standard" | "maintainer";
   status: LinkedIssueMultiplierStatus;
@@ -303,10 +309,12 @@ function computeScoreCore(
   const changesRequestedCount = nonNegative(input.changesRequestedCount);
   const reviewPenaltyMultiplier = clamp(1 - changesRequestedCount * constant(constants, "REVIEW_PENALTY_RATE", 0.15), 0, 1);
   const openPrCount = nonNegative(input.openPrCount);
+  // The concurrency allowance is earned from the contributor's established merged-history token
+  // score; the planned PR's own tokens (totalTokenScore) must not inflate its own open-PR threshold.
   const openPrThreshold = Math.min(
     constant(constants, "MAX_OPEN_PR_THRESHOLD", 30),
     constant(constants, "EXCESSIVE_PR_PENALTY_BASE_THRESHOLD", 2) +
-      Math.floor((nonNegative(input.existingContributorTokenScore) + totalTokenScore) / constant(constants, "OPEN_PR_THRESHOLD_TOKEN_SCORE", 300)),
+      Math.floor(nonNegative(input.existingContributorTokenScore) / constant(constants, "OPEN_PR_THRESHOLD_TOKEN_SCORE", 300)),
   );
   const openPrMultiplier = openPrCount <= openPrThreshold ? 1 : 0;
   const estimatedMergedScore = roundScore(baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier);
@@ -711,13 +719,18 @@ function decideLinkedIssueMultiplier(
     };
   }
 
-  const status = context?.status ?? (solvedByPullRequests.length > 0 ? "validated" : issueNumbers.length > 0 ? "raw" : "unavailable");
+  const projectedSolvedByPullRequestValidation = (context as ProjectedLinkedIssueMultiplierContext | undefined)?.[PROJECTED_SOLVED_BY_PULL_REQUEST_VALIDATION] === true;
+  const requestedStatus = context?.status ?? (solvedByPullRequests.length > 0 ? "validated" : issueNumbers.length > 0 ? "raw" : "unavailable");
+  const hasSolvedByPullRequestEvidence = solvedByPullRequests.length > 0 || projectedSolvedByPullRequestValidation;
+  const status = requestedStatus === "validated" && !hasSolvedByPullRequestEvidence ? (issueNumbers.length > 0 ? "raw" : "unavailable") : requestedStatus;
   const source = context?.source ?? (status === "unavailable" ? "missing" : "user_supplied");
   const branchEligible = !(branchEligibility.required && branchEligibility.status === "ineligible");
-  const eligible = status === "validated" && branchEligible;
+  const eligible = status === "validated" && hasSolvedByPullRequestEvidence && branchEligible;
   const reason =
     branchEligible || status !== "validated"
-      ? context?.reason ?? linkedIssueReason(status, source, issueNumbers, solvedByPullRequests)
+      ? status === requestedStatus
+        ? context?.reason ?? linkedIssueReason(status, source, issueNumbers, solvedByPullRequests)
+        : linkedIssueReason(status, source, issueNumbers, solvedByPullRequests)
       : "Branch eligibility is confirmed ineligible; standard issue multiplier is not applied.";
   return {
     mode,
@@ -738,18 +751,19 @@ function withValidatedLinkedIssueScenario(input: ScorePreviewInput): ScorePrevie
   if (mode === "maintainer") return input;
   const issueNumbers = uniquePositiveInts(input.linkedIssueContext?.issueNumbers ?? []);
   const solvedByPullRequests = uniquePositiveInts(input.linkedIssueContext?.solvedByPullRequests ?? []);
+  const linkedIssueContext: ProjectedLinkedIssueMultiplierContext = {
+    ...input.linkedIssueContext,
+    status: "validated",
+    source: input.linkedIssueContext?.source ?? "user_supplied",
+    issueNumbers,
+    solvedByPullRequests,
+    warnings: [],
+    [PROJECTED_SOLVED_BY_PULL_REQUEST_VALIDATION]: true,
+  };
   return {
     ...input,
     linkedIssueMode: "standard",
-    linkedIssueContext: {
-      ...input.linkedIssueContext,
-      status: "validated",
-      source: input.linkedIssueContext?.source ?? "user_supplied",
-      issueNumbers,
-      solvedByPullRequests,
-      reason: "Projection assumes linked issue context is solved-by-PR validated.",
-      warnings: [],
-    },
+    linkedIssueContext,
   };
 }
 

@@ -641,6 +641,41 @@ describe("upstream ruleset drift tracking", () => {
     expect(status.registryHyperparameterDrift.affectedRepoCount).toBe(4);
   });
 
+  it("preserves stored affected repo counts for legacy capped registry drift reports", async () => {
+    const env = createTestEnv();
+    await persistUpstreamRulesetSnapshot(env, ruleset("current", "current-hash", "pending_saturation_model", 1, 0.01, new Date().toISOString()));
+    const driftEvent = (repoFullName: string) => ({
+      repoFullName,
+      field: "maintainerCut",
+      previous: 0.1,
+      current: 0.2,
+      severity: "high",
+      affectedSurfaces: ["maintainer_economics"],
+      summary: `${repoFullName} maintainerCut changed`,
+    });
+
+    await upsertUpstreamDriftReport(
+      env,
+      driftReport("legacy-capped-registry-drift", {
+        affectedAreas: ["registry"],
+        payload: {
+          registryHyperparameterDrift: {
+            totalEvents: 150,
+            omittedEvents: 50,
+            highImpactCount: 150,
+            affectedRepoCount: 150,
+            affectedFields: ["maintainerCut"],
+            affectedSurfaces: ["maintainer_economics"],
+            events: Array.from({ length: 100 }, (_, index) => driftEvent(`owner/repo-${String(index).padStart(3, "0")}`)),
+          },
+        },
+      }),
+    );
+
+    const status = await loadUpstreamStatus(env);
+    expect(status.registryHyperparameterDrift.affectedRepoCount).toBe(150);
+  });
+
   it("builds low-severity source drift reports from legacy or partial ruleset payloads", async () => {
     const previous = {
       ...ruleset("legacy-previous", "legacy-previous-hash", "pending_saturation_model", 1, 0.01, "2026-05-30T00:00:00.000Z"),

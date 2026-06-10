@@ -852,6 +852,48 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("keeps successful unauthenticated fallback responses out of the shared REST backoff", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await upsertRepositoryFromGitHub(env, {
+      name: "gittensory",
+      full_name: "JSONbored/gittensory",
+      private: false,
+      default_branch: "main",
+      owner: { login: "JSONbored" },
+    });
+    const fallbackAuthHeaders: Array<string | null> = [];
+    let openIssueFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const auth = new Headers(init?.headers).get("authorization");
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 1 });
+      if (url.includes("/labels?") && auth === "Bearer public-token") return new Response("", { status: 404 });
+      if (url.includes("/labels?")) {
+        fallbackAuthHeaders.push(auth);
+        return Response.json([{ name: "bug", color: "cc0000", description: "Bug" }], {
+          headers: { "x-ratelimit-limit": "60", "x-ratelimit-remaining": "59", "x-ratelimit-reset": "1779976046" },
+        });
+      }
+      if (url.includes("/issues?")) {
+        openIssueFetches += 1;
+        expect(auth).toBe("Bearer public-token");
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const labelsResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "full" });
+    const openIssuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "light" });
+
+    expect(labelsResult).toMatchObject({ status: "complete", fetchedCount: 1 });
+    expect(fallbackAuthHeaders).toEqual([null]);
+    expect(openIssuesResult).toMatchObject({ status: "complete", fetchedCount: 0 });
+    expect(openIssueFetches).toBe(1);
+    expect(await listLatestGitHubRateLimitObservations(env)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: expect.stringContaining("/labels?"), statusCode: 200, limitValue: 60, remaining: 59 })]),
+    );
+  });
+
   it("rolls an unfinished recent-merged crawl into the repo sync status instead of success", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);
@@ -1815,6 +1857,46 @@ describe("GitHub backfill", () => {
     expect(await listRepoSyncSegments(env, "JSONbored/gittensory")).toEqual(
       expect.arrayContaining([expect.objectContaining({ segment: "pull_request_files", status: "partial", expectedCount: 13 })]),
     );
+  });
+
+  it("stops PR detail backfill instead of re-queuing forever when a full batch makes no progress", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedRegisteredRepo(env);
+    for (let number = 1; number <= 13; number += 1) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number,
+        title: `PR ${number}`,
+        state: "open",
+        user: { login: "oktofeesh1" },
+        head: { sha: `sha-${number}` },
+        labels: [],
+        body: "",
+      });
+    }
+    // Every PR's file sync fails on both GraphQL and REST, so all 13 stay "partial" and the front-12
+    // batch never completes. Without a progress guard nextCursor would stay 0 and re-queue forever.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return new Response("graphql failure", { status: 503 });
+      if (url.includes("/pulls/") && url.includes("/files")) return new Response("file failure", { status: 503 });
+      if (url.includes("/pulls/") && url.includes("/reviews")) return Response.json([]);
+      if (url.includes("/commits/") && url.includes("/check-runs")) return Response.json({ check_runs: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    const firstBatch = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "light", cursor: 0 });
+
+    expect(firstBatch.status).toBe("partial");
+    expect(firstBatch.nextCursor).toBeUndefined();
+    expect(sent).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "backfill-pr-details" })]));
   });
 
   it("records segment partial, hard error, and GitHub rate-limit states from paged fetches", async () => {

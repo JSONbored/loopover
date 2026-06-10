@@ -221,10 +221,11 @@ describe("contributor issue drafts", () => {
 
   it("skips duplicate drafts during generation", async () => {
     const env = createTestEnv();
+    const repoFullName = "other-owner/other-repo";
     const title = "feat(issues): address focus-policy-missing policy readiness for repo";
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([openIssue(77, title)]);
 
-    const result = await generateContributorIssueDrafts(env, "JSONbored/gittensory", { dryRun: true, limit: 1 });
+    const result = await generateContributorIssueDrafts(env, repoFullName, { dryRun: true, limit: 1 });
     expect(result.skippedDuplicate).toBe(1);
     expect(result.drafts[0]?.status).toBe("skipped_duplicate");
   });

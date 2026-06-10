@@ -387,6 +387,23 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    responses: {
+      200: { description: "Repo focus manifest and compiled policy for maintainers", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    responses: {
+      200: { description: "Persist API-backed focus manifest for a repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Malformed JSON request body" },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/app/self-dogfood/registration-pack",
     responses: {
       200: { description: "Private self-dogfood registration pack for the Gittensory repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },

@@ -2,18 +2,24 @@ import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
 import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, type FocusManifest, type FocusManifestSource } from "./focus-manifest";
+import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
 export const REPO_FOCUS_MANIFEST_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 export const REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS = 4;
+
+export const MANIFEST_FILE_CANDIDATES = [
+  ".gittensory.yml",
+  ".github/gittensory.yml",
+  ".gittensory.json",
+  ".github/gittensory.json",
+] as const;
 
 /**
  * Async source for the raw manifest text of a single repo. Returns null when no manifest is
  * published. Allows tests and the persisted-record path to swap out the public-GitHub fetcher.
  */
 export type RepoFocusManifestFetcher = (repoFullName: string) => Promise<string | null>;
-
-const MANIFEST_FILE_CANDIDATES = [".gittensory.json", ".github/gittensory.json"];
 
 /**
  * Fetch a maintainer-owned manifest file from the public GitHub raw endpoint. Network or HTTP
@@ -58,7 +64,10 @@ export async function loadRepoFocusManifest(
   }
   let manifest: FocusManifest;
   try {
-    const content = await fetcher(repoFullName);
+    let content = await fetcher(repoFullName);
+    if ((content === null || content === undefined) && isGittensorySelfRepo(repoFullName, env)) {
+      content = GITTENSORY_REPO_FOCUS_MANIFEST_YAML;
+    }
     manifest = content === null || content === undefined ? parseFocusManifest(null) : parseFocusManifestContent(content, "repo_file");
   } catch {
     manifest = parseFocusManifest(null);
@@ -177,4 +186,8 @@ function snapshotAgeMs(generatedAt: string | null | undefined): number {
   if (!generatedAt) return Number.POSITIVE_INFINITY;
   const parsed = Date.parse(generatedAt);
   return Number.isFinite(parsed) ? Date.now() - parsed : Number.POSITIVE_INFINITY;
+}
+
+function isGittensorySelfRepo(repoFullName: string, env: Env): boolean {
+  return repoFullName.toLowerCase() === resolveGittensorySelfRepoFullName(env).toLowerCase();
 }

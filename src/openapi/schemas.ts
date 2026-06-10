@@ -1598,7 +1598,7 @@ export const ContributorStrategySchema = z
 
 export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]).openapi("DecisionPackFreshness");
 
-export const AgentRecommendationOutcomeStateSchema = z.enum(["accepted", "ignored", "stale", "merged", "closed", "improved"]).openapi("AgentRecommendationOutcomeState");
+export const AgentRecommendationOutcomeStateSchema = z.enum(["accepted", "rejected", "ignored", "stale", "merged", "closed", "improved"]).openapi("AgentRecommendationOutcomeState");
 
 export const AgentRecommendationOutcomeStateBucketSchema = z
   .object({
@@ -1612,6 +1612,7 @@ export const AgentRecommendationOutcomeRepoSummarySchema = z
     repoFullName: z.string(),
     total: z.number(),
     accepted: z.number(),
+    rejected: z.number(),
     ignored: z.number(),
     stale: z.number(),
     merged: z.number(),
@@ -1633,6 +1634,7 @@ export const AgentRecommendationOutcomeSummarySchema = z
     totals: z.object({
       total: z.number(),
       accepted: z.number(),
+      rejected: z.number(),
       ignored: z.number(),
       stale: z.number(),
       merged: z.number(),
@@ -1641,6 +1643,10 @@ export const AgentRecommendationOutcomeSummarySchema = z
       positive: z.number(),
       negative: z.number(),
       maintainerLaneTotal: z.number(),
+    }),
+    sources: z.object({
+      explicit: z.number(),
+      inferred: z.number(),
     }),
     states: z.array(AgentRecommendationOutcomeStateBucketSchema),
     repos: z.array(AgentRecommendationOutcomeRepoSummarySchema),

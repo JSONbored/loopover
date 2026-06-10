@@ -711,6 +711,7 @@ export type AgentContextSnapshotRecord = {
 export type AgentRecommendationOutcomeState = "accepted" | "rejected" | "ignored" | "stale" | "merged" | "closed" | "improved";
 export type AgentRecommendationOutcomeTargetType = "pull_request" | "issue" | "repository" | "none";
 export type AgentRecommendationOutcomeConfidence = "high" | "medium" | "low";
+export type AgentRecommendationOutcomeSource = "explicit" | "inferred";
 
 export type AgentRecommendationOutcomeRecord = {
   id?: string | undefined;
@@ -723,6 +724,7 @@ export type AgentRecommendationOutcomeRecord = {
   targetRepoFullName?: string | null | undefined;
   targetPullNumber?: number | null | undefined;
   targetIssueNumber?: number | null | undefined;
+  source: AgentRecommendationOutcomeSource;
   outcomeState: AgentRecommendationOutcomeState;
   outcomeTargetType: AgentRecommendationOutcomeTargetType;
   outcomeRepoFullName?: string | null | undefined;
@@ -776,6 +778,10 @@ export type AgentRecommendationOutcomeSummary = {
     positive: number;
     negative: number;
     maintainerLaneTotal: number;
+  };
+  sources: {
+    explicit: number;
+    inferred: number;
   };
   states: AgentRecommendationOutcomeStateBucket[];
   repos: AgentRecommendationOutcomeRepoSummary[];

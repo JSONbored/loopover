@@ -2952,7 +2952,7 @@ export function buildBurdenForecast(
   const stalePrs = openPrs.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) > 30).length;
   const projectedReviewLoad = clamp(openPrs.length * 3 + updatedRecently * 2 + collisions.summary.highRiskCount * 4 + stalePrs, 0, 100);
   const queueGrowthRisk = clamp((openPrs.length - queueHealth.signals.likelyReviewablePullRequests) * 5 + collisions.summary.clusterCount * 7, 0, 100);
-  const level = projectedReviewLoad >= 80 || queueGrowthRisk >= 80 ? "critical" : projectedReviewLoad >= 55 || queueGrowthRisk >= 55 ? "high" : projectedReviewLoad >= 25 ? "medium" : "low";
+  const level = projectedReviewLoad >= 80 || queueGrowthRisk >= 80 ? "critical" : projectedReviewLoad >= 55 || queueGrowthRisk >= 55 ? "high" : projectedReviewLoad >= 25 || queueGrowthRisk >= 25 ? "medium" : "low";
   const findings: SignalFinding[] = [
     ...(queueGrowthRisk >= 55
       ? [

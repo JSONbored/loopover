@@ -478,7 +478,7 @@ function buildRepoInstallPreview(args: {
 }
 
 function writesPrPublicSurface(settings: RepositorySettings, decision: PublicSurfaceDecision): boolean {
-  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings) || shouldApplyPrLabel(settings, "confirmed");
+  return decision.willComment || decision.willLabel || shouldPublishPrComment(settings, "confirmed") || shouldApplyPrLabel(settings, "confirmed");
 }
 
 function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {

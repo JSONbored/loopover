@@ -51,6 +51,7 @@ describe("recommendation outcome feedback", () => {
 
     const summary = await getAgentRecommendationOutcomeSummary(env, "dev", { now: "2026-06-01T00:00:00.000Z", windowDays: 90 });
     expect(summary.totals).toMatchObject({ total: 6, merged: 1, closed: 2, stale: 1, ignored: 1, improved: 1, positive: 2, negative: 4, maintainerLaneTotal: 1 });
+    expect(summary.sources).toEqual({ explicit: 0, inferred: 6 });
     expect(summary.maintainerLane).toMatchObject({ total: 1, states: [{ state: "merged", count: 1 }] });
     expect(summary.repos.find((repo) => repo.repoFullName === "dev/own")).toMatchObject({ total: 0, maintainerLaneTotal: 1, signal: "neutral" });
   });
@@ -75,6 +76,55 @@ describe("recommendation outcome feedback", () => {
     expect(merged.outcomes.find((outcome) => outcome.targetRepoFullName === "owner/later")).toMatchObject({ outcomeState: "merged", outcomePullNumber: 31 });
     const rows = await listAgentRecommendationOutcomes(env, { actorLogin: "dev" });
     expect(rows.filter((row) => row.targetRepoFullName === "owner/later")).toHaveLength(1);
+  });
+
+  it("keeps explicit rejected outcomes in private state buckets when inferred sweeps rerun", async () => {
+    const env = createTestEnv();
+    const run = runRecord("run-explicit-rejected", "dev", "2026-05-01T00:00:00.000Z");
+    const explicitAction = action(run, 0, { targetRepoFullName: "owner/rejected", targetPullNumber: 42 });
+    await createAgentRun(env, run);
+    await replaceAgentActions(env, run.id, [explicitAction]);
+
+    await upsertAgentRecommendationOutcome(env, {
+      actionId: explicitAction.id,
+      runId: run.id,
+      actorLogin: "dev",
+      actionType: explicitAction.actionType,
+      targetRepoFullName: "owner/rejected",
+      targetPullNumber: 42,
+      targetIssueNumber: null,
+      source: "explicit",
+      outcomeState: "rejected",
+      outcomeTargetType: "pull_request",
+      outcomeRepoFullName: "owner/rejected",
+      outcomePullNumber: 42,
+      outcomeIssueNumber: null,
+      maintainerLane: false,
+      confidence: "high",
+      reason: "User marked the recommendation as not useful.",
+      detectedAt: "2026-05-04T00:00:00.000Z",
+      updatedAt: "2026-05-04T00:00:00.000Z",
+      metadata: { feedbackVote: "not_useful" },
+    });
+
+    await upsertPullRequestFromGitHub(env, "owner/rejected", pr(42, { state: "open", created_at: "2026-05-02T00:00:00.000Z", updated_at: "2026-05-02T00:00:00.000Z" }));
+    const rerun = await evaluateRecommendationOutcomes(env, "dev", { now: "2026-06-01T00:00:00.000Z" });
+    expect(rerun.outcomes).toHaveLength(1);
+    expect(rerun.outcomes[0]).toMatchObject({ source: "explicit", outcomeState: "rejected", reason: "User marked the recommendation as not useful." });
+
+    const summary = await getAgentRecommendationOutcomeSummary(env, "dev", { now: "2026-06-01T00:00:00.000Z" });
+    expect(summary.states).toEqual([{ state: "rejected", count: 1 }]);
+    expect(summary.totals).toMatchObject({ total: 1, rejected: 1, positive: 0, negative: 1 });
+    expect(summary.sources).toEqual({ explicit: 1, inferred: 0 });
+    expect(summary.repos).toEqual([
+      expect.objectContaining({
+        repoFullName: "owner/rejected",
+        total: 1,
+        rejected: 1,
+        negative: 1,
+        signal: "negative",
+      }),
+    ]);
   });
 
   it("classifies linked PRs, later issues, payload targets, no-target, and defensive timestamp branches", () => {
@@ -373,6 +423,35 @@ describe("recommendation outcome feedback", () => {
     expect(
       classifyRecommendationOutcome({
         ...base,
+        action: action(run, 7, { targetRepoFullName: "owner/rejected-clean-pr", targetPullNumber: 207 }),
+        pullRequests: [
+          prRecord(207, "owner/rejected-clean-pr", {
+            updatedAt: "2026-05-10T00:00:00.000Z",
+            reviewDecision: "CHANGES_REQUESTED",
+            mergeableState: "clean",
+          }),
+        ],
+        issues: [],
+      }),
+    ).toMatchObject({
+      outcomeState: "rejected",
+      outcomeTargetType: "pull_request",
+      outcomePullNumber: 207,
+      metadata: { reviewDecision: "CHANGES_REQUESTED", mergeableState: "clean" },
+    });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 8, { targetRepoFullName: "owner/approved-lowercase-pr", targetPullNumber: 208 }),
+        pullRequests: [prRecord(208, "owner/approved-lowercase-pr", { updatedAt: "2026-05-10T00:00:00.000Z", reviewDecision: "approved" })],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "improved", outcomePullNumber: 208 });
+
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
         action: action(run, 1, { targetRepoFullName: "owner/merged-pr", targetPullNumber: 201 }),
         pullRequests: [prRecord(201, "owner/merged-pr", { state: "closed", mergedAt: "2026-05-05T00:00:00.000Z", updatedAt: "2026-05-05T00:00:00.000Z" })],
         issues: [],
@@ -482,6 +561,7 @@ describe("recommendation outcome feedback", () => {
       targetRepoFullName: "owner/legacy",
       targetPullNumber: null,
       targetIssueNumber: null,
+      source: "inferred",
       outcomeState: "accepted",
       outcomeTargetType: "repository",
       outcomeRepoFullName: "owner/legacy",

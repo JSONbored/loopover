@@ -131,6 +131,13 @@ describe("private-beta auth and rate limiting", () => {
     ).resolves.toBeNull();
     expect(observedKeys[0]).toMatch(/^normal:\/v1\/repos:ip:/);
     expect(observedKeys[1]).toMatch(/^normal:\/v1\/repos:token:/);
+
+    observedKeys.length = 0;
+    await expect(enforceRateLimit(fakeContext(env, "/v1/public/github/repos/JSONbored/gittensory/stats", { "cf-connecting-ip": "203.0.113.9" }), "normal")).resolves.toBeNull();
+    await expect(enforceRateLimit(fakeContext(env, "/v1/public/github/repos/Attacker/missing-one/stats", { "cf-connecting-ip": "203.0.113.9" }), "normal")).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+    expect(observedKeys[0]).toMatch(/^normal:\/v1\/public\/github\/repos\/:owner\/:repo\/stats:ip:/);
   });
 
   it("enforces route limits with session and IP keys plus retry headers", async () => {

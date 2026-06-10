@@ -201,6 +201,21 @@ describe("buildRepoSettingsPreview", () => {
     expect(withoutChecks.warnings.some((warning) => /Checks: write/.test(warning))).toBe(false);
   });
 
+  it("requires Issues: write for detected-contributors comment mode even when previewing a non-confirmed sample", () => {
+    // detected_contributors_only + comment_only comments for confirmed miners, so the repo needs
+    // issues:write regardless of the previewed sample's miner status. Previewing a non-confirmed
+    // author must not drop the required (and missing) issues permission.
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ publicSurface: "comment_only", commentMode: "detected_contributors_only", autoLabelEnabled: false, publicAudienceMode: "oss_maintainer" }),
+      installation: { ...healthyInstall, status: "needs_attention", missingPermissions: ["issues"] },
+      sample: { authorLogin: "contributor", minerStatus: "not_found" },
+    });
+    expect(preview.decision).toMatchObject({ skipped: false, willComment: false, willLabel: false });
+    expect(preview.installPreview.permissions.required).toContain("issues: write");
+    expect(preview.installPreview.permissions.missing).toContain("issues");
+  });
+
   it("explains a missing Checks: write permission when the opt-in gate is enabled", () => {
     const preview = buildRepoSettingsPreview({
       ...base,

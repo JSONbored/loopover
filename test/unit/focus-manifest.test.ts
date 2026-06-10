@@ -122,11 +122,24 @@ describe("parseFocusManifestContent", () => {
   });
 
   it("warns when JSON content is not a mapping", () => {
-    for (const content of ['["a","b"]', '"string"']) {
+    for (const content of ['["a","b"]', "null", '"string"']) {
       const manifest = parseFocusManifestContent(content);
       expect(manifest.present).toBe(false);
       expect(manifest.warnings.join(" ")).toMatch(/must be a mapping/i);
     }
+  });
+
+  it("parses valid YAML content", () => {
+    const manifest = parseFocusManifestContent("wantedPaths:\n  - src/\nblockedPaths:\n  - dist/\n", "repo_file");
+    expect(manifest.present).toBe(true);
+    expect(manifest.wantedPaths).toEqual(["src/"]);
+    expect(manifest.blockedPaths).toEqual(["dist/"]);
+  });
+
+  it("warns instead of throwing on malformed YAML", () => {
+    const manifest = parseFocusManifestContent("wantedPaths: [unterminated", "repo_file");
+    expect(manifest.present).toBe(false);
+    expect(manifest.warnings.join(" ")).toMatch(/not valid YAML/i);
   });
 });
 

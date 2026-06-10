@@ -10,7 +10,7 @@ import { FORBIDDEN_PUBLIC_COMMENT_WORDS } from "../../src/queue-intelligence";
 import { createTestEnv } from "../helpers/d1";
 
 const PUBLIC_FORBIDDEN_TEXT =
-  /\b(wallets?|hotkeys?|raw trust scores?|trust scores?|payouts?|estimated rewards?|rewards?|reward estimates?|farming|private reviewability|private scoreability|private rankings?|rankings?|public score estimates?)\b/i;
+  /\b(wallets?|hotkeys?|raw trust scores?|trust scores?|payouts?|estimated rewards?|rewards?|reward estimates?|farming|scoreability|reviewability(?: internals?)?|private reviewability|private scoreability|private rankings?|rankings?|public score estimates?)\b/i;
 type AiRunRequest = { messages: Array<{ role: string; content: string }> };
 
 describe("Workers AI summaries", () => {
@@ -152,6 +152,9 @@ describe("Workers AI summaries", () => {
     "rewards",
     "reward",
     "farming",
+    "scoreability",
+    "reviewability",
+    "reviewability internals",
     "private reviewability",
     "private scoreability",
     "public score estimate",
@@ -350,12 +353,14 @@ describe("optional deterministic-summary rewrite layer", () => {
     }
   });
 
-  it("rejects reward and ranking variants in public AI rewrites", async () => {
+  it("rejects reward, ranking, scoreability, and reviewability variants in public AI rewrites", async () => {
     const unsafeOutputs = [
       "The estimated reward is high.",
       "Rewards look likely for this PR.",
+      "This PR may improve contributor rewards and scoreability.",
       "The private ranking looks strong.",
       "This ranking should improve.",
+      "Reviewability internals look healthy.",
     ];
 
     for (const output of unsafeOutputs) {

@@ -852,6 +852,48 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("keeps successful unauthenticated fallback responses out of the shared REST backoff", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await upsertRepositoryFromGitHub(env, {
+      name: "gittensory",
+      full_name: "JSONbored/gittensory",
+      private: false,
+      default_branch: "main",
+      owner: { login: "JSONbored" },
+    });
+    const fallbackAuthHeaders: Array<string | null> = [];
+    let openIssueFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const auth = new Headers(init?.headers).get("authorization");
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 1 });
+      if (url.includes("/labels?") && auth === "Bearer public-token") return new Response("", { status: 404 });
+      if (url.includes("/labels?")) {
+        fallbackAuthHeaders.push(auth);
+        return Response.json([{ name: "bug", color: "cc0000", description: "Bug" }], {
+          headers: { "x-ratelimit-limit": "60", "x-ratelimit-remaining": "59", "x-ratelimit-reset": "1779976046" },
+        });
+      }
+      if (url.includes("/issues?")) {
+        openIssueFetches += 1;
+        expect(auth).toBe("Bearer public-token");
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const labelsResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "full" });
+    const openIssuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "light" });
+
+    expect(labelsResult).toMatchObject({ status: "complete", fetchedCount: 1 });
+    expect(fallbackAuthHeaders).toEqual([null]);
+    expect(openIssuesResult).toMatchObject({ status: "complete", fetchedCount: 0 });
+    expect(openIssueFetches).toBe(1);
+    expect(await listLatestGitHubRateLimitObservations(env)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: expect.stringContaining("/labels?"), statusCode: 200, limitValue: 60, remaining: 59 })]),
+    );
+  });
+
   it("rolls an unfinished recent-merged crawl into the repo sync status instead of success", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

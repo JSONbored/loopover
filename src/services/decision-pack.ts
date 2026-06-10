@@ -737,8 +737,6 @@ function buildRepoDecision(args: {
   const manifestSummary = manifest && manifest.present ? buildRepoDecisionManifestSummary(manifest) : undefined;
   const manifestReasons = manifest && manifest.present ? buildRepoDecisionManifestReasons(manifest) : { whyThisHelps: [], nextActions: [], publicNextActions: [], riskReasons: [] };
   const repoOutcomePatterns = summarizeRepoOutcomePatterns(args.repoOutcomePatterns);
-  const outcomeRiskLines = args.roleContext.maintainerLane ? [] : (repoOutcomePatterns?.riskPatterns ?? []).slice(0, 2).map((pattern) => pattern.detail);
-  const outcomeSuccessLines = recommendation === "pursue" ? (repoOutcomePatterns?.successPatterns ?? []).slice(0, 1).map((pattern) => pattern.detail) : [];
   const recommendationFeedbackRiskLines = args.roleContext.maintainerLane ? [] : recommendationFeedbackRiskReasons(recommendationFeedback);
   const recommendationFeedbackSuccessLines = recommendationFeedbackWhyThisHelps(recommendationFeedback);
   const tradeoffSummary = buildRepoDecisionTradeoffSummary({
@@ -751,8 +749,8 @@ function buildRepoDecision(args: {
     manifestSummary,
     blockers,
   });
-  const finalRiskReasons = [...new Set([...riskReasons, ...manifestReasons.riskReasons, ...outcomeRiskLines, ...recommendationFeedbackRiskLines])];
-  const finalWhyThisHelps = [...new Set([...whyThisHelpsFor(recommendation, copyContext), ...manifestReasons.whyThisHelps, ...outcomeSuccessLines, ...recommendationFeedbackSuccessLines])];
+  const finalRiskReasons = [...new Set([...riskReasons, ...manifestReasons.riskReasons, ...recommendationFeedbackRiskLines])];
+  const finalWhyThisHelps = [...new Set([...whyThisHelpsFor(recommendation, copyContext), ...manifestReasons.whyThisHelps, ...recommendationFeedbackSuccessLines])];
   const finalNextActions = [...new Set([...nextActionsFor(recommendation, copyContext), ...manifestReasons.nextActions])];
   const finalPublicNextActions = [...new Set([...publicNextActionsFor(recommendation, copyContext), ...manifestReasons.publicNextActions])];
   const counterfactualReasons = buildRepoDecisionCounterfactualReasons({

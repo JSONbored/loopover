@@ -160,6 +160,7 @@ import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import {
   buildBountyAdvisory,
   buildBurdenForecast,
@@ -256,6 +257,44 @@ async function recordRouteProductUsage(
   }).catch(() => undefined);
 }
 
+const QUEUE_INTELLIGENCE_MAX_BODY_BYTES = 1024 * 1024;
+const QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS = 250;
+const QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH = 100;
+const QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH = 300;
+const QUEUE_INTELLIGENCE_MAX_BODY_LENGTH = 4000;
+const QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES = 25;
+
+function parsePositiveInt(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+async function readRequestBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {
+  const stream = request.body;
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
+
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
 const PR_VISIBILITY_SKIP_REASONS = [
@@ -268,21 +307,21 @@ const PR_VISIBILITY_SKIP_REASONS = [
 ] as const satisfies readonly PublicSurfaceSkipReason[];
 
 const preflightSchema = z.object({
-  repoFullName: z.string().min(3),
-  contributorLogin: z.string().min(1).optional(),
-  title: z.string().min(1),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  changedFiles: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  tests: z.array(z.string()).optional(),
-  authorAssociation: z.string().optional(),
+  repoFullName: z.string().min(3).max(PREFLIGHT_LIMITS.repoFullNameChars),
+  contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
+  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
+  changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  linkedIssues: z.array(z.number().int().positive()).max(PREFLIGHT_LIMITS.linkedIssues).optional(),
+  tests: z.array(z.string().max(PREFLIGHT_LIMITS.testChars)).max(PREFLIGHT_LIMITS.tests).optional(),
+  authorAssociation: z.string().max(PREFLIGHT_LIMITS.authorAssociationChars).optional(),
 });
 
 const localDiffPreflightSchema = preflightSchema.extend({
   changedLineCount: z.number().int().min(0).optional(),
-  testFiles: z.array(z.string()).optional(),
-  commitMessage: z.string().optional(),
+  testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
 });
 
 const skippedPrAuditQuerySchema = z
@@ -398,6 +437,7 @@ const scorePreviewSchema = z.object({
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
+  duplicateRiskCount: z.number().int().min(0).optional(),
   fixedBaseScore: z.number().min(0).optional(),
   metadataOnly: z.boolean().default(false),
   pendingMergedPrCount: z.number().int().min(0).optional(),
@@ -445,8 +485,8 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
-  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
-  duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
+  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("block"),
+  duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("block"),
   qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
@@ -1100,6 +1140,11 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_command_feedback", issues: parsed.error.issues }, 400);
     const answer = await getAgentCommandAnswer(c.env, parsed.data.answerId);
     if (!answer) return c.json({ error: "command_answer_not_found" }, 404);
+    const repo = await getRepository(c.env, answer.repoFullName);
+    if (identity.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, answer.repoFullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
     const actorLogin = identity.actor;
     await recordAgentCommandFeedback(c.env, {
       answerId: answer.id,
@@ -1518,6 +1563,14 @@ export function createApp() {
 
   app.get("/v1/repos/:owner/:repo/issue-quality", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific repo guards. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const repo = identity.kind === "session" ? await getRepository(c.env, fullName) : null;
+    if (identity.kind === "session") {
+      const forbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (forbidden) return forbidden;
+    }
     const response = await buildIssueQualityResponse(c.env, fullName);
     if (!response) return c.json({ error: "issue_quality_not_found", repoFullName: fullName }, 404);
     return c.json(response);
@@ -1536,6 +1589,13 @@ export function createApp() {
   app.get("/v1/app/self-dogfood/registration-pack", async (c) => {
     const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
     if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const fullName = resolveSelfDogfoodRepoFullName(c.env);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
     return c.json(await buildSelfDogfoodRegistrationPackResponse(c.env));
   });
 
@@ -1601,12 +1661,17 @@ export function createApp() {
   });
 
   app.post("/v1/repos/:owner/:repo/settings-preview", async (c) => {
+    const identity = await authenticateRequestIdentity(c);
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const body = (await c.req.json().catch(() => null)) ?? {};
     const parsed = settingsPreviewSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_settings_preview_request", issues: parsed.error.issues }, 400);
-    const [repo, settings, issues, pullRequests] = await Promise.all([
-      getRepository(c.env, fullName),
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const unauthorized = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (unauthorized) return unauthorized;
+    }
+    const [settings, issues, pullRequests] = await Promise.all([
       getRepositorySettings(c.env, fullName),
       listIssues(c.env, fullName),
       listPullRequests(c.env, fullName),
@@ -2219,13 +2284,29 @@ export function createApp() {
   });
 
   app.post("/v1/internal/queue-intelligence", async (c) => {
-    const body = await c.req.json().catch(() => null);
-    if (!body || !Array.isArray(body.pullRequests)) {
+    const contentLength = parsePositiveInt(c.req.header("content-length"));
+    if (contentLength !== null && contentLength > QUEUE_INTELLIGENCE_MAX_BODY_BYTES) {
+      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_MAX_BODY_BYTES }, 413);
+    }
+
+    const rawBody = await readRequestBodyWithLimit(c.req.raw, QUEUE_INTELLIGENCE_MAX_BODY_BYTES);
+    if (rawBody === null) {
+      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_MAX_BODY_BYTES }, 413);
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      body = null;
+    }
+    if (!body || typeof body !== "object" || !Array.isArray((body as { pullRequests?: unknown }).pullRequests)) {
       return c.json({ error: "invalid_request", detail: "pullRequests array required" }, 400);
     }
+    const queueBody = body as { pullRequests: unknown[]; repoContext?: unknown };
     const prSchema = z.object({
       number: z.number().int().positive(),
-      author: z.string(),
+      author: z.string().max(QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH),
       authorRole: z.enum(["first-time", "contributor", "maintainer"] as [AuthorRole, ...AuthorRole[]]),
       isConfirmedMiner: z.boolean(),
       linkedIssue: z.object({ qualityScore: z.number().min(0).max(1) }).nullable(),
@@ -2233,9 +2314,9 @@ export function createApp() {
       isStale: z.boolean(),
       additions: z.number().int().nonnegative(),
       deletions: z.number().int().nonnegative(),
-      title: z.string(),
-      body: z.string(),
-      duplicateCandidates: z.array(z.number().int().positive()),
+      title: z.string().max(QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH),
+      body: z.string().max(QUEUE_INTELLIGENCE_MAX_BODY_LENGTH),
+      duplicateCandidates: z.array(z.number().int().positive()).max(QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES),
       createdAt: z.string().datetime(),
       lastUpdatedAt: z.string().datetime(),
     });
@@ -2244,10 +2325,10 @@ export function createApp() {
       avgReviewTimeDays: z.number().nonnegative(),
       maintainerWorkload: z.number().min(0).max(1),
     });
-    const prsResult = z.array(prSchema).safeParse(body.pullRequests);
+    const prsResult = z.array(prSchema).max(QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS).safeParse(queueBody.pullRequests);
     if (!prsResult.success) return c.json({ error: "invalid_request", issues: prsResult.error.issues }, 400);
-    const repoContext = repoContextSchema.safeParse(body.repoContext).success
-      ? repoContextSchema.parse(body.repoContext)
+    const repoContext = repoContextSchema.safeParse(queueBody.repoContext).success
+      ? repoContextSchema.parse(queueBody.repoContext)
       : { totalOpenPRs: 0, avgReviewTimeDays: 0, maintainerWorkload: 0 };
     const result = await analyzePRQueue(prsResult.data, repoContext);
     const recommendations: Record<number, string> = {};
@@ -3472,10 +3553,16 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
+  if (isIssueQualityPath(path)) return true;
+  if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoSettingsPreviewPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/settings-preview$/.test(path);
 }
 
 function isRepoOnboardingPackPreviewPath(path: string): boolean {
@@ -3484,6 +3571,10 @@ function isRepoOnboardingPackPreviewPath(path: string): boolean {
 
 function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/contributor-issue-drafts\/generate$/.test(path);
+}
+
+function isIssueQualityPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/issue-quality$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

@@ -166,9 +166,10 @@ describe("buildRepoSettingsPreview", () => {
     });
   });
 
-  it("requires only pull_requests:read for PR comment/label output (no PR write overprivilege)", () => {
-    // Installation grants issues:write (everything comment/label output actually needs) but is missing
-    // pull_requests; the app only reads PRs, so this must NOT be flagged as a comment/label blocker.
+  it("reports missing pull_requests:read without requiring PR write for PR comment/label output", () => {
+    // Installation grants issues:write (everything comment/label output actually writes with) but is missing
+    // pull_requests:read, which the app still requires to read PRs. This must be reported without
+    // regressing to the previous overbroad pull_requests:write requirement.
     const preview = buildRepoSettingsPreview({
       ...base,
       settings: settings(),
@@ -177,7 +178,13 @@ describe("buildRepoSettingsPreview", () => {
     });
     expect(preview.installPreview.permissions.required).toContain("pull_requests: read");
     expect(preview.installPreview.permissions.required).not.toContain("pull_requests: write");
-    expect(preview.installPreview.permissions.missing).not.toContain("pull_requests");
+    expect(preview.installPreview.permissions.missing).toContain("pull_requests");
+    expect(preview.installPreview.permissions.status).toBe("needs_attention");
+    expect(preview.installPreview.status).toBe("needs_attention");
+    expect(preview.installPreview.checklist.find((item) => item.id === "permissions")).toMatchObject({
+      status: "needs_attention",
+      summary: expect.stringContaining("pull_requests"),
+    });
   });
 
   it("explains a missing optional Checks: write permission only when check runs are enabled", () => {

@@ -109,7 +109,8 @@ export function routeClassForPath(path: string): RateLimitClass {
     path.includes("/internal/jobs/generate-signal-snapshots") ||
     path.includes("/internal/jobs/build-contributor-decision-packs") ||
     path.includes("/internal/jobs/refresh-upstream-drift") ||
-    path.includes("/internal/jobs/file-upstream-drift-issues")
+    path.includes("/internal/jobs/file-upstream-drift-issues") ||
+    path.includes("/internal/queue-intelligence")
   ) {
     return "expensive";
   }

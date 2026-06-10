@@ -51,7 +51,8 @@ export function normalizeCommandAuthorizationPolicy(input: unknown): { policy: R
 
 export function commandAuthorizationAllowedRoles(policy: RepositoryCommandAuthorizationPolicy | null | undefined, commandName: string): CommandAuthorizationRole[] {
   const normalized = normalizeCommandAuthorizationPolicy(policy).policy;
-  return dedupeRoles(normalized.commands[commandName] ?? normalized.default);
+  const commandRoles = Object.hasOwn(normalized.commands, commandName) ? normalized.commands[commandName] : undefined;
+  return dedupeRoles(commandRoles ?? normalized.default);
 }
 
 export function commandAuthorizationNeedsMinerDetection(args: {

@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
-import { loadControlPanelRoleSummary } from "../services/control-panel-roles";
+import { loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -77,6 +77,7 @@ import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-mo
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoDataQuality } from "../signals/data-quality";
+import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 
 type AppContext = Context<{ Bindings: Env }>;
@@ -112,22 +113,22 @@ const bountyShape = {
 };
 
 const preflightShape = {
-  repoFullName: z.string().min(3),
-  contributorLogin: z.string().min(1).optional(),
-  title: z.string().min(1),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  changedFiles: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  tests: z.array(z.string()).optional(),
-  authorAssociation: z.string().optional(),
+  repoFullName: z.string().min(3).max(PREFLIGHT_LIMITS.repoFullNameChars),
+  contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
+  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
+  changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  linkedIssues: z.array(z.number().int().positive()).max(PREFLIGHT_LIMITS.linkedIssues).optional(),
+  tests: z.array(z.string().max(PREFLIGHT_LIMITS.testChars)).max(PREFLIGHT_LIMITS.tests).optional(),
+  authorAssociation: z.string().max(PREFLIGHT_LIMITS.authorAssociationChars).optional(),
 };
 
 const localDiffPreflightShape = {
   ...preflightShape,
   changedLineCount: z.number().int().min(0).optional(),
-  testFiles: z.array(z.string()).optional(),
-  commitMessage: z.string().optional(),
+  testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+  commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
 };
 
 const branchEligibilityShape = {
@@ -253,6 +254,7 @@ const scorePreviewShape = {
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
+  duplicateRiskCount: z.number().int().min(0).optional(),
   metadataOnly: z.boolean().default(true),
   pendingMergedPrCount: z.number().int().min(0).optional(),
   pendingClosedPrCount: z.number().int().min(0).optional(),
@@ -424,6 +426,8 @@ async function describeMcpUsageRequest(request: Request, telemetryMetadata: Reco
 }
 
 export class GittensoryMcp {
+  private accessScopePromise: Promise<ControlPanelAccessScope> | null = null;
+
   constructor(
     private readonly env: Env,
     private readonly identity: AuthIdentity = { kind: "static", actor: "mcp" },
@@ -826,8 +830,20 @@ export class GittensoryMcp {
     }
   }
 
+  private async requireRepoAccess(repoFullName: string): Promise<void> {
+    if (await this.canAccessRepo(repoFullName)) return;
+    throw new Error("Forbidden: session cannot access this repository.");
+  }
+
+  private loadSessionAccessScope(): Promise<ControlPanelAccessScope> {
+    if (this.identity.kind !== "session") throw new Error("Session access scope is only available for session identities.");
+    this.accessScopePromise ??= loadControlPanelAccessScope(this.env, this.identity.actor);
+    return this.accessScopePromise;
+  }
+
   private async getRepoContext(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
     const [repo, issues, pullRequests, recentMergedPullRequests, queueCounts, queueTrends] = await Promise.all([
       getRepository(this.env, fullName),
       listIssueSignalSample(this.env, fullName),
@@ -854,6 +870,7 @@ export class GittensoryMcp {
 
   private async getBurdenForecast(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
     const response = await loadOrComputeBurdenForecastResponse(this.env, fullName);
     if (!response) {
       return {
@@ -887,6 +904,12 @@ export class GittensoryMcp {
 
   private async getIssueQuality(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
+    if (!(await this.canAccessRepo(fullName))) {
+      return {
+        summary: `Forbidden: session cannot access issue quality for ${fullName}.`,
+        data: { status: "forbidden", repoFullName: fullName },
+      };
+    }
     const response = await loadOrComputeIssueQualityResponse(this.env, fullName);
     if (!response) {
       return {
@@ -903,8 +926,18 @@ export class GittensoryMcp {
     };
   }
 
+  private async canAccessRepo(fullName: string): Promise<boolean> {
+    if (this.identity.kind !== "session") return true;
+    const [scope, repo] = await Promise.all([this.loadSessionAccessScope(), getRepository(this.env, fullName)]);
+    if (scope.operator) return true;
+    const requestedRepo = fullName.toLowerCase();
+    if (scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo)) return true;
+    return Boolean(repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase()));
+  }
+
   private async getRepoOutcomePatterns(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
     const response = await loadOrComputeRepoOutcomePatternsResponse(this.env, fullName);
     if (!response) {
       return {
@@ -976,6 +1009,7 @@ export class GittensoryMcp {
   private async explainRepoDecision(input: { login: string; owner: string; repo: string }): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
     const serving = await loadContributorDecisionPackForServing(this.env, input.login);
     if (serving.kind === "needs_refresh") {
       return {
@@ -1026,6 +1060,7 @@ export class GittensoryMcp {
   }
 
   private async preflightPr(input: z.infer<z.ZodObject<typeof preflightShape>>): Promise<ToolPayload> {
+    await this.requireRepoAccess(input.repoFullName);
     const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       listIssues(this.env, input.repoFullName),
@@ -1040,6 +1075,7 @@ export class GittensoryMcp {
   }
 
   private async preflightLocalDiff(input: z.infer<z.ZodObject<typeof localDiffPreflightShape>>): Promise<ToolPayload> {
+    await this.requireRepoAccess(input.repoFullName);
     const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       listIssues(this.env, input.repoFullName),
@@ -1055,6 +1091,7 @@ export class GittensoryMcp {
 
   private async previewScore(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
+    await this.requireRepoAccess(input.repoFullName);
     const [repo, snapshot, evidence] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
@@ -1069,6 +1106,7 @@ export class GittensoryMcp {
 
   private async explainReviewRisk(input: z.infer<z.ZodObject<typeof preflightShape>>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
+    await this.requireRepoAccess(input.repoFullName);
     const [repo, issues, pullRequests, bounties] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       listIssues(this.env, input.repoFullName),
@@ -1257,6 +1295,7 @@ export class GittensoryMcp {
 
   private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
     this.requireContributorAccess(input.login);
+    await this.requireRepoAccess(input.repoFullName);
     const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([
       this.loadContributorFastContext(input.login),
       getRepository(this.env, input.repoFullName),
@@ -1305,6 +1344,7 @@ export class GittensoryMcp {
   private async getBountyAdvisory(id: string): Promise<ToolPayload> {
     const bounty = await getBounty(this.env, id);
     if (!bounty) throw new Error("Bounty not found.");
+    if (!(await this.canAccessRepo(bounty.repoFullName))) throw new Error("Bounty not found.");
     const [repo, issue, pullRequests] = await Promise.all([
       getRepository(this.env, bounty.repoFullName),
       getIssue(this.env, bounty.repoFullName, bounty.issueNumber),

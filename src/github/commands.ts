@@ -906,7 +906,7 @@ function duplicateCheckSections(bundle: AgentRunBundle | null | undefined): stri
       lines.push(`- ${publicBlockerLabel(code)}`);
     }
     const caution = [...action.why, action.riskImpact ?? ""]
-      .filter((item) => item.trim().length > 0 && (mentionsDuplicateRiskText(item) || /\blikely_duplicate\b/i.test(item)))
+      .filter(isPublicDuplicateCautionLine)
       .slice(0, 3)
       .map((item) => `- ${publicBlockerDetail(item)}`);
     lines.push(...caution);
@@ -1271,26 +1271,31 @@ function formatActionBullets(
 }
 
 function mentionsDuplicateRisk(action: AgentActionRecord): boolean {
-  return [action.publicSafeSummary, action.recommendation, action.riskImpact ?? "", ...action.why, ...action.blockedBy].some((item) =>
-    mentionsDuplicateRiskText(item),
-  );
+  return [action.publicSafeSummary, action.recommendation, action.riskImpact ?? "", ...action.why, ...action.blockedBy].some(isPublicDuplicateCautionLine);
 }
 
 function mentionsDuplicateRiskText(value: string): boolean {
   return /\b(duplicate|overlap|wip|collision|concurrent|in[- ]progress)\b/i.test(value);
 }
 
+function isPublicDuplicateCautionLine(value: string): boolean {
+  const detail = value.trim();
+  return detail.length > 0 && !mentionsRepoOutcomePatternDetail(detail) && (mentionsDuplicateRiskText(detail) || /\blikely_duplicate\b/i.test(detail));
+}
+
+function mentionsRepoOutcomePatternDetail(value: string): boolean {
+  return /\bPRs (?:touching|labeled|with|that|from) .+\b(?:merge well|high closure risk) here \(\d+\/\d+ merged\)\./i.test(value);
+}
+
 function publicBlockerLabel(code: string): string {
   const normalized = code.trim().toLowerCase();
+  const privateDecisionBlockers = new Set(["open_pr_pressure", "closed_pr_credibility", "low_credibility", "maintainer_lane", "inactive_or_unknown_lane", "issue_discovery_only"]);
   const labels: Record<string, string> = {
     likely_duplicate: "Possible overlap with existing work",
-    open_pr_pressure: "Open pull request queue pressure",
-    closed_pr_credibility: "Closed pull request credibility signal",
-    inactive_or_unknown_lane: "Repository lane is inactive or unknown",
-    issue_discovery_only: "Repository is issue-discovery only",
-    low_credibility: "Contributor credibility needs improvement",
-    maintainer_lane: "Maintainer-lane activity is separate from outside-contributor work",
   };
+  if (privateDecisionBlockers.has(normalized)) {
+    return "Private readiness context available in authenticated Gittensory views";
+  }
   return labels[normalized] ?? sanitizePublicComment(code.replace(/_/g, " "));
 }
 
@@ -1300,7 +1305,7 @@ function publicBlockerDetail(value: string): string {
       value
         .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work")
         .replace(/\bcheck_duplicate_risk\b/gi, "duplicate-risk review")
-        .replace(/\bopen_pr_pressure\b/gi, "open pull request pressure"),
+        .replace(/\b(?:open_pr_pressure|closed_pr_credibility|low_credibility|maintainer_lane|inactive_or_unknown_lane|issue_discovery_only)\b/gi, "private readiness context"),
     ),
   );
 }
@@ -1330,10 +1335,13 @@ function sanitizeFeedbackAnswerId(answerId: string): string {
 
 export function sanitizePublicComment(value: string): string {
   const sanitized = value
+    .replace(/\bprojected score changes?\b(?:\s+from)?\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
     .replace(/\b(raw trust score|trust score|wallet|hotkey|coldkey|seed phrase|mnemonic)\b/gi, "private context")
-    .replace(/\b(public score estimate|estimated score|score estimate|reward estimates?|payout|farming|scoreability|score preview)\b/gi, "private context")
+    .replace(/\b(public score estimate|estimated score|score estimate|reward estimates?|payout|farming|scoreability|score preview|projected score changes?)\b/gi, "private context")
     .replace(/\b(private reviewability|reviewability internals?)\b/gi, "private context")
     .replace(/\b(private ranking|private rankings)\b/gi, "private context")
+    .replace(/\b(?:open_pr_pressure|closed_pr_credibility|low_credibility|maintainer_lane|inactive_or_unknown_lane|issue_discovery_only)\b/gi, "private context")
+    .replace(/\b(?:credibility(?: updates?)?|closed pr credibility|low credibility|open pr pressure)\b/gi, "private context")
     .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work");
   return sanitizeReviewabilityTerm(sanitized).replace(/private context(?:,\s*private context)+/gi, "private context");
 }

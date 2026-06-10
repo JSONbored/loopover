@@ -28,6 +28,7 @@ const CLI_COMMAND_SPEC = {
   login: [],
   logout: [],
   whoami: [],
+  config: [],
   status: [],
   changelog: [],
   completion: [],
@@ -1338,7 +1339,7 @@ function requirePublicSafePacketMarkdown(markdown) {
 }
 
 function isUnsafePublicPacketText(value) {
-  return /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(value);
+  return /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i.test(value);
 }
 
 function printVersion(options) {
@@ -2004,9 +2005,8 @@ function initClient(options) {
 function resolveAgentProfile(profileId) {
   if (!profileId) return null;
   const id = String(profileId).trim().toLowerCase();
-  const profile = AGENT_PROFILES[id];
-  if (!profile) throw new Error(`Unsupported agent profile: ${profileId}. Use ${AGENT_PROFILE_IDS.join(", ")}.`);
-  return profile;
+  if (!Object.hasOwn(AGENT_PROFILES, id)) throw new Error(`Unsupported agent profile: ${profileId}. Use ${AGENT_PROFILE_IDS.join(", ")}.`);
+  return AGENT_PROFILES[id];
 }
 
 function formatAgentProfile(profile) {
@@ -2767,7 +2767,15 @@ async function apiFetch(path, init, options = {}) {
     },
   }).finally(() => clearTimeout(timeout));
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (error) {
+      if (response.ok) throw error;
+      payload = { error: "non_json_response", body: text.slice(0, 500) };
+    }
+  }
   if (!response.ok) {
     const retry = response.headers.get("retry-after");
     const error = new Error(`Gittensory API ${response.status}${retry ? ` retry-after=${retry}s` : ""}: ${JSON.stringify(payload).slice(0, 500)}`);

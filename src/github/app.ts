@@ -55,6 +55,30 @@ export async function getAppInstallation(env: Env, installationId: number): Prom
   return payload;
 }
 
+export type GitHubRepositoryCollaboratorPermission = "admin" | "maintain" | "write" | "triage" | "read" | "none" | string;
+
+export async function getRepositoryCollaboratorPermission(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  login: string,
+): Promise<GitHubRepositoryCollaboratorPermission | null> {
+  const [owner, name] = repoFullName.split("/");
+  if (!owner || !name || !login) return null;
+  const token = await createInstallationToken(env, installationId);
+  const response = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
+    { headers: githubHeaders(`Bearer ${token}`) },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to fetch GitHub collaborator permission (${response.status}): ${body.slice(0, 200)}`);
+  }
+  const payload = (await response.json()) as { permission?: GitHubRepositoryCollaboratorPermission };
+  return payload.permission ?? null;
+}
+
 async function createAppJwt(env: Env): Promise<string> {
   if (!env.GITHUB_APP_PRIVATE_KEY) {
     throw new Error("GitHub App credentials are not configured.");
@@ -114,7 +138,7 @@ export async function createOrUpdatePendingGateCheckRun(
     output: {
       title: "Gittensory Gate is evaluating",
       summary: "Gittensory is running deterministic public PR hygiene checks.",
-      text: "The Gate is advisory-first unless this repository explicitly configures a rule to block merge.",
+      text: "The Gate preserves legacy linked-issue and duplicate-PR blockers unless this repository explicitly sets those rules to advisory or off.",
     },
   });
 }

@@ -23,6 +23,7 @@ import type { PublicContributorProfile } from "../github/public";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { hasLocalTestEvidence } from "./test-evidence";
+import { PREFLIGHT_LIMITS } from "./preflight-limits";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -823,7 +824,7 @@ export function buildCollisionReport(
   /* v8 ignore stop */
 
   const clusterList = [...clusters.values()].sort((left, right) => riskRank(right.risk) - riskRank(left.risk));
-  return {
+  const report = {
     repoFullName,
     generatedAt: nowIso(),
     summary: {
@@ -833,6 +834,8 @@ export function buildCollisionReport(
     },
     clusters: clusterList,
   };
+  collisionReportTermCache.set(report, itemTerms);
+  return report;
 }
 
 export function buildQueueHealth(
@@ -1477,8 +1480,9 @@ export function buildRoleContext(args: {
 // Derive solved / valid-solved issue-discovery counts from cached issues using the same
 // lifecycle classifier as buildIssueDiscoveryLifecycleReport. Used as the cache fallback for
 // official solvedIssues / validSolvedIssues so a contributor without official Gittensor data
-// still gets credit for issues their own merged PRs solved. (Contributor-wide recent-merged
-// solver PRs are not loaded here, so detection uses the cached pull_requests set.)
+// still gets solved credit from merged PR evidence while self-solved issue loops do not
+// inflate valid issue-discovery credit. (Contributor-wide recent-merged solver PRs are not
+// loaded here, so detection uses the cached pull_requests set.)
 function cachedSolvedIssueCounts(issues: IssueRecord[], pullRequests: PullRequestRecord[], lane: LaneAdvice): { solvedIssues: number; validSolvedIssues: number } {
   let solvedIssues = 0;
   let validSolvedIssues = 0;
@@ -1536,8 +1540,11 @@ export function buildContributorOutcomeHistory(args: {
       const mergedPullRequests = official?.mergedPullRequests ?? Math.max(cachedPrs.filter((pr) => pr.mergedAt || pr.state === "merged").length, cachedStat?.mergedPullRequests ?? 0);
       const openPullRequests = official?.openPullRequests ?? Math.max(cachedPrs.filter((pr) => pr.state === "open").length, cachedStat?.openPullRequests ?? 0);
       const closedPullRequests = official?.closedPullRequests ?? Math.max(cachedPrs.filter((pr) => pr.state === "closed" && !pr.mergedAt).length, pullRequests - mergedPullRequests - openPullRequests, 0);
-      const openIssues = official?.openIssues ?? cachedIssues.filter((issue) => issue.state === "open").length;
-      const closedIssues = official?.closedIssues ?? cachedIssues.filter((issue) => issue.state !== "open").length;
+      const openIssueRows = cachedIssues.filter((issue) => issue.state === "open").length;
+      const closedIssueRows = cachedIssues.filter((issue) => issue.state !== "open").length;
+      const cachedIssueCount = Math.max(cachedIssues.length, cachedStat?.issues ?? 0);
+      const openIssues = official?.openIssues ?? openIssueRows;
+      const closedIssues = official?.closedIssues ?? Math.max(closedIssueRows, cachedIssueCount - openIssueRows, 0);
       // Like every field above, issue-discovery solved counts fall back to cache (the issue
       // lifecycle), not a literal 0, when official Gittensor data is absent for this repo.
       const laneAdvice = buildLaneAdvice(repo, repoFullName);
@@ -2343,7 +2350,9 @@ export function buildPreflightResult(
   issueQuality?: IssueQualityReport | null | undefined,
 ): PreflightResult {
   const lane = buildLaneAdvice(repo, input.repoFullName);
-  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(input.body ?? "")])].sort((left, right) => left - right);
+  const linkedIssues = [...new Set([...(input.linkedIssues ?? []), ...extractLinkedIssueNumbers(truncateText(input.body ?? "", PREFLIGHT_LIMITS.bodyChars))])].sort(
+    (left, right) => left - right,
+  );
   // Flag an existing open-work cluster as a possible duplicate when it shares a
   // linked issue, OR when its title/body meaningfully overlaps the planned
   // contribution. The previous check used `item.title.includes(input.title)`,
@@ -2354,12 +2363,14 @@ export function buildPreflightResult(
   // symmetric term-overlap heuristic `buildCollisionReport` uses between items
   // (>=2 shared meaningful terms), which is direction-independent.
   const plannedTerms = plannedContributionTerms(input);
-  const collisions = buildCollisionReport(input.repoFullName, issues, pullRequests).clusters.filter((cluster) =>
+  const collisionReport = buildCollisionReport(input.repoFullName, issues, pullRequests);
+  const itemTerms = collisionReportTermCache.get(collisionReport) ?? new Map<string, CollisionTerms>();
+  const collisions = collisionReport.clusters.filter((cluster) =>
     cluster.items.some((item) => {
       if (linkedIssues.includes(item.number)) {
         return true;
       }
-      const overlap = termOverlap(plannedTerms, collisionTerms(item));
+      const overlap = termOverlap(plannedTerms, itemTerms.get(itemKey(item)) ?? collisionTerms(item));
       return overlap.shared >= 2 && overlap.score >= 0.5;
     }),
   );
@@ -2805,11 +2816,13 @@ function buildIssueLinkageRecord(
   linkedPrs: PullRequestRecord[],
   linkedMergedPrs: RecentMergedPullRequestRecord[],
 ): IssueLinkageRecord {
+  const verifiedMergedPrs = linkedPrs.filter((pr) => pr.linkedIssues.includes(issue.number) && (pr.mergedAt || pr.state === "merged"));
+  const verifiedRecentMergedPrs = linkedMergedPrs.filter((pr) => pr.linkedIssues.includes(issue.number));
   const solvedByPullRequests = [
     ...new Set([
       ...(lifecycleEntry?.solvedByPullRequests ?? []),
-      ...linkedPrs.filter((pr) => pr.mergedAt || pr.state === "merged").map((pr) => pr.number),
-      ...linkedMergedPrs.map((pr) => pr.number),
+      ...verifiedMergedPrs.map((pr) => pr.number),
+      ...verifiedRecentMergedPrs.map((pr) => pr.number),
     ]),
   ].sort((left, right) => left - right);
   const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
@@ -2858,11 +2871,12 @@ function classifyIssueDiscoveryLifecycle(
   recentMergedPullRequests: RecentMergedPullRequestRecord[],
   lane: LaneAdvice,
 ): IssueDiscoveryLifecycleReport["states"][number] {
-  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-  const solvedByPullRequests = [...new Set([...linkedOpenPrs.filter((pr) => pr.mergedAt || pr.state === "merged").map((pr) => pr.number), ...linkedMergedPrs.map((pr) => pr.number)])].sort(
-    (left, right) => left - right,
-  );
+  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  const mergedSolverPrs = [...linkedOpenPrs.filter((pr) => pr.mergedAt || pr.state === "merged"), ...linkedMergedPrs];
+  const solvedByPullRequests = [...new Set(mergedSolverPrs.map((pr) => pr.number))].sort((left, right) => left - right);
+  const issueAuthorLogin = issue.authorLogin;
+  const selfSolvedLoop = Boolean(issueAuthorLogin && mergedSolverPrs.length > 0 && mergedSolverPrs.every((pr) => sameLogin(pr.authorLogin, issueAuthorLogin)));
   const labels = issue.labels.map((label) => label.toLowerCase());
   const stale = daysSince(issue.updatedAt ?? issue.createdAt) > 90;
   const duplicate = labels.some((label) => /duplicate/.test(label));
@@ -2872,7 +2886,7 @@ function classifyIssueDiscoveryLifecycle(
     : invalid
       ? "invalid"
       : solvedByPullRequests.length > 0
-        ? lane.lane === "issue_discovery" || lane.lane === "split"
+        ? (lane.lane === "issue_discovery" || lane.lane === "split") && !selfSolvedLoop
           ? "valid_solved"
           : "solved"
         : issue.state !== "open"
@@ -2884,6 +2898,7 @@ function classifyIssueDiscoveryLifecycle(
     ...(duplicate ? ["Issue carries duplicate labeling."] : []),
     ...(invalid ? ["Issue carries invalid or not-planned labeling."] : []),
     ...(solvedByPullRequests.length > 0 ? [`Linked solver PR(s): ${solvedByPullRequests.map((number) => `#${number}`).join(", ")}.`] : []),
+    ...(selfSolvedLoop ? ["Linked solver PR author matches the issue reporter; cache treats this as solved but not valid issue-discovery evidence."] : []),
     ...(issue.state !== "open" && solvedByPullRequests.length === 0 ? ["Issue is closed without cached solver PR evidence."] : []),
     ...(stale && issue.state === "open" ? ["Issue is stale in cached metadata."] : []),
     ...(lane.lane === "direct_pr" ? ["Repo is direct-PR first; lifecycle should not encourage issue filing."] : []),
@@ -3835,7 +3850,7 @@ function queuePressureComponent(queueHealth: QueueHealth): { score: number; max:
   const cachedOpenPullRequests = Math.max(0, signals.cachedOpenPullRequests ?? signals.ageBuckets.under7Days + signals.ageBuckets.days7To30 + signals.ageBuckets.over30Days);
   const likelyReviewablePullRequests = Math.max(0, Math.min(openPullRequests, signals.likelyReviewablePullRequests));
   const sampledLikelyReviewable = signals.likelyReviewablePullRequestsSource === "sampled_cache" || (signals.likelyReviewablePullRequestsSource === undefined && cachedOpenPullRequests < openPullRequests);
-  const score = queuePressureScore(openPullRequests);
+  const score = queuePressureScore(queueHealth, openPullRequests);
   const likelyEvidence =
     openPullRequests === 0
       ? "0 likely reviewable"
@@ -3858,10 +3873,22 @@ function queuePressureComponent(queueHealth: QueueHealth): { score: number; max:
   };
 }
 
-function queuePressureScore(openPullRequests: number): number {
+function queuePressureScore(queueHealth: QueueHealth, openPullRequests: number): number {
+  if (openPullRequests === 0) return 10;
+  return Math.min(queuePressureOpenPullRequestScore(openPullRequests), queuePressureLevelScore(queueHealth.level));
+}
+
+function queuePressureOpenPullRequestScore(openPullRequests: number): number {
   if (openPullRequests <= 4) return 10;
   if (openPullRequests <= 8) return 8;
   if (openPullRequests <= 13) return 5;
+  return 3;
+}
+
+function queuePressureLevelScore(level: QueueHealth["level"]): number {
+  if (level === "low") return 10;
+  if (level === "medium") return 8;
+  if (level === "high") return 5;
   return 3;
 }
 
@@ -4067,6 +4094,8 @@ type CollisionTerms = {
   size: number;
 };
 
+const collisionReportTermCache = new WeakMap<CollisionReport, Map<string, CollisionTerms>>();
+
 function collisionTerms(item: CollisionItem): CollisionTerms {
   const terms = new Set(tokenize(collisionItemText(item)));
   return { terms, size: terms.size };
@@ -4079,7 +4108,15 @@ function collisionTerms(item: CollisionItem): CollisionTerms {
  * uses between items, rather than a one-direction substring test.
  */
 function plannedContributionTerms(input: PreflightInput): CollisionTerms {
-  const terms = new Set(tokenize([input.title, ...(input.labels ?? []), ...(input.changedFiles ?? [])].join(" ")));
+  const terms = new Set(
+    tokenize(
+      [
+        truncateText(input.title, PREFLIGHT_LIMITS.titleChars),
+        ...boundedTextItems(input.labels, PREFLIGHT_LIMITS.labels, PREFLIGHT_LIMITS.labelChars),
+        ...boundedTextItems(input.changedFiles, PREFLIGHT_LIMITS.changedFiles, PREFLIGHT_LIMITS.changedFileChars),
+      ].join(" "),
+    ),
+  );
   return { terms, size: terms.size };
 }
 
@@ -4094,7 +4131,21 @@ function termOverlap(left: CollisionTerms, right: CollisionTerms): { score: numb
 }
 
 function collisionItemText(item: CollisionItem): string {
-  return [item.title, ...(item.labels ?? []), ...(item.changedFiles ?? [])].filter(Boolean).join(" ");
+  return [
+    truncateText(item.title, PREFLIGHT_LIMITS.titleChars),
+    ...boundedTextItems(item.labels, PREFLIGHT_LIMITS.labels, PREFLIGHT_LIMITS.labelChars),
+    ...boundedTextItems(item.changedFiles, PREFLIGHT_LIMITS.changedFiles, PREFLIGHT_LIMITS.changedFileChars),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function boundedTextItems(values: string[] | undefined, maxItems: number, maxChars: number): string[] {
+  return (values ?? []).slice(0, maxItems).map((value) => truncateText(value, maxChars));
+}
+
+function truncateText(value: string, maxChars: number): string {
+  return value.length > maxChars ? value.slice(0, maxChars) : value;
 }
 
 function tokenize(value: string): string[] {

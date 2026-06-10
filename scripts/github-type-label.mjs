@@ -57,6 +57,9 @@ export function getTypeLabelDecision(eventName, payload, options = {}) {
   if (eventName === "pull_request_target") {
     const pullRequest = payload.pull_request;
     if (!pullRequest || typeof pullRequest !== "object") return { action: "skip", reason: "missing-pull-request" };
+    if (!isTrustedPullRequestForLabeling(pullRequest)) {
+      return { action: "skip", reason: "untrusted-pull-request-author", number: numberOrUndefined(pullRequest.number), title: stringOrEmpty(pullRequest.title) };
+    }
 
     const decision = classifyPullRequestLabel(pullRequest, options.issueReferences ?? []);
     if (!decision.label) return { action: "skip", reason: decision.reason, number: numberOrUndefined(pullRequest.number), title: stringOrEmpty(pullRequest.title) };
@@ -243,8 +246,18 @@ function shouldFetchReferencedIssues(eventName, payload) {
   if (eventName !== "pull_request_target") return false;
   const pullRequest = payload?.pull_request;
   if (!pullRequest || typeof pullRequest !== "object") return false;
+  if (!isTrustedPullRequestForLabeling(pullRequest)) return false;
   if (hasScoringLabel(normalizeLabels(pullRequest.labels))) return false;
   return isFeatureTitle(String(pullRequest.title ?? "").trim());
+}
+
+function isTrustedPullRequestForLabeling(pullRequest) {
+  const association = String(pullRequest.author_association ?? "").toUpperCase();
+  if (["OWNER", "MEMBER", "COLLABORATOR"].includes(association)) return true;
+
+  const headRepository = pullRequest.head?.repo?.full_name;
+  const baseRepository = pullRequest.base?.repo?.full_name;
+  return typeof headRepository === "string" && headRepository.length > 0 && headRepository === baseRepository;
 }
 
 function classifyPullRequestLabel(pullRequest, issueReferences) {

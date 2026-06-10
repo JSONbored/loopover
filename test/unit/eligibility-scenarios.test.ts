@@ -72,7 +72,7 @@ describe("eligible branch with validated linked issue", () => {
       status: "validated",
       source: "official_mirror",
       issueNumbers: [42],
-      solvedByPullRequests: [],
+      solvedByPullRequests: [101],
     },
     branchEligibility: { status: "eligible", source: "github_metadata" },
   });
@@ -308,6 +308,20 @@ describe("branch-eligibility-missing — metadata not provided", () => {
   it("underlying score preview emits branch_eligibility_missing blocker", () => {
     const codes = result.blockedBy.map((b) => b.code);
     expect(codes).toContain("branch_eligibility_missing");
+  });
+
+  it("keeps eligibility unconfirmed when the link is validated but branch metadata is missing", () => {
+    const validatedLinkMissingBranch = preview({
+      linkedIssueMode: "standard",
+      linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [10], solvedByPullRequests: [11] },
+    });
+    const plan = deriveEligibilityPlan(validatedLinkMissingBranch);
+    expect(plan).toMatchObject({
+      eligible: false,
+      linkedIssueStatus: "validated",
+      branchEligibilityStatus: "unknown",
+    });
+    expect(plan.publicSummary).toMatch(/not yet validated|validation is needed/i);
   });
 });
 

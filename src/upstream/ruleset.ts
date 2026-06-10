@@ -609,6 +609,7 @@ type RulesetRegistryRepo = RulesetPayload["registry"]["repositories"][number];
 type RegistryHyperparameterDriftPayload = RegistryHyperparameterDriftSummary & {
   events: RegistryHyperparameterDriftEvent[];
   affectedRepos: string[];
+  unidentifiedAffectedRepoCount: number;
 };
 
 function uniqueRepoNames(events: RegistryHyperparameterDriftEvent[]): string[] {
@@ -665,6 +666,7 @@ function buildRegistryHyperparameterDrift(previous: RulesetRegistryRepo[], curre
     ...summarizeRegistryHyperparameterDriftEvents(events),
     events: capped,
     affectedRepos: uniqueRepoNames(events),
+    unidentifiedAffectedRepoCount: 0,
     omittedEvents: Math.max(events.length - capped.length, 0),
   };
 }
@@ -717,14 +719,18 @@ function summarizeRegistryHyperparameterDriftReports(reports: UpstreamDriftRepor
   const payloads = reports.map((report) => readRegistryHyperparameterDriftPayload(report.payload.registryHyperparameterDrift));
   const events = payloads.flatMap((payload) => payload.events);
   const fallbackSummary = summarizeRegistryHyperparameterDriftEvents(events);
+  const affectedRepoNames = new Set(payloads.flatMap((payload) => payload.affectedRepos));
+  const unidentifiedAffectedRepoCount = sum(payloads.map((payload) => payload.unidentifiedAffectedRepoCount));
   return {
     totalEvents: sum(payloads.map((payload) => payload.totalEvents)) || fallbackSummary.totalEvents,
     omittedEvents: sum(payloads.map((payload) => payload.omittedEvents)),
     highImpactCount: sum(payloads.map((payload) => payload.highImpactCount)) || fallbackSummary.highImpactCount,
     // Distinct repos across reports, not the sum of per-report unique counts -- a repo affected in
     // several open reports must be counted once. Union the pre-cap repo lists (same approach as
-    // affectedFields/affectedSurfaces below).
-    affectedRepoCount: new Set(payloads.flatMap((payload) => payload.affectedRepos)).size || fallbackSummary.affectedRepoCount,
+    // affectedFields/affectedSurfaces below). Legacy capped reports may only identify the first
+    // affected repos in `events`, so add any stored count above the identifiable repo list as
+    // unidentified repos to avoid underreporting their scale.
+    affectedRepoCount: affectedRepoNames.size + unidentifiedAffectedRepoCount || fallbackSummary.affectedRepoCount,
     affectedFields: uniqueSorted(payloads.flatMap((payload) => payload.affectedFields), REGISTRY_DRIFT_FIELD_ORDER),
     affectedSurfaces: uniqueSorted(
       payloads.flatMap((payload) => payload.affectedSurfaces),
@@ -741,17 +747,20 @@ function readRegistryHyperparameterDriftPayload(value: JsonValue | undefined): R
   const affectedFields = arrayPayload(payload.affectedFields).flatMap(readRegistryHyperparameterDriftField);
   const affectedSurfaces = arrayPayload(payload.affectedSurfaces).flatMap(readRegistryDriftSurface);
   const affectedRepos = arrayPayload(payload.affectedRepos).filter((entry): entry is string => typeof entry === "string");
+  const derivedAffectedRepos = affectedRepos.length > 0 ? affectedRepos : uniqueRepoNames(events);
+  const affectedRepoCount = numberPayload(payload.affectedRepoCount) ?? fallback.affectedRepoCount;
   return {
     events,
     totalEvents: numberPayload(payload.totalEvents) ?? fallback.totalEvents,
     omittedEvents: numberPayload(payload.omittedEvents) ?? fallback.omittedEvents,
     highImpactCount: numberPayload(payload.highImpactCount) ?? fallback.highImpactCount,
-    affectedRepoCount: numberPayload(payload.affectedRepoCount) ?? fallback.affectedRepoCount,
+    affectedRepoCount,
     affectedFields: affectedFields.length > 0 ? affectedFields : fallback.affectedFields,
     affectedSurfaces: affectedSurfaces.length > 0 ? affectedSurfaces : fallback.affectedSurfaces,
     // Legacy payloads predate `affectedRepos`; derive it from the stored (capped) events so the
     // reports aggregator can still union repos rather than fall back to summing.
-    affectedRepos: affectedRepos.length > 0 ? affectedRepos : uniqueRepoNames(events),
+    affectedRepos: derivedAffectedRepos,
+    unidentifiedAffectedRepoCount: derivedAffectedRepos.length > 0 ? Math.max(affectedRepoCount - derivedAffectedRepos.length, 0) : 0,
   };
 }
 
@@ -785,6 +794,7 @@ function emptyRegistryHyperparameterDriftPayload(): RegistryHyperparameterDriftP
     affectedFields: [],
     affectedSurfaces: [],
     affectedRepos: [],
+    unidentifiedAffectedRepoCount: 0,
   };
 }
 

@@ -34,6 +34,7 @@ import {
   buildPullRequestReviewability,
   buildRepoRewardRisk,
 } from "../../src/signals/reward-risk";
+import { PREFLIGHT_LIMITS } from "../../src/signals/preflight-limits";
 import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
   ContributorRepoStatRecord,
@@ -604,6 +605,35 @@ describe("signal coverage edge cases", () => {
     expect(preflight.findings.map((finding) => finding.code)).not.toContain("possible_duplicate_work");
   });
 
+  it("bounds preflight body scanning for linked issue extraction", () => {
+    const directRepo = repo("owner/direct");
+    const linkedInsideLimit = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bounded body scan",
+        body: `Fixes #99 ${"x".repeat(PREFLIGHT_LIMITS.bodyChars + 100)}`,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+    const linkedPastLimit = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bounded body scan",
+        body: `${"x".repeat(PREFLIGHT_LIMITS.bodyChars)} Fixes #100`,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+
+    expect(linkedInsideLimit.linkedIssues).toContain(99);
+    expect(linkedPastLimit.linkedIssues).not.toContain(100);
+  });
+
   it("sanitizes public PR comments and supports minimal public signal level", () => {
     const directRepo = repo("owner/direct");
     const prRecord = pr(directRepo.fullName, 55, "Fix cache", { authorLogin: "miner", linkedIssues: [] });
@@ -1144,6 +1174,30 @@ describe("signal coverage edge cases", () => {
       score: 10,
       evidence: "0 open PR(s), 0 likely reviewable.",
       action: "No action.",
+    });
+
+    const staleQueuePullRequests = [44, 45, 46, 47].map((number) =>
+      pr(directRepo.fullName, number, `Stale unlinked queue item ${number}`, {
+        updatedAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+    const criticalBurdenQueue = buildQueueHealth(
+      directRepo,
+      [],
+      staleQueuePullRequests,
+      buildCollisionReport(directRepo.fullName, [], staleQueuePullRequests),
+    );
+    expect(criticalBurdenQueue).toMatchObject({ level: "critical", burdenScore: 100 });
+
+    const criticalBurdenScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: criticalBurdenQueue,
+    });
+    expect(scoreComponent(criticalBurdenScore, "queue_pressure")).toMatchObject({
+      score: 3,
+      evidence: "4 open PR(s), 0 likely reviewable, 4 stale, 4 unlinked.",
+      action: "Expect slower review.",
     });
 
     const sampledQueue = buildQueueHealth(

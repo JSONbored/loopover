@@ -60,7 +60,7 @@ import {
   refreshInstallationHealth,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId } from "../github/app";
+import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import {
   buildMaintainerQueueDigest,
@@ -839,14 +839,17 @@ async function maybePublishPrPublicSurface(
     authorAssociation: pr.authorAssociation ?? null,
     minerStatus: "not_checked",
   });
+  let publicSurfaceSkipped = false;
   if (prelim.skipped) {
     await auditPrVisibilitySkip(env, repoFullName, pr.number, author, prelim.skipReason ?? "skipped", webhook.deliveryId);
-    return;
+    publicSurfaceSkipped = true;
   }
   const needsMinerCheckForDetectedComment =
-    settings.commentMode === "detected_contributors_only" && (settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only");
-  if (!gateEnabled && prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment) return;
-  if (!author) return;
+    !publicSurfaceSkipped &&
+    settings.commentMode === "detected_contributors_only" &&
+    (settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only");
+  if (!gateEnabled && (publicSurfaceSkipped || (prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment))) return;
+  if (!author && !gateEnabled) return;
 
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
     const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.");
@@ -863,10 +866,11 @@ async function maybePublishPrPublicSurface(
     ).catch(() => undefined);
     return;
   }
-  const prelimHasPublicOutput = needsMinerCheckForDetectedComment || prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run");
+  const prelimHasPublicOutput =
+    !publicSurfaceSkipped && (needsMinerCheckForDetectedComment || prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run"));
   let official: Awaited<ReturnType<typeof getCachedOfficialMinerDetection>> | null = null;
   let decision = prelim;
-  if (prelimHasPublicOutput) {
+  if (prelimHasPublicOutput && author) {
     const requireOfficialMiner = settings.publicAudienceMode === "gittensor_only";
     official = await getCachedOfficialMinerDetection(env, author, {
       targetKey: `${repoFullName}#${pr.number}`,
@@ -874,11 +878,13 @@ async function maybePublishPrPublicSurface(
     });
     if (requireOfficialMiner && official.status === "unavailable") {
       await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
-      return;
+      if (!gateEnabled) return;
+      publicSurfaceSkipped = true;
     }
     if (requireOfficialMiner && official.status !== "confirmed") {
       await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
-      return;
+      if (!gateEnabled) return;
+      publicSurfaceSkipped = true;
     }
     decision = decidePublicSurface({
       settings,
@@ -941,7 +947,7 @@ async function maybePublishPrPublicSurface(
   }
 
   if (!prelimHasPublicOutput) return;
-  if (!official) return;
+  if (publicSurfaceSkipped || !official || !author) return;
 
   const [github] = await Promise.all([fetchPublicContributorProfile(author)]);
   const contributorPullRequests: Awaited<ReturnType<typeof listContributorPullRequests>> = [];
@@ -1111,15 +1117,44 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     await recordPrPanelRetriggerSkip(env, deliveryId, repoFullName, targetKey, actor, "missing_repo_pr_or_installation");
     return true;
   }
-  const pr = await getPullRequest(env, repoFullName, issue.number);
+  const [pr, settings] = await Promise.all([getPullRequest(env, repoFullName, issue.number), getRepositorySettings(env, repoFullName)]);
   if (!pr) {
     await recordPrPanelRetriggerSkip(env, deliveryId, repoFullName, targetKey, actor, "cached_pr_missing");
     return true;
   }
 
-  const [repo, settings, otherOpenPullRequests] = await Promise.all([
+  const actorAssociation = await resolvePrPanelRetriggerActorAssociation(env, installationId, repoFullName, actor);
+  const pullRequestAuthor = pr.authorLogin ?? issue.user?.login ?? null;
+  const needsMinerDetection = commandAuthorizationNeedsMinerDetection({
+    policy: settings.commandAuthorization,
+    commandName: "review-now",
+    commenterLogin: actor,
+    commenterAssociation: actorAssociation,
+    pullRequestAuthorLogin: pullRequestAuthor,
+  });
+  const official = pullRequestAuthor && needsMinerDetection ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, { targetKey: `${repoFullName}#${issue.number}`, deliveryId }) : undefined;
+  const authorization = isAuthorizedCommandActor({
+    commandName: "review-now",
+    commenterLogin: actor,
+    commenterAssociation: actorAssociation,
+    pullRequestAuthorLogin: pullRequestAuthor,
+    officialAuthorDetection: official,
+    commandAuthorizationPolicy: settings.commandAuthorization,
+  });
+  if (!authorization.authorized) {
+    await recordPrPanelRetriggerSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, authorization.reason);
+    await recordGithubProductUsage(env, "pr_panel_retrigger_skipped", {
+      actor,
+      repoFullName,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: authorization.reason === "miner_detection_unavailable" ? "error" : "skipped",
+      metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "review-now") },
+    });
+    return true;
+  }
+
+  const [repo, otherOpenPullRequests] = await Promise.all([
     getRepository(env, repoFullName),
-    getRepositorySettings(env, repoFullName),
     listOtherOpenPullRequests(env, repoFullName, pr.number),
   ]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
@@ -1146,6 +1181,14 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     metadata: { commentId: comment.id },
   });
   return true;
+}
+
+async function resolvePrPanelRetriggerActorAssociation(env: Env, installationId: number, repoFullName: string, actor: string | null): Promise<string | null> {
+  if (!actor) return null;
+  const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, actor).catch(() => null);
+  if (permission === "admin" || permission === "maintain") return "MEMBER";
+  if (permission === "write") return "COLLABORATOR";
+  return null;
 }
 
 function isCheckedPrPanelRetrigger(body: string | null | undefined): boolean {

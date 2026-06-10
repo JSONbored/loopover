@@ -1,10 +1,11 @@
 import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
-import { parseFocusManifest, parseFocusManifestContent, type FocusManifest, type FocusManifestSource } from "./focus-manifest";
+import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, type FocusManifest, type FocusManifestSource } from "./focus-manifest";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
 export const REPO_FOCUS_MANIFEST_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS = 4;
 
 /**
  * Async source for the raw manifest text of a single repo. Returns null when no manifest is
@@ -27,7 +28,10 @@ export async function fetchRepoFocusManifestFile(repoFullName: string): Promise<
     const url = `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/HEAD/${path}`;
     try {
       const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "gittensory" } });
-      if (response.ok) return await response.text();
+      if (response.ok) {
+        const text = await readBoundedResponseText(response);
+        if (text !== null) return text;
+      }
     } catch {
       // try the next candidate path
     }
@@ -71,10 +75,54 @@ export async function loadRepoFocusManifests(
   repoFullNames: string[],
   options: { fetcher?: RepoFocusManifestFetcher; maxAgeMs?: number } = {},
 ): Promise<Map<string, FocusManifest>> {
-  const entries = await Promise.all(
-    repoFullNames.map(async (name) => [name.toLowerCase(), await loadRepoFocusManifest(env, name, options)] as const),
+  const entries = await mapWithConcurrencyLimit(repoFullNames, REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS, async (name) =>
+    [name.toLowerCase(), await loadRepoFocusManifest(env, name, options)] as const,
   );
   return new Map(entries);
+}
+
+async function readBoundedResponseText(response: Response): Promise<string | null> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const parsedLength = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsedLength) && parsedLength > MAX_FOCUS_MANIFEST_BYTES) return null;
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_FOCUS_MANIFEST_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function mapWithConcurrencyLimit<T, U>(items: T[], limit: number, mapper: (item: T) => Promise<U>): Promise<U[]> {
+  const results: U[] = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 /**

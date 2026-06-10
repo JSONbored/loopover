@@ -146,27 +146,61 @@ async function validateBearerForRateLimit(c: Context<{ Bindings: Env }>, token: 
 }
 
 function clientIp(c: Context<{ Bindings: Env }>): string {
-  return (
-    firstUsableIp([
-      c.req.header("cf-connecting-ip"),
-      firstForwardedFor(c.req.header("x-forwarded-for")),
-      c.req.header("x-real-ip"),
-    ]) ?? "unknown-ip"
-  );
+  const candidates: Array<string | undefined> = [
+    c.req.header("cf-connecting-ip"),
+    ...forwardedForCandidates(c.req.header("x-forwarded-for")),
+    c.req.header("x-real-ip"),
+  ];
+  return firstValidIp(candidates) ?? "unknown-ip";
 }
 
-function firstUsableIp(candidates: Array<string | undefined>): string | undefined {
+function forwardedForCandidates(header: string | undefined): string[] {
+  if (!header?.trim()) return [];
+  return header.split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function firstValidIp(candidates: Array<string | undefined>): string | undefined {
   for (const candidate of candidates) {
-    const trimmed = candidate?.trim();
-    if (trimmed) return trimmed;
+    const valid = normalizeIpAddress(candidate);
+    if (valid) return valid;
   }
   return undefined;
 }
 
-function firstForwardedFor(header: string | undefined): string | undefined {
-  if (!header?.trim()) return undefined;
-  const first = header.split(",")[0]?.trim();
-  return first || undefined;
+function normalizeIpAddress(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || !isValidIpAddress(trimmed)) return undefined;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed.slice(1, -1);
+  return trimmed;
+}
+
+function isValidIpAddress(value: string): boolean {
+  return isValidIpv4(value) || isValidIpv6(value);
+}
+
+function isValidIpv4(value: string): boolean {
+  const parts = value.split(".");
+  if (parts.length !== 4) return false;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    if (octet < 0 || octet > 255) return false;
+  }
+  return true;
+}
+
+function isValidIpv6(value: string): boolean {
+  let candidate = value;
+  if (candidate.startsWith("[") && candidate.endsWith("]")) candidate = candidate.slice(1, -1);
+  if (!candidate.includes(":") || !/^[0-9a-fA-F:.]+$/.test(candidate)) return false;
+  if (candidate.split("::").length > 2) return false;
+  const segments = candidate.split(":");
+  if (segments.length > 8) return false;
+  for (const segment of segments) {
+    if (segment === "") continue;
+    if (!/^[0-9a-fA-F]{1,4}$/.test(segment)) return false;
+  }
+  return true;
 }
 
 function isPreAuthRateLimitPath(path: string): boolean {

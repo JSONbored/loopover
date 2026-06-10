@@ -188,6 +188,126 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys[1]).toMatch(/^strict:\/v1\/auth\/github\/session:ip:/);
   });
 
+  it("ignores malformed client address headers when building rate-limit keys", async () => {
+    const observedKeys: string[] = [];
+    const env = createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, observedKeys) as unknown as DurableObjectNamespace });
+
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "cf-connecting-ip": "not-an-ip",
+          "x-forwarded-for": "198.51.100.2, 198.51.100.3",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-forwarded-for": "198.51.100.2",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-forwarded-for": "garbage, also-not-ip",
+          "x-real-ip": "203.0.113.44",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-real-ip": "203.0.113.44",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "cf-connecting-ip": "999.999.999.999",
+          "x-forwarded-for": "still-not-ip",
+          "x-real-ip": "also-invalid",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-forwarded-for": "attacker-controlled-bucket",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/session:ip:/);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "cf-connecting-ip": "203.0.113.9",
+          "x-forwarded-for": "198.51.100.1",
+          "x-real-ip": "198.51.100.99",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-forwarded-for": "not-an-ip, 198.51.100.55",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-forwarded-for": "198.51.100.55",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(3);
+    expect(observedKeys[0]).not.toBe(observedKeys[1]);
+    expect(observedKeys[1]).toBe(observedKeys[2]);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-real-ip": "[2001:db8::1]",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-real-ip": "2001:db8::1",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+  });
+
   it("enforces route limits with session and IP keys plus retry headers", async () => {
     const env = createTestEnv();
     const noLimiter = fakeContext(env, "/v1/repos/123/pulls/456", { authorization: "Bearer session-token" });

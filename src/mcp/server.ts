@@ -888,12 +888,11 @@ export class GittensoryMcp {
   }
 
   private async getQueueHealthFederation(limit?: number): Promise<ToolPayload> {
-    if (this.identity.kind === "session") {
-      const summary = await loadControlPanelRoleSummary(this.env, this.identity.actor);
-      if (!summary.roles.includes("operator")) {
-        throw new Error("Forbidden: gittensory_queue_health_federation requires operator role.");
-      }
-    } else if (this.identity.actor !== "mcp") {
+    if (this.identity.kind !== "session") {
+      throw new Error("Forbidden: gittensory_queue_health_federation requires operator role.");
+    }
+    const summary = await loadControlPanelRoleSummary(this.env, this.identity.actor);
+    if (!summary.roles.includes("operator")) {
       throw new Error("Forbidden: gittensory_queue_health_federation requires operator role.");
     }
     const index = await buildFederatedQueueIndex(this.env, limit);

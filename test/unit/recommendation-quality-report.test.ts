@@ -106,6 +106,32 @@ describe("recommendation quality report", () => {
     expect(JSON.stringify(report.rollups)).not.toMatch(FORBIDDEN_REPORT_TERMS);
   });
 
+  it("assigns internal boundary outcomes to exactly one trend bucket", () => {
+    const report = buildRecommendationQualityReportFromOutcomes(
+      [
+        outcome("boundary", "accepted", {
+          surface: "api",
+          metadata: { role: "miner" },
+          updatedAt: "2026-05-25T00:00:00.000Z",
+        }),
+      ],
+      { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 14 },
+    );
+
+    expect(report.totals.total).toBe(1);
+    // The 14-day window splits into two 7-day buckets at 2026-05-25; the boundary outcome belongs to
+    // exactly one bucket (the later one), matching qualityRollups -- not both via an inclusive end.
+    expect(report.trends.map((bucket) => bucket.total)).toEqual([0, 1]);
+    expect(report.trends.reduce((sum, bucket) => sum + bucket.total, 0)).toBe(1);
+    expect(report.rollups).toEqual([
+      expect.objectContaining({
+        periodStart: "2026-05-25T00:00:00.000Z",
+        periodEnd: "2026-06-01T00:00:00.000Z",
+        count: 1,
+      }),
+    ]);
+  });
+
   it("counts rejected outcomes as negative recommendations", () => {
     const rejectedOnly = buildRecommendationQualityReportFromOutcomes(
       [outcome("rejected", "rejected", { actionType: "monitor_existing_pr", repo: "owner/rejected", updatedAt: "2026-05-30T00:00:00.000Z" })],

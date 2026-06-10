@@ -457,7 +457,7 @@ export function buildRegistrationOwnerWorkflow(
     docsItems.push({
       id: "docs-crawl",
       title: "Onboarding docs",
-      state: "needs_cleanup",
+      state: "accepted",
       summary: docs.note,
       remediation:
         "Manually verify CONTRIBUTING.md, README onboarding steps, and issue templates in GitHub; remote doc crawling is not enabled in this signal yet.",

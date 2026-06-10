@@ -224,7 +224,9 @@ function trendBuckets(
   return trendPeriods(generatedAt, windowDays).map((period) => {
     const bucketOutcomes = outcomes.filter((outcome) => {
       const timestamp = Date.parse(outcomeTimestamp(outcome));
-      return Number.isFinite(timestamp) && timestamp >= period.startMs && timestamp <= period.endMs;
+      // Half-open buckets [start, end) (final bucket inclusive) so an outcome exactly on an internal
+      // boundary lands in exactly one bucket -- matching qualityRollups and keeping sum(trends) == totals.
+      return Number.isFinite(timestamp) && timestamp >= period.startMs && (period.last ? timestamp <= period.endMs : timestamp < period.endMs);
     });
     return {
       periodStart: period.periodStart,

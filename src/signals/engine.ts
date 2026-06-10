@@ -3564,10 +3564,7 @@ export function buildPublicPrIntelligenceComment(args: {
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
-  // Deduplicated union of PR-specific clusters and planned-overlap (preflight) clusters -- they are
-  // different filtered subsets of the same report, so the count must be their union, not max(), to
-  // match the related-work items rendered in the panel details below.
-  const scopedOverlapClusters = [...new Map([...prCollisionClusters, ...args.preflight.collisions].map((cluster) => [cluster.id, cluster])).values()];
+  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
   const scopedOverlapCount = scopedOverlapClusters.length;
   const hasRelatedWork = linkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
@@ -3726,6 +3723,16 @@ function isOfficialContributorDetection(detection: ContributorDetection): boolea
 
 function pullRequestSpecificCollisionClusters(report: CollisionReport, pr: PullRequestRecord): CollisionCluster[] {
   return report.clusters.filter((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number));
+}
+
+/** Deduplicated union of PR-specific collision clusters and preflight overlap clusters. */
+export function unionScopedOverlapClusters(
+  report: CollisionReport,
+  pr: PullRequestRecord,
+  preflightCollisions: CollisionCluster[],
+): CollisionCluster[] {
+  const prCollisionClusters = pullRequestSpecificCollisionClusters(report, pr);
+  return [...new Map([...prCollisionClusters, ...preflightCollisions].map((cluster) => [cluster.id, cluster])).values()];
 }
 
 function linkedIssueDuplicatePullRequests(pr: PullRequestRecord, clusters: CollisionCluster[]): number[] {

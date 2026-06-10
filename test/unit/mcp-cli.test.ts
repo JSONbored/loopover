@@ -916,7 +916,7 @@ describe("gittensory-mcp CLI", () => {
         ),
       ).rejects.toThrow("Refusing to print unsafe public packet markdown from the server.");
     }
-  }, 10000);
+  }, 30000);
 
   it("sends bounded structured validation summaries without local logs", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));

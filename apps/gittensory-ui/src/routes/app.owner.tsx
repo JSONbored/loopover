@@ -13,7 +13,7 @@ function OwnerRoute() {
       <PageHeader
         eyebrow="Owner"
         title="Registration workspace"
-        description="Readiness report with direct-PR vs issue-discovery tradeoffs, maintainer economics, queue health, and suggested Gittensor config."
+        description="Guided owner workflow for policy, data quality, queue health, onboarding docs, maintainer capacity, and suggested Gittensor config."
       />
       <OwnerPanel />
     </div>

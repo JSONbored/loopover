@@ -164,10 +164,10 @@ describe("registration workspace UI helpers", () => {
       "maintainer_capacity",
     ]);
     const docs = workflow.buckets.find((bucket) => bucket.id === "docs_onboarding");
-    expect(docs?.state).toBe("needs_cleanup");
+    expect(docs?.state).toBe("accepted");
     expect(docs?.items[0]?.remediationKind).toBe("manual");
-    expect(workflow.overallState).toBe("needs_cleanup");
-    expect(workflow.nextSteps.length).toBeGreaterThan(0);
+    expect(workflow.overallState).toBe("accepted");
+    expect(workflow.nextSteps).toEqual([]);
   });
 
   it("blocked readiness maps workflow to not ready with concrete blocker remediation", () => {

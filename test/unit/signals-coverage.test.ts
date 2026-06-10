@@ -1195,9 +1195,29 @@ describe("signal coverage edge cases", () => {
       queueHealth: criticalBurdenQueue,
     });
     expect(scoreComponent(criticalBurdenScore, "queue_pressure")).toMatchObject({
-      score: 3,
+      score: 10,
       evidence: "4 open PR(s), 0 likely reviewable, 4 stale, 4 unlinked.",
-      action: "Expect slower review.",
+      action: "No action.",
+    });
+
+    const noisyIssues = Array.from({ length: 80 }, (_, index) => issue(directRepo.fullName, index + 1000, `Unrelated issue ${index + 1}`));
+    const issueBurdenQueue = buildQueueHealth(
+      directRepo,
+      noisyIssues,
+      [currentPr],
+      buildCollisionReport(directRepo.fullName, noisyIssues, [currentPr]),
+    );
+    expect(issueBurdenQueue).toMatchObject({ level: "critical" });
+
+    const issueBurdenScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: issueBurdenQueue,
+    });
+    expect(scoreComponent(issueBurdenScore, "queue_pressure")).toMatchObject({
+      score: 10,
+      evidence: "1 open PR(s), 1 likely reviewable.",
+      action: "No action.",
     });
 
     const sampledQueue = buildQueueHealth(

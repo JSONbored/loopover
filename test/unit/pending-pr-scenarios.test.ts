@@ -35,6 +35,7 @@ const maintainerRole: RoleContext = {
 };
 
 function pr(overrides: Partial<PullRequestRecord> & Pick<PullRequestRecord, "number">): PullRequestRecord {
+  const recentDate = new Date(Date.now() - 2 * 86_400_000).toISOString();
   return {
     repoFullName: "entrius/allways-ui",
     title: `PR #${overrides.number}`,
@@ -42,8 +43,8 @@ function pr(overrides: Partial<PullRequestRecord> & Pick<PullRequestRecord, "num
     authorLogin: "miner-a",
     labels: [],
     linkedIssues: [1],
-    createdAt: "2026-05-20T00:00:00.000Z",
-    updatedAt: "2026-05-27T00:00:00.000Z",
+    createdAt: recentDate,
+    updatedAt: recentDate,
     ...overrides,
   };
 }

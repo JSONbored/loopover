@@ -123,6 +123,7 @@ import {
   buildRoleContext,
   detectGittensorContributor,
   PR_PANEL_RETRIGGER_MARKER,
+  unionScopedOverlapClusters,
 } from "../signals/engine";
 import { decidePublicSurface } from "../signals/settings-preview";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
@@ -780,10 +781,6 @@ function linkedIssueDuplicatePullRequestsForGate(pr: PullRequestRecord, pullRequ
   ].sort((left, right) => left - right);
 }
 
-function pullRequestSpecificCollisionCount(collisions: ReturnType<typeof buildCollisionReport>, pr: PullRequestRecord): number {
-  return collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number)).length;
-}
-
 async function auditGateCheckPermissionMissing(
   env: Env,
   actor: string | null,
@@ -933,7 +930,7 @@ async function maybePublishPrPublicSurface(
     preflight,
     queueHealth,
     linkedDuplicatePrs: linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests),
-    scopedOverlapCount: Math.max(pullRequestSpecificCollisionCount(collisions, pr), preflight.collisions.length),
+    scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
   });
 
   const gateEvaluation = settings.gateCheckMode === "enabled" ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total)) : undefined;

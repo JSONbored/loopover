@@ -55,6 +55,16 @@ describe("MCP contributor access", () => {
     expect(JSON.stringify(payload)).not.toContain("SECRET private issue");
   });
 
+  it("blocks static api identity from queue health federation", async () => {
+    const env = createTestEnv();
+    const identity = await authenticatePrivateToken(env, "test-api-token");
+    if (!identity || identity.kind !== "static") throw new Error("expected static identity");
+    const mcp = new GittensoryMcp(env, identity) as unknown as { getQueueHealthFederation(): Promise<unknown> };
+    await expect(mcp.getQueueHealthFederation()).rejects.toThrow(
+      /Forbidden: gittensory_queue_health_federation requires operator role/,
+    );
+  });
+
   it("blocks non-operator session from queue health federation", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     const { token } = await createSessionForGitHubUser(env, { login: "non-operator", id: 9 });

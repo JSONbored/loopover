@@ -1,3 +1,4 @@
+import { parse as parseYaml } from "yaml";
 import type { JsonValue } from "../types";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
@@ -169,19 +170,28 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
 }
 
 /**
- * Parse raw manifest file/record content (JSON). Malformed JSON degrades to an empty manifest
- * with a warning rather than throwing, so a broken `.gittensory` config never breaks analysis.
+ * Parse raw manifest file/record content (JSON or YAML). Malformed content degrades to an empty
+ * manifest with a warning rather than throwing, so a broken `.gittensory` config never breaks analysis.
  */
 export function parseFocusManifestContent(content: string | null | undefined, source: FocusManifestSource = "repo_file"): FocusManifest {
   if (content === undefined || content === null || content.trim() === "") return emptyManifest(source);
   if (content.length > MAX_FOCUS_MANIFEST_BYTES || new TextEncoder().encode(content).byteLength > MAX_FOCUS_MANIFEST_BYTES) {
     return emptyManifest(source, [`Manifest content exceeded ${MAX_FOCUS_MANIFEST_BYTES} bytes; ignoring it and falling back to deterministic signals.`]);
   }
+  const trimmed = content.trim();
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
   } catch {
-    return emptyManifest(source, ["Manifest content was not valid JSON; ignoring it and falling back to deterministic signals."]);
+    return emptyManifest(source, [
+      looksLikeJson
+        ? "Manifest content was not valid JSON; ignoring it and falling back to deterministic signals."
+        : "Manifest content was not valid YAML; ignoring it and falling back to deterministic signals.",
+    ]);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return emptyManifest(source, ["Manifest must be a mapping of fields; ignoring malformed manifest and falling back to deterministic signals."]);
   }
   return parseFocusManifest(parsed, source);
 }

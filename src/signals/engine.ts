@@ -669,7 +669,7 @@ export type ContributorStrategy = {
   actionImpact?: string[] | undefined;
 };
 
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   "the",
   "and",
   "for",

@@ -1,6 +1,7 @@
 import {
   getRepository,
   getRepositorySettings,
+  listClosedContributorDraftIssues,
   listIssueSignalSample,
   listOpenIssues,
   listOpenPullRequests,
@@ -44,7 +45,7 @@ export type ContributorIssueDraftTopic =
   | "upstream:registry_drift"
   | `focus:wanted_path:${string}`;
 
-export type ContributorIssueDraftStatus = "proposed" | "skipped_duplicate" | "skipped_unsafe" | "created" | "skipped_create_failed";
+export type ContributorIssueDraftStatus = "proposed" | "skipped_duplicate" | "skipped_declined" | "skipped_unsafe" | "created" | "skipped_create_failed";
 
 export type ContributorIssueDraft = {
   fingerprint: string;
@@ -54,6 +55,7 @@ export type ContributorIssueDraft = {
   labels: string[];
   status: ContributorIssueDraftStatus;
   duplicateOf?: { number: number; title: string; reason: "marker" | "title" } | undefined;
+  declinedBy?: { number: number; title: string; reason: "wontfix" | "cooldown" } | undefined;
   issue?: { number: number; url: string } | undefined;
 };
 
@@ -64,6 +66,7 @@ export type ContributorIssueDraftGenerationResult = {
   createRequested: boolean;
   proposed: number;
   skippedDuplicate: number;
+  skippedDeclined: number;
   skippedUnsafe: number;
   created: number;
   skippedCreateFailed: number;
@@ -88,6 +91,7 @@ type ContributorIssueDraftContext = {
   contributorIntakeHealth: ContributorIntakeHealth;
   focusManifest: FocusManifest;
   openIssues: IssueRecord[];
+  declinedIssues?: IssueRecord[] | undefined;
   upstreamDriftWarnings: string[];
 };
 
@@ -170,6 +174,37 @@ export function findDuplicateContributorDraft(
   return null;
 }
 
+export const CONTRIBUTOR_ISSUE_DRAFT_DECLINED_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+const DECLINED_DRAFT_WONTFIX_LABELS = new Set(["wontfix", "wont-fix", "invalid", "duplicate", "not-planned"]);
+
+/**
+ * Detect whether a draft was already declined by a maintainer closing the generated issue.
+ * Matches by the stable marker fingerprint on a closed issue. A `wontfix`-style label suppresses
+ * re-proposal indefinitely; otherwise the closure is honored only within the cooldown window, so a
+ * genuine later regression of the underlying warning can resurface once the cooldown elapses.
+ */
+export function findDeclinedContributorDraft(
+  closedIssues: IssueRecord[],
+  draft: Pick<ContributorIssueDraft, "fingerprint">,
+  options: { now?: number | undefined; cooldownMs?: number | undefined } = {},
+): { number: number; title: string; reason: "wontfix" | "cooldown" } | null {
+  const marker = contributorIssueDraftMarker(draft.fingerprint);
+  const nowMs = options.now ?? Date.now();
+  const cooldownMs = options.cooldownMs ?? CONTRIBUTOR_ISSUE_DRAFT_DECLINED_COOLDOWN_MS;
+  for (const issue of closedIssues) {
+    if (issue.state !== "closed") continue;
+    if (!issue.body?.includes(marker)) continue;
+    if (issue.labels.some((label) => DECLINED_DRAFT_WONTFIX_LABELS.has(label.trim().toLowerCase()))) {
+      return { number: issue.number, title: issue.title, reason: "wontfix" };
+    }
+    const closedAtMs = issue.updatedAt ? Date.parse(issue.updatedAt) : Number.NaN;
+    if (!Number.isFinite(closedAtMs) || nowMs - closedAtMs < cooldownMs) {
+      return { number: issue.number, title: issue.title, reason: "cooldown" };
+    }
+  }
+  return null;
+}
+
 export function buildContributorIssueDraftBody(fingerprint: string, sections: ContributorIssueDraftSections): string {
   const blocks: string[] = [contributorIssueDraftMarker(fingerprint), "", "## Background", "", ...sections.background, "", "## Current Behavior", "", ...sections.currentBehavior, "", "## Desired Behavior", "", ...sections.desiredBehavior, "", "## Implementation Requirements", "", ...sections.implementationRequirements.map((line) => `- ${line}`), "", "## Public/Private Output Boundaries", "", ...sections.publicPrivateBoundaries.map((line) => `- ${line}`), "", "## Acceptance Criteria", "", ...sections.acceptanceCriteria.map((line) => `- ${line}`), "", "## Testing Requirements", "", ...sections.testingRequirements.map((line) => `- ${line}`)];
   return blocks.join("\n");
@@ -223,6 +258,7 @@ export async function generateContributorIssueDrafts(
   const drafts: ContributorIssueDraft[] = [];
   let proposed = 0;
   let skippedDuplicate = 0;
+  let skippedDeclined = 0;
   let skippedUnsafe = 0;
   let created = 0;
   let skippedCreateFailed = 0;
@@ -249,6 +285,15 @@ export async function generateContributorIssueDrafts(
       draft.status = "skipped_duplicate";
       draft.duplicateOf = duplicate;
       skippedDuplicate += 1;
+      drafts.push(draft);
+      continue;
+    }
+    /* v8 ignore next -- loadContributorIssueDraftContext always sets declinedIssues; the [] fallback only guards hand-built candidate contexts. */
+    const declined = findDeclinedContributorDraft(context.declinedIssues ?? [], draft);
+    if (declined) {
+      draft.status = "skipped_declined";
+      draft.declinedBy = declined;
+      skippedDeclined += 1;
       drafts.push(draft);
       continue;
     }
@@ -297,6 +342,7 @@ export async function generateContributorIssueDrafts(
     createRequested,
     proposed,
     skippedDuplicate,
+    skippedDeclined,
     skippedUnsafe,
     created,
     skippedCreateFailed,
@@ -444,10 +490,11 @@ function pathSlug(path: string): string {
 }
 
 async function loadContributorIssueDraftContext(env: Env, repoFullName: string): Promise<ContributorIssueDraftContext> {
-  const [repo, settings, openIssues, focusManifest, upstreamReports, issues, pullRequests, recentMergedPullRequests, labels, queueCounts] = await Promise.all([
+  const [repo, settings, openIssues, declinedIssues, focusManifest, upstreamReports, issues, pullRequests, recentMergedPullRequests, labels, queueCounts] = await Promise.all([
     getRepository(env, repoFullName),
     getRepositorySettings(env, repoFullName),
     listOpenIssues(env, repoFullName),
+    listClosedContributorDraftIssues(env, repoFullName, `<!-- ${CONTRIBUTOR_ISSUE_DRAFT_MARKER_PREFIX}`),
     loadRepoFocusManifest(env, repoFullName, { fetcher: async () => null }),
     listUpstreamDriftReports(env, 20),
     listIssueSignalSample(env, repoFullName),
@@ -472,6 +519,7 @@ async function loadContributorIssueDraftContext(env: Env, repoFullName: string):
     contributorIntakeHealth,
     focusManifest,
     openIssues,
+    declinedIssues,
     upstreamDriftWarnings: registryHyperparameterDriftWarningsForRepo(upstreamReports, repoFullName),
   };
 }

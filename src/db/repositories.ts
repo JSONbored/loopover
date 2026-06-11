@@ -2050,6 +2050,21 @@ export async function listIssues(env: Env, fullName: string): Promise<IssueRecor
   return rows.map(toIssueRecordFromRow);
 }
 
+/**
+ * Closed issues whose body carries a contributor-issue-draft marker, recent-first and bounded.
+ * Used to suppress re-proposing drafts a maintainer already declined (closed).
+ */
+export async function listClosedContributorDraftIssues(env: Env, fullName: string, markerPrefix: string, limit = 200): Promise<IssueRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select()
+    .from(issues)
+    .where(and(eq(issues.repoFullName, fullName), eq(issues.state, "closed"), sql`${issues.payloadJson} LIKE ${`%${markerPrefix}%`}`))
+    .orderBy(desc(issues.updatedAt))
+    .limit(limit);
+  return rows.map(toIssueRecordFromRow);
+}
+
 export async function listAllIssues(env: Env): Promise<IssueRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(issues).limit(2000);

@@ -22,9 +22,12 @@ const ROUTES: Record<string, ReadonlySet<string>> = {
   "/stats/api/send": new Set(["POST"]),
 };
 
-// Request headers we never forward upstream (hop-by-hop or our-origin specific).
+// Request headers we never forward upstream (hop-by-hop, credentials, or our-origin specific).
 const STRIP_REQUEST_HEADERS = new Set([
   "host",
+  "authorization",
+  "cookie",
+  "proxy-authorization",
   "connection",
   "keep-alive",
   "transfer-encoding",
@@ -81,14 +84,18 @@ export async function handleAnalyticsProxy(request: Request): Promise<Response |
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
 
+  const upstreamRequest: RequestInit = {
+    method: request.method,
+    headers,
+  };
+  if (hasBody) {
+    // Buffer the (tiny) collect payload so we don't need a streaming/duplex body.
+    upstreamRequest.body = await request.arrayBuffer();
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch(upstreamUrl, {
-      method: request.method,
-      headers,
-      // Buffer the (tiny) collect payload so we don't need a streaming/duplex body.
-      body: hasBody ? await request.arrayBuffer() : undefined,
-    });
+    upstream = await fetch(upstreamUrl, upstreamRequest);
   } catch {
     // Analytics must never take the page down — fail quietly.
     return new Response(null, { status: 502 });

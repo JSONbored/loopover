@@ -8,6 +8,7 @@ import {
   buildContributorIssueDraftTestingRequirements,
   contributorIssueDraftFingerprint,
   contributorIssueDraftMarker,
+  findDeclinedContributorDraft,
   findDuplicateContributorDraft,
   generateContributorIssueDrafts,
   isContributorIssueDraftPublicSafe,
@@ -227,6 +228,49 @@ describe("contributor issue drafts", () => {
     const result = await generateContributorIssueDrafts(env, repoFullName, { dryRun: true, limit: 1 });
     expect(result.skippedDuplicate).toBe(1);
     expect(result.drafts[0]?.status).toBe("skipped_duplicate");
+  });
+
+  it("detects declined drafts by stable marker with wontfix and cooldown policy", async () => {
+    const fingerprint = await contributorIssueDraftFingerprint("JSONbored/gittensory", "policy:focus_policy_missing", "policy:focus_policy_missing");
+    const marker = contributorIssueDraftMarker(fingerprint);
+    const closed = (over: Partial<IssueRecord>): IssueRecord => ({
+      ...openIssue(5, "feat(issues): address focus-policy-missing policy readiness for repo", marker),
+      state: "closed",
+      updatedAt: new Date().toISOString(),
+      ...over,
+    });
+    const longAgo = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Recently closed -> suppressed within the cooldown window.
+    expect(findDeclinedContributorDraft([closed({})], { fingerprint })).toMatchObject({ number: 5, reason: "cooldown" });
+    // wontfix-style label -> suppressed regardless of age.
+    expect(findDeclinedContributorDraft([closed({ updatedAt: longAgo, labels: ["wontfix"] })], { fingerprint })).toMatchObject({ reason: "wontfix" });
+    // Past the cooldown without a wontfix label -> may resurface (a later regression).
+    expect(findDeclinedContributorDraft([closed({ updatedAt: longAgo })], { fingerprint })).toBeNull();
+    // Missing/unparseable close timestamp -> treat as still within cooldown (suppress).
+    expect(findDeclinedContributorDraft([closed({ updatedAt: undefined })], { fingerprint })).toMatchObject({ reason: "cooldown" });
+    // Open issues, missing markers, and other fingerprints are ignored.
+    expect(findDeclinedContributorDraft([{ ...closed({}), state: "open" }], { fingerprint })).toBeNull();
+    expect(findDeclinedContributorDraft([closed({ body: "no marker here" })], { fingerprint })).toBeNull();
+    expect(findDeclinedContributorDraft([closed({})], { fingerprint: "other-fingerprint" })).toBeNull();
+  });
+
+  it("skips drafts a maintainer already declined by closing the issue", async () => {
+    const env = createTestEnv();
+    // Use a non-self repo so the policy candidate is deterministic (the self-repo carries a bundled manifest).
+    const repoFullName = "other-owner/other-repo";
+    const fingerprint = await contributorIssueDraftFingerprint(repoFullName, "policy:focus_policy_missing", "policy:focus_policy_missing");
+    const marker = contributorIssueDraftMarker(fingerprint);
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    vi.spyOn(repositories, "listClosedContributorDraftIssues").mockResolvedValue([
+      { ...openIssue(90, "feat(issues): address focus-policy-missing policy readiness for repo", marker), state: "closed", updatedAt: new Date().toISOString() },
+    ]);
+
+    const result = await generateContributorIssueDrafts(env, repoFullName, { dryRun: false, create: true, limit: 1 });
+    expect(result.skippedDeclined).toBe(1);
+    expect(result.created).toBe(0);
+    expect(result.drafts[0]?.status).toBe("skipped_declined");
+    expect(result.drafts[0]?.declinedBy).toMatchObject({ number: 90, reason: "cooldown" });
   });
 
   it("records skipped_create_failed when GitHub create is unavailable", async () => {

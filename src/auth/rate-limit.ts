@@ -197,11 +197,13 @@ function isValidIpv6(value: string): boolean {
   if (candidate.split("::").length > 2) return false;
   const segments = candidate.split(":");
   if (segments.length > 8) return false;
+  let hasHexSegment = false;
   for (const segment of segments) {
     if (segment === "") continue;
     if (!/^[0-9a-fA-F]{1,4}$/.test(segment)) return false;
+    hasHexSegment = true;
   }
-  return true;
+  return hasHexSegment;
 }
 
 function isPreAuthRateLimitPath(path: string): boolean {

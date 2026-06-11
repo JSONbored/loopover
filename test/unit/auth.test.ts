@@ -307,6 +307,34 @@ describe("private-beta auth and rate limiting", () => {
     ).resolves.toBeNull();
     expect(observedKeys).toHaveLength(2);
     expect(observedKeys[0]).toBe(observedKeys[1]);
+
+    observedKeys.length = 0;
+    await expect(enforceRateLimit(fakeContext(env, "/v1/auth/github/session"), "strict")).resolves.toBeNull();
+    const unknownIpKey = observedKeys[0];
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "cf-connecting-ip": "1.2.3.abc",
+          "x-forwarded-for": "256.0.0.1, 1.2.3",
+          "x-real-ip": "1::2::3",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys[0]).toBe(unknownIpKey);
+
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", {
+          "x-forwarded-for": "1:2:3:4:5:6:7:8:9:0, xyz::1",
+        }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    expect(observedKeys[0]).toBe(unknownIpKey);
   });
 
   it("enforces route limits with session and IP keys plus retry headers", async () => {

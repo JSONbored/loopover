@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getRepository } from "../../src/db/repositories";
+import { getRepository, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { getLatestRegistrySnapshot, persistRegistrySnapshot, refreshRegistry } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
@@ -145,6 +145,45 @@ describe("registry normalization", () => {
       isRegistered: true,
       registryConfig: expect.objectContaining({ repo: "JSONbored/awesome-claude" }),
     });
+  });
+
+  it("updates an existing case-variant repo row instead of inserting a duplicate", async () => {
+    const env = createTestEnv();
+    // A GitHub-sourced row already exists under canonical casing.
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } });
+
+    // The registry supplies the same repo with different casing.
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "jsonbored/gittensory": { emission_share: 0.02, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "fixture://registry" },
+        "2026-05-22T00:00:00.000Z",
+      ),
+    );
+
+    // The existing canonical row is updated to registered -- no duplicate primary-key row.
+    await expect(getRepository(env, "JSONbored/gittensory")).resolves.toMatchObject({ isRegistered: true });
+    const rows = await env.DB.prepare("SELECT full_name FROM repositories WHERE lower(full_name) = ?").bind("jsonbored/gittensory").all();
+    expect(rows.results).toHaveLength(1);
+    expect((rows.results[0] as { full_name: string }).full_name).toBe("JSONbored/gittensory");
+  });
+
+  it("does not de-register a repo whose snapshot casing differs from the stored row", async () => {
+    const env = createTestEnv();
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.02, issue_discovery_share: 0 } }, { kind: "raw-github", url: "fixture://old" }, "2026-05-22T00:00:00.000Z"),
+    );
+    // The next snapshot uses different casing for the same repo.
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "jsonbored/gittensory": { emission_share: 0.02, issue_discovery_share: 0 } }, { kind: "raw-github", url: "fixture://new" }, "2026-05-23T00:00:00.000Z"),
+    );
+
+    await expect(getRepository(env, "JSONbored/gittensory")).resolves.toMatchObject({ isRegistered: true });
+    const rows = await env.DB.prepare("SELECT full_name FROM repositories WHERE lower(full_name) = ?").bind("jsonbored/gittensory").all();
+    expect(rows.results).toHaveLength(1);
   });
 
   it("falls back to raw GitHub when registry API probes fail", async () => {

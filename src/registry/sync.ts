@@ -1,4 +1,4 @@
-import { and, desc, eq, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { registrySnapshots, repositories, syncRuns } from "../db/schema";
 import type { RegistrySnapshot } from "../types";
@@ -91,12 +91,20 @@ export async function persistRegistrySnapshot(env: Env, snapshot: RegistrySnapsh
     payloadJson: jsonString(snapshot as unknown as Record<string, unknown>),
   });
 
+  // repositories.fullName is a case-sensitive primary key, but repo names arrive from multiple sources
+  // (the upstream registry vs GitHub-canonical webhook/API casing) and the rest of the system resolves
+  // repos case-insensitively (getRepository). Resolve each snapshot repo to an existing row by lowercased
+  // name so a casing variant updates that row instead of inserting a duplicate primary key.
+  const existingFullNames = (await db.select({ fullName: repositories.fullName }).from(repositories)).map((row) => row.fullName);
+  const canonicalByLower = new Map(existingFullNames.map((name) => [name.toLowerCase(), name]));
+
   for (const repo of snapshot.repositories) {
-    const parts = repoParts(repo.repo);
+    const fullName = canonicalByLower.get(repo.repo.toLowerCase()) ?? repo.repo;
+    const parts = repoParts(fullName);
     await db
       .insert(repositories)
       .values({
-        fullName: repo.repo,
+        fullName,
         owner: parts.owner,
         name: parts.name,
         isRegistered: true,
@@ -123,8 +131,11 @@ export async function persistRegistrySnapshot(env: Env, snapshot: RegistrySnapsh
       });
   }
 
-  const registeredFullNames = snapshot.repositories.map((repo) => repo.repo);
-  if (registeredFullNames.length > 0) {
+  // De-register case-insensitively: only existing rows whose lowercased name is absent from the snapshot,
+  // so a casing variant of a still-registered repo is never wrongly de-registered.
+  const registeredLower = new Set(snapshot.repositories.map((repo) => repo.repo.toLowerCase()));
+  const staleFullNames = existingFullNames.filter((name) => !registeredLower.has(name.toLowerCase()));
+  if (staleFullNames.length > 0) {
     await db
       .update(repositories)
       .set({
@@ -136,7 +147,7 @@ export async function persistRegistrySnapshot(env: Env, snapshot: RegistrySnapsh
         labelMultipliersJson: "{}",
         updatedAt: nowIso(),
       })
-      .where(and(eq(repositories.isRegistered, true), notInArray(repositories.fullName, registeredFullNames)));
+      .where(and(eq(repositories.isRegistered, true), inArray(repositories.fullName, staleFullNames)));
   }
 }
 

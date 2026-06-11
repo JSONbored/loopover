@@ -143,7 +143,7 @@ describe("private-beta auth and rate limiting", () => {
 
   it("keys pre-auth routes by proxy fallback headers when cf-connecting-ip is absent", async () => {
     const observedKeys: string[] = [];
-    const env = createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, observedKeys) as unknown as DurableObjectNamespace });
+    const env = rateLimitTestEnv({}, observedKeys);
 
     await expect(
       enforceRateLimit(
@@ -164,13 +164,13 @@ describe("private-beta auth and rate limiting", () => {
     observedKeys.length = 0;
     await expect(
       enforceRateLimit(
-        fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({ "x-forwarded-for": "198.51.100.2, 198.51.100.3" })),
+        fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({ "x-real-ip": "198.51.100.3", "x-forwarded-for": "198.51.100.2, 198.51.100.3" })),
         "strict",
       ),
     ).resolves.toBeNull();
     await expect(
       enforceRateLimit(
-        fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({ "x-forwarded-for": "198.51.100.3" })),
+        fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({ "x-real-ip": "198.51.100.3" })),
         "strict",
       ),
     ).resolves.toBeNull();
@@ -196,6 +196,30 @@ describe("private-beta auth and rate limiting", () => {
     ).resolves.toBeNull();
     await expect(
       enforceRateLimit(fakeContext(env, "/v1/auth/github/session", { "x-forwarded-for": "198.51.100.2" }), "strict"),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/session:ip:/);
+  });
+
+  it("does not treat spoofed cf-ray as trusted proxy proof", async () => {
+    const observedKeys: string[] = [];
+    const env = createTestEnv({
+      RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, observedKeys) as unknown as DurableObjectNamespace,
+      RATE_LIMIT_TRUSTED_PROXIES: TEST_TRUSTED_PROXY,
+    });
+
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", { "cf-ray": "attacker-controlled", "x-forwarded-for": "198.51.100.1" }),
+        "strict",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(
+        fakeContext(env, "/v1/auth/github/session", { "cf-ray": "attacker-controlled", "x-forwarded-for": "198.51.100.2" }),
+        "strict",
+      ),
     ).resolves.toBeNull();
     expect(observedKeys).toHaveLength(2);
     expect(observedKeys[0]).toBe(observedKeys[1]);
@@ -254,12 +278,13 @@ describe("private-beta auth and rate limiting", () => {
 
   it("ignores malformed client address headers when building rate-limit keys", async () => {
     const observedKeys: string[] = [];
-    const env = createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, observedKeys) as unknown as DurableObjectNamespace });
+    const env = rateLimitTestEnv({}, observedKeys);
 
     await expect(
       enforceRateLimit(
         fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({
           "cf-connecting-ip": "not-an-ip",
+          "x-real-ip": "198.51.100.2",
           "x-forwarded-for": "198.51.100.2, 198.51.100.3",
         })),
         "strict",
@@ -267,7 +292,7 @@ describe("private-beta auth and rate limiting", () => {
     ).resolves.toBeNull();
     await expect(
       enforceRateLimit(
-        fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({ "x-forwarded-for": "198.51.100.3" })),
+        fakeContext(env, "/v1/auth/github/session", trustedProxyHeaders({ "x-real-ip": "198.51.100.2" })),
         "strict",
       ),
     ).resolves.toBeNull();
@@ -406,9 +431,9 @@ describe("private-beta auth and rate limiting", () => {
 
     const fallbackObservedKeys: string[] = [];
     const fallbackHeaders = fakeContext(
-      createTestEnv({ RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, fallbackObservedKeys) as unknown as DurableObjectNamespace }),
+      rateLimitTestEnv({}, fallbackObservedKeys),
       "/v1/repos/JSONbored/gittensory",
-      trustedProxyHeaders({ "x-forwarded-for": "198.51.100.2, 198.51.100.3" }),
+      trustedProxyHeaders({ "x-real-ip": "198.51.100.3", "x-forwarded-for": "198.51.100.2, 198.51.100.3" }),
     );
     await expect(enforceRateLimit(fallbackHeaders, "normal")).resolves.toBeNull();
     expect(fallbackObservedKeys).toHaveLength(1);
@@ -794,6 +819,15 @@ function rateLimiterNamespace(decision: { status: number; body: Record<string, u
   };
 }
 
+function rateLimitTestEnv(overrides: Partial<Env> = {}, observedKeys?: string[]) {
+  return createTestEnv({
+    RATE_LIMITER: rateLimiterNamespace({ status: 200, body: {} }, observedKeys) as unknown as DurableObjectNamespace,
+    RATE_LIMIT_TRUSTED_PROXIES: TEST_TRUSTED_PROXY,
+    RATE_LIMIT_TRUSTED_PROXY_COUNT: "2",
+    ...overrides,
+  });
+}
+
 function fakeContext(env: Env, path: string, headers: Record<string, string> = {}) {
   const responseHeaders = new Headers();
   return {
@@ -811,6 +845,15 @@ function fakeContext(env: Env, path: string, headers: Record<string, string> = {
   } as unknown as import("hono").Context<{ Bindings: Env }> & { res: { headers: Headers } };
 }
 
+const TEST_TRUSTED_PROXY = "198.51.100.99";
+
 function trustedProxyHeaders(headers: Record<string, string> = {}): Record<string, string> {
-  return { "cf-ray": "test-trusted-edge", ...headers };
+  const next = { ...headers };
+  const chain = (next["x-forwarded-for"] ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!chain.includes(TEST_TRUSTED_PROXY)) chain.push(TEST_TRUSTED_PROXY);
+  next["x-forwarded-for"] = chain.join(", ");
+  return next;
 }

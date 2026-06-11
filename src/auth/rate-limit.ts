@@ -162,7 +162,6 @@ function clientIp(c: Context<{ Bindings: Env }>): string {
 }
 
 function isTrustedProxyRequest(c: Context<{ Bindings: Env }>): boolean {
-  if (c.req.header("cf-ray")?.trim()) return true;
   const trustedProxies = parseTrustedProxyList(c.env.RATE_LIMIT_TRUSTED_PROXIES);
   if (trustedProxies.length === 0) return false;
   const chain = forwardedForCandidates(c.req.header("x-forwarded-for"))

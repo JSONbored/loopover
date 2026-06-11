@@ -28,7 +28,7 @@ export const Route = createFileRoute("/roadmap")({
 const COLUMNS = [
   { key: "shipping-soon", title: "Now", hint: "Phase 0/1: stabilize and ship the miner loop." },
   { key: "planned", title: "Next", hint: "Phase 2/3: maintainer trust and repo-owner intake." },
-  { key: "exploring", title: "Later", hint: "Phase 4/5: analytics, launch system, distribution." },
+  { key: "exploring", title: "Later", hint: "Phase 4/5: analytics, launch system, and distribution." },
 ] as const;
 
 const LAST_UPDATED = "2026-06-01";

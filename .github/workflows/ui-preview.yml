@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload built UI artifact
         if: steps.cfg.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ui-preview-dist
           path: apps/gittensory-ui/dist
@@ -98,7 +98,7 @@ jobs:
         run: npm install --global wrangler@4.95.0
 
       - name: Download built UI artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: ui-preview-dist
           path: preview-dist

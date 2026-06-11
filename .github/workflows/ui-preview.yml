@@ -1,0 +1,117 @@
+name: UI Preview Deploy
+
+# Builds a per-PR preview of the gittensory UI Worker and records it as a GitHub
+# Deployment with an `environment_url`. Reviewbot reads that URL to render the
+# "after" screenshot in its before/after review comment (taopedia-style).
+#
+# Required repo secrets (until both are set, this workflow no-ops with a notice):
+#   CLOUDFLARE_API_TOKEN   — token with "Workers Scripts:Edit" on the account
+#   CLOUDFLARE_ACCOUNT_ID  — the Cloudflare account id that owns gittensory-ui
+#
+# Fork PRs do not receive secrets, so previews only run for same-repo branches;
+# Reviewbot degrades gracefully to a before-only comment for forks.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "apps/gittensory-ui/**"
+      - "packages/**"
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: ui-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build + upload UI preview
+    # Secrets are unavailable to fork PRs — skip there (Reviewbot shows before-only).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check Cloudflare secrets
+        id: cfg
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — skipping preview deploy (Reviewbot will post a before-only comment)."
+          fi
+
+      - name: Checkout PR head
+        if: steps.cfg.outputs.ready == 'true'
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        if: steps.cfg.outputs.ready == 'true'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.cfg.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Build UI
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
+        run: npm run ui:build
+
+      - name: Upload preview version
+        id: upload
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          set -o pipefail
+          out=$(npx wrangler versions upload --config apps/gittensory-ui/dist/server/wrangler.json 2>&1 | tee /dev/stderr)
+          url=$(printf '%s\n' "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -n1)
+          if [ -z "$url" ]; then
+            echo "::error::Could not parse a preview URL from wrangler output"
+            exit 1
+          fi
+          echo "preview_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview: $url"
+
+      - name: Record deployment for Reviewbot
+        if: steps.cfg.outputs.ready == 'true' && steps.upload.outputs.preview_url != ''
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const url = ${{ toJSON(steps.upload.outputs.preview_url) }};
+            const pr = context.payload.pull_request;
+            const sha = pr.head.sha;
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              environment: `preview/pr-${pr.number}`,
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: true,
+              description: "Gittensory UI preview",
+              // Reviewbot reads `pr` here to re-review this exact PR once the preview is live.
+              payload: JSON.stringify({ pr: pr.number, head_sha: sha }),
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: "success",
+              environment: `preview/pr-${pr.number}`,
+              environment_url: url,
+              description: "Preview ready",
+            });
+            core.notice(`Preview deployment recorded: ${url}`);

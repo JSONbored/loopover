@@ -64,6 +64,23 @@ describe("loadOrComputeBurdenForecastResponse", () => {
     expect(response).toBeNull();
   });
 
+  it("does not expose an orphaned cached forecast for an unknown repo", async () => {
+    const env = createTestEnv();
+    await upsertBurdenForecast(env, {
+      repoFullName: "ghost/private-repo",
+      payload: {
+        repoFullName: "ghost/private-repo",
+        level: "critical",
+        summary: "orphaned private queue fixture",
+      } as unknown as Record<string, JsonValue>,
+      generatedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    const response = await loadOrComputeBurdenForecastResponse(env, "ghost/private-repo");
+
+    expect(response).toBeNull();
+  });
+
   it("returns a snapshot envelope with freshness:fresh for a recently persisted forecast", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "fresh", full_name: "owner/fresh", private: false, owner: { login: "owner" }, default_branch: "main" });
@@ -105,6 +122,13 @@ describe("loadOrComputeBurdenForecastResponse", () => {
 
   it("treats malformed cached forecast timestamps as stale", async () => {
     const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, {
+      name: "malformed-time",
+      full_name: "owner/malformed-time",
+      private: false,
+      owner: { login: "owner" },
+      default_branch: "main",
+    });
     await upsertBurdenForecast(env, {
       repoFullName: "owner/malformed-time",
       payload: { repoFullName: "owner/malformed-time", level: "medium", summary: "bad timestamp fixture" } as unknown as Record<string, JsonValue>,

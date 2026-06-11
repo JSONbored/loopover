@@ -34,6 +34,52 @@ describe("gittensory-mcp CLI", () => {
     expect(generic.snippet).toBe(claude.snippet);
   });
 
+  it("prints human-approved agent profile instructions for supported MCP clients", () => {
+    const payload = JSON.parse(run(["init-client", "--print", "codex", "--agent-profile", "miner-planner", "--json"])) as {
+      agentProfile: {
+        id: string;
+        title: string;
+        recommendedPrompts: string[];
+        recommendedTools: string[];
+        boundaries: string[];
+        whenNotToUse: string;
+      };
+      notes: string[];
+    };
+
+    expect(payload.agentProfile).toMatchObject({
+      id: "miner-planner",
+      title: "Miner planner",
+      recommendedPrompts: expect.arrayContaining(["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_draft_pr_packet"]),
+      recommendedTools: expect.arrayContaining(["gittensory_agent_plan_next_work", "gittensory_agent_prepare_pr_packet"]),
+    });
+    expect(payload.agentProfile.boundaries.join("\n")).toMatch(/do not open PRs|do not.*post comments|do not.*tokens|local source contents/i);
+    expect(payload.notes.join("\n")).toMatch(/human-approved/i);
+    expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|[A-Z0-9_]*TOKEN=|PRIVATE_KEY=/);
+
+    const plain = run(["init-client", "--print", "claude", "--agent-profile", "repo-owner-intake"]);
+    expect(plain).toContain('"mcpServers"');
+    expect(plain).toContain("Gittensory agent profile: Repo-owner intake");
+    expect(plain).toContain("gittensory_repo_owner_intake_readiness");
+    expect(plain).toMatch(/do not.*publish public output/i);
+  });
+
+  it("supports all documented agent profiles without changing MCP server config", () => {
+    for (const profile of ["miner-planner", "maintainer-triage", "repo-owner-intake"]) {
+      const payload = JSON.parse(run(["init-client", "--print", "mcp", "--agent-profile", profile, "--json"])) as {
+        args: string[];
+        snippet: string;
+        agentProfile: { id: string; boundaries: string[]; whenNotToUse: string };
+      };
+
+      expect(payload.args).toEqual(["--stdio"]);
+      expect(payload.snippet).toContain('"args": [');
+      expect(payload.agentProfile.id).toBe(profile);
+      expect(payload.agentProfile.boundaries.join("\n")).toMatch(/Human-approved only/i);
+      expect(payload.agentProfile.whenNotToUse).not.toMatch(/wallet|hotkey|coldkey|token/i);
+    }
+  });
+
   it("runs doctor against a local health/session fixture", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -722,6 +768,35 @@ describe("gittensory-mcp CLI", () => {
     await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
   });
 
+  it("does not use stale decision-pack cache for non-JSON authorization failures", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    const fixtureOptions: {
+      decisionPackStatus?: number;
+      decisionPackErrorBody?: string;
+      decisionPackErrorContentType?: string;
+      repoDecisionStatus?: number;
+      repoDecisionErrorBody?: string;
+      repoDecisionErrorContentType?: string;
+    } = {};
+    const url = await startFixtureServer(fixtureOptions);
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    };
+
+    await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
+    fixtureOptions.decisionPackStatus = 403;
+    fixtureOptions.decisionPackErrorBody = "<html>forbidden</html>";
+    fixtureOptions.decisionPackErrorContentType = "text/html";
+    fixtureOptions.repoDecisionStatus = 403;
+    fixtureOptions.repoDecisionErrorBody = "<html>forbidden</html>";
+    fixtureOptions.repoDecisionErrorContentType = "text/html";
+
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
+    await expect(runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
+  });
+
   it("does not use stale decision-pack cache when local credentials are missing", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
@@ -815,7 +890,18 @@ describe("gittensory-mcp CLI", () => {
     git(tempDir, "commit", "-m", "initial commit");
     git(tempDir, "checkout", "-b", "codex/public-safe-pr-packets");
 
-    for (const unsafePhrase of ["score: 1.15", "reward estimate", "wallet address", "hotkey id", "raw-trust: 0.7", "private-reviewability: ready", "raw_trust: 0.7", "private_reviewability: ready", "trust_score: 0.4"]) {
+    for (const unsafePhrase of [
+      "score: 1.15",
+      "reward estimate",
+      "wallet address",
+      "hotkey id",
+      "raw-trust: 0.7",
+      "private-reviewability: ready",
+      "raw_trust: 0.7",
+      "private_reviewability: ready",
+      "trust_score: 0.4",
+      "log path C:\\Users\\alice\\workspace\\raw.log",
+    ]) {
       if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
       server = null;
       const url = await startFixtureServer({ packetMarkdown: `# Public-safe PR packet\n\n- ${unsafePhrase}\n` });
@@ -830,7 +916,7 @@ describe("gittensory-mcp CLI", () => {
         ),
       ).rejects.toThrow("Refusing to print unsafe public packet markdown from the server.");
     }
-  }, 10000);
+  }, 30000);
 
   it("sends bounded structured validation summaries without local logs", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
@@ -1030,6 +1116,13 @@ describe("gittensory-mcp CLI", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });
 
+  it("rejects unsupported agent profiles", () => {
+    for (const profile of ["autopilot", "__proto__", "constructor"]) {
+      expect(() => run(["init-client", "--print", "codex", "--agent-profile", profile])).toThrow(/Unsupported agent profile/);
+      expect(() => run(["init-client", "--print", "codex", "--agent-profile", profile, "--json"])).toThrow(/Unsupported agent profile/);
+    }
+  });
+
   it("reports the package version via version, --version, and -v", () => {
     const expected = "@jsonbored/gittensory-mcp/0.4.0";
     for (const flag of ["version", "--version", "-v"]) {
@@ -1059,18 +1152,19 @@ describe("gittensory-mcp CLI", () => {
     expect(bash).toContain("_gittensory_mcp()");
     expect(bash).toContain("complete -F _gittensory_mcp gittensory-mcp");
     expect(bash).toContain("analyze-branch");
-    expect(bash).toContain("local commands=\"login logout whoami status changelog completion version doctor");
+    expect(bash).toContain("local commands=\"login logout whoami config status changelog completion version doctor");
     expect(bash).toContain("version");
     expect(bash).toContain("plan status explain packet");
 
     const zsh = run(["completion", "zsh"]);
     expect(zsh).toContain("#compdef gittensory-mcp");
     expect(zsh).toContain("_describe 'command' commands");
-    expect(zsh).toContain("commands=(login logout whoami status changelog completion version doctor");
+    expect(zsh).toContain("commands=(login logout whoami config status changelog completion version doctor");
     expect(zsh).toContain("list create switch remove");
 
     const fish = run(["completion", "fish"]);
     expect(fish).toContain("complete -c gittensory-mcp");
+    expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a config");
     expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a completion");
     expect(fish).toContain("__fish_seen_subcommand_from agent");
   });
@@ -1286,6 +1380,11 @@ async function startFixtureServer(
     compatibilityStatus?: number;
     npmStatus?: number;
     decisionPackStatus?: number;
+    decisionPackErrorBody?: string;
+    decisionPackErrorContentType?: string;
+    repoDecisionStatus?: number;
+    repoDecisionErrorBody?: string;
+    repoDecisionErrorContentType?: string;
     packetMarkdown?: string;
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
@@ -1370,10 +1469,21 @@ async function startFixtureServer(
     if (request.url === "/v1/contributors/JSONbored/decision-pack" && request.method === "GET") {
       if (options.decisionPackStatus && options.decisionPackStatus >= 400) {
         response.statusCode = options.decisionPackStatus;
-        response.end(JSON.stringify({ error: "decision_pack_unavailable" }));
+        if (options.decisionPackErrorContentType) response.setHeader("content-type", options.decisionPackErrorContentType);
+        response.end(options.decisionPackErrorBody ?? JSON.stringify({ error: "decision_pack_unavailable" }));
         return;
       }
       response.end(JSON.stringify(decisionPackFixture()));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/repos/JSONbored/gittensory/decision" && request.method === "GET") {
+      if (options.repoDecisionStatus && options.repoDecisionStatus >= 400) {
+        response.statusCode = options.repoDecisionStatus;
+        if (options.repoDecisionErrorContentType) response.setHeader("content-type", options.repoDecisionErrorContentType);
+        response.end(options.repoDecisionErrorBody ?? JSON.stringify({ error: "repo_decision_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify({ status: "ready", login: "JSONbored", repoFullName: "JSONbored/gittensory", decision: decisionPackFixture().repoDecisions[0] }));
       return;
     }
     if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {

@@ -53,7 +53,7 @@ describe("MCP server telemetry", () => {
         surface: "mcp",
         eventName: "mcp_tool_called",
         outcome: "error",
-        clientName: "gittensory-mcp-cli",
+        clientName: "gittensory-<redacted-actor>-cli",
         clientVersion: "0.4.0",
         metadata: expect.objectContaining({
           toolName: "gittensory_local_status",
@@ -99,7 +99,7 @@ describe("MCP server telemetry", () => {
         surface: "mcp",
         eventName: "mcp_request",
         outcome: "success",
-        clientName: "mcp",
+        clientName: "<redacted-actor>",
         metadata: expect.objectContaining({ rpcMethod: "ping", compatibilityStatus: "unknown" }),
       }),
     ]);

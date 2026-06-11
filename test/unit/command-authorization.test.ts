@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  commandAuthorizationAllowedRoles,
   commandAuthorizationNeedsMinerDetection,
   evaluateCommandAuthorization,
   normalizeCommandAuthorizationPolicy,
@@ -52,6 +53,17 @@ describe("repo command authorization policy", () => {
       authorized: false,
       reason: "command_policy_denied",
     });
+  });
+
+  it("falls back to default roles for inherited object property command names", () => {
+    for (const commandName of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(commandAuthorizationAllowedRoles(undefined, commandName)).toEqual(["maintainer", "collaborator", "confirmed_miner"]);
+      expect(evaluateCommandAuthorization({ commandName, commenterAssociation: "OWNER" })).toMatchObject({
+        authorized: true,
+        reason: "maintainer_invocation",
+        allowedRoles: ["maintainer", "collaborator", "confirmed_miner"],
+      });
+    }
   });
 
   it("warns on malformed policy and falls back to default command roles", () => {

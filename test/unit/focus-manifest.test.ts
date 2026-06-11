@@ -82,6 +82,20 @@ describe("parseFocusManifest", () => {
     expect(manifest.wantedPaths).toEqual(["src/", "lib/"]);
   });
 
+  it("de-duplicates over-long entries after truncation", () => {
+    const prefix = "a".repeat(300);
+    const manifest = parseFocusManifest({ wantedPaths: [`${prefix}X`, `${prefix}Y`] });
+    expect(manifest.wantedPaths).toEqual([prefix]);
+    expect(manifest.warnings.join(" ")).toMatch(/truncated an over-long entry/);
+  });
+
+  it("applies the list cap to over-long entries", () => {
+    const overLong = Array.from({ length: 250 }, (_, index) => `path-${index}-${"x".repeat(300)}`);
+    const manifest = parseFocusManifest({ wantedPaths: overLong });
+    expect(manifest.wantedPaths.length).toBe(200);
+    expect(manifest.warnings.join(" ")).toMatch(/exceeded 200 entries/);
+  });
+
   it("marks a manifest with no recognized fields as absent", () => {
     const manifest = parseFocusManifest({ unrelated: "value" });
     expect(manifest.present).toBe(false);
@@ -122,11 +136,24 @@ describe("parseFocusManifestContent", () => {
   });
 
   it("warns when JSON content is not a mapping", () => {
-    for (const content of ['["a","b"]', '"string"']) {
+    for (const content of ['["a","b"]', "null", '"string"']) {
       const manifest = parseFocusManifestContent(content);
       expect(manifest.present).toBe(false);
       expect(manifest.warnings.join(" ")).toMatch(/must be a mapping/i);
     }
+  });
+
+  it("parses valid YAML content", () => {
+    const manifest = parseFocusManifestContent("wantedPaths:\n  - src/\nblockedPaths:\n  - dist/\n", "repo_file");
+    expect(manifest.present).toBe(true);
+    expect(manifest.wantedPaths).toEqual(["src/"]);
+    expect(manifest.blockedPaths).toEqual(["dist/"]);
+  });
+
+  it("warns instead of throwing on malformed YAML", () => {
+    const manifest = parseFocusManifestContent("wantedPaths: [unterminated", "repo_file");
+    expect(manifest.present).toBe(false);
+    expect(manifest.warnings.join(" ")).toMatch(/not valid YAML/i);
   });
 });
 

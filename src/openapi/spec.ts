@@ -387,6 +387,31 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    responses: {
+      200: { description: "Repo focus manifest and compiled policy for maintainers", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/focus-manifest/refresh",
+    responses: {
+      200: { description: "Refresh the persisted focus manifest cache from the repo file", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    responses: {
+      200: { description: "Persist API-backed focus manifest for a repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Malformed JSON request body" },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/app/self-dogfood/registration-pack",
     responses: {
       200: { description: "Private self-dogfood registration pack for the Gittensory repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -408,6 +433,15 @@ export function buildOpenApiSpec() {
       200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role" },
       404: { description: "Repository is not accepted or preview unavailable" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate",
+    responses: {
+      200: { description: "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      400: { description: "Invalid request or explicit create without dryRun false" },
+      403: { description: "Insufficient role" },
     },
   });
   registry.registerPath({

@@ -159,7 +159,7 @@ describe("decision-pack service", () => {
     expect(negative.directPrShare).toBeCloseTo(0.01 * 0.9 * 1, 10); // 0.009
   });
 
-  it("feeds repo outcome patterns into repo decisions without inflating maintainer-lane evidence", () => {
+  it("keeps repo outcome patterns scoped to the private pattern field", () => {
     const outsideRole = { maintainerLane: false } as any;
     const maintainerRole = { maintainerLane: true } as any;
     const patterns = {
@@ -178,10 +178,12 @@ describe("decision-pack service", () => {
     });
     expect(pursue.recommendation).toBe("pursue");
     expect(pursue.repoOutcomePatterns?.sampleSize).toBe(8);
-    expect(pursue.whyThisHelps.some((line) => line.includes("PRs touching src/ merge well here"))).toBe(true);
-    expect(pursue.riskReasons.some((line) => line.includes("high closure risk"))).toBe(true);
+    expect(pursue.repoOutcomePatterns?.successPatterns[0]?.detail).toContain("PRs touching src/ merge well here");
+    expect(pursue.repoOutcomePatterns?.riskPatterns[0]?.detail).toContain("high closure risk");
+    expect(pursue.whyThisHelps.some((line) => line.includes("PRs touching src/ merge well here"))).toBe(false);
+    expect(pursue.riskReasons.some((line) => line.includes("high closure risk"))).toBe(false);
 
-    // Maintainer-lane repos surface the patterns for context but never fold the risk into the contributor's own risk reasons.
+    // Maintainer-lane repos also surface the patterns for private context without folding risk into generic reasons.
     const maintainer = __decisionPackInternals.buildRepoDecision({
       repo: repo("owner/direct", 0.03, 0),
       roleContext: maintainerRole,

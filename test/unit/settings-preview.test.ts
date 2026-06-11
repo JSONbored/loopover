@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRepoSettingsPreview, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
+import { REQUIRED_INSTALLATION_PERMISSIONS } from "../../src/github/backfill";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
 
 const FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE =
@@ -166,9 +167,10 @@ describe("buildRepoSettingsPreview", () => {
     });
   });
 
-  it("requires only pull_requests:read for PR comment/label output (no PR write overprivilege)", () => {
-    // Installation grants issues:write (everything comment/label output actually needs) but is missing
-    // pull_requests; the app only reads PRs, so this must NOT be flagged as a comment/label blocker.
+  it("reports missing pull_requests:read without requiring PR write for PR comment/label output", () => {
+    // Installation grants issues:write (everything comment/label output actually writes with) but is missing
+    // pull_requests:read, which the app still requires to read PRs. This must be reported without
+    // regressing to the previous overbroad pull_requests:write requirement.
     const preview = buildRepoSettingsPreview({
       ...base,
       settings: settings(),
@@ -177,7 +179,13 @@ describe("buildRepoSettingsPreview", () => {
     });
     expect(preview.installPreview.permissions.required).toContain("pull_requests: read");
     expect(preview.installPreview.permissions.required).not.toContain("pull_requests: write");
-    expect(preview.installPreview.permissions.missing).not.toContain("pull_requests");
+    expect(preview.installPreview.permissions.missing).toContain("pull_requests");
+    expect(preview.installPreview.permissions.status).toBe("needs_attention");
+    expect(preview.installPreview.status).toBe("needs_attention");
+    expect(preview.installPreview.checklist.find((item) => item.id === "permissions")).toMatchObject({
+      status: "needs_attention",
+      summary: expect.stringContaining("pull_requests"),
+    });
   });
 
   it("explains a missing optional Checks: write permission only when check runs are enabled", () => {
@@ -342,5 +350,23 @@ describe("buildRepoSettingsPreview", () => {
     expect(preview.installPreview.permissions.required).toEqual(["metadata: read", "pull_requests: read"]);
     expect(preview.installPreview.publicOutputs).toEqual(["No public comment, label, or check run for this sample."]);
     expect(preview.installPreview.checklist.find((item) => item.id === "public-outputs")?.summary).toMatch(/no public output action is enabled/i);
+  });
+
+  it("derives read-only base permissions from REQUIRED_INSTALLATION_PERMISSIONS so the preview stays in sync with the canonical constant", () => {
+    // Regression: settings-preview previously hardcoded ["metadata: read", "pull_requests: read"] instead
+    // of reading from REQUIRED_INSTALLATION_PERMISSIONS, so any change to the constant would leave the
+    // preview silently stale (issue #419/#420 pattern).
+    const readEntries = Object.entries(REQUIRED_INSTALLATION_PERMISSIONS).filter(([, v]) => v === "read");
+    const expectedReadPerms = readEntries.map(([k, v]) => `${k}: ${v}`).sort();
+
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ publicSurface: "label_only", autoLabelEnabled: false, commentMode: "off", checkRunMode: "off" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+
+    const actualReadPerms = (preview.installPreview.permissions.required as string[]).filter((p) => p.endsWith(": read")).sort();
+    expect(actualReadPerms).toEqual(expectedReadPerms);
   });
 });

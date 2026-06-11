@@ -1,3 +1,4 @@
+import { parse as parseYaml } from "yaml";
 import type { JsonValue } from "../types";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
@@ -57,6 +58,7 @@ export type FocusManifestGuidance = {
 
 const MAX_LIST_ITEMS = 200;
 const MAX_ITEM_LENGTH = 300;
+export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 
 const EMPTY_MANIFEST: FocusManifest = {
   present: false,
@@ -98,12 +100,15 @@ function normalizeStringList(value: JsonValue | undefined, field: string, warnin
     }
     const trimmed = entry.trim();
     if (!trimmed) continue;
-    if (trimmed.length > MAX_ITEM_LENGTH) {
+    // Truncate in place, then flow through the same de-dup and cap logic. Falling through (rather than
+    // `continue`-ing) keeps over-long entries subject to both limits, so untrusted manifests cannot
+    // bypass de-duplication or the MAX_LIST_ITEMS safety cap via pathological long entries.
+    let normalized = trimmed;
+    if (normalized.length > MAX_ITEM_LENGTH) {
       warnings.push(`Manifest field "${field}" truncated an over-long entry.`);
-      result.push(trimmed.slice(0, MAX_ITEM_LENGTH));
-      continue;
+      normalized = normalized.slice(0, MAX_ITEM_LENGTH);
     }
-    if (!result.includes(trimmed)) result.push(trimmed);
+    if (!result.includes(normalized)) result.push(normalized);
     if (result.length >= MAX_LIST_ITEMS) {
       warnings.push(`Manifest field "${field}" exceeded ${MAX_LIST_ITEMS} entries; extra entries ignored.`);
       break;
@@ -168,16 +173,28 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
 }
 
 /**
- * Parse raw manifest file/record content (JSON). Malformed JSON degrades to an empty manifest
- * with a warning rather than throwing, so a broken `.gittensory` config never breaks analysis.
+ * Parse raw manifest file/record content (JSON or YAML). Malformed content degrades to an empty
+ * manifest with a warning rather than throwing, so a broken `.gittensory` config never breaks analysis.
  */
 export function parseFocusManifestContent(content: string | null | undefined, source: FocusManifestSource = "repo_file"): FocusManifest {
   if (content === undefined || content === null || content.trim() === "") return emptyManifest(source);
+  if (content.length > MAX_FOCUS_MANIFEST_BYTES || new TextEncoder().encode(content).byteLength > MAX_FOCUS_MANIFEST_BYTES) {
+    return emptyManifest(source, [`Manifest content exceeded ${MAX_FOCUS_MANIFEST_BYTES} bytes; ignoring it and falling back to deterministic signals.`]);
+  }
+  const trimmed = content.trim();
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
   } catch {
-    return emptyManifest(source, ["Manifest content was not valid JSON; ignoring it and falling back to deterministic signals."]);
+    return emptyManifest(source, [
+      looksLikeJson
+        ? "Manifest content was not valid JSON; ignoring it and falling back to deterministic signals."
+        : "Manifest content was not valid YAML; ignoring it and falling back to deterministic signals.",
+    ]);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return emptyManifest(source, ["Manifest must be a mapping of fields; ignoring malformed manifest and falling back to deterministic signals."]);
   }
   return parseFocusManifest(parsed, source);
 }

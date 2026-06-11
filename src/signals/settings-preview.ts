@@ -13,6 +13,7 @@ import {
   buildQueueHealth,
   type ContributorDetection,
 } from "./engine";
+import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
 
 export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled";
@@ -481,10 +482,13 @@ function writesPrPublicSurface(settings: RepositorySettings, decision: PublicSur
 }
 
 function requiredInstallPermissions(settings: RepositorySettings, decision: PublicSurfaceDecision): string[] {
-  // PR conversation comments and PR labels use GitHub Issues endpoints, so they require issues:write, not
-  // pull_requests:write -- the app only reads PRs. This matches REQUIRED_INSTALLATION_PERMISSIONS
-  // (pull_requests: read) and avoids asking maintainers for broader PR-write scope than the app uses.
-  const permissions = new Set(["metadata: read", "pull_requests: read"]);
+  // Read-only base permissions are derived from the canonical constant so this surface stays in sync.
+  // Write permissions are gated on whether the current settings actually produce that output.
+  const permissions = new Set(
+    Object.entries(REQUIRED_INSTALLATION_PERMISSIONS)
+      .filter(([, value]) => value === "read")
+      .map(([key, value]) => `${key}: ${value}`),
+  );
   if (writesPrPublicSurface(settings, decision)) permissions.add("issues: write");
   if (decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") permissions.add("checks: write");
   return [...permissions];
@@ -494,6 +498,7 @@ function activeMissingPermissions(settings: RepositorySettings, decision: Public
   if (!installation) return [];
   const missing = new Set(installation.missingPermissions);
   const active: string[] = [];
+  if (missing.has("pull_requests")) active.push("pull_requests");
   // Comment/label output is gated on issues:write (Issues endpoints), not pull_requests:write.
   if (writesPrPublicSurface(settings, decision) && missing.has("issues")) active.push("issues");
   if ((decision.willCheckRun || settings.checkRunMode === "enabled" || settings.gateCheckMode === "enabled") && missing.has("checks")) active.push("checks");

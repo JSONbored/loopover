@@ -50,4 +50,43 @@ describe("MCP compatibility adoption summaries", () => {
       truncated: true,
     });
   });
+
+  it("canonicalizes client version buckets before returning aggregate analytics", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "mcp-adoption-test-salt" });
+
+    await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_request",
+      actor: "alice",
+      clientName: "gittensory-mcp",
+      clientVersion: "0.3.0+alice",
+      metadata: { packageVersion: "0.3.0+alice" },
+      occurredAt: "2026-05-28T00:03:00.000Z",
+    });
+    await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_request",
+      actor: "bob",
+      clientName: "gittensory-mcp",
+      clientVersion: "v0.4.0-beta.1+bob",
+      metadata: { packageVersion: "v0.4.0-beta.1+bob" },
+      occurredAt: "2026-05-28T00:04:00.000Z",
+    });
+    await recordProductUsageEvent(env, {
+      surface: "mcp",
+      eventName: "mcp_request",
+      actor: "carol",
+      clientName: "gittensory-mcp",
+      clientVersion: "canary+carol",
+      metadata: { packageVersion: "canary+carol" },
+      occurredAt: "2026-05-28T00:05:00.000Z",
+    });
+
+    const summary = await summarizeMcpCompatibilityAdoption(env);
+
+    expect(summary.byClientVersion).toContainEqual({ key: "0.3.0", count: 1 });
+    expect(summary.byClientVersion).toContainEqual({ key: "0.4.0-beta.1", count: 1 });
+    expect(summary.byClientVersion).toContainEqual({ key: "unknown", count: 1 });
+    expect(JSON.stringify(summary)).not.toMatch(/alice|bob|carol/i);
+  });
 });

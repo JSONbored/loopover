@@ -58,12 +58,13 @@ describe("GitHub type label classifier", () => {
     ).toMatchObject({ action: "skip", reason: "issue-is-pull-request" });
   });
 
-  it("applies bug labels to pull_request_target payloads directly", () => {
+  it("applies bug labels to trusted pull_request_target payloads", () => {
     expect(
       getTypeLabelDecision("pull_request_target", {
         pull_request: {
           number: 42,
           title: "fix(mcp): repair metadata boundary checks",
+          author_association: "MEMBER",
           labels: [{ name: "size:S" }],
         },
       }),
@@ -75,11 +76,52 @@ describe("GitHub type label classifier", () => {
     });
   });
 
+  it("skips labels for untrusted fork pull_request_target payloads", () => {
+    expect(
+      getTypeLabelDecision("pull_request_target", {
+        pull_request: {
+          number: 42,
+          title: "fix(mcp): repair metadata boundary checks",
+          author_association: "NONE",
+          head: { repo: { full_name: "driveby/gittensory", fork: true } },
+          base: { repo: { full_name: "JSONbored/gittensory" } },
+          labels: [{ name: "size:S" }],
+        },
+      }),
+    ).toEqual({
+      action: "skip",
+      reason: "untrusted-pull-request-author",
+      number: 42,
+      title: "fix(mcp): repair metadata boundary checks",
+    });
+  });
+
+  it("applies labels for same-repository pull_request_target payloads", () => {
+    expect(
+      getTypeLabelDecision("pull_request_target", {
+        pull_request: {
+          number: 44,
+          title: "fix(mcp): repair metadata boundary checks",
+          author_association: "NONE",
+          head: { repo: { full_name: "JSONbored/gittensory" } },
+          base: { repo: { full_name: "JSONbored/gittensory" } },
+          labels: [{ name: "size:S" }],
+        },
+      }),
+    ).toEqual({
+      action: "apply",
+      label: "gittensor:bug",
+      number: 44,
+      title: "fix(mcp): repair metadata boundary checks",
+    });
+  });
+
   it("requires a linked feature issue before labeling feature pull requests", () => {
     const payload = {
       pull_request: {
         number: 43,
         title: "feat(mcp): add metadata boundary checks",
+        author_association: "COLLABORATOR",
         labels: [{ name: "size:S" }],
       },
     };
@@ -108,7 +150,7 @@ describe("GitHub type label classifier", () => {
 
     expect(workflow).toMatch(/pull_request_target:/);
     expect(workflow).toMatch(/issues:\s+write/);
-    expect(workflow).toMatch(/pull-requests:\s+write/);
+    expect(workflow).not.toMatch(/pull-requests:\s+write/);
     expect(workflow).toContain("Checkout base branch");
     expect(workflow).toContain("ref: ${{ github.event.repository.default_branch }}");
     expect(workflow).toContain("persist-credentials: false");
@@ -290,6 +332,47 @@ describe("GitHub type label classifier", () => {
     expect(issues).toEqual([{ number: 12, title: "[Feature]: add metadata boundary checks", labels: [{ name: "feature" }] }]);
   });
 
+  it("does not fetch issue references for untrusted fork pull requests", async () => {
+    const originalEnv = { ...process.env };
+    const originalFetch = globalThis.fetch;
+    const eventDir = mkdtempSync(join(tmpdir(), "type-label-"));
+    const eventPath = join(eventDir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          number: 102,
+          title: "feat(mcp): add metadata boundary checks",
+          author_association: "NONE",
+          head: { repo: { full_name: "driveby/gittensory", fork: true } },
+          base: { repo: { full_name: "JSONbored/gittensory" } },
+          body: "Closes #12",
+          labels: [],
+        },
+      }),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => {
+      throw new Error("fetch should not run for untrusted fork pull requests");
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    process.env.GITHUB_EVENT_NAME = "pull_request_target";
+    process.env.GITHUB_REPOSITORY = "JSONbored/gittensory";
+    process.env.GITHUB_TOKEN = "token";
+
+    try {
+      await main();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("type-label: skipped untrusted-pull-request-author");
+    } finally {
+      process.env = originalEnv;
+      globalThis.fetch = originalFetch;
+      log.mockRestore();
+      rmSync(eventDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not fetch issue references for non-feature pull requests", async () => {
     const originalEnv = { ...process.env };
     const originalFetch = globalThis.fetch;
@@ -301,6 +384,7 @@ describe("GitHub type label classifier", () => {
         pull_request: {
           number: 101,
           title: "chore: update documentation",
+          author_association: "MEMBER",
           body: "Closes #1 fixes #2 resolves #3",
           labels: [],
         },

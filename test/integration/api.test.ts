@@ -988,6 +988,100 @@ describe("api routes", () => {
     );
     expect(invalidRepoContext.status).toBe(200);
 
+    const boundedQueuePr = {
+      number: 1,
+      author: "alice",
+      authorRole: "contributor",
+      isConfirmedMiner: true,
+      linkedIssue: { qualityScore: 0.9 },
+      checksStatus: "passing",
+      isStale: false,
+      additions: 50,
+      deletions: 10,
+      title: "Fix cache",
+      body: "Fixes #1",
+      duplicateCandidates: [],
+      createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+      lastUpdatedAt: new Date(Date.now() - 3600000).toISOString(),
+    };
+
+    const tooManyQueuePRs = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({ pullRequests: Array.from({ length: 251 }, (_, index) => ({ ...boundedQueuePr, number: index + 1 })) }),
+      },
+      env,
+    );
+    expect(tooManyQueuePRs.status).toBe(400);
+
+    const oversizedQueueFields = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: JSON.stringify({
+          pullRequests: [
+            {
+              ...boundedQueuePr,
+              author: "a".repeat(101),
+              title: "t".repeat(301),
+              body: "b".repeat(4001),
+              duplicateCandidates: Array.from({ length: 26 }, (_, index) => index + 1),
+            },
+          ],
+        }),
+      },
+      env,
+    );
+    expect(oversizedQueueFields.status).toBe(400);
+
+    const oversizedQueuePayload = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: { ...internalHeaders(env), "content-length": "1048577" },
+        body: JSON.stringify({}),
+      },
+      env,
+    );
+    expect(oversizedQueuePayload.status).toBe(413);
+    await expect(oversizedQueuePayload.json()).resolves.toMatchObject({ error: "payload_too_large", maxBytes: 1048576 });
+
+    const oversizedQueueStream = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+        body: "x".repeat(1048577),
+      },
+      env,
+    );
+    expect(oversizedQueueStream.status).toBe(413);
+    await expect(oversizedQueueStream.json()).resolves.toMatchObject({ error: "payload_too_large", maxBytes: 1048576 });
+
+    const invalidQueueContentLength = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: { ...internalHeaders(env), "content-length": "not-a-number" },
+        body: JSON.stringify({ pullRequests: [boundedQueuePr] }),
+      },
+      env,
+    );
+    expect(invalidQueueContentLength.status).toBe(200);
+
+    const missingQueueBody = await app.request(
+      "/v1/internal/queue-intelligence",
+      {
+        method: "POST",
+        headers: internalHeaders(env),
+      },
+      env,
+    );
+    expect(missingQueueBody.status).toBe(400);
+
     const localBranchAnalysis = await app.request(
       "/v1/local/branch-analysis",
       {
@@ -1251,6 +1345,7 @@ describe("api routes", () => {
           totalTokenScore: 60,
           sourceLines: 40,
           openPrCount: 1,
+          duplicateRiskCount: 2,
         }),
       },
       env,
@@ -1259,7 +1354,12 @@ describe("api routes", () => {
     await expect(scorePreview.json()).resolves.toMatchObject({
       repoFullName: "entrius/allways-ui",
       targetType: "planned_pr",
-      result: { privateOnly: true, scoringModelSnapshotId: "scoring-1" },
+      input: { duplicateRiskCount: 2 },
+      result: {
+        privateOnly: true,
+        scoringModelSnapshotId: "scoring-1",
+        blockedBy: expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk", severity: "reducer" })]),
+      },
     });
     const noContributorScorePreview = await app.request(
       "/v1/scoring/preview",
@@ -1351,6 +1451,11 @@ describe("api routes", () => {
       repoFullName: "entrius/allways-ui",
       report: { repoFullName: "entrius/allways-ui", issues: expect.any(Array) },
     });
+
+    const { token: unrelatedIssueQualityToken } = await createSessionForGitHubUser(env, { login: "unrelated-user", id: 404 });
+    const forbiddenIssueQuality = await app.request("/v1/repos/entrius/allways-ui/issue-quality", { headers: { authorization: `Bearer ${unrelatedIssueQualityToken}` } }, env);
+    expect(forbiddenIssueQuality.status).toBe(403);
+    await expect(forbiddenIssueQuality.json()).resolves.toMatchObject({ error: "forbidden_repo" });
 
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "entrius/uncached", private: false, owner: { login: "entrius" }, default_branch: "main" });
     const computedIssueQuality = await app.request("/v1/repos/entrius/uncached/issue-quality", { headers: apiHeaders(env) }, env);
@@ -1736,6 +1841,20 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/mcp-compatibility", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
+    const ownerSettingsPreview = await app.request(
+      "/v1/repos/repo-owner/owned-repo/settings-preview",
+      { method: "POST", headers: ownerHeaders, body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed" } }) },
+      ownerEnv,
+    );
+    expect(ownerSettingsPreview.status).toBe(200);
+    await expect(ownerSettingsPreview.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
+    const forbiddenVictimSettingsPreview = await app.request(
+      "/v1/repos/victim-org/secret-repo/settings-preview",
+      { method: "POST", headers: ownerHeaders, body: JSON.stringify({ sample: { authorLogin: "oktofeesh1", minerStatus: "confirmed" } }) },
+      ownerEnv,
+    );
+    expect(forbiddenVictimSettingsPreview.status).toBe(403);
+    await expect(forbiddenVictimSettingsPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const ownerWeeklyReport = await app.request("/v1/app/analytics/weekly-value-report", { headers: ownerHeaders }, ownerEnv);
     expect(ownerWeeklyReport.status).toBe(200);
     const ownerWeeklyReportBody = await ownerWeeklyReport.json();
@@ -1798,6 +1917,53 @@ describe("api routes", () => {
     );
     expect(forbiddenVictimPreview.status).toBe(403);
     await expect(forbiddenVictimPreview.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    await upsertAgentCommandAnswer(ownerEnv, {
+      id: "owned-app-feedback",
+      repoFullName: "repo-owner/owned-repo",
+      issueNumber: 7,
+      command: "plan-next-work",
+      requestCommentId: 700,
+      responseCommentId: 701,
+      responseUrl: "https://github.com/repo-owner/owned-repo/pull/7#issuecomment-701",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    await upsertAgentCommandAnswer(ownerEnv, {
+      id: "victim-app-feedback",
+      repoFullName: "victim-org/secret-repo",
+      issueNumber: 42,
+      command: "plan-next-work",
+      requestCommentId: 4200,
+      responseCommentId: 4201,
+      responseUrl: "https://github.com/victim-org/secret-repo/pull/42#issuecomment-4201",
+      actorKind: "maintainer",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {},
+    });
+    const ownerRepoFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ answerId: "owned-app-feedback", vote: "useful" }),
+      },
+      ownerEnv,
+    );
+    expect(ownerRepoFeedback.status).toBe(200);
+    const forbiddenVictimFeedback = await app.request(
+      "/v1/app/commands/feedback",
+      {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({ answerId: "victim-app-feedback", vote: "not_useful" }),
+      },
+      ownerEnv,
+    );
+    expect(forbiddenVictimFeedback.status).toBe(403);
+    await expect(forbiddenVictimFeedback.json()).resolves.toMatchObject({ error: "forbidden_repo" });
     const { token: operatorToken } = await createSessionForGitHubUser(ownerEnv, { login: "jsonbored", id: 1 });
     const operatorVictimPreview = await app.request(
       "/v1/app/commands/preview",
@@ -3548,6 +3714,45 @@ describe("api routes", () => {
     expect(body).not.toContain("SECRET roadmap PR title");
     expect(body).not.toContain("SECRET-LAUNCH-CODE");
     expect(body).not.toContain("confidential-roadmap");
+
+    const allowedMcpContext = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "allowed-session-repo-context",
+          method: "tools/call",
+          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "allowed" } },
+        }),
+      },
+      env,
+    );
+    expect(allowedMcpContext.status).toBe(200);
+    await expect(mcpJson(allowedMcpContext)).resolves.toMatchObject({ result: { structuredContent: { repoFullName: "target-org/allowed" } } });
+
+    const siblingMcpContext = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "forbidden-session-repo-context",
+          method: "tools/call",
+          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "secret" } },
+        }),
+      },
+      env,
+    );
+    expect(siblingMcpContext.status).toBe(200);
+    const siblingMcpBody = await siblingMcpContext.text();
+    expect(siblingMcpBody).toContain("Forbidden");
+    expect(siblingMcpBody).toContain("session cannot access this repository");
+    expect(siblingMcpBody).not.toContain("SECRET roadmap PR title");
+    expect(siblingMcpBody).not.toContain("SECRET-LAUNCH-CODE");
+    expect(siblingMcpBody).not.toContain("confidential-roadmap");
   });
 
   it("returns 404 for unknown repos and serves cached snapshot with freshness for known repos", async () => {
@@ -4149,6 +4354,39 @@ describe("api routes", () => {
     expect(callPayload.result.structuredContent.repoFullName).toBe("entrius/allways-ui");
     expect(callPayload.result.content[0]?.text).not.toMatch(/reward|farming/i);
 
+    const scorePreviewCall = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "score-preview-duplicate-risk",
+          method: "tools/call",
+          params: {
+            name: "gittensory_preview_local_pr_score",
+            arguments: {
+              repoFullName: "entrius/allways-ui",
+              targetKey: "mcp-duplicate-risk",
+              sourceTokenScore: 40,
+              totalTokenScore: 60,
+              sourceLines: 42,
+              duplicateRiskCount: 2,
+            },
+          },
+        }),
+      },
+      env,
+    );
+    expect(scorePreviewCall.status).toBe(200);
+    const scorePreviewPayload = (await mcpJson(scorePreviewCall)) as {
+      result: { structuredContent: { input: { duplicateRiskCount?: number }; result: { blockedBy: Array<{ code: string; severity: string }> } } };
+    };
+    expect(scorePreviewPayload.result.structuredContent.input.duplicateRiskCount).toBe(2);
+    expect(scorePreviewPayload.result.structuredContent.result.blockedBy).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk", severity: "reducer" })]),
+    );
+
     const noTotalsContext = await app.request(
       "/mcp",
       {
@@ -4727,12 +4965,12 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-mcp-cli", clientVersion: "0.4.0" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-<redacted-actor>-cli", clientVersion: "0.4.0" }),
         expect.objectContaining({
           surface: "mcp",
           eventName: "mcp_tool_called",
           outcome: "success",
-          clientName: "gittensory-mcp-cli",
+          clientName: "gittensory-<redacted-actor>-cli",
           clientVersion: "0.4.0",
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",

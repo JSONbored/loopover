@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
+import type { JsonValue } from "../../src/types";
 import {
   fetchRepoFocusManifestFile,
   loadRepoFocusManifest,
   loadRepoFocusManifests,
   upsertRepoFocusManifest,
   REPO_FOCUS_MANIFEST_MAX_AGE_MS,
+  REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS,
 } from "../../src/signals/focus-manifest-loader";
+import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../src/signals/focus-manifest";
 
 describe("focus-manifest loader", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -84,18 +87,28 @@ describe("focus-manifest loader", () => {
     expect(reloaded.source).toBe("api_record");
   });
 
-  it("bulk-loads manifests for many repos in parallel", async () => {
+  it("bulk-loads manifests for many repos with a concurrency cap", async () => {
     const env = createTestEnv();
-    const fetcher = async (repoFullName: string) =>
-      repoFullName === "owner/a"
+    let active = 0;
+    let maxActive = 0;
+    const fetcher = async (repoFullName: string) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return repoFullName === "owner/a"
         ? JSON.stringify({ wantedPaths: ["src/"] })
         : repoFullName === "owner/b"
           ? JSON.stringify({ blockedPaths: ["dist/"] })
           : null;
-    const map = await loadRepoFocusManifests(env, ["owner/a", "owner/b", "owner/c"], { fetcher });
+    };
+    const repos = ["owner/a", "owner/b", "owner/c", "owner/d", "owner/e", "owner/f"];
+    const map = await loadRepoFocusManifests(env, repos, { fetcher });
     expect(map.get("owner/a")?.wantedPaths).toEqual(["src/"]);
     expect(map.get("owner/b")?.blockedPaths).toEqual(["dist/"]);
     expect(map.get("owner/c")?.present).toBe(false);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS);
   });
 
   it("rejects an invalid repoFullName from the public fetcher without throwing", async () => {
@@ -107,13 +120,53 @@ describe("focus-manifest loader", () => {
   it("returns raw text from the first 200 OK candidate path", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const stringUrl = String(url);
-      if (stringUrl.endsWith("/.gittensory.json")) return new Response("not found", { status: 404 });
-      if (stringUrl.endsWith("/.github/gittensory.json")) return new Response('{"wantedPaths":["src/"]}', { status: 200 });
+      if (stringUrl.endsWith("/.gittensory.yml")) return new Response("wantedPaths:\n  - src/\n", { status: 200 });
       return new Response("not found", { status: 404 });
     });
     const text = await fetchRepoFocusManifestFile("owner/repo");
+    expect(text).toBe("wantedPaths:\n  - src/\n");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read public manifest responses when Content-Length is too large", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const stringUrl = String(url);
+      if (stringUrl.endsWith("/.gittensory.yml") || stringUrl.endsWith("/.github/gittensory.yml")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (stringUrl.endsWith("/.gittensory.json")) {
+        return new Response('{"wantedPaths":["too-large/"]}', {
+          status: 200,
+          headers: { "content-length": String(MAX_FOCUS_MANIFEST_BYTES + 1) },
+        });
+      }
+      return new Response('{"wantedPaths":["src/"]}', { status: 200 });
+    });
+    const text = await fetchRepoFocusManifestFile("owner/repo");
     expect(text).toBe('{"wantedPaths":["src/"]}');
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it("aborts public manifest streams that grow beyond the byte cap", async () => {
+    const oversizedChunk = new Uint8Array(MAX_FOCUS_MANIFEST_BYTES + 1);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(oversizedChunk);
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    expect(await fetchRepoFocusManifestFile("owner/repo")).toBeNull();
+  });
+
+  it("rejects oversized raw manifest content before JSON parsing", () => {
+    const manifest = parseFocusManifestContent(`{ "wantedPaths": ["${"a".repeat(MAX_FOCUS_MANIFEST_BYTES)}"] }`);
+    expect(manifest.present).toBe(false);
+    expect(manifest.warnings.join(" ")).toMatch(/exceeded/);
   });
 
   it("returns null when every candidate path responds non-ok", async () => {
@@ -149,6 +202,22 @@ describe("focus-manifest loader", () => {
     expect(calls).toBe(2);
   });
 
+  it("falls back to bundled YAML for a configured self-repo alias when fetch is unavailable", async () => {
+    const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "fork/gittensory" });
+    const manifest = await loadRepoFocusManifest(env, "fork/gittensory", { fetcher: async () => null });
+    expect(manifest.present).toBe(true);
+    expect(manifest.wantedPaths).toContain("apps/gittensory-ui/");
+  });
+
+  it("does not persist an empty manifest from a failed fetch", async () => {
+    const env = createTestEnv();
+    await loadRepoFocusManifest(env, "owner/empty", { fetcher: async () => null });
+    const { listSignalSnapshots } = await import("../../src/db/repositories");
+    const { REPO_FOCUS_MANIFEST_SIGNAL } = await import("../../src/signals/focus-manifest-loader");
+    const snapshots = await listSignalSnapshots(env, REPO_FOCUS_MANIFEST_SIGNAL, "owner/empty");
+    expect(snapshots).toHaveLength(0);
+  });
+
   it("treats a cached snapshot with a missing or unparseable timestamp as stale", async () => {
     const env = createTestEnv();
     const { persistSignalSnapshot } = await import("../../src/db/repositories");
@@ -179,5 +248,26 @@ describe("focus-manifest loader", () => {
     const emptyTime = await loadRepoFocusManifest(env, "owner/emptytime", { fetcher });
     expect(emptyTime.wantedPaths).toEqual(["fresh/"]);
     expect(calls).toBe(2);
+  });
+
+  it("treats a cached array payload as a repo-file snapshot without an explicit api_record source", async () => {
+    const env = createTestEnv();
+    const { persistSignalSnapshot } = await import("../../src/db/repositories");
+    const { REPO_FOCUS_MANIFEST_SIGNAL } = await import("../../src/signals/focus-manifest-loader");
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_FOCUS_MANIFEST_SIGNAL,
+      targetKey: "owner/array-payload",
+      repoFullName: "owner/array-payload",
+      payload: ["wantedPaths", "src/"] as unknown as Record<string, JsonValue>,
+      generatedAt: new Date().toISOString(),
+    });
+    const manifest = await loadRepoFocusManifest(env, "owner/array-payload", {
+      fetcher: async () => {
+        throw new Error("should not fetch when a fresh repo-file cache snapshot exists");
+      },
+    });
+    expect(manifest.present).toBe(false);
+    expect(manifest.warnings.join(" ")).toMatch(/mapping/i);
   });
 });

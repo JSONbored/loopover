@@ -8,6 +8,7 @@ import {
   createOrUpdateSkippedGateCheckRun,
   getAppInstallation,
   getInstallationId,
+  getRepositoryCollaboratorPermission,
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -79,6 +80,41 @@ describe("GitHub check runs", () => {
     });
 
     await expect(createInstallationToken(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123)).resolves.toBe("installation-token");
+  });
+
+  it("fetches repository collaborator permissions with installation credentials", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      calls.push(url);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/repos/JSONbored/gittensory/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(getRepositoryCollaboratorPermission(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", "maintainer")).resolves.toBe("maintain");
+    expect(calls.some((url) => url.includes("/app/installations/123/access_tokens"))).toBe(true);
+  });
+
+  it("handles missing repository collaborator permission responses", async () => {
+    const privateKey = await generatePrivateKeyPem();
+
+    await expect(getRepositoryCollaboratorPermission(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "invalid", "maintainer")).resolves.toBeNull();
+    await expect(getRepositoryCollaboratorPermission(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", "")).resolves.toBeNull();
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/missing/permission")) return new Response("missing", { status: 404 });
+      if (url.includes("/collaborators/no-permission/permission")) return Response.json({});
+      if (url.includes("/collaborators/error/permission")) return new Response("permission unavailable", { status: 500 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(getRepositoryCollaboratorPermission(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", "missing")).resolves.toBeNull();
+    await expect(getRepositoryCollaboratorPermission(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", "no-permission")).resolves.toBeNull();
+    await expect(getRepositoryCollaboratorPermission(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123, "JSONbored/gittensory", "error")).rejects.toThrow(/Failed to fetch GitHub collaborator permission/);
   });
 
   it("updates an existing Gittensory check run for the same head SHA", async () => {
@@ -226,7 +262,7 @@ describe("GitHub check runs", () => {
       output: { title: "Gittensory Gate is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
-    expect(capturedBody.output?.text).toContain("advisory-first");
+    expect(capturedBody.output?.text).toContain("preserves legacy linked-issue and duplicate-PR blockers");
   });
 
   it("finalizes a known pending Gate check by id without listing check runs first", async () => {

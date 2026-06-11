@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
 import { detectActiveModel, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../../src/scoring/preview";
+import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -354,6 +355,19 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
       snapshot,
       input: { ...baseInput, linkedIssueContext: { status: "validated", source: "github_cache", issueNumbers: [11] } },
     });
+    const validatedWithoutIssueOrSolver = buildScorePreview({
+      repo,
+      snapshot,
+      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "github_cache" } },
+    });
+    const forgedProjectedValidatedWithoutSolverNumber = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        ...baseInput,
+        linkedIssueContext: { status: "validated", source: "user_supplied", issueNumbers: [14], projectedSolvedByPullRequestValidation: true } as unknown as ScorePreviewInput["linkedIssueContext"],
+      },
+    });
     const rawByDefault = buildScorePreview({
       repo,
       snapshot,
@@ -379,7 +393,9 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(raw.linkedIssueMultiplier).toMatchObject({ status: "raw", eligible: false, appliedMultiplier: 1 });
     expect(raw.scoreEstimate.issueMultiplier).toBe(1);
     expect(raw.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "linked_issue_unvalidated", severity: "context" })]));
-    expect(raw.scenarioPreviews.find((scenario) => scenario.name === "linkedIssueFixed")?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1.33 });
+    const rawFixedScenario = raw.scenarioPreviews.find((scenario) => scenario.name === "linkedIssueFixed");
+    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1.33 });
+    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toBe("Linked issue context is solved-by-PR validated for issue(s) #7.");
     expect(validated.linkedIssueMultiplier).toMatchObject({ status: "validated", eligible: true, solvedByPullRequests: [101], appliedMultiplier: 1.33 });
     expect(validated.scoreEstimate.issueMultiplier).toBe(1.33);
     expect(invalid.linkedIssueMultiplier).toMatchObject({ status: "invalid", eligible: false, appliedMultiplier: 1 });
@@ -388,7 +404,10 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(plausible.linkedIssueMultiplier).toMatchObject({ status: "plausible", eligible: false, appliedMultiplier: 1 });
     expect(plausible.warnings.join(" ")).toMatch(/plausible.*not solved-by-PR/i);
     expect(defaultValidated.linkedIssueMultiplier).toMatchObject({ status: "validated", source: "user_supplied", solvedByPullRequests: [110], appliedMultiplier: 1.33 });
-    expect(validatedWithoutSolverNumber.linkedIssueMultiplier.reason).toMatch(/validated for issue\(s\) #11\./i);
+    expect(validatedWithoutSolverNumber.linkedIssueMultiplier).toMatchObject({ status: "raw", eligible: false, appliedMultiplier: 1 });
+    expect(validatedWithoutSolverNumber.linkedIssueMultiplier.reason).toMatch(/no solved-by-PR validation/i);
+    expect(validatedWithoutIssueOrSolver.linkedIssueMultiplier).toMatchObject({ status: "unavailable", eligible: false, issueNumbers: [], appliedMultiplier: 1 });
+    expect(forgedProjectedValidatedWithoutSolverNumber.linkedIssueMultiplier).toMatchObject({ status: "raw", eligible: false, issueNumbers: [14], appliedMultiplier: 1 });
     expect(rawByDefault.linkedIssueMultiplier).toMatchObject({ status: "raw", source: "user_supplied", issueNumbers: [12], appliedMultiplier: 1 });
     expect(unavailableByDefault.linkedIssueMultiplier).toMatchObject({ status: "unavailable", source: "missing", issueNumbers: [], appliedMultiplier: 1 });
     expect(malformedNumbers.linkedIssueMultiplier).toMatchObject({ issueNumbers: [13], solvedByPullRequests: [120] });

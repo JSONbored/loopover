@@ -21,6 +21,7 @@ export const docsNav: DocsGroup[] = [
       { to: "/docs/miner-workflow", label: "Miner workflow" },
       { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
       { to: "/docs/github-app", label: "GitHub App" },
+      { to: "/docs/maintainer-install-trust", label: "Maintainer install & trust" },
     ],
   },
   {

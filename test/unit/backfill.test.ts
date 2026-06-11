@@ -257,6 +257,50 @@ describe("GitHub backfill", () => {
     ]);
   });
 
+  it("does not double-count labels appearing in overlapping PR buckets (all/merged/open regression)", async () => {
+    // Regression: allPullRequests, mergedPullRequests, and openPullRequests are overlapping views of
+    // the same PR set. A label on a PR that appears in all three buckets was previously counted three
+    // times, biasing dominantLabels toward labels on frequently-bucketed PRs over labels that only
+    // appear once per PR but on many distinct PRs.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const sharedPrUrl = "https://github.com/JSONbored/gittensory/pull/10";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        data: {
+          // One PR with label "shared-label" appears in all three overlapping buckets.
+          // Two distinct issue records each have label "issue-label" once.
+          r_JSONbored_gittensory_all: {
+            issueCount: 1,
+            nodes: [{ __typename: "PullRequest", url: sharedPrUrl, updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "shared-label" }] }, body: "" }],
+          },
+          r_JSONbored_gittensory_merged: {
+            issueCount: 1,
+            nodes: [{ __typename: "PullRequest", url: sharedPrUrl, updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "shared-label" }] }, body: "" }],
+          },
+          r_JSONbored_gittensory_open: {
+            issueCount: 1,
+            nodes: [{ __typename: "PullRequest", url: sharedPrUrl, updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "shared-label" }] }, body: "" }],
+          },
+          r_JSONbored_gittensory_issues: {
+            issueCount: 2,
+            nodes: [
+              { __typename: "Issue", updatedAt: "2026-05-23T00:00:00Z", labels: { nodes: [{ name: "issue-label" }] }, body: "" },
+              { __typename: "Issue", updatedAt: "2026-05-22T00:00:00Z", labels: { nodes: [{ name: "issue-label" }] }, body: "" },
+            ],
+          },
+        },
+      }),
+    );
+
+    await refreshContributorActivity(env, "jsonbored");
+    const [stat] = await listContributorRepoStats(env, "jsonbored");
+
+    // Without deduplication: shared-label count=3, issue-label count=2 → ["shared-label", "issue-label"]
+    // With deduplication:    shared-label count=1, issue-label count=2 → ["issue-label", "shared-label"]
+    expect(stat?.dominantLabels).toEqual(["issue-label", "shared-label"]);
+  });
+
   it("carries GraphQL warnings and ignores repos with no contributor activity", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);
@@ -849,6 +893,48 @@ describe("GitHub backfill", () => {
     expect(result).toMatchObject({ status: "waiting_rate_limit", fetchedCount: 0 });
     expect(await listLatestGitHubRateLimitObservations(env)).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ path: expect.stringContaining("/labels?"), statusCode: 403, remaining: 0 })]),
+    );
+  });
+
+  it("keeps successful unauthenticated fallback responses out of the shared REST backoff", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await upsertRepositoryFromGitHub(env, {
+      name: "gittensory",
+      full_name: "JSONbored/gittensory",
+      private: false,
+      default_branch: "main",
+      owner: { login: "JSONbored" },
+    });
+    const fallbackAuthHeaders: Array<string | null> = [];
+    let openIssueFetches = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const auth = new Headers(init?.headers).get("authorization");
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 1 });
+      if (url.includes("/labels?") && auth === "Bearer public-token") return new Response("", { status: 404 });
+      if (url.includes("/labels?")) {
+        fallbackAuthHeaders.push(auth);
+        return Response.json([{ name: "bug", color: "cc0000", description: "Bug" }], {
+          headers: { "x-ratelimit-limit": "60", "x-ratelimit-remaining": "59", "x-ratelimit-reset": "1779976046" },
+        });
+      }
+      if (url.includes("/issues?")) {
+        openIssueFetches += 1;
+        expect(auth).toBe("Bearer public-token");
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const labelsResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "labels", mode: "full" });
+    const openIssuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "light" });
+
+    expect(labelsResult).toMatchObject({ status: "complete", fetchedCount: 1 });
+    expect(fallbackAuthHeaders).toEqual([null]);
+    expect(openIssuesResult).toMatchObject({ status: "complete", fetchedCount: 0 });
+    expect(openIssueFetches).toBe(1);
+    expect(await listLatestGitHubRateLimitObservations(env)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: expect.stringContaining("/labels?"), statusCode: 200, limitValue: 60, remaining: 59 })]),
     );
   });
 

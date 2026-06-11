@@ -24,6 +24,7 @@ import {
   buildRoleContext,
   detectGittensorContributor,
   shouldPublishPrIntelligenceComment,
+  unionScopedOverlapClusters,
   type CollisionCluster,
   type CollisionReport,
   type QueueHealth,
@@ -34,6 +35,7 @@ import {
   buildPullRequestReviewability,
   buildRepoRewardRisk,
 } from "../../src/signals/reward-risk";
+import { PREFLIGHT_LIMITS } from "../../src/signals/preflight-limits";
 import type { GittensorContributorSnapshot } from "../../src/gittensor/api";
 import type {
   ContributorRepoStatRecord,
@@ -604,6 +606,35 @@ describe("signal coverage edge cases", () => {
     expect(preflight.findings.map((finding) => finding.code)).not.toContain("possible_duplicate_work");
   });
 
+  it("bounds preflight body scanning for linked issue extraction", () => {
+    const directRepo = repo("owner/direct");
+    const linkedInsideLimit = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bounded body scan",
+        body: `Fixes #99 ${"x".repeat(PREFLIGHT_LIMITS.bodyChars + 100)}`,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+    const linkedPastLimit = buildPreflightResult(
+      {
+        repoFullName: directRepo.fullName,
+        title: "Bounded body scan",
+        body: `${"x".repeat(PREFLIGHT_LIMITS.bodyChars)} Fixes #100`,
+        linkedIssues: [],
+      },
+      directRepo,
+      [],
+      [],
+    );
+
+    expect(linkedInsideLimit.linkedIssues).toContain(99);
+    expect(linkedPastLimit.linkedIssues).not.toContain(100);
+  });
+
   it("sanitizes public PR comments and supports minimal public signal level", () => {
     const directRepo = repo("owner/direct");
     const prRecord = pr(directRepo.fullName, 55, "Fix cache", { authorLogin: "miner", linkedIssues: [] });
@@ -1112,6 +1143,54 @@ describe("signal coverage edge cases", () => {
     expect(scoreComponent(weak, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
   });
 
+  it("unionScopedOverlapClusters deduplicates PR-specific and preflight clusters (regression for Math.max mismatch)", () => {
+    const directRepo = repo("owner/dedup-overlap");
+    const currentPr = pr(directRepo.fullName, 10, "Cache refresh performance fix", { linkedIssues: [] });
+    const clusterA: CollisionCluster = {
+      id: "title-cluster-a",
+      risk: "medium",
+      reason: "Titles share meaningful terms.",
+      items: [
+        { type: "pull_request", number: currentPr.number, title: currentPr.title, authorLogin: "dev", labels: [], linkedIssues: [] },
+        { type: "pull_request", number: 20, title: "Cache refresh bug fix", authorLogin: "other", labels: [], linkedIssues: [] },
+      ],
+    };
+    const clusterB: CollisionCluster = {
+      id: "title-cluster-b",
+      risk: "medium",
+      reason: "Path overlap with another open PR.",
+      items: [
+        { type: "pull_request", number: currentPr.number, title: currentPr.title, authorLogin: "dev", labels: [], linkedIssues: [] },
+        { type: "issue", number: 5, title: "Perf regression in cache layer", authorLogin: "reporter", labels: [], linkedIssues: [] },
+      ],
+    };
+    const clusterC: CollisionCluster = {
+      id: "preflight-only-cluster",
+      risk: "low",
+      reason: "Planned overlap surfaced only in preflight.",
+      items: [
+        { type: "issue", number: 9, title: "Cache layer follow-up", authorLogin: "reporter", labels: [], linkedIssues: [] },
+      ],
+    };
+    const collisions: CollisionReport = {
+      repoFullName: directRepo.fullName,
+      generatedAt: "2026-06-07T00:00:00.000Z",
+      summary: { clusterCount: 2, highRiskCount: 0, itemsReviewed: 3 },
+      clusters: [clusterA, clusterB],
+    };
+
+    const preflightCollisions = [clusterB, clusterC];
+    const prSpecificCount = collisions.clusters.filter((cluster) =>
+      cluster.items.some((item) => item.type === "pull_request" && item.number === currentPr.number),
+    ).length;
+    const union = unionScopedOverlapClusters(collisions, currentPr, preflightCollisions);
+
+    expect(union.map((cluster) => cluster.id).sort()).toEqual(["preflight-only-cluster", "title-cluster-a", "title-cluster-b"]);
+    expect(union.length).toBe(3);
+    expect(Math.max(prSpecificCount, preflightCollisions.length)).toBe(2);
+    expect(union.length).toBeGreaterThan(Math.max(prSpecificCount, preflightCollisions.length));
+  });
+
   it("keeps the public PR queue row coherent for zero and sampled queue evidence", () => {
     const directRepo = repo("owner/queue-panel");
     const currentPr = pr(directRepo.fullName, 43, "Fix queue display", {
@@ -1146,6 +1225,50 @@ describe("signal coverage edge cases", () => {
       action: "No action.",
     });
 
+    const staleQueuePullRequests = [44, 45, 46, 47].map((number) =>
+      pr(directRepo.fullName, number, `Stale unlinked queue item ${number}`, {
+        updatedAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+    const criticalBurdenQueue = buildQueueHealth(
+      directRepo,
+      [],
+      staleQueuePullRequests,
+      buildCollisionReport(directRepo.fullName, [], staleQueuePullRequests),
+    );
+    expect(criticalBurdenQueue).toMatchObject({ level: "critical", burdenScore: 100 });
+
+    const criticalBurdenScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: criticalBurdenQueue,
+    });
+    expect(scoreComponent(criticalBurdenScore, "queue_pressure")).toMatchObject({
+      score: 10,
+      evidence: "4 open PR(s), 0 likely reviewable, 4 stale, 4 unlinked.",
+      action: "No action.",
+    });
+
+    const noisyIssues = Array.from({ length: 80 }, (_, index) => issue(directRepo.fullName, index + 1000, `Unrelated issue ${index + 1}`));
+    const issueBurdenQueue = buildQueueHealth(
+      directRepo,
+      noisyIssues,
+      [currentPr],
+      buildCollisionReport(directRepo.fullName, noisyIssues, [currentPr]),
+    );
+    expect(issueBurdenQueue).toMatchObject({ level: "critical" });
+
+    const issueBurdenScore = buildPublicReadinessScore({
+      pr: currentPr,
+      preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] },
+      queueHealth: issueBurdenQueue,
+    });
+    expect(scoreComponent(issueBurdenScore, "queue_pressure")).toMatchObject({
+      score: 10,
+      evidence: "1 open PR(s), 1 likely reviewable.",
+      action: "No action.",
+    });
+
     const sampledQueue = buildQueueHealth(
       directRepo,
       [],
@@ -1160,6 +1283,32 @@ describe("signal coverage edge cases", () => {
     });
     expect(scoreComponent(sampledScore, "queue_pressure")).toMatchObject({ score: 3, action: "Expect slower review." });
     expect(scoreComponent(sampledScore, "queue_pressure").evidence).toContain("1 likely reviewable in 1 cached PR(s); full queue reviewability is sampled");
+
+    // score=8 bucket (5–8 open PRs) — not covered by other cases
+    const mediumQueue: QueueHealth = {
+      ...queueHealthFixture(directRepo.fullName, "medium"),
+      signals: {
+        ...queueHealthFixture(directRepo.fullName, "medium").signals,
+        openPullRequests: 7,
+        likelyReviewablePullRequests: 3,
+        likelyReviewablePullRequestsSource: "cache",
+      },
+    };
+    expect(scoreComponent(buildPublicReadinessScore({ pr: currentPr, preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] }, queueHealth: mediumQueue }), "queue_pressure")).toMatchObject({ score: 8, action: "No action." });
+
+    // sampledLikelyReviewable=true with cachedOpenPullRequests=0 → "likely-reviewable count unavailable" branch
+    const sampledNoCacheQueue: QueueHealth = {
+      ...queueHealthFixture(directRepo.fullName, "critical"),
+      signals: {
+        ...queueHealthFixture(directRepo.fullName, "critical").signals,
+        openPullRequests: 20,
+        cachedOpenPullRequests: 0,
+        likelyReviewablePullRequests: 0,
+        likelyReviewablePullRequestsSource: "sampled_cache",
+        ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 },
+      },
+    };
+    expect(scoreComponent(buildPublicReadinessScore({ pr: currentPr, preflight: { ...preflight, status: "ready", reviewBurden: "low", findings: [] }, queueHealth: sampledNoCacheQueue }), "queue_pressure").evidence).toContain("likely-reviewable count unavailable from cached PR metadata");
   });
 
   it("filters disabled linked-issue findings and uses fallback next steps when the panel is clean", () => {

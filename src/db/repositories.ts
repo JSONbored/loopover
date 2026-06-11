@@ -386,8 +386,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
-      linkedIssueGateMode: "advisory",
-      duplicatePrGateMode: "advisory",
+      linkedIssueGateMode: "block",
+      duplicatePrGateMode: "block",
       qualityGateMode: "advisory",
       qualityGateMinScore: null,
       autoLabelEnabled: true,
@@ -436,8 +436,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
-    linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
-    duplicatePrGateMode: settings.duplicatePrGateMode ?? "advisory",
+    linkedIssueGateMode: settings.linkedIssueGateMode ?? "block",
+    duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
     qualityGateMode: settings.qualityGateMode ?? "advisory",
     qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
@@ -1145,8 +1145,8 @@ export async function recordProductUsageEvent(
     targetKey: redactProductUsageActor(boundedProductUsageField(event.targetKey, 256), actorRedactor),
     outcome: normalizeProductUsageOutcome(event.outcome),
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
-    clientName: boundedProductUsageField(event.clientName, 80),
-    clientVersion: boundedProductUsageField(event.clientVersion, 80),
+    clientName: redactProductUsageActor(boundedProductUsageField(event.clientName, 80), actorRedactor),
+    clientVersion: redactProductUsageActor(boundedProductUsageField(event.clientVersion, 80), actorRedactor),
     metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
@@ -2047,6 +2047,21 @@ export async function markUnseenOpenIssuesClosed(env: Env, fullName: string, see
 export async function listIssues(env: Env, fullName: string): Promise<IssueRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(issues).where(eq(issues.repoFullName, fullName)).limit(500);
+  return rows.map(toIssueRecordFromRow);
+}
+
+/**
+ * Closed issues whose body carries a contributor-issue-draft marker, recent-first and bounded.
+ * Used to suppress re-proposing drafts a maintainer already declined (closed).
+ */
+export async function listClosedContributorDraftIssues(env: Env, fullName: string, markerPrefix: string, limit = 200): Promise<IssueRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select()
+    .from(issues)
+    .where(and(eq(issues.repoFullName, fullName), eq(issues.state, "closed"), sql`${issues.payloadJson} LIKE ${`%${markerPrefix}%`}`))
+    .orderBy(desc(issues.updatedAt))
+    .limit(limit);
   return rows.map(toIssueRecordFromRow);
 }
 
@@ -4063,7 +4078,13 @@ function isProductUsageUsefulMaintainerEvent(event: ProductUsageEventRecord): bo
 }
 
 function mcpClientVersionForEvent(event: ProductUsageEventRecord): string {
-  return event.clientVersion ?? productUsageMetadataString(event, "packageVersion") ?? "unknown";
+  return aggregateMcpClientVersion(event.clientVersion ?? productUsageMetadataString(event, "packageVersion"));
+}
+
+function aggregateMcpClientVersion(version: string | null | undefined): string {
+  if (!version) return "unknown";
+  const semver = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+.*)?$/.exec(version.trim());
+  return semver?.[1] ?? "unknown";
 }
 
 function mcpCompatibilityStatusForEvent(event: ProductUsageEventRecord): "current" | "stale" | "incompatible" | "unknown" {

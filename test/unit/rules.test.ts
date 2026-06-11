@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCheckRunAnnotations,
   buildIssueAdvisory,
   buildPullRequestAdvisory,
   buildRepositoryAdvisory,
+  CHECK_RUN_ANNOTATION_LIMIT,
   evaluateGateCheck,
   formatCheckRunOutput,
   formatGateCheckOutput,
 } from "../../src/rules/advisory";
-import type { IssueRecord, PullRequestRecord, RepositoryRecord } from "../../src/types";
+import type { CollisionReport } from "../../src/signals/engine";
+import type { IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
 
 const repo: RepositoryRecord = {
   fullName: "JSONbored/gittensory",
@@ -500,4 +503,284 @@ describe("advisory rules", () => {
     expect(cleanSplit.summary).toBe("Issue advisory generated.");
     expect(cleanSplit.conclusion).toBe("success");
   });
+
+  it("buildCheckRunAnnotations maps duplicate overlap and missing-test hotspots onto changed files", () => {
+    const advisory = buildPullRequestAdvisory(repo, {
+      repoFullName: repo.fullName,
+      number: 12,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "contributor",
+      authorAssociation: "NONE",
+      labels: [],
+      linkedIssues: [],
+    });
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 12, path: "src/registry/sync.ts", additions: 12, deletions: 0, changes: 12, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 1, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "pr-12--pr-13",
+          risk: "high",
+          reason: "Titles/paths share 4 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 12, title: "Add registry sync" },
+            { type: "pull_request", number: 13, title: "Registry sync cleanup" },
+          ],
+        },
+      ],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 12 }, "standard");
+
+    expect(annotations.some((entry) => entry.title === "Missing test evidence" && entry.path === "src/registry/sync.ts")).toBe(true);
+    expect(annotations.some((entry) => entry.title === "Possible duplicate overlap")).toBe(true);
+    expect(JSON.stringify(annotations)).not.toMatch(/trust score|wallet|hotkey|reward estimate|reviewability/i);
+  });
+
+  it("buildCheckRunAnnotations uses notice level for medium-risk collisions and critical public finding text", () => {
+    const advisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "public_lane",
+          title: "Issue discovery is disabled for this repo",
+          severity: "critical" as const,
+          detail: "Private detail",
+          publicText: "This repo is configured for direct contribution review rather than issue-discovery flow.",
+        },
+      ],
+    };
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 14, path: "src/api/routes.ts", additions: 2, deletions: 0, changes: 2, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 14, path: "src/api/routes.test.ts", additions: 2, deletions: 0, changes: 2, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "pr-14--pr-15",
+          risk: "medium",
+          reason: "Titles/paths share 2 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 14, title: "Add routes" },
+            { type: "pull_request", number: 15, title: "Routes cleanup" },
+          ],
+        },
+      ],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 14 }, "standard");
+
+    expect(annotations.some((entry) => entry.annotation_level === "notice" && entry.title === "Possible duplicate overlap")).toBe(true);
+    expect(annotations.some((entry) => entry.annotation_level === "failure" && entry.title === "Issue discovery is disabled for this repo")).toBe(true);
+    expect(annotations.some((entry) => entry.title === "Missing test evidence")).toBe(false);
+  });
+
+  it("buildCheckRunAnnotations ignores blank public text and maps info findings to notice", () => {
+    const advisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "blank_public",
+          title: "   ",
+          severity: "info" as const,
+          detail: "Private detail",
+          publicText: "   ",
+        },
+        {
+          code: "info_public",
+          title: "Configured lane",
+          severity: "info" as const,
+          detail: "Private detail",
+          publicText: "This repo is configured for direct contribution review rather than issue-discovery flow.",
+        },
+        {
+          code: "warn_public",
+          title: "Queue pressure",
+          severity: "warning" as const,
+          detail: "Private detail",
+          publicText: "Open PR queue is elevated; keep changes focused.",
+        },
+      ],
+    };
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 15, path: "src/api/routes.ts", additions: 2, deletions: 0, changes: 2, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 15, path: "src/api/routes.test.ts", additions: 2, deletions: 0, changes: 2, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "pr-15--pr-16",
+          risk: "low",
+          reason: "Titles/paths share 2 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 15, title: "Add routes" },
+            { type: "pull_request", number: 16, title: "Routes cleanup" },
+          ],
+        },
+      ],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 15 }, "deep");
+    expect(annotations.some((entry) => entry.annotation_level === "notice" && entry.title === "Configured lane")).toBe(true);
+    expect(annotations.some((entry) => entry.annotation_level === "warning" && entry.title === "Queue pressure")).toBe(true);
+    expect(annotations.some((entry) => entry.title === "   ")).toBe(false);
+  });
+
+  it("buildCheckRunAnnotations caps output at 50 annotations and reports omitted count via formatCheckRunOutput", () => {
+    const advisory = { ...buildPullRequestAdvisory(repo, null), findings: [] };
+    const files = Array.from({ length: CHECK_RUN_ANNOTATION_LIMIT + 5 }, (_, index) => ({
+      repoFullName: repo.fullName,
+      pullNumber: 99,
+      path: `src/feature/file-${index}.ts`,
+      additions: 3,
+      deletions: 0,
+      changes: 3,
+      payload: {},
+    }));
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 },
+      clusters: [],
+    };
+
+    const { annotations, omittedCount } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 99 }, "deep");
+    expect(annotations).toHaveLength(CHECK_RUN_ANNOTATION_LIMIT);
+    expect(omittedCount).toBe(5);
+
+    const output = formatCheckRunOutput(advisory, "deep", { files, collisions, pullNumber: 99 });
+    expect(output.annotations).toHaveLength(CHECK_RUN_ANNOTATION_LIMIT);
+    expect(output.text).toContain("…5 more hotspot annotation(s) omitted from inline check output.");
+  });
+
+  it("buildCheckRunAnnotations stays empty for minimal detail level", () => {
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 1, path: "src/x.ts", additions: 1, deletions: 0, changes: 1, payload: {} },
+    ];
+    const { annotations } = buildCheckRunAnnotations(buildPullRequestAdvisory(repo, null), { files, collisions: emptyCollisions(), pullNumber: 1 }, "minimal");
+    expect(annotations).toEqual([]);
+  });
+
+  it("buildCheckRunAnnotations skips findings without public text and duplicate overlap clusters for other pulls", () => {
+    const advisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "private_only",
+          title: "Internal detail",
+          severity: "warning" as const,
+          detail: "Private detail",
+        },
+        {
+          code: "public_lane",
+          title: "Configured lane",
+          severity: "info" as const,
+          detail: "Private detail",
+          publicText: "This repo is configured for direct contribution review rather than issue-discovery flow.",
+        },
+      ],
+    };
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 20, path: "src/api/routes.ts", additions: 2, deletions: 0, changes: 2, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 20, path: "src/api/routes.test.ts", additions: 4, deletions: 0, changes: 4, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "pr-21--pr-22",
+          risk: "medium",
+          reason: "Titles/paths share 3 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 21, title: "Other overlap" },
+            { type: "pull_request", number: 22, title: "Other overlap cleanup" },
+          ],
+        },
+      ],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 20 }, "standard");
+
+    expect(annotations.some((entry) => entry.title === "Missing test evidence")).toBe(false);
+    expect(annotations.some((entry) => entry.title === "Possible duplicate overlap")).toBe(false);
+    expect(annotations.filter((entry) => entry.title === "Configured lane")).toHaveLength(2);
+  });
+
+  it("buildCheckRunAnnotations deduplicates identical hotspot annotations", () => {
+    const advisory = { ...buildPullRequestAdvisory(repo, null), findings: [] };
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 30, path: "src/a.ts", additions: 1, deletions: 0, changes: 1, payload: {} },
+    ];
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 2, highRiskCount: 0, itemsReviewed: 4 },
+      clusters: [
+        {
+          id: "pr-30--pr-31",
+          risk: "medium",
+          reason: "Titles/paths share 3 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 30, title: "Overlap" },
+            { type: "pull_request", number: 31, title: "Overlap cleanup" },
+          ],
+        },
+        {
+          id: "pr-30--pr-32",
+          risk: "medium",
+          reason: "Titles/paths share 3 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 30, title: "Overlap" },
+            { type: "pull_request", number: 32, title: "Overlap follow-up" },
+          ],
+        },
+      ],
+    };
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions, pullNumber: 30 }, "standard");
+    expect(annotations.filter((entry) => entry.title === "Possible duplicate overlap")).toHaveLength(1);
+  });
+
+  it("buildCheckRunAnnotations ignores public findings when changed files have no paths", () => {
+    const advisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "public_lane",
+          title: "Configured lane",
+          severity: "info" as const,
+          detail: "Private detail",
+          publicText: "This repo is configured for direct contribution review rather than issue-discovery flow.",
+        },
+      ],
+    };
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 40, path: "", additions: 1, deletions: 0, changes: 1, payload: {} },
+    ];
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions: emptyCollisions(), pullNumber: 40 }, "standard");
+    expect(annotations).toEqual([]);
+  });
 });
+
+function emptyCollisions(): CollisionReport {
+  return {
+    repoFullName: "JSONbored/gittensory",
+    generatedAt: "2026-06-10T00:00:00.000Z",
+    summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 },
+    clusters: [],
+  };
+}

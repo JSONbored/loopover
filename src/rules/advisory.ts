@@ -5,9 +5,11 @@ import type {
   AdvisorySeverity,
   GateRuleMode,
   IssueRecord,
+  PullRequestFileRecord,
   PullRequestRecord,
   RepositoryRecord,
 } from "../types";
+import type { CollisionCluster, CollisionReport } from "../signals/engine";
 import { nowIso } from "../utils/json";
 
 export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
@@ -112,28 +114,166 @@ function sanitizeForCheckRun(text: string): string {
   return text.replace(CHECK_RUN_FORBIDDEN_TERMS, "[context]").replace(/\s+/g, " ").trim();
 }
 
+export const CHECK_RUN_ANNOTATION_LIMIT = 50;
+
+export type CheckRunAnnotation = {
+  path: string;
+  start_line: number;
+  end_line: number;
+  annotation_level: "notice" | "warning" | "failure";
+  message: string;
+  title: string;
+};
+
+export type CheckRunOutput = {
+  title: string;
+  summary: string;
+  text: string;
+  annotations?: CheckRunAnnotation[];
+};
+
+export type CheckRunAnnotationContext = {
+  files: PullRequestFileRecord[];
+  collisions: CollisionReport;
+  pullNumber: number;
+};
+
+export type CheckRunAnnotationBuildResult = {
+  annotations: CheckRunAnnotation[];
+  omittedCount: number;
+};
+
+function severityToAnnotationLevel(severity: AdvisorySeverity): CheckRunAnnotation["annotation_level"] {
+  if (severity === "critical") return "failure";
+  if (severity === "warning") return "warning";
+  return "notice";
+}
+
+function isCodePath(path: string): boolean {
+  return /\.(ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|cpp|c|h|swift|kt|m|sql|yaml|yml|json|toml|md)$/i.test(path);
+}
+
+function isTestPath(path: string): boolean {
+  return (
+    /(^|\/)(test|tests|spec|__tests__)\//i.test(path) ||
+    /\.(test|spec)\.(ts|tsx|js|jsx|py|go|rs)$/i.test(path) ||
+    /(^|\/)[^/]+_test\.go$/i.test(path)
+  );
+}
+
+function collisionClustersForPull(collisions: CollisionReport, pullNumber: number): CollisionCluster[] {
+  return collisions.clusters.filter((cluster) =>
+    cluster.items.some((item) => item.type === "pull_request" && item.number === pullNumber),
+  );
+}
+
+function annotationLineForFile(file: PullRequestFileRecord): number {
+  return Math.max(1, file.additions > 0 ? 1 : 1);
+}
+
+export function buildCheckRunAnnotations(
+  advisoryResult: Advisory,
+  annotationContext: CheckRunAnnotationContext | undefined,
+  detailLevel: "minimal" | "standard" | "deep" = "minimal",
+): CheckRunAnnotationBuildResult {
+  if (detailLevel === "minimal" || !annotationContext) {
+    return { annotations: [], omittedCount: 0 };
+  }
+
+  const candidates: CheckRunAnnotation[] = [];
+  const seen = new Set<string>();
+  const addCandidate = (
+    path: string,
+    line: number,
+    level: CheckRunAnnotation["annotation_level"],
+    title: string,
+    message: string,
+  ) => {
+    const safeTitle = sanitizeForCheckRun(title).slice(0, 255);
+    const safeMessage = sanitizeForCheckRun(message).slice(0, 65535);
+    if (!path || !safeTitle || !safeMessage) return;
+    const key = `${path}:${safeTitle}:${safeMessage}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const startLine = Math.max(1, line);
+    candidates.push({
+      path,
+      start_line: startLine,
+      end_line: startLine,
+      annotation_level: level,
+      title: safeTitle,
+      message: safeMessage,
+    });
+  };
+
+  const codeFiles = annotationContext.files.filter((file) => file.path && isCodePath(file.path) && !isTestPath(file.path));
+  const testFiles = annotationContext.files.filter((file) => file.path && isTestPath(file.path));
+  if (codeFiles.length > 0 && testFiles.length === 0) {
+    for (const file of codeFiles) {
+      addCandidate(
+        file.path,
+        annotationLineForFile(file),
+        "warning",
+        "Missing test evidence",
+        "Code changed without an obvious test file in this PR. Add focused tests or explain why existing coverage is sufficient.",
+      );
+    }
+  }
+
+  for (const cluster of collisionClustersForPull(annotationContext.collisions, annotationContext.pullNumber)) {
+    const level: CheckRunAnnotation["annotation_level"] = cluster.risk === "high" ? "warning" : "notice";
+    for (const file of annotationContext.files) {
+      addCandidate(file.path, annotationLineForFile(file), level, "Possible duplicate overlap", cluster.reason);
+    }
+  }
+
+  const changedPaths = annotationContext.files.map((file) => file.path).filter(Boolean);
+  for (const finding of advisoryResult.findings) {
+    if (!finding.publicText) continue;
+    const targets = changedPaths.length > 0 ? changedPaths : [];
+    for (const path of targets) {
+      addCandidate(
+        path,
+        1,
+        severityToAnnotationLevel(finding.severity),
+        finding.title,
+        finding.publicText,
+      );
+    }
+  }
+
+  const omittedCount = Math.max(0, candidates.length - CHECK_RUN_ANNOTATION_LIMIT);
+  return { annotations: candidates.slice(0, CHECK_RUN_ANNOTATION_LIMIT), omittedCount };
+}
+
 export function formatCheckRunOutput(
   advisoryResult: Advisory,
   detailLevel: "minimal" | "standard" | "deep" = "minimal",
-): { title: string; summary: string; text: string } {
+  annotationContext?: CheckRunAnnotationContext,
+): CheckRunOutput {
   const title = advisoryResult.conclusion === "success" ? "Gittensory context checked" : "Gittensory context posted";
   const summary = "Gittensory public check output is intentionally minimal. Detailed maintainer context is available only through private API/MCP surfaces.";
 
-  if (detailLevel === "minimal" || advisoryResult.findings.length === 0) {
-    return { title, summary, text: "No detailed findings are published in check runs." };
+  let text: string;
+  if (detailLevel === "minimal") {
+    text = "No detailed findings are published in check runs.";
+  } else if (advisoryResult.findings.length === 0) {
+    text = "No detailed findings are published in check runs.";
+  } else {
+    const publicLines = advisoryResult.findings.flatMap((f) => {
+      if (!f.publicText) return [];
+      const label = f.severity === "warning" ? "⚠️" : "ℹ️";
+      return [`${label} ${sanitizeForCheckRun(f.publicText)}`];
+    });
+    text = publicLines.length === 0 ? "No detailed findings are published in check runs." : publicLines.join("\n");
   }
 
-  const publicLines = advisoryResult.findings.flatMap((f) => {
-    if (!f.publicText) return [];
-    const label = f.severity === "warning" ? "⚠️" : "ℹ️";
-    return [`${label} ${sanitizeForCheckRun(f.publicText)}`];
-  });
-
-  if (publicLines.length === 0) {
-    return { title, summary, text: "No detailed findings are published in check runs." };
+  const { annotations, omittedCount } = buildCheckRunAnnotations(advisoryResult, annotationContext, detailLevel);
+  if (omittedCount > 0) {
+    text = `${text}\n\n…${omittedCount} more hotspot annotation(s) omitted from inline check output.`;
   }
 
-  return { title, summary, text: publicLines.join("\n") };
+  return annotations.length > 0 ? { title, summary, text, annotations } : { title, summary, text };
 }
 
 export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {

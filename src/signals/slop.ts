@@ -72,6 +72,7 @@ const GENERIC_SUBJECTS = new Set([
 ]);
 
 export const SLOP_WEIGHTS = {
+  duplicateClusterMembership: 35,
   lowQualityCommitMessages: 20,
 } as const;
 
@@ -84,11 +85,12 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "- `high`: 60-100",
   "",
   "Current deterministic signals:",
+  "- duplicate-cluster membership",
   "- low-quality commit messages",
 ].join("\n");
 
 export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment {
-  const _collisions =
+  const collisions =
     input.prebuiltCollisions ??
     buildCollisionReport(
       input.repoFullName,
@@ -97,12 +99,19 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
       input.recentMergedPullRequests ?? [],
     );
   const findings: SignalFinding[] = [];
+  const duplicateClusterFinding = buildDuplicateClusterMembershipFinding(
+    collisions,
+    input.targetPullRequestNumber,
+  );
+  if (duplicateClusterFinding) findings.push(duplicateClusterFinding);
+
   const lowQualityCommitMessages = findLowQualityCommitMessages(input.commitMessages ?? []);
   const commitMessageFinding = buildLowQualityCommitMessageFinding(lowQualityCommitMessages);
   if (commitMessageFinding) findings.push(commitMessageFinding);
 
   const slopRisk = clamp(
-    lowQualityCommitMessages.length * SLOP_WEIGHTS.lowQualityCommitMessages,
+    (duplicateClusterFinding ? SLOP_WEIGHTS.duplicateClusterMembership : 0) +
+      lowQualityCommitMessages.length * SLOP_WEIGHTS.lowQualityCommitMessages,
     0,
     100,
   );
@@ -146,6 +155,40 @@ export function findLowQualityCommitMessages(
     }
   }
   return findings;
+}
+
+function buildDuplicateClusterMembershipFinding(
+  collisions: CollisionReport,
+  targetPullRequestNumber: number | undefined,
+): SignalFinding | null {
+  if (!targetPullRequestNumber || !Number.isFinite(targetPullRequestNumber)) return null;
+
+  const matchingClusters = collisions.clusters.filter(
+    (cluster) =>
+      cluster.risk === "high" &&
+      cluster.items.some(
+        (item) => item.type === "pull_request" && item.number === targetPullRequestNumber,
+      ),
+  );
+  if (matchingClusters.length === 0) return null;
+
+  const detail = ensurePublicSafeText(
+    `${matchingClusters.length} high-risk duplicate or overlap cluster(s) include PR #${targetPullRequestNumber}.`,
+    "High-risk duplicate or overlap work includes this PR.",
+  );
+  const action = ensurePublicSafeText(
+    "Resolve or narrow overlapping PR work before asking for review.",
+    "Resolve overlapping PR work before review.",
+  );
+
+  return {
+    code: "duplicate_cluster_membership",
+    title: "PR belongs to a high-risk duplicate cluster",
+    severity: "warning",
+    detail,
+    action,
+    publicText: detail,
+  };
 }
 
 function buildLowQualityCommitMessageFinding(
@@ -198,7 +241,11 @@ function firstNonEmptyLine(text: string): string {
 }
 
 function normalizeSubject(subject: string): string {
-  return subject.toLowerCase().replace(/\s+/g, " ").replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "").trim();
+  return subject
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .trim();
 }
 
 function truncate(value: string, maxLength: number): string {

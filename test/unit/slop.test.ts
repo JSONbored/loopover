@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildCollisionReport } from "../../src/signals/engine";
 import {
   buildSlopAssessment,
   findLowQualityCommitMessages,
@@ -51,12 +52,41 @@ function pr(
 }
 
 describe("buildSlopAssessment", () => {
-  it("raises the slop signal for generic, empty, or template commit messages", () => {
+  it("raises the duplicate-cluster slop signal when the target PR belongs to a high-risk cluster", () => {
+    const repoFullName = "JSONbored/gittensory";
+    const issues = [
+      issue(repoFullName, 7, "Stabilize queue health signals", { linkedPrs: [41, 42] }),
+    ];
+    const pullRequests = [
+      pr(repoFullName, 41, "Stabilize queue health signals", { linkedIssues: [7] }),
+      pr(repoFullName, 42, "Alternative queue health stabilization", { linkedIssues: [7] }),
+    ];
+
+    const result = buildSlopAssessment({
+      repoFullName,
+      issues,
+      pullRequests,
+      targetPullRequestNumber: 41,
+    });
+
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("elevated");
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "duplicate_cluster_membership",
+          severity: "warning",
+        }),
+      ]),
+    );
+  });
+
+  it("raises the commit-message slop signal for generic, empty, or template subjects", () => {
     const repoFullName = "JSONbored/gittensory";
     const result = buildSlopAssessment({
       repoFullName,
-      issues: [issue(repoFullName, 7, "Track queue triage")],
-      pullRequests: [pr(repoFullName, 41, "Track queue triage")],
+      issues: [issue(repoFullName, 8, "Track queue triage")],
+      pullRequests: [pr(repoFullName, 51, "Track queue triage")],
       commitMessages: ["fix", "\n\n", "WIP"],
     });
 
@@ -72,12 +102,44 @@ describe("buildSlopAssessment", () => {
     );
   });
 
-  it("does not raise the signal for descriptive commit messages with meaningful terms", () => {
+  it("aggregates both signals in one shared assessment", () => {
     const repoFullName = "JSONbored/gittensory";
+    const issues = [
+      issue(repoFullName, 9, "Tighten duplicate cluster detection", { linkedPrs: [61, 62] }),
+    ];
+    const pullRequests = [
+      pr(repoFullName, 61, "Tighten duplicate cluster detection", { linkedIssues: [9] }),
+      pr(repoFullName, 62, "Duplicate cluster detector follow-up", { linkedIssues: [9] }),
+    ];
+
     const result = buildSlopAssessment({
       repoFullName,
-      issues: [issue(repoFullName, 8, "Stabilize branch annotations")],
-      pullRequests: [pr(repoFullName, 42, "Stabilize branch annotations")],
+      issues,
+      pullRequests,
+      targetPullRequestNumber: 61,
+      commitMessages: ["update", "WIP"],
+    });
+
+    expect(result.slopRisk).toBe(75);
+    expect(result.band).toBe("high");
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual([
+      "duplicate_cluster_membership",
+      "low_quality_commit_messages",
+    ]);
+  });
+
+  it("does not raise either signal without a target PR and with descriptive commits", () => {
+    const repoFullName = "JSONbored/gittensory";
+    const issues = [issue(repoFullName, 10, "Improve docs indexing")];
+    const pullRequests = [
+      pr(repoFullName, 71, "Add onboarding note", { linkedIssues: [10] }),
+      pr(repoFullName, 72, "Unrelated queue report cleanup"),
+    ];
+
+    const result = buildSlopAssessment({
+      repoFullName,
+      issues,
+      pullRequests,
       commitMessages: [
         "feat(ci): annotate failing checks with branch-specific remediation",
         "docs(api): explain maintainer branch annotation payload",
@@ -85,6 +147,37 @@ describe("buildSlopAssessment", () => {
     });
 
     expect(result).toEqual({ slopRisk: 0, band: "clean", findings: [] });
+  });
+
+  it("is deterministic for identical metadata input when prebuilt collisions are reused", () => {
+    const repoFullName = "JSONbored/gittensory";
+    const issues = [
+      issue(repoFullName, 11, "Resolve overlapping queue triage work", { linkedPrs: [81, 82] }),
+    ];
+    const pullRequests = [
+      pr(repoFullName, 81, "Resolve overlapping queue triage work", { linkedIssues: [11] }),
+      pr(repoFullName, 82, "Alternative overlapping queue triage work", { linkedIssues: [11] }),
+    ];
+    const collisions = buildCollisionReport(repoFullName, issues, pullRequests);
+
+    const left = buildSlopAssessment({
+      repoFullName,
+      issues,
+      pullRequests,
+      targetPullRequestNumber: 81,
+      commitMessages: ["update", "WIP"],
+      prebuiltCollisions: collisions,
+    });
+    const right = buildSlopAssessment({
+      repoFullName,
+      issues,
+      pullRequests,
+      targetPullRequestNumber: 81,
+      commitMessages: ["update", "WIP"],
+      prebuiltCollisions: collisions,
+    });
+
+    expect(left).toEqual(right);
   });
 
   it("shares deterministic low-quality classification helpers for the future lint tool", () => {
@@ -106,8 +199,8 @@ describe("buildSlopAssessment", () => {
 
     const elevated = buildSlopAssessment({
       repoFullName,
-      issues: [issue(repoFullName, 11, "Clarify CI notes")],
-      pullRequests: [pr(repoFullName, 81, "Clarify CI notes")],
+      issues: [issue(repoFullName, 12, "Clarify CI notes")],
+      pullRequests: [pr(repoFullName, 91, "Clarify CI notes")],
       commitMessages: ["update", "WIP"],
     });
     expect(elevated.slopRisk).toBe(40);
@@ -115,8 +208,8 @@ describe("buildSlopAssessment", () => {
 
     const longTemplate = buildSlopAssessment({
       repoFullName,
-      issues: [issue(repoFullName, 12, "Trace branch changes")],
-      pullRequests: [pr(repoFullName, 82, "Trace branch changes")],
+      issues: [issue(repoFullName, 13, "Trace branch changes")],
+      pullRequests: [pr(repoFullName, 92, "Trace branch changes")],
       commitMessages: ["placeholder ".repeat(6).trim(), "temp", "fix"],
     });
     expect(longTemplate.findings[0]?.detail).toContain("...");
@@ -124,10 +217,19 @@ describe("buildSlopAssessment", () => {
 
   it("keeps the rubric and finding text public-safe", () => {
     const repoFullName = "JSONbored/gittensory";
+    const issues = [
+      issue(repoFullName, 14, "Improve slop scoring", { linkedPrs: [101, 102] }),
+    ];
+    const pullRequests = [
+      pr(repoFullName, 101, "Improve slop scoring", { linkedIssues: [14] }),
+      pr(repoFullName, 102, "Alternative slop scoring change", { linkedIssues: [14] }),
+    ];
+
     const result = buildSlopAssessment({
       repoFullName,
-      issues: [issue(repoFullName, 10, "Improve slop scoring")],
-      pullRequests: [pr(repoFullName, 71, "Improve slop scoring")],
+      issues,
+      pullRequests,
+      targetPullRequestNumber: 101,
       commitMessages: ["temp"],
     });
     const publicText = [

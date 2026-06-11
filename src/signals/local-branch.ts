@@ -351,6 +351,9 @@ export function buildLocalBranchAnalysis(args: {
     scenarioNotes: observedPullRequestScenarios.notes.slice(0, 4),
     ...(eligibilityStatusForScenario ? { eligibilityStatus: eligibilityStatusForScenario } : {}),
   });
+  // classified is intentionally empty here: buildLocalBranchAnalysis only has aggregate
+  // counts and notes from observedPullRequestScenarios, not per-PR detail rows. The
+  // pendingScenarioNotes surface the counts; per-PR rows require caller-supplied classification.
   const pendingDetectionForSummary: ScenarioSummaryInput["pendingDetection"] =
     observedPullRequestScenarios.approvedOrMergeable > 0 || observedPullRequestScenarios.stale > 0
       ? {

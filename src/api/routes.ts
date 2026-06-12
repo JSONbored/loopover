@@ -3638,7 +3638,7 @@ function isIssueQualityPath(path: string): boolean {
 }
 
 function isRepoFocusManifestPath(path: string): boolean {
-  return /^\/v1\/repos\/[^/]+\/[^/]+\/focus-manifest$/.test(path);
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/focus-manifest(?:\/refresh)?$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {

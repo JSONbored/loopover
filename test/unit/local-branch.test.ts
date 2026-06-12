@@ -1543,6 +1543,130 @@ describe("local MCP git metadata collection", () => {
       expect(error instanceof Error ? error.message : String(error)).not.toContain(tempDir);
     }
   });
+
+  it("emits scenarioSummary with advisory flags set and no forbidden public language", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.advisoryOnly).toBe(true);
+    expect(analysis.scenarioSummary.notAutonomousPrBot).toBe(true);
+    expect(analysis.scenarioSummary.notPublicScoring).toBe(true);
+    expect(analysis.scenarioSummary.headline.length).toBeGreaterThan(0);
+    expect(JSON.stringify(analysis.scenarioSummary)).not.toMatch(
+      /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i,
+    );
+  });
+
+  it("populates scenarioSummary.dataClassification with contributor and repo facts from branch metadata", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        branchName: "feat-util-refactor",
+        changedFiles: [{ path: "src/util.ts", additions: 20, deletions: 1, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 35, totalTokenScore: 55, sourceLines: 30 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.dataClassification.facts).toContain("Contributor");
+    expect(analysis.scenarioSummary.dataClassification.facts).toContain("Repository");
+    expect(analysis.scenarioSummary.dataClassification.facts).toContain("Branch");
+  });
+
+  it("populates scenarioSummary.eligibilityNotes from the derived eligibility plan", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/cache.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.eligibilityNotes.length).toBeGreaterThan(0);
+  });
+
+  it("populates scenarioSummary.blockerNotes when the score preview has metadata-only signals", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        // No localScorer — falls back to metadata-only mode, triggering the metadata_only blocker
+        changedFiles: [{ path: "src/cache.ts", additions: 5, deletions: 0, status: "modified" }],
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.blockerNotes.join(" ")).toMatch(/metadata signals are available/i);
+  });
+
+  it("populates scenarioSummary.pendingScenarioNotes when approved open PRs are observed from cached GitHub state", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/cache.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      contributorPullRequests: [
+        {
+          repoFullName: repo.fullName,
+          number: 21,
+          title: "Approved cache fix",
+          state: "open",
+          authorLogin: "oktofeesh1",
+          authorAssociation: "CONTRIBUTOR",
+          reviewDecision: "APPROVED",
+          labels: [],
+          linkedIssues: [],
+        },
+      ],
+      profile,
+      outcomeHistory: { ...outcomeHistory, totals: { ...outcomeHistory.totals, openPullRequests: 1 } },
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.observedPullRequestScenarios.approvedOrMergeable).toBeGreaterThan(0);
+    expect(analysis.scenarioSummary.pendingScenarioNotes.length).toBeGreaterThan(0);
+    expect(analysis.scenarioSummary.pendingScenarioNotes.join(" ")).toMatch(/cached GitHub reviews, checks, and activity/i);
+  });
 });
 
 const repo: RepositoryRecord = {

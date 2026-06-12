@@ -19,6 +19,9 @@ import { buildRepoRewardRisk, type RepoRewardRisk, type RewardRiskAction } from 
 import { buildLocalWorkspaceIntelligence, type LocalWorkspaceIntelligence } from "./local-workspace-intelligence";
 import { buildFocusManifestGuidance, parseFocusManifest, type FocusManifestGuidance } from "./focus-manifest";
 import { sanitizeLocalScorerWarnings } from "./local-scorer-diagnostics";
+import { deriveEligibilityPlan } from "../services/eligibility-plan";
+import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
+import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -170,6 +173,7 @@ export type LocalBranchAnalysis = {
   };
   nextActions: RewardRiskAction[];
   workspaceIntelligence: LocalWorkspaceIntelligence;
+  scenarioSummary: PublicScenarioSummary;
   summary: string;
 };
 
@@ -334,6 +338,41 @@ export function buildLocalBranchAnalysis(args: {
     ...scorePreview.warnings.filter((warning) => /not registered|no active|exceeds|credibility|token gate|confirmed ineligible/i.test(warning)),
     ...preflight.findings.filter((finding) => finding.severity !== "info").map((finding) => finding.title),
   ];
+  const eligibilityPlan = deriveEligibilityPlan(scorePreview);
+  const eligibilityStatusForScenario = scorePreview.branchEligibility.status === "not_required" ? undefined : scorePreview.branchEligibility.status;
+  const branchScenarioInput = scenarioInputFromLocalBranchMetadata({
+    scenarioType: "branch_preflight",
+    login: args.input.login,
+    repoFullName: args.input.repoFullName,
+    ...(args.input.branchName ? { branchName: args.input.branchName } : {}),
+    ...(args.input.baseRef ? { baseRef: args.input.baseRef } : {}),
+    changedFileCount: changedFiles.length,
+    ...(args.input.linkedIssues ? { linkedIssues: args.input.linkedIssues } : {}),
+    scenarioNotes: observedPullRequestScenarios.notes.slice(0, 4),
+    ...(eligibilityStatusForScenario ? { eligibilityStatus: eligibilityStatusForScenario } : {}),
+  });
+  // classified is intentionally empty here: buildLocalBranchAnalysis only has aggregate
+  // counts and notes from observedPullRequestScenarios, not per-PR detail rows. The
+  // pendingScenarioNotes surface the counts; per-PR rows require caller-supplied classification.
+  const pendingDetectionForSummary: ScenarioSummaryInput["pendingDetection"] =
+    observedPullRequestScenarios.approvedOrMergeable > 0 || observedPullRequestScenarios.stale > 0
+      ? {
+          source: "github_observed",
+          pendingMergedPrCount: observedPullRequestScenarios.approvedOrMergeable,
+          pendingClosedPrCount: observedPullRequestScenarios.stale,
+          approvedPrCount: observedPullRequestScenarios.approvedOrMergeable,
+          scenarioNotes: observedPullRequestScenarios.notes,
+          classified: [],
+        }
+      : undefined;
+  const scenarioSummary = renderPublicScenarioSummary({
+    repoFullName: args.input.repoFullName,
+    generatedAt: nowIso(),
+    eligibilityPlan,
+    publicBlockers: scorePreview.blockedBy,
+    scenarioInput: branchScenarioInput,
+    pendingDetection: pendingDetectionForSummary,
+  });
   return {
     login: args.input.login,
     repoFullName: args.input.repoFullName,
@@ -367,6 +406,7 @@ export function buildLocalBranchAnalysis(args: {
     manifestGuidance,
     prPacket,
     nextActions: withSituationalAction(rewardRisk.actions, branchQualityBlockers, accountStateBlockers, scorePreview).slice(0, 6),
+    scenarioSummary,
     workspaceIntelligence: buildLocalWorkspaceIntelligence({
       input: args.input,
       analysis: {

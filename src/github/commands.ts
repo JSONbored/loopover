@@ -1,4 +1,5 @@
 import { AGENT_COMMAND_COMMENT_MARKER } from "./comments";
+import { gittensoryFooter } from "./footer";
 import type { AgentRunBundle } from "../services/agent-orchestrator";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import type { AgentActionRecord, RepositoryCommandAuthorizationPolicy } from "../types";
@@ -230,7 +231,7 @@ export function buildPublicAgentCommandComment(args: {
     ...feedbackPromptSections(args.answerId),
     "",
     "---",
-    "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers.",
+    gittensoryFooter(),
   ].join("\n");
   return sanitizePublicComment(body);
 }

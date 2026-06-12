@@ -20,6 +20,7 @@ import type {
   ScoringModelSnapshotRecord,
 } from "../types";
 import type { PublicContributorProfile } from "../github/public";
+import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { hasLocalTestEvidence } from "./test-evidence";
@@ -3650,9 +3651,9 @@ export function buildPublicPrIntelligenceComment(args: {
     publicFindings.length > 0
       ? publicFindings.map((finding) => `- ${sanitizePanelText(finding.title)}: ${sanitizePanelText(finding.publicText ?? finding.detail)}`)
       : ["- No public-safe advisory findings were generated from cached metadata."];
-  const footer = confirmedMiner || args.settings.publicAudienceMode === "gittensor_only"
-    ? "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers. Learn more about [Gittensor](https://gittensor.io) contribution workflows."
-    : "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers.";
+  // Always-on earn CTA — a permanent, free marketing surface on every reviewed PR. The CTA points at
+  // this repo's public Gittensor miner page (social proof for THIS repo + a path to register).
+  const footer = gittensoryFooter({ earnUrl: gittensorRepoEarnUrl(args.pr.repoFullName) });
   return [
     "<!-- gittensory-pr-panel:v1 -->",
     "",

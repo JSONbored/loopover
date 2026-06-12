@@ -724,7 +724,8 @@ describe("signal coverage edge cases", () => {
     expect(collisionComment).not.toContain("possible overlaps");
     expect(collisionComment).not.toContain("Cached OSS contributor activity");
     expect(collisionComment).not.toContain("Cached prior PRs/issues");
-    expect(collisionComment).not.toContain("gittensor.io");
+    // The always-on earn CTA footer is a permanent marketing surface on every PR.
+    expect(collisionComment).toContain("register to start earning");
 
     const repoBlockedComment = buildPublicPrIntelligenceComment({
       repo: null,

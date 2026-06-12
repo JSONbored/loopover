@@ -62,6 +62,7 @@ import {
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
 import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
+import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import {
   buildMaintainerQueueDigest,
   buildPublicAgentCommandComment,
@@ -832,7 +833,7 @@ function buildClosedPrPanelUpdate(repoFullName: string, pullNumber: number): str
     `> | Gate result | ⚠️ Skipped | ${repoFullName}#${pullNumber} is no longer open. | No action. |`,
     "",
     "---",
-    "Checked by [Gittensory](https://github.com/JSONbored/gittensory), a quiet PR intelligence layer for OSS maintainers.",
+    gittensoryFooter({ earnUrl: gittensorRepoEarnUrl(repoFullName) }),
   ].join("\n");
 }
 

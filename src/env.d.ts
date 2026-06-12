@@ -31,6 +31,8 @@ declare global {
     GITTENSORY_API_TOKEN: string;
     GITTENSORY_MCP_TOKEN: string;
     INTERNAL_JOB_TOKEN: string;
+    RATE_LIMIT_TRUSTED_PROXIES?: string;
+    RATE_LIMIT_TRUSTED_PROXY_COUNT?: string;
   }
 }
 

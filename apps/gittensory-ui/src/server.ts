@@ -2,6 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { handleAnalyticsProxy } from "./lib/analytics-proxy";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -39,6 +40,13 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    // First-party proxy for the self-hosted Umami tracker (/stats/*). Runs ahead
+    // of SSR and returns undefined for every other path. Only active in the
+    // deployed Worker; `vite dev` uses TanStack's default server entry, so local
+    // /stats/script.js 404s and analytics simply doesn't load in dev (intended).
+    const analytics = await handleAnalyticsProxy(request);
+    if (analytics) return analytics;
+
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);

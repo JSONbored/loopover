@@ -149,16 +149,39 @@ describe("focus-manifest route auth", () => {
     });
   });
 
-  it("bypasses cached manifest when refresh=true", async () => {
+  it("does not refresh cached manifests from GET query parameters", async () => {
     const app = createApp();
     const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
     const headers = apiHeaders(env);
-    const first = await app.request(FOCUS_MANIFEST_PATH, { headers }, env);
-    expect(first.status).toBe(200);
-    const refreshed = await app.request(`${FOCUS_MANIFEST_PATH}?refresh=true`, { headers }, env);
+    const putResponse = await app.request(
+      FOCUS_MANIFEST_PATH,
+      { method: "PUT", headers, body: JSON.stringify({ wantedPaths: ["private-cache/"] }) },
+      env,
+    );
+    expect(putResponse.status).toBe(200);
+
+    const response = await app.request(`${FOCUS_MANIFEST_PATH}?refresh=true`, { headers }, env);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      manifest: { present: true, source: "api_record", wantedPaths: ["private-cache/"] },
+    });
+  });
+
+  it("refreshes cached manifests from an unsafe POST endpoint", async () => {
+    const app = createApp();
+    const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
+    const headers = apiHeaders(env);
+    const putResponse = await app.request(
+      FOCUS_MANIFEST_PATH,
+      { method: "PUT", headers, body: JSON.stringify({ wantedPaths: ["private-cache/"] }) },
+      env,
+    );
+    expect(putResponse.status).toBe(200);
+
+    const refreshed = await app.request(`${FOCUS_MANIFEST_PATH}/refresh`, { method: "POST", headers }, env);
     expect(refreshed.status).toBe(200);
     await expect(refreshed.json()).resolves.toMatchObject({
-      manifest: { present: true, wantedPaths: expect.arrayContaining(["apps/gittensory-ui/"]) },
+      manifest: { present: true, source: "repo_file", wantedPaths: expect.arrayContaining(["apps/gittensory-ui/"]) },
     });
   });
 

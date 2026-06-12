@@ -30,6 +30,7 @@ import { Route as DocsPrivacySecurityRouteImport } from './routes/docs.privacy-s
 import { Route as DocsMinerWorkflowRouteImport } from './routes/docs.miner-workflow'
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
+import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
@@ -152,6 +153,12 @@ const DocsMaintainerWorkflowRoute = DocsMaintainerWorkflowRouteImport.update({
   path: '/maintainer-workflow',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsMaintainerInstallTrustRoute =
+  DocsMaintainerInstallTrustRouteImport.update({
+    id: '/maintainer-install-trust',
+    path: '/maintainer-install-trust',
+    getParentRoute: () => DocsRoute,
+  } as any)
 const DocsGithubAppRoute = DocsGithubAppRouteImport.update({
   id: '/github-app',
   path: '/github-app',
@@ -260,6 +267,7 @@ export interface FileRoutesByFullPath {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
@@ -296,6 +304,7 @@ export interface FileRoutesByTo {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
@@ -336,6 +345,7 @@ export interface FileRoutesById {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
@@ -377,6 +387,7 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
     | '/docs/miner-workflow'
@@ -413,6 +424,7 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
     | '/docs/miner-workflow'
@@ -452,6 +464,7 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
     | '/docs/miner-workflow'
@@ -627,6 +640,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsMaintainerWorkflowRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/maintainer-install-trust': {
+      id: '/docs/maintainer-install-trust'
+      path: '/maintainer-install-trust'
+      fullPath: '/docs/maintainer-install-trust'
+      preLoaderRoute: typeof DocsMaintainerInstallTrustRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/github-app': {
       id: '/docs/github-app'
       path: '/github-app'
@@ -791,6 +811,7 @@ interface DocsRouteChildren {
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
+  DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
   DocsMinerWorkflowRoute: typeof DocsMinerWorkflowRoute
@@ -807,6 +828,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,
+  DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,
   DocsMcpClientsRoute: DocsMcpClientsRoute,
   DocsMinerWorkflowRoute: DocsMinerWorkflowRoute,

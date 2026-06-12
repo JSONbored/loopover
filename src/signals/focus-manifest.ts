@@ -100,12 +100,15 @@ function normalizeStringList(value: JsonValue | undefined, field: string, warnin
     }
     const trimmed = entry.trim();
     if (!trimmed) continue;
-    if (trimmed.length > MAX_ITEM_LENGTH) {
+    // Truncate in place, then flow through the same de-dup and cap logic. Falling through (rather than
+    // `continue`-ing) keeps over-long entries subject to both limits, so untrusted manifests cannot
+    // bypass de-duplication or the MAX_LIST_ITEMS safety cap via pathological long entries.
+    let normalized = trimmed;
+    if (normalized.length > MAX_ITEM_LENGTH) {
       warnings.push(`Manifest field "${field}" truncated an over-long entry.`);
-      result.push(trimmed.slice(0, MAX_ITEM_LENGTH));
-      continue;
+      normalized = normalized.slice(0, MAX_ITEM_LENGTH);
     }
-    if (!result.includes(trimmed)) result.push(trimmed);
+    if (!result.includes(normalized)) result.push(normalized);
     if (result.length >= MAX_LIST_ITEMS) {
       warnings.push(`Manifest field "${field}" exceeded ${MAX_LIST_ITEMS} entries; extra entries ignored.`);
       break;

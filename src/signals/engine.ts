@@ -3564,10 +3564,7 @@ export function buildPublicPrIntelligenceComment(args: {
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
-  // Deduplicated union of PR-specific clusters and planned-overlap (preflight) clusters -- they are
-  // different filtered subsets of the same report, so the count must be their union, not max(), to
-  // match the related-work items rendered in the panel details below.
-  const scopedOverlapClusters = [...new Map([...prCollisionClusters, ...args.preflight.collisions].map((cluster) => [cluster.id, cluster])).values()];
+  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
   const scopedOverlapCount = scopedOverlapClusters.length;
   const hasRelatedWork = linkedDuplicatePrs.length > 0 || scopedOverlapCount > 0;
   const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
@@ -3728,6 +3725,16 @@ function pullRequestSpecificCollisionClusters(report: CollisionReport, pr: PullR
   return report.clusters.filter((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number));
 }
 
+/** Deduplicated union of PR-specific collision clusters and preflight overlap clusters. */
+export function unionScopedOverlapClusters(
+  report: CollisionReport,
+  pr: PullRequestRecord,
+  preflightCollisions: CollisionCluster[],
+): CollisionCluster[] {
+  const prCollisionClusters = pullRequestSpecificCollisionClusters(report, pr);
+  return [...new Map([...prCollisionClusters, ...preflightCollisions].map((cluster) => [cluster.id, cluster])).values()];
+}
+
 function linkedIssueDuplicatePullRequests(pr: PullRequestRecord, clusters: CollisionCluster[]): number[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
@@ -3850,7 +3857,7 @@ function queuePressureComponent(queueHealth: QueueHealth): { score: number; max:
   const cachedOpenPullRequests = Math.max(0, signals.cachedOpenPullRequests ?? signals.ageBuckets.under7Days + signals.ageBuckets.days7To30 + signals.ageBuckets.over30Days);
   const likelyReviewablePullRequests = Math.max(0, Math.min(openPullRequests, signals.likelyReviewablePullRequests));
   const sampledLikelyReviewable = signals.likelyReviewablePullRequestsSource === "sampled_cache" || (signals.likelyReviewablePullRequestsSource === undefined && cachedOpenPullRequests < openPullRequests);
-  const score = queuePressureScore(queueHealth, openPullRequests);
+  const score = queuePressureScore(openPullRequests);
   const likelyEvidence =
     openPullRequests === 0
       ? "0 likely reviewable"
@@ -3873,22 +3880,15 @@ function queuePressureComponent(queueHealth: QueueHealth): { score: number; max:
   };
 }
 
-function queuePressureScore(queueHealth: QueueHealth, openPullRequests: number): number {
+function queuePressureScore(openPullRequests: number): number {
   if (openPullRequests === 0) return 10;
-  return Math.min(queuePressureOpenPullRequestScore(openPullRequests), queuePressureLevelScore(queueHealth.level));
+  return queuePressureOpenPullRequestScore(openPullRequests);
 }
 
 function queuePressureOpenPullRequestScore(openPullRequests: number): number {
   if (openPullRequests <= 4) return 10;
   if (openPullRequests <= 8) return 8;
   if (openPullRequests <= 13) return 5;
-  return 3;
-}
-
-function queuePressureLevelScore(level: QueueHealth["level"]): number {
-  if (level === "low") return 10;
-  if (level === "medium") return 8;
-  if (level === "high") return 5;
   return 3;
 }
 

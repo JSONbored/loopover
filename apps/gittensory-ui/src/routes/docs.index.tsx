@@ -69,6 +69,7 @@ const AUDIENCES: Audience[] = [
     description: "Confirmed-miner context, sanitized comments, no noisy checks.",
     primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
+      { to: "/docs/maintainer-install-trust", label: "Install & trust guide" },
       { to: "/docs/github-app", label: "Install the GitHub App" },
       { to: "/docs/maintainer-workflow", label: "Maintainer workflow" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },

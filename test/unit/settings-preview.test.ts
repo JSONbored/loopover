@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRepoSettingsPreview, decidePublicSurface, type InstallationHealthSummary } from "../../src/signals/settings-preview";
+import { REQUIRED_INSTALLATION_PERMISSIONS } from "../../src/github/backfill";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
 
 const FORBIDDEN_INSTALL_PREVIEW_PUBLIC_LANGUAGE =
@@ -349,5 +350,23 @@ describe("buildRepoSettingsPreview", () => {
     expect(preview.installPreview.permissions.required).toEqual(["metadata: read", "pull_requests: read"]);
     expect(preview.installPreview.publicOutputs).toEqual(["No public comment, label, or check run for this sample."]);
     expect(preview.installPreview.checklist.find((item) => item.id === "public-outputs")?.summary).toMatch(/no public output action is enabled/i);
+  });
+
+  it("derives read-only base permissions from REQUIRED_INSTALLATION_PERMISSIONS so the preview stays in sync with the canonical constant", () => {
+    // Regression: settings-preview previously hardcoded ["metadata: read", "pull_requests: read"] instead
+    // of reading from REQUIRED_INSTALLATION_PERMISSIONS, so any change to the constant would leave the
+    // preview silently stale (issue #419/#420 pattern).
+    const readEntries = Object.entries(REQUIRED_INSTALLATION_PERMISSIONS).filter(([, v]) => v === "read");
+    const expectedReadPerms = readEntries.map(([k, v]) => `${k}: ${v}`).sort();
+
+    const preview = buildRepoSettingsPreview({
+      ...base,
+      settings: settings({ publicSurface: "label_only", autoLabelEnabled: false, commentMode: "off", checkRunMode: "off" }),
+      installation: healthyInstall,
+      sample: { authorLogin: "miner", minerStatus: "confirmed" },
+    });
+
+    const actualReadPerms = (preview.installPreview.permissions.required as string[]).filter((p) => p.endsWith(": read")).sort();
+    expect(actualReadPerms).toEqual(expectedReadPerms);
   });
 });

@@ -398,6 +398,14 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
+    method: "post",
+    path: "/v1/repos/{owner}/{repo}/focus-manifest/refresh",
+    responses: {
+      200: { description: "Refresh the persisted focus manifest cache from the repo file", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
     method: "put",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
     responses: {

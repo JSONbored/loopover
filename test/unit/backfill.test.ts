@@ -257,6 +257,50 @@ describe("GitHub backfill", () => {
     ]);
   });
 
+  it("does not double-count labels appearing in overlapping PR buckets (all/merged/open regression)", async () => {
+    // Regression: allPullRequests, mergedPullRequests, and openPullRequests are overlapping views of
+    // the same PR set. A label on a PR that appears in all three buckets was previously counted three
+    // times, biasing dominantLabels toward labels on frequently-bucketed PRs over labels that only
+    // appear once per PR but on many distinct PRs.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const sharedPrUrl = "https://github.com/JSONbored/gittensory/pull/10";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        data: {
+          // One PR with label "shared-label" appears in all three overlapping buckets.
+          // Two distinct issue records each have label "issue-label" once.
+          r_JSONbored_gittensory_all: {
+            issueCount: 1,
+            nodes: [{ __typename: "PullRequest", url: sharedPrUrl, updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "shared-label" }] }, body: "" }],
+          },
+          r_JSONbored_gittensory_merged: {
+            issueCount: 1,
+            nodes: [{ __typename: "PullRequest", url: sharedPrUrl, updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "shared-label" }] }, body: "" }],
+          },
+          r_JSONbored_gittensory_open: {
+            issueCount: 1,
+            nodes: [{ __typename: "PullRequest", url: sharedPrUrl, updatedAt: "2026-05-24T00:00:00Z", labels: { nodes: [{ name: "shared-label" }] }, body: "" }],
+          },
+          r_JSONbored_gittensory_issues: {
+            issueCount: 2,
+            nodes: [
+              { __typename: "Issue", updatedAt: "2026-05-23T00:00:00Z", labels: { nodes: [{ name: "issue-label" }] }, body: "" },
+              { __typename: "Issue", updatedAt: "2026-05-22T00:00:00Z", labels: { nodes: [{ name: "issue-label" }] }, body: "" },
+            ],
+          },
+        },
+      }),
+    );
+
+    await refreshContributorActivity(env, "jsonbored");
+    const [stat] = await listContributorRepoStats(env, "jsonbored");
+
+    // Without deduplication: shared-label count=3, issue-label count=2 → ["shared-label", "issue-label"]
+    // With deduplication:    shared-label count=1, issue-label count=2 → ["issue-label", "shared-label"]
+    expect(stat?.dominantLabels).toEqual(["issue-label", "shared-label"]);
+  });
+
   it("carries GraphQL warnings and ignores repos with no contributor activity", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

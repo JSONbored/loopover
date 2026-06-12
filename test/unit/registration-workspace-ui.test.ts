@@ -167,7 +167,9 @@ describe("registration workspace UI helpers", () => {
     expect(docs?.state).toBe("needs_cleanup");
     expect(docs?.items[0]?.remediationKind).toBe("manual");
     expect(workflow.overallState).toBe("needs_cleanup");
-    expect(workflow.nextSteps.length).toBeGreaterThan(0);
+    expect(workflow.nextSteps).toContain(
+      "Manually verify CONTRIBUTING.md, README onboarding steps, and issue templates in GitHub; remote doc crawling is not enabled in this signal yet.",
+    );
   });
 
   it("blocked readiness maps workflow to not ready with concrete blocker remediation", () => {

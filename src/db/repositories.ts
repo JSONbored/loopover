@@ -2078,6 +2078,21 @@ export async function listIssues(env: Env, fullName: string): Promise<IssueRecor
   return rows.map(toIssueRecordFromRow);
 }
 
+/**
+ * Closed issues whose body carries a contributor-issue-draft marker, recent-first and bounded.
+ * Used to suppress re-proposing drafts a maintainer already declined (closed).
+ */
+export async function listClosedContributorDraftIssues(env: Env, fullName: string, markerPrefix: string, limit = 200): Promise<IssueRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select()
+    .from(issues)
+    .where(and(eq(issues.repoFullName, fullName), eq(issues.state, "closed"), sql`${issues.payloadJson} LIKE ${`%${markerPrefix}%`}`))
+    .orderBy(desc(issues.updatedAt))
+    .limit(limit);
+  return rows.map(toIssueRecordFromRow);
+}
+
 export async function listAllIssues(env: Env): Promise<IssueRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(issues).limit(2000);
@@ -3167,6 +3182,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     body?: string | null;
     created_at?: string | null;
     updated_at?: string | null;
+    closed_at?: string | null;
     draft?: boolean | null;
     mergeable_state?: string | null;
     reviewDecision?: string | null;
@@ -3189,6 +3205,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     body: payload.body,
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
+    closedAt: payload.closed_at,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
   };
@@ -3215,6 +3232,7 @@ function compactGitHubPayload(payload: {
   body?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  closed_at?: string | null;
   draft?: boolean | null;
   isDraft?: boolean | null;
   mergeable?: boolean | null;
@@ -3228,6 +3246,7 @@ function compactGitHubPayload(payload: {
     body: truncateBody(payload.body),
     created_at: payload.created_at ?? null,
     updated_at: payload.updated_at ?? null,
+    closed_at: payload.closed_at ?? null,
     ...(draft !== undefined ? { draft } : {}),
     ...(mergeableState !== undefined ? { mergeable_state: mergeableState } : {}),
     ...(payload.reviewDecision !== undefined ? { reviewDecision: payload.reviewDecision } : {}),
@@ -3246,7 +3265,7 @@ function truncateBody(body: string | null | undefined): string | null {
 }
 
 function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {
-  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null }>(row.payloadJson, {});
+  const payload = parseJson<{ body?: string | null; created_at?: string | null; updated_at?: string | null; closed_at?: string | null }>(row.payloadJson, {});
   return {
     repoFullName: row.repoFullName,
     number: row.number,
@@ -3258,6 +3277,7 @@ function toIssueRecordFromRow(row: typeof issues.$inferSelect): IssueRecord {
     body: payload.body,
     createdAt: payload.created_at,
     updatedAt: payload.updated_at ?? row.updatedAt,
+    closedAt: payload.closed_at,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedPrs: parseJson<number[]>(row.linkedPrsJson, []),
   };

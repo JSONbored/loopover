@@ -14815,6 +14815,36 @@
           }
         ]
       }
+    },
+    "/v1/repos/{owner}/{repo}/focus-manifest/refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Refresh the persisted focus manifest cache from the repo file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

@@ -162,6 +162,16 @@ describe("renderPublicScenarioSummary", () => {
     expect(summary.advisoryOnly).toBe(true);
   });
 
+  it("renders for a repo whose name contains a forbidden term without throwing", () => {
+    // "hotkey"/"wallet" are Bittensor protocol terms; a legitimately named repo must not fail the guard.
+    const summary = renderPublicScenarioSummary({
+      repoFullName: "octo/hotkey-wallet",
+      generatedAt: "2026-06-12T00:00:00.000Z",
+    });
+    expect(summary.repoFullName).toBe("octo/hotkey-wallet");
+    expect(summary.headline).toMatch(/Advisory scenario summary generated from available repo signals/i);
+  });
+
   it("renders pressure options, eligibility notes, blockers, and data classification", () => {
     const pressureSimulation = simulateOpenPrPressure({
       repoFullName: "octo/demo",

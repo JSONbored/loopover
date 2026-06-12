@@ -7,7 +7,8 @@ describe("MCP compatibility telemetry", () => {
     expect(classifyMcpClientVersion("0.1.9")).toBe("incompatible");
     expect(classifyMcpClientVersion("0.2.1")).toBe("incompatible");
     expect(classifyMcpClientVersion("0.3.0")).toBe("incompatible");
-    expect(classifyMcpClientVersion("0.4.0")).toBe("current");
+    expect(classifyMcpClientVersion("0.4.0")).toBe("incompatible");
+    expect(classifyMcpClientVersion("0.5.0")).toBe("current");
     expect(classifyMcpClientVersion("not-a-version")).toBe("unknown");
     expect(classifyMcpClientVersion(undefined)).toBe("unknown");
   });
@@ -39,14 +40,14 @@ describe("MCP compatibility telemetry", () => {
     const telemetry = buildMcpClientTelemetry(
       new Headers({
         "x-gittensory-mcp-package": "@example/custom-mcp",
-        "x-gittensory-mcp-version": "0.4.0",
+        "x-gittensory-mcp-version": "0.5.0",
       }),
       { requireGittensoryHeader: true },
     );
 
     expect(telemetry).toMatchObject({
       clientName: "custom-mcp",
-      clientVersion: "0.4.0",
+      clientVersion: "0.5.0",
       metadata: {
         packageName: "@example/custom-mcp",
         compatibilityStatus: "current",

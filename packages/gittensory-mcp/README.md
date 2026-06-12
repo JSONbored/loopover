@@ -63,7 +63,7 @@ gittensory-mcp --stdio
 `gittensory-mcp version` (aliases `--version` and `-v`) prints the installed package version, the targeted API version, and the Node.js runtime version:
 
 ```text
-@jsonbored/gittensory-mcp/0.4.0 (api 0.1.0, node v22.12.0)
+@jsonbored/gittensory-mcp/0.5.0 (api 0.1.0, node v22.12.0)
 ```
 
 Add `--json` for machine-readable output:
@@ -71,7 +71,7 @@ Add `--json` for machine-readable output:
 ```json
 {
   "name": "@jsonbored/gittensory-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "apiVersion": "0.1.0",
   "node": "v22.12.0"
 }

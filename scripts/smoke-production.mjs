@@ -31,12 +31,12 @@ async function main() {
   checks.push(checkStatus(`${siteOrigin}/sitemap.xml`, 200, "sitemap", { contentType: /application\/xml/i }));
   checks.push(checkStatus(`${siteOrigin}/CNAME`, 404, "retired GitHub Pages CNAME"));
 
-  checks.push(checkJson(`${apiOrigin}/health`, "API health", (json) => json.status === "ok" && json.minMcpVersion === "0.4.0" && json.latestRecommendedMcpVersion === "0.4.0"));
+  checks.push(checkJson(`${apiOrigin}/health`, "API health", (json) => json.status === "ok" && json.minMcpVersion === "0.5.0" && json.latestRecommendedMcpVersion === "0.5.0"));
   checks.push(
     checkJson(
       `${apiOrigin}/v1/mcp/compatibility`,
       "MCP compatibility",
-      (json) => json.status === "ok" && json.mcp?.minimumSupportedVersion === "0.4.0" && json.mcp?.latestPackageVersion === "0.4.0",
+      (json) => json.status === "ok" && json.mcp?.minimumSupportedVersion === "0.5.0" && json.mcp?.latestPackageVersion === "0.5.0",
     ),
   );
   checks.push(checkJson(`${apiOrigin}/v1/auth/session`, "signed-out session", (json) => json.status === "signed_out"));

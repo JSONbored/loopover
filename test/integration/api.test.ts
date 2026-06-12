@@ -77,8 +77,8 @@ describe("api routes", () => {
     await expect(health.json()).resolves.toMatchObject({
       status: "ok",
       service: "gittensory-api",
-      minMcpVersion: "0.4.0",
-      latestRecommendedMcpVersion: "0.4.0",
+      minMcpVersion: "0.5.0",
+      latestRecommendedMcpVersion: "0.5.0",
     });
 
     const compatibility = await app.request("/v1/mcp/compatibility", {}, env);
@@ -90,9 +90,9 @@ describe("api routes", () => {
       apiVersion: "0.1.0",
       mcp: {
         packageName: "@jsonbored/gittensory-mcp",
-        minimumSupportedVersion: "0.4.0",
-        latestRecommendedVersion: "0.4.0",
-        latestPackageVersion: "0.4.0",
+        minimumSupportedVersion: "0.5.0",
+        latestRecommendedVersion: "0.5.0",
+        latestPackageVersion: "0.5.0",
       },
       compatibilityWarnings: [],
       breakingChanges: [],
@@ -3235,7 +3235,7 @@ describe("api routes", () => {
         expect.objectContaining({ label: "Product events", value: String(productUsageEvents.length) }),
         expect.objectContaining({ label: "Active users" }),
         expect.objectContaining({ label: "Activation rollups", value: "partial" }),
-        expect.objectContaining({ label: "MCP stale clients", value: "2" }),
+        expect.objectContaining({ label: "MCP stale clients", value: "4" }),
       ]),
     );
     expect(usageOperatorBody.usageSummary.totalEvents).toBe(productUsageEvents.length);
@@ -3245,7 +3245,7 @@ describe("api routes", () => {
       totalEvents: 4,
       activeActors: 4,
       staleEvents: 1,
-      incompatibleEvents: 1,
+      incompatibleEvents: 3,
       byClientVersion: expect.arrayContaining([
         { key: "0.1.0", count: 1 },
         { key: "0.2.1", count: 1 },
@@ -3256,8 +3256,7 @@ describe("api routes", () => {
         { key: "2025-03-26", count: 2 },
       ]),
       byCompatibilityStatus: expect.arrayContaining([
-        { status: "current", count: 2 },
-        { status: "incompatible", count: 1 },
+        { status: "incompatible", count: 3 },
         { status: "stale", count: 1 },
       ]),
     });
@@ -3267,10 +3266,10 @@ describe("api routes", () => {
     const mcpCompatibilityBody = await mcpCompatibility.json();
     expect(mcpCompatibilityBody).toMatchObject({
       adoption: expect.objectContaining({
-        minimumSupportedVersion: "0.4.0",
-        latestRecommendedVersion: "0.4.0",
+        minimumSupportedVersion: "0.5.0",
+        latestRecommendedVersion: "0.5.0",
         staleEvents: 1,
-        incompatibleEvents: 1,
+        incompatibleEvents: 3,
         totalEvents: 4,
       }),
     });
@@ -4975,9 +4974,9 @@ describe("api routes", () => {
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",
             protocolVersion: "2025-03-26",
-            compatibilityStatus: "current",
-            minimumSupportedVersion: "0.4.0",
-            latestRecommendedVersion: "0.4.0",
+            compatibilityStatus: "incompatible",
+            minimumSupportedVersion: "0.5.0",
+            latestRecommendedVersion: "0.5.0",
           }),
         }),
       ]),

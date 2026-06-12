@@ -767,6 +767,33 @@ function withValidatedLinkedIssueScenario(input: ScorePreviewInput): ScorePrevie
   };
 }
 
+/**
+ * Project the standard linked-issue multiplier decision under the assumption that a planned PR
+ * becomes the merged solver of the given issue(s). Reuses {@link decideLinkedIssueMultiplier} — the
+ * same eligibility rule used by buildScorePreview — so standalone validators stay consistent with
+ * the scoring engine. The numeric multiplier on the returned decision is private; callers that are
+ * public-safe should surface only `eligible`/`status`/`reason`.
+ */
+export function projectLinkedIssueMultiplierForPlannedSolve(issueNumbers: number[]): LinkedIssueMultiplierDecision {
+  const branchEligibility: BranchEligibilityResult = {
+    required: true,
+    status: "eligible",
+    evidence: "provided",
+    source: "user_supplied",
+    stale: false,
+    warnings: [],
+  };
+  const context: ProjectedLinkedIssueMultiplierContext = {
+    status: "validated",
+    source: "user_supplied",
+    issueNumbers: uniquePositiveInts(issueNumbers),
+    solvedByPullRequests: [],
+    warnings: [],
+    [PROJECTED_SOLVED_BY_PULL_REQUEST_VALIDATION]: true,
+  };
+  return decideLinkedIssueMultiplier("standard", context, {}, branchEligibility);
+}
+
 function linkedIssueReason(
   status: Exclude<LinkedIssueMultiplierStatus, "not_required">,
   source: LinkedIssueMultiplierSource,

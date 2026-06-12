@@ -708,6 +708,23 @@ describe("api routes", () => {
     expect(preflight.status).toBe(200);
     await expect(preflight.json()).resolves.toMatchObject({ status: "needs_work" });
 
+    const validateLinkedIssue = await app.request(
+      "/v1/repos/entrius/allways-ui/validate-linked-issue",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ issueNumber: 7, plannedChange: { title: "Fix dashboard cache refresh" } }) },
+      env,
+    );
+    expect(validateLinkedIssue.status).toBe(200);
+    const validateLinkedIssueBody = await validateLinkedIssue.json();
+    expect(validateLinkedIssueBody).toMatchObject({ repoFullName: "entrius/allways-ui", issueNumber: 7, multiplierWouldApply: expect.any(Boolean) });
+    expect(JSON.stringify(validateLinkedIssueBody)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+
+    const invalidValidateLinkedIssue = await app.request(
+      "/v1/repos/entrius/allways-ui/validate-linked-issue",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ issueNumber: 0 }) },
+      env,
+    );
+    expect(invalidValidateLinkedIssue.status).toBe(400);
+
     const contributorProfile = await app.request("/v1/contributors/oktofeesh1/profile", { headers: apiHeaders(env) }, env);
     expect(contributorProfile.status).toBe(200);
     await expect(contributorProfile.json()).resolves.toMatchObject({ login: "oktofeesh1", github: { topLanguages: ["TypeScript", "Python"] } });
@@ -1456,6 +1473,13 @@ describe("api routes", () => {
     const forbiddenIssueQuality = await app.request("/v1/repos/entrius/allways-ui/issue-quality", { headers: { authorization: `Bearer ${unrelatedIssueQualityToken}` } }, env);
     expect(forbiddenIssueQuality.status).toBe(403);
     await expect(forbiddenIssueQuality.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+
+    const forbiddenValidateLinkedIssue = await app.request(
+      "/v1/repos/entrius/allways-ui/validate-linked-issue",
+      { method: "POST", headers: { authorization: `Bearer ${unrelatedIssueQualityToken}` }, body: JSON.stringify({ issueNumber: 7 }) },
+      env,
+    );
+    expect(forbiddenValidateLinkedIssue.status).toBe(403);
 
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "entrius/uncached", private: false, owner: { login: "entrius" }, default_branch: "main" });
     const computedIssueQuality = await app.request("/v1/repos/entrius/uncached/issue-quality", { headers: apiHeaders(env) }, env);

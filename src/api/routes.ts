@@ -172,6 +172,7 @@ import {
   buildContributorIntakeHealth,
   buildLabelAudit,
   buildLaneAdvice,
+  buildLinkedIssueValidation,
   buildLocalDiffPreflightResult,
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
@@ -322,6 +323,17 @@ const localDiffPreflightSchema = preflightSchema.extend({
   changedLineCount: z.number().int().min(0).optional(),
   testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
   commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+});
+
+const validateLinkedIssueSchema = z.object({
+  issueNumber: z.number().int().positive(),
+  plannedChange: z
+    .object({
+      title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
+      changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+      contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
+    })
+    .optional(),
 });
 
 const skippedPrAuditQuerySchema = z
@@ -1560,6 +1572,26 @@ export function createApp() {
     const response = await buildIssueQualityResponse(c.env, fullName);
     if (!response) return c.json({ error: "issue_quality_not_found", repoFullName: fullName }, 404);
     return c.json(response);
+  });
+
+  app.post("/v1/repos/:owner/:repo/validate-linked-issue", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific repo guards. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const parsed = validateLinkedIssueSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_validate_linked_issue_request", issues: parsed.error.issues }, 400);
+    const [repo, issues, pullRequests, recentMergedPullRequests] = await Promise.all([
+      getRepository(c.env, fullName),
+      listIssueSignalSample(c.env, fullName),
+      listOpenPullRequests(c.env, fullName),
+      listRecentMergedPullRequests(c.env, fullName),
+    ]);
+    if (identity.kind === "session") {
+      const forbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (forbidden) return forbidden;
+    }
+    return c.json(buildLinkedIssueValidation(repo, issues, pullRequests, recentMergedPullRequests, fullName, parsed.data.issueNumber, parsed.data.plannedChange ?? {}));
   });
 
   app.get("/v1/repos/:owner/:repo/registration-readiness", async (c) => {

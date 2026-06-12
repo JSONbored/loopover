@@ -30,7 +30,7 @@ function AgentsPage() {
     <>
       <Section className="pt-16 pb-12 sm:pt-24">
         <div className="max-w-3xl">
-          <div className="text-token-xs text-muted-foreground">For coding agents</div>
+          <div className="text-token-xs text-muted-foreground">Built for coding agents</div>
           <h1 className="mt-4 text-token-2xl font-medium tracking-tight text-foreground">
             Deterministic tools, not vibes.
           </h1>

@@ -19,6 +19,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_explain_repo_decision",
   "gittensory_get_issue_quality",
   "gittensory_validate_linked_issue",
+  "gittensory_check_before_start",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
   "gittensory_local_status",
@@ -160,6 +161,18 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.multiplierWouldApply).toBe(true);
     expect(data.multiplierStatus).toBe("validated");
     expect(data.blockingReason).toBeUndefined();
+  });
+
+  it("gittensory_check_before_start returns a recommendation for a clean repo", async () => {
+    const { client } = await connectTestClient();
+    const result = await client.callTool({ name: "gittensory_check_before_start", arguments: { owner: "octo", repo: "demo", issueNumber: 1 } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(["go", "raise", "avoid"]).toContain(data.recommendation);
+    expect(data.found).toBe(false);
+    expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
   it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {

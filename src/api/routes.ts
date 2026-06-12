@@ -177,6 +177,7 @@ import {
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
   buildPullRequestMaintainerPacket,
+  buildPreStartCheck,
   buildRoleContext,
   buildPreflightResult,
   buildQueueHealth,
@@ -334,6 +335,12 @@ const validateLinkedIssueSchema = z.object({
       contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
     })
     .optional(),
+});
+
+const checkBeforeStartSchema = z.object({
+  issueNumber: z.number().int().positive().optional(),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
+  plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
 });
 
 const skippedPrAuditQuerySchema = z
@@ -1592,6 +1599,27 @@ export function createApp() {
       if (forbidden) return forbidden;
     }
     return c.json(buildLinkedIssueValidation(repo, issues, pullRequests, recentMergedPullRequests, fullName, parsed.data.issueNumber, parsed.data.plannedChange ?? {}));
+  });
+
+  app.post("/v1/repos/:owner/:repo/check-before-start", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific repo guards. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = checkBeforeStartSchema.safeParse(body ?? {});
+    if (!parsed.success) return c.json({ error: "invalid_check_before_start_request", issues: parsed.error.issues }, 400);
+    const [repo, issues, pullRequests, recentMergedPullRequests] = await Promise.all([
+      getRepository(c.env, fullName),
+      listIssueSignalSample(c.env, fullName),
+      listOpenPullRequests(c.env, fullName),
+      listRecentMergedPullRequests(c.env, fullName),
+    ]);
+    if (identity.kind === "session") {
+      const forbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (forbidden) return forbidden;
+    }
+    return c.json(buildPreStartCheck(repo, issues, pullRequests, recentMergedPullRequests, fullName, parsed.data));
   });
 
   app.get("/v1/repos/:owner/:repo/registration-readiness", async (c) => {

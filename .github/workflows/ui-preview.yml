@@ -27,18 +27,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  preview:
-    name: Build + upload UI preview
+  build:
+    name: Build UI preview artifact
     # Secrets are unavailable to fork PRs — skip there (Reviewbot shows before-only).
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    timeout-minutes: 20
+    outputs:
+      ready: ${{ steps.cfg.outputs.ready }}
     steps:
       - name: Check Cloudflare secrets
         id: cfg
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -71,12 +73,91 @@ jobs:
           VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
         run: npm run ui:build
 
+      - name: Upload built UI artifact
+        if: steps.cfg.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-preview-dist
+          path: apps/gittensory-ui/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  upload:
+    name: Upload UI preview version
+    needs: build
+    if: needs.build.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Install trusted Wrangler
+        run: npm install --global wrangler@4.95.0
+
+      - name: Download built UI artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: ui-preview-dist
+          path: preview-dist
+
+      - name: Write trusted preview Wrangler config
+        run: |
+          cat > preview-dist/server/wrangler.preview.json <<'JSON'
+          {
+            "compatibility_date": "2026-05-28",
+            "name": "gittensory-ui",
+            "workers_dev": true,
+            "preview_urls": true,
+            "compatibility_flags": ["nodejs_compat"],
+            "placement": {
+              "mode": "smart"
+            },
+            "observability": {
+              "enabled": true,
+              "logs": {
+                "enabled": true,
+                "head_sampling_rate": 1
+              },
+              "traces": {
+                "enabled": true,
+                "head_sampling_rate": 1
+              }
+            },
+            "vars": {
+              "VITE_GITTENSORY_API_ORIGIN": "https://gittensory-api.aethereal.dev"
+            },
+            "routes": [
+              {
+                "pattern": "gittensory.aethereal.dev",
+                "custom_domain": true
+              }
+            ],
+            "main": "index.mjs",
+            "assets": {
+              "binding": "ASSETS",
+              "directory": "../client"
+            },
+            "no_bundle": true,
+            "rules": [
+              {
+                "type": "ESModule",
+                "globs": ["**/*.mjs", "**/*.js"]
+              }
+            ]
+          }
+          JSON
+
       - name: Upload preview version
         id: upload
-        if: steps.cfg.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -o pipefail
-          out=$(npx wrangler versions upload --config apps/gittensory-ui/dist/server/wrangler.json 2>&1 | tee /dev/stderr)
+          out=$(wrangler versions upload --config preview-dist/server/wrangler.preview.json 2>&1 | tee /dev/stderr)
           url=$(printf '%s\n' "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -n1)
           if [ -z "$url" ]; then
             echo "::error::Could not parse a preview URL from wrangler output"
@@ -86,7 +167,7 @@ jobs:
           echo "Preview: $url"
 
       - name: Record deployment for Reviewbot
-        if: steps.cfg.outputs.ready == 'true' && steps.upload.outputs.preview_url != ''
+        if: steps.upload.outputs.preview_url != ''
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |

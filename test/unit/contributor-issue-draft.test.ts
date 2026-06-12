@@ -236,6 +236,8 @@ describe("contributor issue drafts", () => {
     const closed = (over: Partial<IssueRecord>): IssueRecord => ({
       ...openIssue(5, "feat(issues): address focus-policy-missing policy readiness for repo", marker),
       state: "closed",
+      authorAssociation: "OWNER",
+      closedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...over,
     });
@@ -244,11 +246,14 @@ describe("contributor issue drafts", () => {
     // Recently closed -> suppressed within the cooldown window.
     expect(findDeclinedContributorDraft([closed({})], { fingerprint })).toMatchObject({ number: 5, reason: "cooldown" });
     // wontfix-style label -> suppressed regardless of age.
-    expect(findDeclinedContributorDraft([closed({ updatedAt: longAgo, labels: ["wontfix"] })], { fingerprint })).toMatchObject({ reason: "wontfix" });
+    expect(findDeclinedContributorDraft([closed({ closedAt: longAgo, labels: ["wontfix"] })], { fingerprint })).toMatchObject({ reason: "wontfix" });
     // Past the cooldown without a wontfix label -> may resurface (a later regression).
-    expect(findDeclinedContributorDraft([closed({ updatedAt: longAgo })], { fingerprint })).toBeNull();
-    // Missing/unparseable close timestamp -> treat as still within cooldown (suppress).
-    expect(findDeclinedContributorDraft([closed({ updatedAt: undefined })], { fingerprint })).toMatchObject({ reason: "cooldown" });
+    expect(findDeclinedContributorDraft([closed({ closedAt: longAgo, updatedAt: new Date().toISOString() })], { fingerprint })).toBeNull();
+    // Missing/unparseable close timestamp on trusted maintainer-authored issues -> treat as still within cooldown (suppress).
+    expect(findDeclinedContributorDraft([closed({ closedAt: undefined })], { fingerprint })).toMatchObject({ reason: "cooldown" });
+    // Attacker-controlled issue bodies cannot suppress drafts without maintainer authorship or maintainer-applied labels.
+    expect(findDeclinedContributorDraft([closed({ authorAssociation: "NONE" })], { fingerprint })).toBeNull();
+    expect(findDeclinedContributorDraft([closed({ authorAssociation: "NONE", closedAt: longAgo, labels: ["not-planned"] })], { fingerprint })).toMatchObject({ reason: "wontfix" });
     // Open issues, missing markers, and other fingerprints are ignored.
     expect(findDeclinedContributorDraft([{ ...closed({}), state: "open" }], { fingerprint })).toBeNull();
     expect(findDeclinedContributorDraft([closed({ body: "no marker here" })], { fingerprint })).toBeNull();
@@ -263,7 +268,13 @@ describe("contributor issue drafts", () => {
     const marker = contributorIssueDraftMarker(fingerprint);
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     vi.spyOn(repositories, "listClosedContributorDraftIssues").mockResolvedValue([
-      { ...openIssue(90, "feat(issues): address focus-policy-missing policy readiness for repo", marker), state: "closed", updatedAt: new Date().toISOString() },
+      {
+        ...openIssue(90, "feat(issues): address focus-policy-missing policy readiness for repo", marker),
+        state: "closed",
+        authorAssociation: "OWNER",
+        closedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
     ]);
 
     const result = await generateContributorIssueDrafts(env, repoFullName, { dryRun: false, create: true, limit: 1 });
@@ -271,6 +282,37 @@ describe("contributor issue drafts", () => {
     expect(result.created).toBe(0);
     expect(result.drafts[0]?.status).toBe("skipped_declined");
     expect(result.drafts[0]?.declinedBy).toMatchObject({ number: 90, reason: "cooldown" });
+  });
+
+  it("does not let untrusted closed issue markers suppress draft creation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          number: 502,
+          html_url: "https://github.com/other-owner/other-repo/issues/502",
+        }),
+      ),
+    );
+    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const repoFullName = "other-owner/other-repo";
+    const fingerprint = await contributorIssueDraftFingerprint(repoFullName, "policy:focus_policy_missing", "policy:focus_policy_missing");
+    const marker = contributorIssueDraftMarker(fingerprint);
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    vi.spyOn(repositories, "listClosedContributorDraftIssues").mockResolvedValue([
+      {
+        ...openIssue(91, "attacker-controlled spoof", marker),
+        state: "closed",
+        authorAssociation: "NONE",
+        closedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const result = await generateContributorIssueDrafts(env, repoFullName, { dryRun: false, create: true, limit: 1 });
+    expect(result.skippedDeclined).toBe(0);
+    expect(result.created).toBe(1);
+    expect(result.drafts[0]?.status).toBe("created");
   });
 
   it("records skipped_create_failed when GitHub create is unavailable", async () => {

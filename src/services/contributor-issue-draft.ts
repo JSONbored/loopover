@@ -14,6 +14,7 @@ import {
   recordAuditEvent,
 } from "../db/repositories";
 import type { IssueRecord, RepositoryRecord, RepositorySettings } from "../types";
+import { isMaintainerAssociation } from "../github/commands";
 import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, repoParts } from "../utils/json";
 import {
@@ -178,10 +179,12 @@ export const CONTRIBUTOR_ISSUE_DRAFT_DECLINED_COOLDOWN_MS = 30 * 24 * 60 * 60 * 
 const DECLINED_DRAFT_WONTFIX_LABELS = new Set(["wontfix", "wont-fix", "invalid", "duplicate", "not-planned"]);
 
 /**
- * Detect whether a draft was already declined by a maintainer closing the generated issue.
- * Matches by the stable marker fingerprint on a closed issue. A `wontfix`-style label suppresses
- * re-proposal indefinitely; otherwise the closure is honored only within the cooldown window, so a
- * genuine later regression of the underlying warning can resurface once the cooldown elapses.
+ * Detect whether a draft was already declined through trusted maintainer evidence.
+ * Matches by the stable marker fingerprint on a closed issue, but never lets an arbitrary
+ * marker-bearing issue suppress generation: a `wontfix`-style label is trusted because
+ * labels are maintainer-controlled, while cooldown suppression requires a maintainer-
+ * associated issue author. Cooldowns use GitHub's close timestamp instead of `updated_at`
+ * so comments or unrelated edits cannot refresh the suppression window.
  */
 export function findDeclinedContributorDraft(
   closedIssues: IssueRecord[],
@@ -197,7 +200,8 @@ export function findDeclinedContributorDraft(
     if (issue.labels.some((label) => DECLINED_DRAFT_WONTFIX_LABELS.has(label.trim().toLowerCase()))) {
       return { number: issue.number, title: issue.title, reason: "wontfix" };
     }
-    const closedAtMs = issue.updatedAt ? Date.parse(issue.updatedAt) : Number.NaN;
+    if (!isMaintainerAssociation(issue.authorAssociation)) continue;
+    const closedAtMs = issue.closedAt ? Date.parse(issue.closedAt) : Number.NaN;
     if (!Number.isFinite(closedAtMs) || nowMs - closedAtMs < cooldownMs) {
       return { number: issue.number, title: issue.title, reason: "cooldown" };
     }

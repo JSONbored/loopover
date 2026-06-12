@@ -172,6 +172,7 @@ export type GitHubPullRequestPayload = {
   reviewDecision?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  closed_at?: string | null;
   user?: {
     login?: string;
     type?: string;
@@ -195,6 +196,7 @@ export type GitHubIssuePayload = {
   html_url?: string;
   created_at?: string | null;
   updated_at?: string | null;
+  closed_at?: string | null;
   user?: {
     login?: string;
   };
@@ -310,6 +312,7 @@ export type PullRequestRecord = {
   body?: string | null | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
+  closedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
 };
@@ -325,6 +328,7 @@ export type IssueRecord = {
   body?: string | null | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
+  closedAt?: string | null | undefined;
   labels: string[];
   linkedPrs: number[];
 };

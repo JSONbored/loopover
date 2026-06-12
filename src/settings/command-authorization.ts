@@ -8,6 +8,10 @@ export const DEFAULT_COMMAND_AUTHORIZATION_POLICY: RepositoryCommandAuthorizatio
     "review-now": ["maintainer", "collaborator"],
     "needs-author": ["maintainer", "collaborator"],
     "duplicate-clusters": ["maintainer", "collaborator"],
+    "burden-forecast": ["maintainer", "collaborator"],
+    "intake-health": ["maintainer", "collaborator"],
+    "outcome-patterns": ["maintainer", "collaborator"],
+    "noise-report": ["maintainer", "collaborator"],
   },
 };
 

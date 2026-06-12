@@ -2919,6 +2919,190 @@ export function buildLinkedIssueValidation(
   };
 }
 
+export type PreStartCheckTarget = {
+  issueNumber?: number | undefined;
+  title?: string | undefined;
+  plannedPaths?: string[] | undefined;
+};
+
+export type PreStartCheckClaimStatus = "unclaimed" | "claimed" | "solved" | "unknown";
+export type PreStartCheckRecommendation = "go" | "raise" | "avoid";
+export type DuplicateClusterRisk = "none" | "low" | "medium" | "high";
+
+export type PreStartCheckReport = {
+  repoFullName: string;
+  generatedAt: string;
+  lane: LaneAdvice;
+  target: {
+    requested: { issueNumber?: number | undefined; title?: string | undefined; plannedPaths?: string[] | undefined };
+    matchedBy: "issue_number" | "title" | "planned_paths" | "none";
+    resolvedIssueNumber?: number | undefined;
+    resolvedIssueTitle?: string | undefined;
+  };
+  found: boolean;
+  claimStatus: PreStartCheckClaimStatus;
+  lifecycle?: IssueDiscoveryLifecycleState | undefined;
+  issueQualityStatus?: "ready" | "needs_proof" | "hold" | "do_not_use" | undefined;
+  duplicateClusterRisk: DuplicateClusterRisk;
+  recommendation: PreStartCheckRecommendation;
+  reasons: string[];
+  blockers: string[];
+  summary: string;
+};
+
+const DUPLICATE_RISK_RANK: Record<DuplicateClusterRisk, number> = { none: 0, low: 1, medium: 2, high: 3 };
+// Minimum Jaccard token overlap for a supplied title to resolve to a cached open issue.
+const TITLE_MATCH_MIN_JACCARD = 0.5;
+// Cap the title-matching scan so it stays cheap on repos with very large open-issue counts
+// (matches the bound used by the issue lifecycle report).
+const TITLE_MATCH_MAX_ISSUES = 300;
+
+/**
+ * Pre-start duplicate/solvability check. Answers, before any branch exists, whether an issue is
+ * already claimed/solved, whether a duplicate cluster is forming, and whether it is a valid target —
+ * composing the existing collision, issue-quality, and lifecycle reports. Public-safe by construction:
+ * every reason/blocker is routed through {@link sanitizePublicComment}; no reward/score/trust language.
+ */
+export function buildPreStartCheck(
+  repo: RepositoryRecord | null,
+  issues: IssueRecord[],
+  pullRequests: PullRequestRecord[],
+  recentMergedPullRequests: RecentMergedPullRequestRecord[],
+  fullName: string,
+  target: PreStartCheckTarget,
+): PreStartCheckReport {
+  const lane = buildLaneAdvice(repo, fullName);
+  const collisions = buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
+  const quality = buildIssueQualityReport(repo, issues, pullRequests, fullName, [], collisions, recentMergedPullRequests);
+  const lifecycle = buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests);
+  const openIssues = issues.filter((issue) => issue.state === "open");
+
+  let resolvedIssue: IssueRecord | undefined;
+  let matchedBy: PreStartCheckReport["target"]["matchedBy"] = "none";
+  if (typeof target.issueNumber === "number") {
+    resolvedIssue = openIssues.find((issue) => issue.number === target.issueNumber);
+    if (resolvedIssue) matchedBy = "issue_number";
+  } else if (target.title) {
+    const wanted = new Set(tokenize(target.title));
+    let best: { number: number; score: number } | undefined;
+    // An all-stopword/short title has no meaningful tokens to match against. Bound the scan to a
+    // fixed number of open issues so title matching stays cheap on repos with very large queues.
+    if (wanted.size > 0) {
+      for (const issue of openIssues.slice(0, TITLE_MATCH_MAX_ISSUES)) {
+        const have = new Set(tokenize(issue.title));
+        const shared = [...wanted].filter((term) => have.has(term)).length;
+        const score = shared / new Set([...wanted, ...have]).size;
+        if (!best || score > best.score) best = { number: issue.number, score };
+      }
+    }
+    if (best && best.score >= TITLE_MATCH_MIN_JACCARD) {
+      resolvedIssue = openIssues.find((issue) => issue.number === best!.number);
+      matchedBy = "title";
+    }
+  }
+
+  const resolvedNumber = resolvedIssue?.number;
+  const qualityEntry = resolvedNumber == null ? undefined : quality.issues.find((entry) => entry.number === resolvedNumber);
+  const lifecycleEntry = resolvedNumber == null ? undefined : lifecycle.states.find((entry) => entry.number === resolvedNumber);
+
+  const plannedPaths = (target.plannedPaths ?? []).map((path) => path.toLowerCase());
+  if (matchedBy === "none" && plannedPaths.length > 0) matchedBy = "planned_paths";
+
+  const issueClusters =
+    resolvedNumber == null ? [] : collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "issue" && item.number === resolvedNumber));
+  // Open PR records carry no file metadata in the cache, so planned-path overlap is evaluated against recently merged work.
+  const pathOverlapMergedPullRequests =
+    plannedPaths.length === 0 ? [] : recentMergedPullRequests.filter((pr) => pr.changedFiles.some((file) => plannedPaths.includes(file.toLowerCase())));
+
+  let duplicateClusterRisk: DuplicateClusterRisk = "none";
+  const riskCandidates: DuplicateClusterRisk[] = [...issueClusters.map((cluster) => cluster.risk), ...(pathOverlapMergedPullRequests.length > 0 ? (["medium"] as const) : [])];
+  for (const risk of riskCandidates) {
+    if (DUPLICATE_RISK_RANK[risk] > DUPLICATE_RISK_RANK[duplicateClusterRisk]) duplicateClusterRisk = risk;
+  }
+
+  const found = resolvedNumber != null || matchedBy === "planned_paths";
+
+  let claimStatus: PreStartCheckClaimStatus = "unknown";
+  if (resolvedNumber != null) {
+    const linkageStatus = qualityEntry?.linkage?.status;
+    const state = lifecycleEntry?.state;
+    if (state === "solved" || state === "valid_solved" || linkageStatus === "validated") claimStatus = "solved";
+    else if (linkageStatus === "plausible") claimStatus = "claimed";
+    else claimStatus = "unclaimed";
+  } else if (matchedBy === "planned_paths") {
+    claimStatus = pathOverlapMergedPullRequests.length > 0 ? "claimed" : "unclaimed";
+  }
+
+  const reasons: string[] = [];
+  const blockers: string[] = [];
+
+  if (!found) {
+    blockers.push(
+      target.issueNumber != null
+        ? `Issue #${target.issueNumber} was not found in cached open-issue metadata; confirm it exists and is open before starting.`
+        : "No matching open issue or overlapping work was found in cached metadata; confirm the target before starting.",
+    );
+  }
+  if (claimStatus === "solved") blockers.push("This issue already has merged or validated solving work; new work would likely duplicate it.");
+  if (claimStatus === "claimed") {
+    blockers.push(
+      resolvedNumber != null
+        ? "Open PR work already references this issue; coordinate or pick a different target to avoid a collision."
+        : "Recently merged work already touched one or more of these paths; confirm this is not a duplicate before starting.",
+    );
+  }
+  if (duplicateClusterRisk === "high") blockers.push("A high-risk duplicate or overlapping work cluster already exists for this target.");
+  if (lifecycleEntry?.state === "duplicate") blockers.push("This issue is classified as a duplicate in cached metadata.");
+  if (lifecycleEntry?.state === "invalid") blockers.push("This issue is classified as invalid in cached metadata.");
+  // Issue quality is "uncertain" when the cached report places it anywhere short of ready (needs_proof/hold), but not at the do_not_use floor (handled as an avoid blocker).
+  const qualityUncertain = qualityEntry != null && qualityEntry.status !== "ready" && qualityEntry.status !== "do_not_use";
+  if (duplicateClusterRisk === "medium") reasons.push("A possible duplicate or overlapping work cluster exists; confirm it before starting.");
+  if (qualityUncertain) reasons.push("Issue quality is not yet a confident go; verify the scope and proof before committing effort.");
+  if (lane.lane === "direct_pr") reasons.push("This repository is direct-PR first; issue filing is not its primary contribution path.");
+
+  let recommendation: PreStartCheckRecommendation;
+  if (claimStatus === "solved" || qualityEntry?.status === "do_not_use" || lifecycleEntry?.state === "duplicate" || lifecycleEntry?.state === "invalid" || duplicateClusterRisk === "high") {
+    recommendation = "avoid";
+  } else if (!found || duplicateClusterRisk === "medium" || claimStatus === "claimed" || qualityUncertain || lane.lane === "direct_pr") {
+    recommendation = "raise";
+  } else {
+    recommendation = "go";
+  }
+  if (recommendation === "go") reasons.push("No claim, duplicate, or solvability blocker was detected in cached metadata; this looks safe to start.");
+
+  const summary =
+    recommendation === "go"
+      ? "Go: no blocking claim, duplicate, or solvability signal in cached metadata."
+      : recommendation === "raise"
+        ? "Raise: proceed only after confirming the flagged concerns."
+        : "Avoid: this target is already claimed, solved, duplicate, or high-risk.";
+
+  return {
+    repoFullName: fullName,
+    generatedAt: nowIso(),
+    lane,
+    target: {
+      requested: {
+        ...(target.issueNumber != null ? { issueNumber: target.issueNumber } : {}),
+        ...(target.title ? { title: target.title } : {}),
+        ...(plannedPaths.length > 0 ? { plannedPaths: target.plannedPaths } : {}),
+      },
+      matchedBy,
+      resolvedIssueNumber: resolvedNumber,
+      resolvedIssueTitle: resolvedIssue?.title,
+    },
+    found,
+    claimStatus,
+    lifecycle: lifecycleEntry?.state,
+    issueQualityStatus: qualityEntry?.status,
+    duplicateClusterRisk,
+    recommendation,
+    reasons: [...new Set(reasons)].map((reason) => sanitizePublicComment(reason)),
+    blockers: [...new Set(blockers)].map((blocker) => sanitizePublicComment(blocker)),
+    summary: sanitizePublicComment(summary),
+  };
+}
+
 function buildIssueLinkageRecord(
   issue: IssueRecord,
   lifecycleEntry: IssueDiscoveryLifecycleReport["states"][number] | undefined,

@@ -29,12 +29,16 @@ const STRIP_REQUEST_HEADERS = new Set([
   "keep-alive",
   "transfer-encoding",
   "upgrade",
+  // Cookieless analytics: never forward the visitor's first-party cookies upstream.
+  "cookie",
   "cf-connecting-ip",
   "cf-ipcountry",
   "cf-ray",
   "cf-visitor",
   "x-forwarded-host",
   "x-forwarded-proto",
+  // Re-derived below from the trusted cf-connecting-ip; never trust a client-supplied value.
+  "x-forwarded-for",
 ]);
 
 // Response headers we never relay back to the browser. content-encoding/-length
@@ -72,12 +76,11 @@ export async function handleAnalyticsProxy(request: Request): Promise<Response |
   request.headers.forEach((value, key) => {
     if (!STRIP_REQUEST_HEADERS.has(key.toLowerCase())) headers.set(key, value);
   });
-  // Preserve the real client IP so Umami geolocates the visitor, not the Worker.
+  // Preserve the real client IP so Umami geolocates the visitor, not the Worker. Set it to the
+  // trusted cf-connecting-ip only -- the client-supplied x-forwarded-for is stripped above so a
+  // visitor cannot spoof their geolocation.
   const clientIp = request.headers.get("cf-connecting-ip");
-  if (clientIp) {
-    const existing = request.headers.get("x-forwarded-for");
-    headers.set("x-forwarded-for", existing ? `${existing}, ${clientIp}` : clientIp);
-  }
+  if (clientIp) headers.set("x-forwarded-for", clientIp);
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
 
@@ -87,7 +90,7 @@ export async function handleAnalyticsProxy(request: Request): Promise<Response |
       method: request.method,
       headers,
       // Buffer the (tiny) collect payload so we don't need a streaming/duplex body.
-      body: hasBody ? await request.arrayBuffer() : undefined,
+      body: hasBody ? await request.arrayBuffer() : null,
     });
   } catch {
     // Analytics must never take the page down — fail quietly.

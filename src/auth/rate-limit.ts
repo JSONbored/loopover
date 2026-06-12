@@ -147,7 +147,97 @@ async function validateBearerForRateLimit(c: Context<{ Bindings: Env }>, token: 
 }
 
 function clientIp(c: Context<{ Bindings: Env }>): string {
-  return c.req.header("cf-connecting-ip")?.trim() || "unknown-ip";
+  const cloudflareIp = normalizeIpAddress(c.req.header("cf-connecting-ip"));
+  if (cloudflareIp) return cloudflareIp;
+
+  if (!isTrustedProxyRequest(c)) return "unknown-ip";
+
+  const proxyCount = trustedProxyCount(c.env.RATE_LIMIT_TRUSTED_PROXY_COUNT);
+  return (
+    firstValidIp([
+      c.req.header("x-real-ip"),
+      trustedForwardedForIp(c.req.header("x-forwarded-for"), proxyCount),
+    ]) ?? "unknown-ip"
+  );
+}
+
+function isTrustedProxyRequest(c: Context<{ Bindings: Env }>): boolean {
+  const trustedProxies = parseTrustedProxyList(c.env.RATE_LIMIT_TRUSTED_PROXIES);
+  if (trustedProxies.length === 0) return false;
+  const chain = forwardedForCandidates(c.req.header("x-forwarded-for"))
+    .map((entry) => normalizeIpAddress(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  const peer = chain[chain.length - 1];
+  return peer ? trustedProxies.includes(peer) : false;
+}
+
+function parseTrustedProxyList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => normalizeIpAddress(entry))
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function trustedProxyCount(value: string | undefined): number {
+  const parsed = Number(value?.trim());
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function trustedForwardedForIp(header: string | undefined, trustedProxyCountValue: number): string | undefined {
+  const chain = forwardedForCandidates(header);
+  if (chain.length < trustedProxyCountValue) return undefined;
+  return chain[chain.length - trustedProxyCountValue];
+}
+
+function forwardedForCandidates(header: string | undefined): string[] {
+  if (!header?.trim()) return [];
+  return header.split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function firstValidIp(candidates: Array<string | undefined>): string | undefined {
+  for (const candidate of candidates) {
+    const valid = normalizeIpAddress(candidate);
+    if (valid) return valid;
+  }
+  return undefined;
+}
+
+function normalizeIpAddress(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || !isValidIpAddress(trimmed)) return undefined;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed.slice(1, -1);
+  return trimmed;
+}
+
+function isValidIpAddress(value: string): boolean {
+  return isValidIpv4(value) || isValidIpv6(value);
+}
+
+function isValidIpv4(value: string): boolean {
+  const parts = value.split(".");
+  if (parts.length !== 4) return false;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    if (octet < 0 || octet > 255) return false;
+  }
+  return true;
+}
+
+function isValidIpv6(value: string): boolean {
+  let candidate = value;
+  if (candidate.startsWith("[") && candidate.endsWith("]")) candidate = candidate.slice(1, -1);
+  if (!candidate.includes(":") || !/^[0-9a-fA-F:.]+$/.test(candidate)) return false;
+  if (candidate.split("::").length > 2) return false;
+  const segments = candidate.split(":");
+  if (segments.length > 8) return false;
+  let hasHexSegment = false;
+  for (const segment of segments) {
+    if (segment === "") continue;
+    if (!/^[0-9a-fA-F]{1,4}$/.test(segment)) return false;
+    hasHexSegment = true;
+  }
+  return hasHexSegment;
 }
 
 function isPreAuthRateLimitPath(path: string): boolean {

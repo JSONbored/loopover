@@ -1,9 +1,15 @@
-// Throwaway fixture to verify reviewbot's unified CodeRabbit-style review (one thread: summary body +
-// inline committable suggestions + a consolidated "Prompt for AI agents"). Lives in scratch/ — outside
-// the build, typecheck, test, and coverage scope — so it cannot affect CI. Safe to delete.
+// Small numeric helpers.
+
+/** Clamp a percentage into the 0–100 range. */
+export function clampPercent(value: number): number {
+  if (value > 100) {
+    return 100;
+  }
+  return value;
+}
 
 /** Return the average of the numbers. */
-export function mean(values: number[]): number {
+export function average(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 

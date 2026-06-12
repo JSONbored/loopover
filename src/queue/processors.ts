@@ -24,6 +24,7 @@ import {
   listOtherOpenPullRequests,
   listOpenPullRequests,
   listPullRequests,
+  listPullRequestFiles,
   listRecentMergedPullRequests,
   listRepoLabels,
   listRepoPullRequestFiles,
@@ -982,7 +983,12 @@ async function maybePublishPrPublicSurface(
 
   if (decision.willCheckRun && advisory.headSha) {
     try {
-      const checkRunResult = await createOrUpdateCheckRun(env, installationId, repoFullName, advisory, settings.checkRunDetailLevel);
+      const checkRunFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      const checkRunResult = await createOrUpdateCheckRun(env, installationId, repoFullName, advisory, settings.checkRunDetailLevel, {
+        files: checkRunFiles,
+        collisions,
+        pullNumber: pr.number,
+      });
       if (checkRunResult?.kind === "permission_missing") {
         failedOutputs.push({ output: "check_run", error: checkRunResult.warning });
         await recordAuditEvent(env, {

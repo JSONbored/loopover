@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/core";
 import type { Advisory, GitHubWebhookPayload } from "../types";
 import { signRs256Jwt } from "../utils/crypto";
-import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type GateCheckConclusion, type GateCheckPolicy } from "../rules/advisory";
+import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type CheckRunAnnotationContext, type CheckRunOutput, type GateCheckConclusion, type GateCheckPolicy } from "../rules/advisory";
 
 type CheckRunResponse = {
   id: number;
@@ -100,11 +100,12 @@ export async function createOrUpdateCheckRun(
   repoFullName: string,
   advisory: Advisory,
   detailLevel: "minimal" | "standard" | "deep" = "minimal",
+  annotationContext?: CheckRunAnnotationContext,
 ): Promise<CheckRunOutcome | null> {
   return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
     name: GITTENSORY_CONTEXT_CHECK_NAME,
     conclusion: advisory.conclusion,
-    output: formatCheckRunOutput(advisory, detailLevel),
+    output: formatCheckRunOutput(advisory, detailLevel, annotationContext),
   });
 }
 
@@ -171,7 +172,7 @@ async function createOrUpdateNamedCheckRun(
     name: string;
     status?: GitHubCheckStatus | undefined;
     conclusion?: GitHubCheckConclusion | undefined;
-    output: { title: string; summary: string; text: string };
+    output: CheckRunOutput;
     checkRunId?: number | undefined;
   },
 ): Promise<CheckRunOutcome | null> {

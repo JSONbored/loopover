@@ -1,5 +1,6 @@
 import type { SignalFinding } from "./engine";
 import { isCodeFile, isTestFile } from "./local-branch";
+import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFocusManifestPublicSafe } from "./focus-manifest";
 
 export type SlopBand = "clean" | "low" | "elevated" | "high";
@@ -12,6 +13,8 @@ export type SlopChangedFile = {
 
 export type SlopAssessmentInput = {
   changedFiles?: SlopChangedFile[] | undefined;
+  tests?: string[] | undefined;
+  testFiles?: string[] | undefined;
 };
 
 export type SlopAssessment = {
@@ -21,6 +24,7 @@ export type SlopAssessment = {
 };
 
 export const SLOP_WEIGHTS = {
+  missingTestEvidence: 30,
   trivialWhitespaceChurn: 25,
 } as const;
 
@@ -33,6 +37,7 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "- `high`: 60-100",
   "",
   "Current deterministic signals:",
+  "- missing test evidence",
   "- trivial / whitespace-only churn",
 ].join("\n");
 
@@ -41,15 +46,52 @@ const MAX_SOURCE_LINE_SHARE = 0.15;
 
 export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment {
   const findings: SignalFinding[] = [];
+  const missingTestEvidenceFinding = buildMissingTestEvidenceFinding(input);
   const trivialChurnFinding = buildTrivialWhitespaceChurnFinding(input);
+  if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
   if (trivialChurnFinding) findings.push(trivialChurnFinding);
 
-  const slopRisk = clamp(trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0, 0, 100);
+  const slopRisk = clamp(
+    (missingTestEvidenceFinding ? SLOP_WEIGHTS.missingTestEvidence : 0) +
+      (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0),
+    0,
+    100,
+  );
 
   return {
     slopRisk,
     band: slopBandFor(slopRisk),
     findings,
+  };
+}
+
+export function buildMissingTestEvidenceFinding(input: SlopAssessmentInput): SignalFinding | null {
+  const changedFiles = input.changedFiles ?? [];
+  const changedPaths = changedFiles.map((file) => file.path).filter(Boolean);
+  const codePaths = changedPaths.filter(isCodeFile);
+  if (codePaths.length === 0) return null;
+
+  const hasChangedTestPaths =
+    changedPaths.some((path) => isTestFile(path) || isTestPath(path)) ||
+    hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles });
+  if (hasChangedTestPaths) return null;
+
+  const detail = ensurePublicSafeText(
+    `Changed paths include ${codePaths.length} code file(s) without accompanying test evidence.`,
+    "Code changes were detected without accompanying test evidence.",
+  );
+  const action = ensurePublicSafeText(
+    "Add focused regression tests or explain why existing coverage is sufficient.",
+    "Add focused tests or explain why existing coverage is sufficient.",
+  );
+
+  return {
+    code: "missing_test_evidence",
+    title: "Code changes lack test evidence",
+    severity: "warning",
+    detail,
+    action,
+    publicText: detail,
   };
 }
 

@@ -284,7 +284,11 @@ function pullRequestOutcomeState(
     if (hasChangesRequestedReview(pr)) return "rejected";
     if (hasPositiveOpenPullRequestSignal(pr)) return "improved";
   }
-  if (createdAt >= actionAt || updatedAt > actionAt) return "accepted";
+  // A PR that already merged before the action cannot be a positive outcome of it. Without this guard a
+  // pre-action merge that merely receives a later updatedAt bump (e.g. a comment) would fall through to
+  // "accepted" -- mirror the "merged" branch's own >= actionAt discipline so it stays stale/ignored.
+  const mergedBeforeAction = Number.isFinite(mergedAt) && mergedAt < actionAt;
+  if (!mergedBeforeAction && (createdAt >= actionAt || updatedAt > actionAt)) return "accepted";
   if (actionAgeMs >= staleAfterMs) return "stale";
   return "ignored";
 }

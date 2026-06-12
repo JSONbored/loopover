@@ -246,6 +246,24 @@ describe("recommendation outcome feedback", () => {
       }),
     ).toMatchObject({ outcomeState: "stale", outcomeTargetType: "pull_request" });
 
+    // A pre-action merge that merely receives a later updatedAt bump (e.g. a comment) must not be
+    // credited as the positive "accepted" outcome of the recommendation.
+    expect(
+      classifyRecommendationOutcome({
+        ...base,
+        action: action(run, 2, { targetRepoFullName: "owner/old-merged", targetPullNumber: 62 }),
+        pullRequests: [
+          prRecord(62, "owner/old-merged", {
+            state: "merged",
+            mergedAt: "2026-04-01T00:00:00.000Z",
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-05-10T00:00:00.000Z",
+          }),
+        ],
+        issues: [],
+      }),
+    ).toMatchObject({ outcomeState: "stale", outcomeTargetType: "pull_request" });
+
     expect(
       classifyRecommendationOutcome({
         ...base,

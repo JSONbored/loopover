@@ -133,6 +133,7 @@ export type GitHubWebhookPayload = {
   pull_request?: GitHubPullRequestPayload;
   issue?: GitHubIssuePayload;
   comment?: GitHubIssueCommentPayload;
+  review?: GitHubReviewPayload;
   reaction?: GitHubReactionPayload;
   sender?: GitHubWebhookUserPayload;
   label?: {
@@ -187,6 +188,13 @@ export type GitHubPullRequestPayload = {
   };
   labels?: Array<{ name?: string }>;
   body?: string | null;
+};
+
+export type GitHubReviewPayload = {
+  state?: string;
+  user?: GitHubWebhookUserPayload;
+  submitted_at?: string | null;
+  html_url?: string;
 };
 
 export type GitHubIssuePayload = {

@@ -113,6 +113,25 @@ describe("focus-manifest route auth", () => {
     expect(ownRepoGet.status).toBe(200);
   });
 
+  it("allows a same-repo owner session to POST focus-manifest refresh", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    await seedRegisteredInstalledRepo(env, 202, "other-owner", "other-repo");
+    const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
+    const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
+
+    // Same-repo owner session must reach the refresh handler (was 403'd by the blanket session gate).
+    const refreshed = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${token}` } }, env);
+    expect(refreshed.status).toBe(200);
+    await expect(refreshed.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
+
+    // Cross-repo owner session is still rejected -- by the route handler (forbidden_repo), not the blanket middleware.
+    const crossRepo = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
+    expect(crossRepo.status).toBe(403);
+    await expect(crossRepo.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+  });
+
   it("allows operator sessions to access any repo focus manifest", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });

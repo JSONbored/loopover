@@ -77,6 +77,7 @@ import { ensurePullRequestLabel } from "../github/labels";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck } from "../rules/advisory";
+import { detectNotificationEvents } from "../notifications/events";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import {
@@ -726,6 +727,25 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       const repo = await getRepository(env, payload.repository.full_name);
       const advisory = buildIssueAdvisory(repo, issue);
       await persistAdvisory(env, advisory);
+    }
+
+    for (const notificationEvent of detectNotificationEvents(eventName, payload)) {
+      await recordAuditEvent(env, {
+        eventType: "notification.event_detected",
+        actor: notificationEvent.actorLogin,
+        targetKey: notificationEvent.recipientLogin,
+        outcome: "success",
+        detail: `${notificationEvent.eventType} for ${notificationEvent.repoFullName}#${notificationEvent.pullNumber}`,
+        metadata: {
+          deliveryId,
+          eventType: notificationEvent.eventType,
+          recipientLogin: notificationEvent.recipientLogin,
+          repoFullName: notificationEvent.repoFullName,
+          pullNumber: notificationEvent.pullNumber,
+          dedupKey: notificationEvent.dedupKey,
+          deeplink: notificationEvent.deeplink,
+        },
+      });
     }
 
     await recordWebhookEvent(env, {

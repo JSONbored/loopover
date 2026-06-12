@@ -23,6 +23,8 @@ import type { PublicContributorProfile } from "../github/public";
 import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
+import { sanitizePublicComment } from "../queue-intelligence";
+import { projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 
@@ -2808,6 +2810,112 @@ export function buildIssueDiscoveryLifecycleReport(
     lane,
     states,
     summary: `${states.length} issue lifecycle state(s) classified; ${states.filter((entry) => entry.state === "valid_solved").length} valid solved issue(s), ${states.filter((entry) => entry.state === "closed_not_solved").length} closed without solver evidence.`,
+  };
+}
+
+export type LinkedIssuePlannedChange = {
+  title?: string | undefined;
+  changedFiles?: string[] | undefined;
+  contributorLogin?: string | undefined;
+};
+
+export type LinkedIssueValidationReport = {
+  repoFullName: string;
+  generatedAt: string;
+  issueNumber: number;
+  found: boolean;
+  open: boolean;
+  lifecycle?: IssueDiscoveryLifecycleState | undefined;
+  /** Canonical linked-issue multiplier status from the scoring engine. The numeric multiplier value stays private. */
+  multiplierStatus: LinkedIssueMultiplierStatus;
+  multiplierWouldApply: boolean;
+  blockingReason?: string | undefined;
+  reasons: string[];
+  warnings: string[];
+  summary: string;
+};
+
+/**
+ * Validate whether linking a given issue will actually earn the standard linked-issue multiplier for
+ * a planned PR — open? valid? single-owner (uncontested)? solvable by this PR? — so miners stop
+ * chasing the bonus blind. Reuses {@link buildIssueDiscoveryLifecycleReport} for lifecycle truth and
+ * {@link projectLinkedIssueMultiplierForPlannedSolve} (buildScorePreview's eligibility rule) for the
+ * applies/does-not-apply decision. Public-safe: reasons routed through {@link sanitizePublicComment};
+ * only applies/does-not-apply + status are surfaced, never the raw multiplier value.
+ */
+export function buildLinkedIssueValidation(
+  repo: RepositoryRecord | null,
+  issues: IssueRecord[],
+  pullRequests: PullRequestRecord[],
+  recentMergedPullRequests: RecentMergedPullRequestRecord[],
+  fullName: string,
+  issueNumber: number,
+  plannedChange: LinkedIssuePlannedChange = {},
+): LinkedIssueValidationReport {
+  const lifecycle = buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests);
+  const issue = issues.find((candidate) => candidate.number === issueNumber);
+  const lifecycleEntry = lifecycle.states.find((entry) => entry.number === issueNumber);
+  const open = issue?.state === "open";
+
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+  let blockingReason: string | undefined;
+
+  // Other contributors' open PRs already pointing at the issue make the linkage contested — the
+  // multiplier follows whichever solving PR merges first, so it is not a single-owner target.
+  const contestingPullRequests = pullRequests.filter(
+    (pr) => pr.state === "open" && pr.linkedIssues.includes(issueNumber) && !sameLogin(pr.authorLogin, plannedChange.contributorLogin ?? ""),
+  );
+
+  if (!issue) {
+    blockingReason = `Issue #${issueNumber} was not found in cached open-issue metadata; confirm it exists and is open before linking it.`;
+  } else if (!open) {
+    blockingReason = `Issue #${issueNumber} is not open; the standard linked-issue multiplier requires an open issue.`;
+  } else if (lifecycleEntry?.state === "duplicate") {
+    blockingReason = `Issue #${issueNumber} is classified as a duplicate; it is not a valid linked-issue target.`;
+  } else if (lifecycleEntry?.state === "invalid") {
+    blockingReason = `Issue #${issueNumber} is classified as invalid or not-planned; it is not a valid linked-issue target.`;
+  } else if (lifecycleEntry?.state === "solved" || lifecycleEntry?.state === "valid_solved") {
+    blockingReason = `Issue #${issueNumber} is already solved by merged work; its solver holds the linkage, so linking it will not earn the multiplier.`;
+  } else if (contestingPullRequests.length > 0) {
+    blockingReason = `Another open PR already references issue #${issueNumber}; the linked-issue multiplier follows whichever solving PR merges first, so this is contested.`;
+  }
+
+  const multiplierWouldApply = blockingReason === undefined;
+  // Reuse the scoring engine's eligibility rule for the projected "this PR solves the issue" scenario.
+  const decision = multiplierWouldApply ? projectLinkedIssueMultiplierForPlannedSolve([issueNumber]) : undefined;
+  const multiplierStatus: LinkedIssueMultiplierStatus = decision
+    ? decision.status
+    : lifecycleEntry?.state === "duplicate" || lifecycleEntry?.state === "invalid"
+      ? "invalid"
+      : "unavailable";
+
+  if (multiplierWouldApply) {
+    reasons.push(`Issue #${issueNumber} is open, valid, and uncontested; linking it will earn the multiplier once your PR is the merged solver.`);
+    reasons.push("This assumes your PR becomes the merged solver of the issue (solved-by-PR validation).");
+    if (lifecycleEntry?.state === "stale") warnings.push(`Issue #${issueNumber} looks stale in cached metadata; confirm it is still wanted before investing effort.`);
+    if (!plannedChange.title && (plannedChange.changedFiles ?? []).length === 0) warnings.push("No planned-change detail was supplied; confirm the change actually resolves the issue so the linkage validates.");
+  } else {
+    reasons.push(blockingReason as string);
+  }
+
+  const summary = multiplierWouldApply
+    ? `The linked-issue multiplier would apply for issue #${issueNumber} once your PR is the merged solver.`
+    : `The linked-issue multiplier would not apply for issue #${issueNumber}.`;
+
+  return {
+    repoFullName: fullName,
+    generatedAt: nowIso(),
+    issueNumber,
+    found: Boolean(issue),
+    open,
+    lifecycle: lifecycleEntry?.state,
+    multiplierStatus,
+    multiplierWouldApply,
+    blockingReason: blockingReason === undefined ? undefined : sanitizePublicComment(blockingReason),
+    reasons: [...new Set(reasons)].map((reason) => sanitizePublicComment(reason)),
+    warnings: [...new Set(warnings)].map((warning) => sanitizePublicComment(warning)),
+    summary: sanitizePublicComment(summary),
   };
 }
 

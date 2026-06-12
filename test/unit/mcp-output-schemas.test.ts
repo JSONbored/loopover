@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { persistSignalSnapshot, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -18,6 +18,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_monitor_open_prs",
   "gittensory_explain_repo_decision",
   "gittensory_get_issue_quality",
+  "gittensory_validate_linked_issue",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
   "gittensory_local_status",
@@ -129,6 +130,36 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
+  });
+
+  it("gittensory_validate_linked_issue reports multiplier eligibility for an uncached issue", async () => {
+    const { client } = await connectTestClient();
+    const result = await client.callTool({ name: "gittensory_validate_linked_issue", arguments: { owner: "octo", repo: "demo", issueNumber: 1 } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.status).toBe("ok");
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(data.issueNumber).toBe(1);
+    expect(data.found).toBe(false);
+    expect(data.multiplierWouldApply).toBe(false);
+    expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_validate_linked_issue reports the multiplier would apply for a clean open issue", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "octo/demo", { number: 5, title: "Fix flaky retry backoff", state: "open", user: { login: "reporter" }, labels: [], body: "Reproduction steps and expected behaviour are described in detail." });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_validate_linked_issue",
+      arguments: { owner: "octo", repo: "demo", issueNumber: 5, plannedChange: { title: "Fix retry backoff", changedFiles: ["src/queue.ts"] } },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.found).toBe(true);
+    expect(data.multiplierWouldApply).toBe(true);
+    expect(data.multiplierStatus).toBe("validated");
+    expect(data.blockingReason).toBeUndefined();
   });
 
   it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {

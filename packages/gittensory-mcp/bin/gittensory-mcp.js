@@ -118,6 +118,19 @@ const loginRepoShape = {
   repo: z.string().min(1),
 };
 
+const validateLinkedIssueShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  issueNumber: z.number().int().positive(),
+  plannedChange: z
+    .object({
+      title: z.string().min(1).optional(),
+      changedFiles: z.array(z.string()).optional(),
+      contributorLogin: z.string().min(1).optional(),
+    })
+    .optional(),
+};
+
 const preflightShape = {
   repoFullName: z.string().min(3),
   contributorLogin: z.string().min(1).optional(),
@@ -259,6 +272,20 @@ server.registerTool(
     inputSchema: preflightShape,
   },
   async (input) => toolResult("Gittensory PR preflight.", await apiPost("/v1/preflight/pr", input)),
+);
+
+server.registerTool(
+  "gittensory_validate_linked_issue",
+  {
+    description:
+      "Report whether linking an issue will actually earn the standard linked-issue scoring multiplier for a planned PR — open, valid, single-owner, solvable by this PR — with the blocking reason if not. The raw multiplier value stays private.",
+    inputSchema: validateLinkedIssueShape,
+  },
+  async ({ owner, repo, issueNumber, plannedChange }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const body = { issueNumber, ...(plannedChange ? { plannedChange } : {}) };
+    return toolResult("Gittensory linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
+  },
 );
 
 server.registerTool(

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS } from "../../src/scenarios/input-model";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../../src/signals/local-branch";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../../src/signals/local-scorer-diagnostics";
 import type { ContributorOutcomeHistory, ContributorProfile, ContributorScoringProfile, IssueQualityReport } from "../../src/signals/engine";
@@ -1591,6 +1592,30 @@ describe("local MCP git metadata collection", () => {
     expect(analysis.scenarioSummary.dataClassification.facts).toContain("Contributor");
     expect(analysis.scenarioSummary.dataClassification.facts).toContain("Repository");
     expect(analysis.scenarioSummary.dataClassification.facts).toContain("Branch");
+  });
+
+  it("does not throw while summarizing oversized local branch metadata", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        branchName: "b".repeat(SCENARIO_MAX_BRANCH_REF_CHARS + 1),
+        baseRef: "m".repeat(SCENARIO_MAX_BRANCH_REF_CHARS + 1),
+        linkedIssues: Array.from({ length: SCENARIO_MAX_LINKED_ISSUE_NUMBERS + 1 }, (_, index) => index + 1),
+        changedFiles: [{ path: "src/util.ts", additions: 20, deletions: 1, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 35, totalTokenScore: 55, sourceLines: 30 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.dataClassification.facts).toContain("Branch");
+    expect(analysis.branchName).toHaveLength(SCENARIO_MAX_BRANCH_REF_CHARS + 1);
   });
 
   it("populates scenarioSummary.eligibilityNotes from the derived eligibility plan", () => {

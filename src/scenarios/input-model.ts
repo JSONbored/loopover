@@ -2,6 +2,10 @@ import { z } from "zod";
 import { sanitizePublicComment } from "../github/commands";
 
 export const SCENARIO_INPUT_VERSION = 1 as const;
+export const SCENARIO_MAX_REPO_FULL_NAME_CHARS = 200;
+export const SCENARIO_MAX_BRANCH_REF_CHARS = 200;
+export const SCENARIO_MAX_LINKED_ISSUE_NUMBERS = 50;
+export const SCENARIO_MAX_SIGNAL_DETAIL_CHARS = 2000;
 
 export const scenarioInputKinds = ["fact", "assumption", "estimate", "unavailable"] as const;
 export type ScenarioInputKind = (typeof scenarioInputKinds)[number];
@@ -36,7 +40,7 @@ const scenarioSignalEntrySchema = z
     id: z.string().min(1).max(120),
     kind: z.enum(scenarioInputKinds),
     label: z.string().min(1).max(200),
-    detail: z.string().min(1).max(2000),
+    detail: z.string().min(1).max(SCENARIO_MAX_SIGNAL_DETAIL_CHARS),
     source: z.enum(scenarioSignalSources),
   })
   .strict();
@@ -45,7 +49,7 @@ export type ScenarioSignalEntry = z.infer<typeof scenarioSignalEntrySchema>;
 
 const scenarioRepoConfigSchema = z
   .object({
-    repoFullName: z.string().min(3).max(200),
+    repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
     registered: z.boolean().optional(),
     maintainerLane: z.boolean().optional(),
   })
@@ -56,7 +60,7 @@ export type ScenarioRepoConfig = z.infer<typeof scenarioRepoConfigSchema>;
 const scenarioIssueStateSchema = z
   .object({
     openIssueCount: z.number().int().min(0).optional(),
-    linkedIssueNumbers: z.array(z.number().int().positive()).max(50).optional(),
+    linkedIssueNumbers: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
   })
   .strict();
 
@@ -75,9 +79,9 @@ export type ScenarioPullRequestState = z.infer<typeof scenarioPullRequestStateSc
 
 const scenarioBranchStateSchema = z
   .object({
-    branchName: z.string().min(1).max(200).optional(),
-    baseRef: z.string().min(1).max(200).optional(),
-    headRef: z.string().min(1).max(200).optional(),
+    branchName: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
+    baseRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
+    headRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
     pendingCommitCount: z.number().int().min(0).optional(),
     changedFileCount: z.number().int().min(0).optional(),
     eligibilityStatus: z.enum(["eligible", "ineligible", "unknown"]).optional(),
@@ -219,40 +223,49 @@ export function scenarioInputFromLocalBranchMetadata(args: {
   scenarioNotes?: string[];
   eligibilityStatus?: "eligible" | "ineligible" | "unknown";
 }): AgentScenarioInput {
+  const login = trimScenarioText(args.login, SCENARIO_MAX_BRANCH_REF_CHARS);
+  const repoFullName = trimScenarioText(args.repoFullName, SCENARIO_MAX_REPO_FULL_NAME_CHARS);
+  const branchName = optionalScenarioText(args.branchName, SCENARIO_MAX_BRANCH_REF_CHARS);
+  const baseRef = optionalScenarioText(args.baseRef, SCENARIO_MAX_BRANCH_REF_CHARS);
+  const linkedIssues = args.linkedIssues?.slice(0, SCENARIO_MAX_LINKED_ISSUE_NUMBERS);
+  const scenarioNotes = args.scenarioNotes
+    ?.map((note) => trimScenarioText(note, SCENARIO_MAX_SIGNAL_DETAIL_CHARS))
+    .filter((note) => note.length > 0);
+
   const facts: ScenarioSignalEntry[] = [
     createScenarioSignalEntry({
       id: "actor",
       kind: "fact",
       label: "Contributor",
-      detail: `Planning scenario for ${args.login}.`,
+      detail: `Planning scenario for ${login}.`,
       source: "github_observed",
     }),
     createScenarioSignalEntry({
       id: "repo",
       kind: "fact",
       label: "Repository",
-      detail: `Repo context is ${args.repoFullName}.`,
+      detail: `Repo context is ${repoFullName}.`,
       source: "local_metadata",
     }),
   ];
-  if (args.branchName) {
+  if (branchName) {
     facts.push(
       createScenarioSignalEntry({
         id: "branch",
         kind: "fact",
         label: "Branch",
-        detail: `Active branch ${args.branchName}${args.baseRef ? ` against ${args.baseRef}` : ""}.`,
+        detail: `Active branch ${branchName}${baseRef ? ` against ${baseRef}` : ""}.`,
         source: "local_metadata",
       }),
     );
   }
   const assumptions =
-    args.scenarioNotes?.map((note, index) =>
+    scenarioNotes?.map((note, index) =>
       createScenarioSignalEntry({
         id: `assumption_${index + 1}`,
         kind: "assumption",
         label: "Caller assumption",
-        detail: note.trim(),
+        detail: note,
         source: "user_supplied",
       }),
     ) ?? [];
@@ -268,12 +281,17 @@ export function scenarioInputFromLocalBranchMetadata(args: {
       }),
     );
   }
-  const branchState = compactBranchState(args);
+  const branchState = compactBranchState({
+    ...(branchName ? { branchName } : {}),
+    ...(baseRef ? { baseRef } : {}),
+    ...(args.changedFileCount !== undefined ? { changedFileCount: args.changedFileCount } : {}),
+    ...(args.eligibilityStatus ? { eligibilityStatus: args.eligibilityStatus } : {}),
+  });
   return buildScenarioInput({
     scenarioType: args.scenarioType,
-    repoFullName: args.repoFullName,
+    repoFullName,
     ...(branchState ? { branchState } : {}),
-    ...(args.linkedIssues?.length ? { issueState: { linkedIssueNumbers: args.linkedIssues } } : {}),
+    ...(linkedIssues?.length ? { issueState: { linkedIssueNumbers: linkedIssues } } : {}),
     facts,
     assumptions,
     unavailableSignals,
@@ -337,6 +355,16 @@ function validateBucketKinds(
       });
     }
   }
+}
+
+function trimScenarioText(value: string, maxLength: number): string {
+  return value.trim().slice(0, maxLength);
+}
+
+function optionalScenarioText(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) return undefined;
+  const trimmed = trimScenarioText(value, maxLength);
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function sortEntries(entries: ScenarioSignalEntry[]): ScenarioSignalEntry[] {

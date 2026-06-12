@@ -79,6 +79,7 @@ import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signa
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
+import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 
 type AppContext = Context<{ Bindings: Env }>;
@@ -162,11 +163,11 @@ const branchEligibilityShape = {
 };
 
 const localBranchAnalysisShape = {
-  login: z.string().min(1),
-  repoFullName: z.string().min(3),
-  baseRef: z.string().min(1).optional(),
-  headRef: z.string().min(1).optional(),
-  branchName: z.string().min(1).optional(),
+  login: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  baseRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
+  headRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
+  branchName: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
   baseSha: z.string().min(1).optional(),
   headSha: z.string().min(1).optional(),
   mergeBaseSha: z.string().min(1).optional(),
@@ -201,7 +202,7 @@ const localBranchAnalysisShape = {
     )
     .max(50)
     .optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
+  linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
   labels: z.array(z.string()).optional(),
   title: z.string().min(1).optional(),
   body: z.string().optional(),

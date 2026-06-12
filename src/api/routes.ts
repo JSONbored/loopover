@@ -23,6 +23,7 @@ import {
 } from "../auth/security";
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -410,10 +411,10 @@ const branchEligibilitySchema = z
 const localBranchAnalysisSchema = z
   .object({
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
-    repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS),
-    baseRef: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    headRef: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    branchName: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
+    repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+    baseRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
+    headRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
+    branchName: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
     baseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     headSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     mergeBaseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
@@ -421,7 +422,7 @@ const localBranchAnalysisSchema = z
     commitMessages: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(30).optional(),
     changedFiles: z.array(localBranchChangedFileSchema).max(500).optional(),
     validation: z.array(localBranchValidationSchema).max(50).optional(),
-    linkedIssues: z.array(z.number().int().positive()).optional(),
+    linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
     labels: z.array(z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS)).max(50).optional(),
     title: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     body: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),

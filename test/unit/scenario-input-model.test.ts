@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  SCENARIO_MAX_BRANCH_REF_CHARS,
+  SCENARIO_MAX_LINKED_ISSUE_NUMBERS,
+  SCENARIO_MAX_REPO_FULL_NAME_CHARS,
+  SCENARIO_MAX_SIGNAL_DETAIL_CHARS,
   assertScenarioLocalBranchInputSafe,
   buildScenarioInput,
   createScenarioSignalEntry,
@@ -263,6 +267,24 @@ describe("source-upload safety", () => {
     expect(input.assumptions[0]?.source).toBe("user_supplied");
     expect(input.unavailableSignals[0]?.kind).toBe("unavailable");
     expect(JSON.stringify(input)).not.toMatch(/fileContent|sourceContent|upload/i);
+  });
+
+  it("bounds local branch metadata before scenario validation", () => {
+    const input = scenarioInputFromLocalBranchMetadata({
+      scenarioType: "branch_preflight",
+      login: "miner",
+      repoFullName: `octo/${"r".repeat(260)}`,
+      branchName: "b".repeat(260),
+      baseRef: "m".repeat(260),
+      linkedIssues: Array.from({ length: 75 }, (_, index) => index + 1),
+      scenarioNotes: ["n".repeat(SCENARIO_MAX_SIGNAL_DETAIL_CHARS + 100)],
+    });
+
+    expect(input.repo.repoFullName).toHaveLength(SCENARIO_MAX_REPO_FULL_NAME_CHARS);
+    expect(input.branchState?.branchName).toHaveLength(SCENARIO_MAX_BRANCH_REF_CHARS);
+    expect(input.branchState?.baseRef).toHaveLength(SCENARIO_MAX_BRANCH_REF_CHARS);
+    expect(input.issueState?.linkedIssueNumbers).toHaveLength(SCENARIO_MAX_LINKED_ISSUE_NUMBERS);
+    expect(input.assumptions[0]?.detail).toHaveLength(SCENARIO_MAX_SIGNAL_DETAIL_CHARS);
   });
 });
 

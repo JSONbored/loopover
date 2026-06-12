@@ -1210,7 +1210,7 @@ function safeRepoPath(path: string): string {
   return /^(\/Users\/|\/home\/|\/tmp\/|[A-Z]:\/Users\/)/i.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
 }
 
-function isTestFile(file: string): boolean {
+export function isTestFile(file: string): boolean {
   return (
     /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
     /(^|\/)src\/test\//i.test(file) ||
@@ -1220,7 +1220,7 @@ function isTestFile(file: string): boolean {
   );
 }
 
-function isCodeFile(file: string): boolean {
+export function isCodeFile(file: string): boolean {
   return /\.(ts|tsx|js|jsx|py|rb|rs|kt|scala|java|go|sql)$/i.test(file) && !isTestFile(file);
 }
 

@@ -349,6 +349,58 @@ describe("GitHub check runs", () => {
     expect(capturedBody.output?.text).toContain("does not post late first comments");
   });
 
+  it("publishes Context check annotations on changed files while Gate stays text-only", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let contextBody: { name?: string; output?: { annotations?: Array<{ path: string; title: string }> } } = {};
+    let gateBody: { name?: string; output?: { annotations?: Array<{ path: string; title: string }> } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        const body = JSON.parse(String(init?.body)) as {
+          name?: string;
+          output?: { annotations?: Array<{ path: string; title: string }> };
+        };
+        if (body.name === "Gittensory Context") contextBody = body;
+        if (body.name === "Gittensory Gate") gateBody = body;
+        return Response.json({ id: body.name === "Gittensory Gate" ? 90 : 77 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-annot",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#9",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 9,
+      headSha: "bbb999",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory, "standard", {
+      pullNumber: 9,
+      files: [{ repoFullName: "JSONbored/gittensory", pullNumber: 9, path: "src/api/routes.ts", additions: 4, deletions: 0, changes: 4, payload: {} }],
+      collisions: {
+        repoFullName: "JSONbored/gittensory",
+        generatedAt: "2026-06-10T00:00:00.000Z",
+        summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 },
+        clusters: [],
+      },
+    });
+    await createOrUpdateGateCheckRun(env, 123, "JSONbored/gittensory", advisory);
+
+    expect(contextBody.output?.annotations?.[0]).toMatchObject({ path: "src/api/routes.ts", title: "Missing test evidence" });
+    expect(gateBody.output?.annotations).toBeUndefined();
+  });
+
   it("publishes check run with standard detail level and includes public-safe finding text", async () => {
     const privateKey = await generatePrivateKeyPem();
     let capturedBody: { output?: { text?: string } } = {};

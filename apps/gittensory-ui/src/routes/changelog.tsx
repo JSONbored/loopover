@@ -56,8 +56,8 @@ function Changelog() {
       <Eyebrow>Releases</Eyebrow>
       <h1 className="mt-3 text-token-2xl font-medium tracking-tight text-foreground">Changelog</h1>
       <p className="mt-3 max-w-2xl text-muted-foreground">
-        Live release history for <code className="font-mono">{MCP_PACKAGE_NAME}</code>, sourced
-        directly from npm <code className="font-mono">dist-tags.latest</code>. Current release:{" "}
+        The complete live release history for <code className="font-mono">{MCP_PACKAGE_NAME}</code>,
+        sourced directly from npm <code className="font-mono">dist-tags.latest</code>. Current release:{" "}
         <code className="font-mono">v{latestVersion}</code>.
       </p>
       <div className="mt-4 flex flex-wrap items-center gap-2">

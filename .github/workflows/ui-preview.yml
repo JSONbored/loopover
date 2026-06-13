@@ -1,15 +1,14 @@
-name: UI Preview Deploy
+name: UI Preview Build
 
-# Builds a per-PR preview of the gittensory UI Worker and records it as a GitHub
-# Deployment with an `environment_url`. Reviewbot reads that URL to render the
-# "after" screenshot in its before/after review comment (taopedia-style).
+# Build half of the fork-safe per-PR preview pipeline. Runs for EVERY PR — including forks — and
+# deliberately WITHOUT secrets (fork PRs get a read-only token): it only produces the built `dist`
+# artifact. The trusted `ui-preview-deploy.yml` (triggered on workflow_run) then deploys that artifact
+# WITH secrets and records the GitHub Deployment that Reviewbot reads for the "after" screenshot.
 #
-# Required repo secrets (until both are set, this workflow no-ops with a notice):
-#   CLOUDFLARE_API_TOKEN   — token with "Workers Scripts:Edit" on the account
-#   CLOUDFLARE_ACCOUNT_ID  — the Cloudflare account id that owns gittensory-ui
-#
-# Fork PRs do not receive secrets, so previews only run for same-repo branches;
-# Reviewbot degrades gracefully to a before-only comment for forks.
+# Why split: a preview requires building the PR's UI, and building runs the PR's (possibly fork-authored)
+# code. Doing that here with no secret access — and deploying the resulting bundle in a separate trusted
+# step that never executes fork code — is the standard way to give fork PRs previews without exposing
+# Cloudflare credentials to untrusted code.
 
 on:
   pull_request:
@@ -20,179 +19,43 @@ on:
 
 permissions:
   contents: read
-  deployments: write
 
 concurrency:
-  group: ui-preview-${{ github.event.pull_request.number }}
+  group: ui-preview-build-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   build:
     name: Build UI preview artifact
-    # Secrets are unavailable to fork PRs — skip there (Reviewbot shows before-only).
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    outputs:
-      ready: ${{ steps.cfg.outputs.ready }}
     steps:
-      - name: Check Cloudflare secrets
-        id: cfg
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — skipping preview deploy (Reviewbot will post a before-only comment)."
-          fi
-
       - name: Checkout PR head
-        if: steps.cfg.outputs.ready == 'true'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Setup Node
-        if: steps.cfg.outputs.ready == 'true'
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
-        if: steps.cfg.outputs.ready == 'true'
         run: npm ci
 
       - name: Build UI
-        if: steps.cfg.outputs.ready == 'true'
         env:
           VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
         run: npm run ui:build
 
+      # The trusted deploy workflow downloads this by name + run-id. It contains only the built bundle
+      # (server/ + client/) — no secrets, no source needed downstream.
       - name: Upload built UI artifact
-        if: steps.cfg.outputs.ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ui-preview-dist
           path: apps/gittensory-ui/dist
           if-no-files-found: error
           retention-days: 1
-
-  upload:
-    name: Upload UI preview version
-    needs: build
-    if: needs.build.outputs.ready == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 22
-
-      - name: Install trusted Wrangler
-        run: npm install --global wrangler@4.95.0
-
-      - name: Download built UI artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
-        with:
-          name: ui-preview-dist
-          path: preview-dist
-
-      - name: Write trusted preview Wrangler config
-        run: |
-          cat > preview-dist/server/wrangler.preview.json <<'JSON'
-          {
-            "compatibility_date": "2026-05-28",
-            "name": "gittensory-ui",
-            "workers_dev": true,
-            "preview_urls": true,
-            "compatibility_flags": ["nodejs_compat"],
-            "placement": {
-              "mode": "smart"
-            },
-            "observability": {
-              "enabled": true,
-              "logs": {
-                "enabled": true,
-                "head_sampling_rate": 1
-              },
-              "traces": {
-                "enabled": true,
-                "head_sampling_rate": 1
-              }
-            },
-            "vars": {
-              "VITE_GITTENSORY_API_ORIGIN": "https://gittensory-api.aethereal.dev"
-            },
-            "routes": [
-              {
-                "pattern": "gittensory.aethereal.dev",
-                "custom_domain": true
-              }
-            ],
-            "main": "index.mjs",
-            "assets": {
-              "binding": "ASSETS",
-              "directory": "../client"
-            },
-            "no_bundle": true,
-            "rules": [
-              {
-                "type": "ESModule",
-                "globs": ["**/*.mjs", "**/*.js"]
-              }
-            ]
-          }
-          JSON
-
-      - name: Upload preview version
-        id: upload
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -o pipefail
-          out=$(wrangler versions upload --config preview-dist/server/wrangler.preview.json 2>&1 | tee /dev/stderr)
-          url=$(printf '%s\n' "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -n1)
-          if [ -z "$url" ]; then
-            echo "::error::Could not parse a preview URL from wrangler output"
-            exit 1
-          fi
-          echo "preview_url=$url" >> "$GITHUB_OUTPUT"
-          echo "Preview: $url"
-
-      - name: Record deployment for Reviewbot
-        if: steps.upload.outputs.preview_url != ''
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        with:
-          script: |
-            const url = ${{ toJSON(steps.upload.outputs.preview_url) }};
-            const pr = context.payload.pull_request;
-            const sha = pr.head.sha;
-            const deployment = await github.rest.repos.createDeployment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: sha,
-              environment: `preview/pr-${pr.number}`,
-              auto_merge: false,
-              required_contexts: [],
-              transient_environment: true,
-              description: "Gittensory UI preview",
-              // Reviewbot reads `pr` here to re-review this exact PR once the preview is live.
-              payload: JSON.stringify({ pr: pr.number, head_sha: sha }),
-            });
-            await github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: deployment.data.id,
-              state: "success",
-              environment: `preview/pr-${pr.number}`,
-              environment_url: url,
-              description: "Preview ready",
-            });
-            core.notice(`Preview deployment recorded: ${url}`);

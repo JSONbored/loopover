@@ -780,13 +780,14 @@ function shouldProcessPullRequestPublicSurface(action: string | undefined): bool
   return PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") || PR_GATE_CLOSED_ACTIONS.has(action ?? "");
 }
 
-function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null) {
+function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null, confirmedContributor?: boolean) {
   return {
     linkedIssueGateMode: settings.linkedIssueGateMode,
     duplicatePrGateMode: settings.duplicatePrGateMode,
     qualityGateMode: settings.qualityGateMode,
     qualityGateMinScore: settings.qualityGateMinScore ?? null,
     readinessScore: readinessScore ?? null,
+    confirmedContributor,
   };
 }
 
@@ -955,11 +956,22 @@ async function maybePublishPrPublicSurface(
     scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
   });
 
-  const gateEvaluation = settings.gateCheckMode === "enabled" ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total)) : undefined;
+  // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
+  // detection) gets a neutral, non-blocking gate. `official` may be null if no public output ran.
+  const confirmedContributor = official?.status === "confirmed";
+  const gateEvaluation =
+    settings.gateCheckMode === "enabled" ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total, confirmedContributor)) : undefined;
   if (gateEnabled) {
-    const gateCheckResult = await createOrUpdateGateCheckRun(env, installationId, repoFullName, advisory, gateCheckPolicy(settings, readiness.total), {
-      checkRunId: pendingGateCheckRunId,
-    });
+    const gateCheckResult = await createOrUpdateGateCheckRun(
+      env,
+      installationId,
+      repoFullName,
+      advisory,
+      gateCheckPolicy(settings, readiness.total, confirmedContributor),
+      {
+        checkRunId: pendingGateCheckRunId,
+      },
+    );
     if (gateCheckResult?.kind === "permission_missing") {
       await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
     }

@@ -139,7 +139,7 @@ export async function createOrUpdatePendingGateCheckRun(
     output: {
       title: "Gittensory Gate is evaluating",
       summary: "Gittensory is running deterministic public PR hygiene checks.",
-      text: "The Gate preserves legacy linked-issue and duplicate-PR blockers unless this repository explicitly sets those rules to advisory or off.",
+      text: "The Gate only blocks confirmed Gittensor contributors, and only on configured blockers (duplicate PRs by default). For everyone else, and while state is still syncing, it stays advisory.",
     },
   });
 }

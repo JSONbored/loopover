@@ -3892,7 +3892,7 @@ export function buildPublicPrIntelligenceComment(args: {
   const fallbackGateConclusion = !gateEnabled
     ? "success"
     : !args.repo
-      ? "action_required"
+      ? "neutral"
       : hardLinkedIssueBlock || hardDuplicateBlock
         ? "failure"
         : "success";
@@ -4235,14 +4235,14 @@ function gateStatus(gateEnabled: boolean, conclusion: PublicPrPanelGateEvaluatio
   if (!gateEnabled) return "⚠️ Advisory only";
   if (conclusion === "success") return "✅ Passing";
   if (conclusion === "action_required") return "⚠️ App action required";
-  if (conclusion === "neutral" || conclusion === "skipped") return "⚠️ Skipped";
+  if (conclusion === "neutral" || conclusion === "skipped") return "⚠️ Not blocking";
   return "❌ Blocking";
 }
 
 function gateAction(conclusion: PublicPrPanelGateEvaluation["conclusion"]): string {
   if (conclusion === "success") return "No configured blocker found.";
   if (conclusion === "action_required") return "Install/config needs attention.";
-  if (conclusion === "neutral" || conclusion === "skipped") return "PR closed before full evaluation.";
+  if (conclusion === "neutral" || conclusion === "skipped") return "Advisory; not blocking this PR.";
   return "Repo-configured hard blocker found.";
 }
 

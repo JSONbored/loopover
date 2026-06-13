@@ -505,7 +505,7 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
-  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("block"),
+  linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("block"),
   qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),

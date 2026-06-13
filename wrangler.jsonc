@@ -84,6 +84,11 @@
         "queue": "gittensory-jobs",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
+        // After max_retries failed attempts a job is dead-lettered instead of silently dropped, so a
+        // persistently-failing webhook is observable (inspect via `wrangler queues` / the dashboard)
+        // rather than vanishing. The DLQ is a landing pad with no consumer (house pattern).
+        "max_retries": 3,
+        "dead_letter_queue": "gittensory-jobs-dlq",
       },
     ],
   },

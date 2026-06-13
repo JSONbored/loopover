@@ -131,6 +131,14 @@ const validateLinkedIssueShape = {
     .optional(),
 };
 
+const checkBeforeStartShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  issueNumber: z.number().int().positive().optional(),
+  title: z.string().min(1).optional(),
+  plannedPaths: z.array(z.string()).optional(),
+};
+
 const preflightShape = {
   repoFullName: z.string().min(3),
   contributorLogin: z.string().min(1).optional(),
@@ -285,6 +293,24 @@ server.registerTool(
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = { issueNumber, ...(plannedChange ? { plannedChange } : {}) };
     return toolResult("Gittensory linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
+  },
+);
+
+server.registerTool(
+  "gittensory_check_before_start",
+  {
+    description:
+      "Before writing any code, check whether an issue is already claimed or solved, whether a duplicate cluster is forming, and whether it is a valid target. Returns a go/raise/avoid recommendation with public-safe reasons from cached metadata.",
+    inputSchema: checkBeforeStartShape,
+  },
+  async ({ owner, repo, issueNumber, title, plannedPaths }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const body = {
+      ...(issueNumber != null ? { issueNumber } : {}),
+      ...(title ? { title } : {}),
+      ...(plannedPaths ? { plannedPaths } : {}),
+    };
+    return toolResult("Gittensory pre-start check.", await apiPost(`${prefix}/check-before-start`, body));
   },
 );
 

@@ -5,7 +5,19 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import type { AgentActionRecord, RepositoryCommandAuthorizationPolicy } from "../types";
 import type { CheckSummaryRecord, GitHubIssuePayload, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord } from "../types";
 import { evaluateCommandAuthorization } from "../settings/command-authorization";
-import { buildCollisionReport, buildQueueHealth, type CollisionCluster, type QueueHealth } from "../signals/engine";
+import {
+  buildBurdenForecast,
+  buildCollisionReport,
+  buildContributorIntakeHealth,
+  buildQueueHealth,
+  buildRepoOutcomePatterns,
+  type BurdenForecast,
+  type CollisionCluster,
+  type ContributorIntakeHealth,
+  type QueueHealth,
+  type RepoOutcomePatterns,
+} from "../signals/engine";
+import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signals/reward-risk";
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [
   { id: "help", title: "Gittensory command help", description: "Show public-safe @gittensory command help." },
@@ -26,6 +38,10 @@ const MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG = [
   { id: "review-now", title: "Gittensory review-now queue", description: "List cached PRs that look ready for maintainer review." },
   { id: "needs-author", title: "Gittensory needs-author queue", description: "List cached PRs that need author cleanup before detailed review." },
   { id: "duplicate-clusters", title: "Gittensory duplicate clusters", description: "List duplicate or WIP clusters visible from cached GitHub metadata." },
+  { id: "burden-forecast", title: "Gittensory burden forecast", description: "Project maintainer review load and queue-growth risk from cached metadata." },
+  { id: "intake-health", title: "Gittensory intake health", description: "Summarize contributor-intake health from cached queue and config signals." },
+  { id: "outcome-patterns", title: "Gittensory outcome patterns", description: "Summarize what this repo actually merges vs closes from cached PR outcomes." },
+  { id: "noise-report", title: "Gittensory noise report", description: "Highlight queue noise sources maintainers should triage first." },
 ] as const;
 
 export const GITTENSORY_MENTION_COMMAND_CATALOG = [...PUBLIC_MENTION_COMMAND_CATALOG, ...MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG] as const;
@@ -127,6 +143,10 @@ export type MaintainerQueueDigest = {
   needsAuthorPullRequests: MaintainerQueuePullRequestSummary[];
   confirmedMinerPullRequests: MaintainerQueuePullRequestSummary[];
   duplicateClusters: MaintainerDuplicateClusterSummary[];
+  burdenForecast: BurdenForecast;
+  intakeHealth: ContributorIntakeHealth;
+  outcomePatterns: RepoOutcomePatterns;
+  noiseReport: MaintainerNoiseReport;
   sourceNotes: string[];
   controlPanelUrl?: string | null | undefined;
 };
@@ -379,6 +399,14 @@ function commandSummary(command: GittensoryMentionCommandName): string {
       return "Maintainer-only author-cleanup queue candidates from cached PR state.";
     case "duplicate-clusters":
       return "Maintainer-only duplicate and WIP cluster summary from cached metadata.";
+    case "burden-forecast":
+      return "Maintainer-only review-load and queue-growth forecast from cached metadata.";
+    case "intake-health":
+      return "Maintainer-only contributor-intake health summary from cached queue and config signals.";
+    case "outcome-patterns":
+      return "Maintainer-only summary of what this repo merges vs closes from cached PR outcomes.";
+    case "noise-report":
+      return "Maintainer-only queue-noise summary highlighting what to triage first.";
   }
 }
 
@@ -443,6 +471,14 @@ function commandNextActions(command: GittensoryMentionCommandName, bundle: Agent
       return ["Ask authors to clear visible cleanup items before detailed review."];
     case "duplicate-clusters":
       return ["Triage duplicate or WIP overlap before requesting deeper review."];
+    case "burden-forecast":
+      return ["Use this forecast to plan review capacity; rerun after the queue changes."];
+    case "intake-health":
+      return ["Address the lowest intake-health signals before inviting more contributions."];
+    case "outcome-patterns":
+      return ["Steer contributors toward the patterns this repo actually merges."];
+    case "noise-report":
+      return ["Clear the listed noise sources before deeper review to reduce queue drag."];
   }
 }
 
@@ -536,6 +572,10 @@ function commandSections(
     case "review-now":
     case "needs-author":
     case "duplicate-clusters":
+    case "burden-forecast":
+    case "intake-health":
+    case "outcome-patterns":
+    case "noise-report":
       return maintainerDigestSections(command, maintainerDigest);
   }
 }
@@ -559,6 +599,10 @@ function helpSections(): string[] {
     "- `@gittensory needs-author` lists PRs that need author cleanup.",
     "- `@gittensory confirmed-miners` lists cached confirmed-miner PRs.",
     "- `@gittensory duplicate-clusters` lists duplicate/WIP clusters.",
+    "- `@gittensory burden-forecast` projects maintainer review load and queue-growth risk.",
+    "- `@gittensory intake-health` summarizes contributor-intake health.",
+    "- `@gittensory outcome-patterns` summarizes what the repo merges vs closes.",
+    "- `@gittensory noise-report` highlights queue noise to triage first.",
   ];
 }
 
@@ -1018,7 +1062,15 @@ function maintainerDigestSections(command: MaintainerQueueDigestCommandName, dig
           ? listPrSection("Review-now candidates", digest.reviewNowPullRequests, "No cached PR currently looks ready for detailed review.")
           : command === "needs-author"
             ? listPrSection("Needs-author queue", digest.needsAuthorPullRequests, "No cached PR currently needs obvious author cleanup first.")
-            : duplicateClusterSection(digest);
+            : command === "duplicate-clusters"
+              ? duplicateClusterSection(digest)
+              : command === "burden-forecast"
+                ? burdenForecastSection(digest.burdenForecast)
+                : command === "intake-health"
+                  ? intakeHealthSection(digest.intakeHealth)
+                  : command === "outcome-patterns"
+                    ? outcomePatternsSection(digest.outcomePatterns)
+                    : noiseReportSection(digest.noiseReport);
   return [
     ...commandSpecific,
     "",
@@ -1075,6 +1127,75 @@ function duplicateClusterSection(digest: MaintainerQueueDigest): string[] {
   ];
 }
 
+// Render up to the top three signal findings as public-safe bullets. Prefers the finding's
+// explicit publicText (already vetted for a public audience) over the internal title, and routes
+// every line through publicBlockerDetail so no private readiness/scoring vocabulary leaks.
+function findingDigestLines(findings: Array<{ title: string; publicText?: string | undefined }>): string[] {
+  return findings.slice(0, 3).map((finding) => `- ${publicBlockerDetail(finding.publicText ?? finding.title)}`);
+}
+
+// `@gittensory burden-forecast` renderer: surfaces the maintainer review-load / queue-growth
+// forecast (level, projected load, reviewable/stale counts) so maintainers can plan capacity.
+function burdenForecastSection(forecast: BurdenForecast): string[] {
+  return [
+    "**Burden forecast**",
+    "",
+    `- Forecast level: ${forecast.level} (horizon ${forecast.horizonDays} days).`,
+    `- ${publicBlockerDetail(forecast.summary)}`,
+    `- Projected review load: ${forecast.forecast.projectedReviewLoad}; queue-growth risk: ${forecast.forecast.queueGrowthRisk}.`,
+    `- Reviewable PRs: ${forecast.forecast.reviewablePullRequests}; stale PRs: ${forecast.forecast.stalePullRequests}; duplicate trend: ${forecast.forecast.duplicateTrend}.`,
+    ...findingDigestLines(forecast.findings),
+  ];
+}
+
+// `@gittensory intake-health` renderer: summarizes how healthy contributor intake is (level, config
+// quality, duplicate clusters, reviewable PRs) so maintainers can see whether the repo is set up to
+// absorb more contributions before inviting them.
+function intakeHealthSection(intake: ContributorIntakeHealth): string[] {
+  return [
+    "**Contributor intake health**",
+    "",
+    `- Intake level: ${intake.level}.`,
+    `- ${publicBlockerDetail(intake.summary)}`,
+    `- Config quality: ${intake.configLevel}; duplicate clusters: ${intake.duplicateClusters}; reviewable PRs: ${intake.reviewablePullRequests}.`,
+    ...findingDigestLines(intake.findings),
+  ];
+}
+
+// `@gittensory outcome-patterns` renderer: summarizes what the repo actually merges vs closes
+// (totals, merge rates, and the top success/risk pattern when present) so maintainers can steer
+// contributors toward the patterns that get merged. The success/risk lines are omitted when the
+// cached sample has no pattern of that kind.
+function outcomePatternsSection(patterns: RepoOutcomePatterns): string[] {
+  return [
+    "**Outcome patterns**",
+    "",
+    `- Lane: ${patterns.lane}; PRs analyzed: ${patterns.totals.analyzed}.`,
+    `- ${publicBlockerDetail(patterns.summary)}`,
+    `- Merged: ${patterns.totals.merged}; closed unmerged: ${patterns.totals.closedUnmerged}; open active: ${patterns.totals.openActive}; open stale: ${patterns.totals.openStale}.`,
+    `- Outside-contributor merge rate: ${Math.round(patterns.outsideContributorMergeRate * 100)}%; maintainer-lane merge rate: ${Math.round(patterns.maintainerLaneMergeRate * 100)}%.`,
+    ...(patterns.successPatterns.length > 0 ? [`- Merges when: ${publicBlockerDetail(patterns.successPatterns[0]!.detail)}`] : []),
+    ...(patterns.riskPatterns.length > 0 ? [`- Closes when: ${publicBlockerDetail(patterns.riskPatterns[0]!.detail)}`] : []),
+  ];
+}
+
+// `@gittensory noise-report` renderer: highlights the queue-noise sources maintainers should triage
+// first (level, up to five noise sources, and the suggested triage actions). Falls back to a
+// "no obvious noise" line when the cached metadata shows none, and omits the triage line when there
+// are no suggested actions.
+function noiseReportSection(noise: MaintainerNoiseReport): string[] {
+  return [
+    "**Noise report**",
+    "",
+    `- Noise level: ${noise.level}.`,
+    `- ${publicBlockerDetail(noise.summary)}`,
+    ...(noise.noiseSources.length > 0
+      ? noise.noiseSources.slice(0, 5).map((source) => `- ${publicBlockerDetail(source)}`)
+      : ["- No obvious queue noise source is visible from cached metadata."]),
+    ...(noise.maintainerActions.length > 0 ? [`- Suggested triage: ${noise.maintainerActions.map((action) => publicBlockerDetail(action)).join(", ")}.`] : []),
+  ];
+}
+
 function formatPrDigestItem(item: MaintainerQueuePullRequestSummary): string {
   const author = item.authorLogin ? ` by @${item.authorLogin}` : "";
   const linked = item.linkedIssues.length > 0 ? ` Linked: ${item.linkedIssues.map((issue) => `#${issue}`).join(", ")}.` : "";
@@ -1104,6 +1225,15 @@ export function buildMaintainerQueueDigest(args: {
     .sort(reviewNowSort);
   const confirmedMinerPullRequests = summaries.filter((item) => item.confirmedMiner).sort(reviewNowSort);
   const duplicateClusters = collisions.clusters.filter(isDuplicateWorkCluster).map(toMaintainerDuplicateClusterSummary);
+  // Compute the maintainer-intelligence reports that back the burden-forecast / intake-health /
+  // outcome-patterns / noise-report commands, reusing the already-computed collision report so the
+  // digest stays a single deterministic pass over the cached metadata. They are command-agnostic;
+  // maintainerDigestSections() picks the relevant one per command.
+  const recentMergedPullRequests = args.recentMergedPullRequests ?? [];
+  const burdenForecast = buildBurdenForecast(args.repo, args.issues, args.pullRequests, collisions);
+  const intakeHealth = buildContributorIntakeHealth(args.repo, args.issues, args.pullRequests, repoFullName, collisions);
+  const outcomePatterns = buildRepoOutcomePatterns({ repo: args.repo, repoFullName, pullRequests: args.pullRequests, recentMergedPullRequests });
+  const noiseReport = buildMaintainerNoiseReport(args.repo, args.issues, args.pullRequests, recentMergedPullRequests, repoFullName);
   return {
     repoFullName,
     generatedAt: new Date().toISOString(),
@@ -1128,6 +1258,10 @@ export function buildMaintainerQueueDigest(args: {
     needsAuthorPullRequests,
     confirmedMinerPullRequests,
     duplicateClusters,
+    burdenForecast,
+    intakeHealth,
+    outcomePatterns,
+    noiseReport,
     sourceNotes: [
       "Queue digest uses cached GitHub issues, pull requests, recent merges, checks, PR age, and official-miner cache entries.",
       "Private evidence, detailed blockers, and full command history require authenticated dashboard/API access.",

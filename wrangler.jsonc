@@ -1,5 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // Auto-deploys to production via Cloudflare Workers Builds on push to `main`
+  // (deploy command: `npm run deploy:api` — applies pending D1 migrations, then `wrangler deploy`).
   "name": "gittensory-api",
   "main": "src/index.ts",
   "workers_dev": true,

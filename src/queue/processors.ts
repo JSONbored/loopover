@@ -61,7 +61,7 @@ import {
   refreshInstallationHealth,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
 import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import {
@@ -944,62 +944,91 @@ async function maybePublishPrPublicSurface(
     }
   }
 
-  const [repoIssues, repoPullRequests, repoBounties] = await Promise.all([
-    listIssues(env, repoFullName),
-    listPullRequests(env, repoFullName),
-    listBountiesByRepo(env, repoFullName),
-  ]);
-  const collisions = buildCollisionReport(repoFullName, repoIssues, repoPullRequests);
-  const queueHealth = buildQueueHealth(repo, repoIssues, repoPullRequests, collisions);
-  const preflight = buildPreflightResult(
-    {
-      repoFullName,
-      contributorLogin: author ?? undefined,
-      title: pr.title,
-      body: pr.body ?? undefined,
-      labels: pr.labels,
-      linkedIssues: pr.linkedIssues,
-      authorAssociation: pr.authorAssociation ?? undefined,
-    },
-    repo,
-    repoIssues,
-    repoPullRequests,
-    repoBounties,
-  );
-  const readiness = buildPublicReadinessScore({
-    pr,
-    preflight,
-    queueHealth,
-    linkedDuplicatePrs: linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests),
-    scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
-  });
-
-  if (gateEnabled && author && !publicSurfaceSkipped && !official) {
-    official = await getCachedOfficialMinerDetection(env, author, {
-      targetKey: `${repoFullName}#${pr.number}`,
-      deliveryId: webhook.deliveryId,
-    });
-  }
-
-  // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
-  // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
-  // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
-  const confirmedContributor = official?.status === "confirmed";
-  const gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total, confirmedContributor)) : undefined;
-  if (gateEnabled) {
-    const gateCheckResult = await createOrUpdateGateCheckRun(
-      env,
-      installationId,
-      repoFullName,
-      advisory,
-      gateCheckPolicy(settings, readiness.total, confirmedContributor),
+  // The pending Gate check is now posted (status in_progress). Everything from here until the gate is
+  // completed runs inside a try so that ANY failure/timeout (a slow Gittensor or GitHub call, a D1 error)
+  // still finalizes the check to a neutral, non-blocking state instead of orphaning it in_progress forever
+  // (the cause of the multi-hour stuck Gate). External calls in this window are bounded by request timeouts
+  // (GitHub App + Gittensor API), so a hang becomes a catchable error here.
+  let collisions!: ReturnType<typeof buildCollisionReport>;
+  let queueHealth!: ReturnType<typeof buildQueueHealth>;
+  let preflight!: ReturnType<typeof buildPreflightResult>;
+  let gateEvaluation: ReturnType<typeof evaluateGateCheck> | undefined;
+  let gateFinalized = false;
+  try {
+    const [repoIssues, repoPullRequests, repoBounties] = await Promise.all([
+      listIssues(env, repoFullName),
+      listPullRequests(env, repoFullName),
+      listBountiesByRepo(env, repoFullName),
+    ]);
+    collisions = buildCollisionReport(repoFullName, repoIssues, repoPullRequests);
+    queueHealth = buildQueueHealth(repo, repoIssues, repoPullRequests, collisions);
+    preflight = buildPreflightResult(
       {
-        checkRunId: pendingGateCheckRunId,
+        repoFullName,
+        contributorLogin: author ?? undefined,
+        title: pr.title,
+        body: pr.body ?? undefined,
+        labels: pr.labels,
+        linkedIssues: pr.linkedIssues,
+        authorAssociation: pr.authorAssociation ?? undefined,
       },
+      repo,
+      repoIssues,
+      repoPullRequests,
+      repoBounties,
     );
-    if (gateCheckResult?.kind === "permission_missing") {
-      await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
+    const readiness = buildPublicReadinessScore({
+      pr,
+      preflight,
+      queueHealth,
+      linkedDuplicatePrs: linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests),
+      scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
+    });
+
+    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
+      official = await getCachedOfficialMinerDetection(env, author, {
+        targetKey: `${repoFullName}#${pr.number}`,
+        deliveryId: webhook.deliveryId,
+      });
     }
+
+    // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
+    // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
+    // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
+    const confirmedContributor = official?.status === "confirmed";
+    gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total, confirmedContributor)) : undefined;
+    if (gateEnabled) {
+      const gateCheckResult = await createOrUpdateGateCheckRun(
+        env,
+        installationId,
+        repoFullName,
+        advisory,
+        gateCheckPolicy(settings, readiness.total, confirmedContributor),
+        {
+          checkRunId: pendingGateCheckRunId,
+        },
+      );
+      if (gateCheckResult?.kind === "published") gateFinalized = true;
+      if (gateCheckResult?.kind === "permission_missing") {
+        await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
+      }
+    }
+  } catch (error) {
+    // The pending Gate check was posted but evaluation could not finish. Finalize it to a neutral
+    // (non-blocking) terminal state so it never hangs in_progress; it re-runs on the next push. Only when
+    // the gate was enabled, a pending check id exists, and a real conclusion was not already published.
+    if (gateEnabled && pendingGateCheckRunId !== undefined && !gateFinalized) {
+      await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }).catch(() => undefined);
+      await recordAuditEvent(env, {
+        eventType: "github_app.gate_finalized_on_error",
+        actor: author,
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "error",
+        detail: errorMessage(error),
+        metadata: { deliveryId: webhook.deliveryId, repoFullName },
+      }).catch(() => undefined);
+    }
+    throw error;
   }
 
   if (!prelimHasPublicOutput) return;

@@ -26,9 +26,20 @@ export const GITTENSORY_GATE_CHECK_NAME = "Gittensory Gate";
 type GitHubCheckConclusion = Advisory["conclusion"] | GateCheckConclusion | "skipped";
 type GitHubCheckStatus = "queued" | "in_progress" | "completed";
 
+/** Hard cap on a single GitHub API request. Without it a slow/half-open GitHub connection can hang the
+ *  Worker — e.g. the Gate's own completing PATCH stalling after the pending check was posted, which leaves
+ *  the check in_progress forever. A bounded timeout turns a hang into a catchable error the caller can
+ *  finalize. Applied to every raw fetch here and to the Octokit instances (via a timeout-injecting fetch). */
+const GITHUB_FETCH_TIMEOUT_MS = 12_000;
+
+function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (init?.signal) return fetch(input, init);
+  return fetch(input, { ...(init ?? {}), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
+}
+
 export async function createInstallationToken(env: Env, installationId: number): Promise<string> {
   const jwt = await createAppJwt(env);
-  const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
+  const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: githubHeaders(`Bearer ${jwt}`),
   });
@@ -43,7 +54,7 @@ export async function createInstallationToken(env: Env, installationId: number):
 
 export async function getAppInstallation(env: Env, installationId: number): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
   const jwt = await createAppJwt(env);
-  const response = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+  const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}`, {
     headers: githubHeaders(`Bearer ${jwt}`),
   });
   if (!response.ok) {
@@ -66,7 +77,7 @@ export async function getRepositoryCollaboratorPermission(
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name || !login) return null;
   const token = await createInstallationToken(env, installationId);
-  const response = await fetch(
+  const response = await timeoutFetch(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/collaborators/${encodeURIComponent(login)}/permission`,
     { headers: githubHeaders(`Bearer ${token}`) },
   );
@@ -163,6 +174,33 @@ export async function createOrUpdateSkippedGateCheckRun(
   });
 }
 
+/**
+ * Finalize a previously-posted pending Gate check to a NEUTRAL (non-blocking) terminal state when the
+ * evaluation could not finish (a transient error/timeout in the work between posting the pending check and
+ * completing it). This guarantees the "Gittensory Gate is evaluating" run never hangs in_progress forever;
+ * it does not block the PR and re-runs on the next push. Targets the known pending check_run id so it
+ * updates the SAME run rather than creating a second one.
+ */
+export async function createOrUpdateErroredGateCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+  options: { checkRunId?: number | undefined } = {},
+): Promise<CheckRunOutcome | null> {
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_GATE_CHECK_NAME,
+    status: "completed",
+    conclusion: "neutral",
+    output: {
+      title: "Gittensory Gate — could not finish evaluating",
+      summary: "A transient error interrupted gate evaluation. This does NOT block the PR and re-runs automatically on the next push.",
+      text: "Gittensory finalizes the Gate to a neutral, non-blocking state when evaluation is interrupted, so the check never hangs in_progress. Push a new commit or use the 'Re-run Gittensory review' checkbox to re-evaluate.",
+    },
+    checkRunId: options.checkRunId,
+  });
+}
+
 async function createOrUpdateNamedCheckRun(
   env: Env,
   installationId: number,
@@ -181,7 +219,9 @@ async function createOrUpdateNamedCheckRun(
   if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  // Inject a per-request timeout so a stalled GitHub API call (e.g. the Gate's completing PATCH) can never
+  // hang the Worker and orphan the in_progress check.
+  const octokit = new Octokit({ auth: token, request: { fetch: timeoutFetch } });
 
   try {
     if (check.checkRunId) {

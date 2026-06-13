@@ -968,6 +968,69 @@ describe("queue processors", () => {
     expect(gatePatchBody.output?.title).toBe("Gittensory Gate: No linked issue detected");
   });
 
+  it("finalizes the Gate to neutral instead of leaving it in_progress when gate completion fails", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    const patchBodies: Array<{ status?: string; conclusion?: string; output?: { title?: string } }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/finalize123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 970 }, { status: 201 }); // pending
+      if (url.includes("/check-runs/970") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
+        patchBodies.push(body);
+        // First PATCH = the gate completion; fail it transiently so the catch must finalize the check.
+        if (patchBodies.length === 1) return new Response(JSON.stringify({ message: "server error" }), { status: 500 });
+        return Response.json({ id: 970 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-finalize-on-error",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 80, title: "Some change", state: "open", user: { login: "contributor" }, head: { sha: "finalize123" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    // The completion PATCH failed (500), so the catch finalized the SAME check run (id 970) to a neutral,
+    // non-blocking terminal state — never left hanging in_progress.
+    expect(patchBodies.length).toBe(2);
+    const finalize = patchBodies[1];
+    expect(finalize?.status).toBe("completed");
+    expect(finalize?.conclusion).toBe("neutral");
+    expect(finalize?.output?.title).toBe("Gittensory Gate — could not finish evaluating");
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.gate_finalized_on_error", "JSONbored/gittensory#80")
+      .first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("error");
+  });
+
   it("disables the gate from .gittensory.yml (gate.enabled: false) even when repo settings enable it", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

@@ -233,7 +233,7 @@ describe("GitHub check runs", () => {
     expect(capturedBody).toMatchObject({
       name: "Gittensory Gate",
       conclusion: "failure",
-      output: { title: "Gittensory Gate is blocking merge" },
+      output: { title: "Gittensory Gate: No linked issue detected" },
     });
     expect(capturedBody.output?.text).toContain("Link the issue before merge.");
     expect(capturedBody.output?.text).not.toMatch(/reward|wallet|hotkey|trust score|reviewability|farming/i);
@@ -262,7 +262,7 @@ describe("GitHub check runs", () => {
       output: { title: "Gittensory Gate is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
-    expect(capturedBody.output?.text).toContain("preserves legacy linked-issue and duplicate-PR blockers");
+    expect(capturedBody.output?.text).toContain("only blocks confirmed Gittensor contributors");
   });
 
   it("finalizes a known pending Gate check by id without listing check runs first", async () => {

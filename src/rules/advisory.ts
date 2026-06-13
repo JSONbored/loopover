@@ -20,6 +20,10 @@ export type GateCheckPolicy = {
   qualityGateMode?: GateRuleMode | undefined;
   qualityGateMinScore?: number | null | undefined;
   readinessScore?: number | null | undefined;
+  /** ONLY confirmed gittensor contributors can be hard-blocked. When explicitly `false`, the gate is
+   *  forced to a neutral (non-blocking) conclusion regardless of blockers — gittensory must never block
+   *  a non-confirmed contributor. `undefined` = the caller did not gate on contributor status. */
+  confirmedContributor?: boolean | undefined;
 };
 
 export type GateCheckEvaluation = {
@@ -277,10 +281,36 @@ export function formatCheckRunOutput(
 }
 
 export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPolicy = {}): GateCheckEvaluation {
-  const evaluationBlockers = advisoryResult.findings.filter((finding) => isEvaluationBlocker(finding.code));
+  const warnings = advisoryResult.findings.filter((finding) => finding.severity === "warning");
+  // App/infra state (repo not synced yet, PR not cached): gittensory cannot evaluate this PR yet, so the
+  // gate is NEUTRAL (non-blocking) and re-evaluates automatically on the next sync/webhook. Never block a
+  // contributor on the app's OWN state.
+  if (advisoryResult.findings.some((finding) => isEvaluationBlocker(finding.code))) {
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: "Gittensory Gate — not evaluated yet",
+      summary: "Gittensory has not finished syncing this repo/PR. The gate stays advisory and re-evaluates automatically; no action is needed.",
+      blockers: [],
+      warnings,
+    };
+  }
   const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding.code, policy));
   const qualityBlocker = buildQualityGateBlocker(policy);
-  const blockers = [...evaluationBlockers, ...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : [])];
+  const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : [])];
+  // Contributor-gated: ONLY confirmed Gittensor contributors can be hard-blocked. For everyone else the
+  // gate is neutral (non-blocking) + the minimal advisory comment — gittensory must never block a
+  // non-confirmed contributor, regardless of what blockers fired.
+  if (policy.confirmedContributor === false && blockers.length > 0) {
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: "Gittensory Gate — advisory only",
+      summary: "The PR author is not a confirmed Gittensor contributor, so gittensory does not block this PR. Findings stay advisory.",
+      blockers: [],
+      warnings,
+    };
+  }
   if (blockers.length === 0) {
     return {
       enabled: true,
@@ -288,17 +318,19 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
       title: "Gittensory Gate passed",
       summary: "No configured hard blocker was found. Advisory findings, if any, stay advisory.",
       blockers,
-      warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning"),
+      warnings,
     };
   }
+  // Name the exact blocker(s) + fix in the title so the contributor sees WHY at a glance.
+  const firstBlocker = blockers[0];
+  const titleDetail = blockers.length === 1 && firstBlocker ? sanitizeForCheckRun(firstBlocker.title) : `${blockers.length} blockers`;
   return {
     enabled: true,
-    conclusion: evaluationBlockers.length > 0 ? "action_required" : "failure",
-    title: evaluationBlockers.length > 0 ? "Gittensory Gate needs app attention" : "Gittensory Gate is blocking merge",
-    summary:
-      evaluationBlockers.length > 0
-        ? "Gittensory cannot evaluate this PR until app or repo state is repaired."
-        : `${blockers.length} configured hard blocker${blockers.length === 1 ? "" : "s"} found.`,
+    conclusion: "failure",
+    title: `Gittensory Gate: ${titleDetail}`,
+    summary: blockers
+      .map((finding) => `${sanitizeForCheckRun(finding.title)}${finding.action ? ` — ${sanitizeForCheckRun(finding.action)}` : ""}`)
+      .join("; "),
     blockers,
     warnings: advisoryResult.findings.filter((finding) => finding.severity === "warning" && !blockers.includes(finding)),
   };
@@ -325,10 +357,7 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
   });
   return {
     title: gate.title,
-    summary:
-      gate.conclusion === "action_required"
-        ? "Gittensory Gate could not evaluate this PR because app or repo state needs attention."
-        : "Gittensory Gate found a repo-configured hard blocker.",
+    summary: "Gittensory Gate found a repo-configured hard blocker.",
     text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.",
   };
 }
@@ -525,7 +554,9 @@ function isEvaluationBlocker(code: string): boolean {
 }
 
 function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean {
-  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "block") === "block";
+  // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
+  // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
+  if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory") === "block";
   if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block") === "block";
   return false;
 }

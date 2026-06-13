@@ -149,16 +149,19 @@ describe("advisory rules", () => {
     expect(output.text).toContain("No configured hard blocker");
   });
 
-  it("maps broken evaluation state to action_required gate output", () => {
+  it("never blocks on app/infra state — keeps an unsynced repo/PR neutral", () => {
     const advisory = buildPullRequestAdvisory(null, null);
     const gate = evaluateGateCheck(advisory);
     const output = formatGateCheckOutput(gate);
 
-    expect(gate.conclusion).toBe("action_required");
-    expect(gate.blockers.map((finding) => finding.code)).toEqual(["repo_not_registered", "pr_not_cached"]);
-    expect(output.title).toBe("Gittensory Gate needs app attention");
-    expect(output.text).toContain("Repository registration is unknown");
-    expect(output.text).toContain("Action: Refresh the Gittensor registry snapshot.");
+    // App-state findings (repo not synced, PR not cached) must NOT block a contributor on the app's
+    // own state — the gate is neutral and re-evaluates automatically.
+    expect(advisory.findings.map((finding) => finding.code)).toEqual(expect.arrayContaining(["repo_not_registered", "pr_not_cached"]));
+    expect(gate.conclusion).toBe("neutral");
+    expect(gate.blockers).toEqual([]);
+    expect(output.title).toBe("Gittensory Gate — not evaluated yet");
+    expect(output.summary).toContain("re-evaluates automatically");
+    expect(output.text).toBe("Gittensory did not create a contributor-facing failure for this event.");
   });
 
   it("formats and sanitizes gate blockers without leaking private scoring terms", () => {
@@ -184,7 +187,7 @@ describe("advisory rules", () => {
     expect(output.text).not.toMatch(/reward|wallet|trust score|score estimate/i);
   });
 
-  it("keeps legacy Gate blockers by default while honoring explicit advisory or off modes", () => {
+  it("keeps missing-issue advisory by default, blocks duplicates by default, honoring explicit modes", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,
       number: 21,
@@ -198,7 +201,9 @@ describe("advisory rules", () => {
     };
     const missingIssueAdvisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true });
 
-    expect(evaluateGateCheck(missingIssueAdvisory).conclusion).toBe("failure");
+    // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks
+    // when a repo explicitly opts in.
+    expect(evaluateGateCheck(missingIssueAdvisory).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "off" }).conclusion).toBe("success");
     expect(evaluateGateCheck(missingIssueAdvisory, { linkedIssueGateMode: "block" }).conclusion).toBe("failure");
@@ -261,9 +266,38 @@ describe("advisory rules", () => {
     );
 
     expect(gate.conclusion).toBe("failure");
-    expect(gate.summary).toBe("3 configured hard blockers found.");
+    // Title names the blocker count; summary enumerates every active blocker with its fix.
+    expect(gate.title).toBe("Gittensory Gate: 3 blockers");
+    expect(gate.summary).toContain("No linked issue detected");
+    expect(gate.summary).toContain("Linked issue overlaps another open PR");
+    expect(gate.summary).toContain("Readiness score is below the configured threshold — Address the short explicit PR panel actions");
     expect(gate.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue", "duplicate_pr_risk", "readiness_score_below_threshold"]);
     expect(gate.warnings.map((finding) => finding.code)).toEqual(["busy_pr_queue"]);
+  });
+
+  it("only hard-blocks confirmed Gittensor contributors — non-confirmed authors stay neutral regardless of blockers", () => {
+    const blockingAdvisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [{ code: "duplicate_pr_risk", title: "Linked issue overlaps another open PR", severity: "warning" as const, detail: "Duplicate." }],
+    };
+
+    // Non-confirmed author: the gate is forced neutral (non-blocking) even though a real blocker fired.
+    const nonConfirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: false });
+    expect(nonConfirmed.conclusion).toBe("neutral");
+    expect(nonConfirmed.title).toBe("Gittensory Gate — advisory only");
+    expect(nonConfirmed.summary).toContain("not a confirmed Gittensor contributor");
+    expect(nonConfirmed.blockers).toEqual([]);
+
+    // Confirmed author with the same blocker: the gate blocks and names the blocker in the title.
+    const confirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: true });
+    expect(confirmed.conclusion).toBe("failure");
+    expect(confirmed.title).toBe("Gittensory Gate: Linked issue overlaps another open PR");
+    expect(confirmed.blockers.map((finding) => finding.code)).toEqual(["duplicate_pr_risk"]);
+
+    // A clean PR from a non-confirmed author stays a normal success (the neutral override only kicks in
+    // when there is actually a blocker to suppress).
+    const cleanNonConfirmed = evaluateGateCheck({ ...buildPullRequestAdvisory(repo, null), findings: [] }, { confirmedContributor: false });
+    expect(cleanNonConfirmed.conclusion).toBe("success");
   });
 
   it("formats skipped and neutral Gate outputs as non-failures", () => {

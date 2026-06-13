@@ -743,10 +743,10 @@ describe("signal coverage edge cases", () => {
       settings: gateSettings,
     });
 
-    expect(repoBlockedComment).toContain("> [!IMPORTANT]");
-    expect(repoBlockedComment).toContain("cannot evaluate the repo state");
+    // App/infra state (repo not synced) never blocks a contributor — the gate stays neutral/advisory.
     expect(repoBlockedComment).toContain("Public profile only");
-    expect(repoBlockedComment).toContain("> | Gate result | ⚠️ App action required | Install/config needs attention. | Fix app config. |");
+    expect(repoBlockedComment).toContain("> | Gate result | ⚠️ Not blocking | Advisory; not blocking this PR. | No action. |");
+    expect(repoBlockedComment).not.toContain("App action required");
 
     const missingIssueComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -1104,7 +1104,7 @@ describe("signal coverage edge cases", () => {
     expect(comment).toContain("> | Review load | ❌ 8/20 |");
     expect(comment).toContain("> | Validation evidence | ❌ 5/25 | Cached preflight status is hold. | Fix blocker. |");
     expect(comment).toContain("> | Open PR queue | ❌ 3/10 | 16 open PR(s), 0 likely reviewable, 16 unlinked. | Expect slower review. |");
-    expect(comment).toContain("> | Gate result | ⚠️ Skipped | PR closed before full evaluation. | No action. |");
+    expect(comment).toContain("> | Gate result | ⚠️ Not blocking | Advisory; not blocking this PR. | No action. |");
     expect(comment).toContain("[JSONbored](https://github.com/JSONbored)");
     expect(comment).toContain("[Gittensor profile](https://gittensor.io/miners/details?githubId=49853598)");
     expect(comment).toContain("Official Gittensor activity: 29 PR(s), 6 issue(s).");

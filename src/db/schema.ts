@@ -60,6 +60,22 @@ export const repositorySettings = sqliteTable("repository_settings", {
   updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
 });
 
+// Maintainer BYOK provider keys (Anthropic/OpenAI), encrypted at rest with AES-256-GCM. Isolated in its
+// own table so the ciphertext is NEVER serialized by the repository-settings GET surface. The plaintext
+// key is never stored; `last4` is a display-only hint derived from the plaintext at write time.
+export const repositoryAiKeys = sqliteTable("repository_ai_keys", {
+  repoFullName: text("repo_full_name").primaryKey(),
+  provider: text("provider").notNull(),
+  ciphertext: text("ciphertext").notNull(),
+  iv: text("iv").notNull(),
+  keyVersion: integer("key_version").notNull().default(1),
+  model: text("model"),
+  last4: text("last4").notNull(),
+  createdBy: text("created_by"),
+  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+
 export const repoSyncState = sqliteTable("repo_sync_state", {
   repoFullName: text("repo_full_name").primaryKey(),
   status: text("status").notNull().default("never_synced"),

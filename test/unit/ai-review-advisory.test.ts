@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAiReviewDiff, runAiReviewForAdvisory } from "../../src/queue/processors";
+import { upsertRepositoryAiKey } from "../../src/db/repositories";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function fileRecord(over: Partial<PullRequestFileRecord> & { path: string }): PullRequestFileRecord {
   return { repoFullName: "acme/widgets", pullNumber: 3, status: "modified", additions: 1, deletions: 0, changes: 1, payload: {}, ...over };
@@ -135,6 +140,30 @@ describe("runAiReviewForAdvisory", () => {
       confirmedContributor: true,
     });
     expect(result).toBeUndefined();
+  });
+
+  it("uses the maintainer's BYOK provider key when aiReviewByok is on and a key is configured", async () => {
+    const env = createTestEnv({
+      AI: { run: async () => ({ response: notesOnlyJson() }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      TOKEN_ENCRYPTION_SECRET: "advisory-test-encryption-secret-32bytes",
+    });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-key-9999", model: null });
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ content: [{ type: "text", text: notesOnlyJson() }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory", aiReviewByok: true } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result?.notes).toContain("Add a test.");
+    // Advisory write-up went to the BYOK provider, not Workers AI.
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.anthropic.com/v1/messages");
   });
 
   it("is fail-safe: a thrown error (e.g. broken DB) yields no finding and no notes", async () => {

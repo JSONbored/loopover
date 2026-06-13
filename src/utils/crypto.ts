@@ -41,6 +41,48 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+// ─── Reversible secret encryption (AES-256-GCM) ─────────────────────────────────────────────────
+// Used for maintainer BYOK provider keys (Anthropic/OpenAI) that MUST be recoverable in plaintext at
+// AI-call time. The AES key is derived from the worker secret TOKEN_ENCRYPTION_SECRET via PBKDF2; a
+// fresh random 12-byte IV is used per encryption so ciphertexts are unique and the GCM tag authenticates
+// them. The plaintext key is never persisted, never logged, and never returned from the API.
+const SECRET_KDF_SALT = new TextEncoder().encode("gittensory-secret-encryption-v1");
+const SECRET_KEY_VERSION = 1;
+
+async function deriveSecretAesKey(keyMaterial: string): Promise<CryptoKey> {
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(keyMaterial), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: SECRET_KDF_SALT, iterations: 100_000, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+/** Encrypt a secret with AES-256-GCM. Returns base64 ciphertext (incl. auth tag) + base64 IV + version. */
+export async function encryptSecret(plaintext: string, keyMaterial: string): Promise<{ ciphertext: string; iv: string; version: number }> {
+  if (!keyMaterial) throw new Error("missing_encryption_secret");
+  const key = await deriveSecretAesKey(keyMaterial);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext));
+  return { ciphertext: base64Encode(new Uint8Array(encrypted)), iv: base64Encode(iv), version: SECRET_KEY_VERSION };
+}
+
+/** Decrypt a secret produced by {@link encryptSecret}. Throws if the secret/IV/ciphertext do not match. */
+export async function decryptSecret(ciphertext: string, iv: string, keyMaterial: string): Promise<string> {
+  if (!keyMaterial) throw new Error("missing_encryption_secret");
+  const key = await deriveSecretAesKey(keyMaterial);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(iv) }, key, base64ToBytes(ciphertext));
+  return new TextDecoder().decode(decrypted);
+}
+
+function base64Encode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 export function base64UrlEncode(input: Uint8Array | string): string {
   const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
   let binary = "";

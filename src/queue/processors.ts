@@ -7,6 +7,7 @@ import {
   getFreshOfficialMinerDetection,
   getPullRequest,
   getRepository,
+  getDecryptedRepositoryAiKey,
   getRepositorySettings,
   listCheckSummaries,
   listAllIssues,
@@ -849,6 +850,9 @@ export async function runAiReviewForAdvisory(
 ): Promise<{ notes: string } | undefined> {
   if (args.settings.aiReviewMode === "off" || !args.confirmedContributor || !args.advisory.headSha) return undefined;
   try {
+    // BYOK: decrypt the maintainer's provider key only when opted in. Falls back to free Workers AI when
+    // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
+    const providerKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
     const files = await listPullRequestFiles(env, args.repoFullName, args.pr.number);
     const result = await runGittensoryAiReview(env, {
       repoFullName: args.repoFullName,
@@ -858,7 +862,7 @@ export async function runAiReviewForAdvisory(
       diff: buildAiReviewDiff(files),
       actor: args.author,
       mode: args.settings.aiReviewMode === "block" ? "block" : "advisory",
-      providerKey: null,
+      providerKey,
     });
     if (result.status !== "ok") return undefined;
     if (result.consensusDefect) {

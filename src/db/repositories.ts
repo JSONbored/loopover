@@ -42,6 +42,7 @@ import {
   repoSnapshots,
   repoSyncSegments,
   repoSyncState,
+  repositoryAiKeys,
   repositorySettings,
   scorePreviews,
   scoringModelSnapshots,
@@ -139,7 +140,7 @@ import type {
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
-import { sha256Hex } from "../utils/crypto";
+import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
@@ -512,6 +513,81 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       },
     });
   return getRepositorySettings(env, resolved.repoFullName);
+}
+
+// ─── Maintainer BYOK provider keys ──────────────────────────────────────────────────────────────
+
+export type AiKeyProvider = "anthropic" | "openai";
+
+/** Public, secret-free status of a repo's BYOK key. NEVER includes the key or ciphertext. */
+export type RepositoryAiKeyStatus =
+  | { configured: true; provider: AiKeyProvider; last4: string; model: string | null }
+  | { configured: false };
+
+/** A decrypted provider key for use at AI-call time only. Never returned from the API, never logged. */
+export type DecryptedRepositoryAiKey = { provider: AiKeyProvider; key: string; model: string | null };
+
+function normalizeAiKeyProvider(value: string): AiKeyProvider {
+  return value === "openai" ? "openai" : "anthropic";
+}
+
+/** Read the secret-free status of a repo's configured BYOK key (for the dashboard/API). */
+export async function getRepositoryAiKeyStatus(env: Env, fullName: string): Promise<RepositoryAiKeyStatus> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName)).limit(1);
+  if (!row) return { configured: false };
+  return { configured: true, provider: normalizeAiKeyProvider(row.provider), last4: row.last4, model: row.model ?? null };
+}
+
+/**
+ * Store (or replace) a repo's BYOK provider key, encrypted at rest. Returns the secret-free status.
+ * Throws `missing_encryption_secret` when TOKEN_ENCRYPTION_SECRET is not configured — callers must
+ * surface that rather than store a key in the clear.
+ */
+export async function upsertRepositoryAiKey(
+  env: Env,
+  input: { repoFullName: string; provider: AiKeyProvider; key: string; model?: string | null; createdBy?: string | null },
+): Promise<RepositoryAiKeyStatus> {
+  const secret = env.TOKEN_ENCRYPTION_SECRET;
+  if (!secret) throw new Error("missing_encryption_secret");
+  const trimmedKey = input.key.trim();
+  const { ciphertext, iv, version } = await encryptSecret(trimmedKey, secret);
+  const last4 = trimmedKey.slice(-4);
+  const model = input.model?.trim() ? input.model.trim() : null;
+  const db = getDb(env.DB);
+  await db
+    .insert(repositoryAiKeys)
+    .values({ repoFullName: input.repoFullName, provider: input.provider, ciphertext, iv, keyVersion: version, model, last4, createdBy: input.createdBy ?? null, updatedAt: nowIso() })
+    .onConflictDoUpdate({
+      target: repositoryAiKeys.repoFullName,
+      set: { provider: input.provider, ciphertext, iv, keyVersion: version, model, last4, createdBy: input.createdBy ?? null, updatedAt: nowIso() },
+    });
+  return { configured: true, provider: input.provider, last4, model };
+}
+
+/** Remove a repo's BYOK key. */
+export async function deleteRepositoryAiKey(env: Env, fullName: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db.delete(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName));
+}
+
+/**
+ * Decrypt a repo's BYOK key for an AI call. Returns null when no key is configured OR the encryption
+ * secret is unavailable OR decryption fails — so the caller silently falls back to free Workers AI and
+ * a misconfiguration never blocks the review. The plaintext key must be used immediately and never cached.
+ */
+export async function getDecryptedRepositoryAiKey(env: Env, fullName: string): Promise<DecryptedRepositoryAiKey | null> {
+  const secret = env.TOKEN_ENCRYPTION_SECRET;
+  if (!secret) return null;
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName)).limit(1);
+  if (!row) return null;
+  try {
+    const key = await decryptSecret(row.ciphertext, row.iv, secret);
+    return { provider: normalizeAiKeyProvider(row.provider), key, model: row.model ?? null };
+  } catch {
+    return null;
+  }
 }
 
 export async function upsertRepoSyncState(env: Env, state: RepoSyncStateRecord): Promise<void> {

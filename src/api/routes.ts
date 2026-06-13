@@ -89,6 +89,9 @@ import {
   upsertContributorEvidence,
   upsertContributorScoringProfile,
   upsertRepositorySettings,
+  getRepositoryAiKeyStatus,
+  upsertRepositoryAiKey,
+  deleteRepositoryAiKey,
 } from "../db/repositories";
 import {
   backfillOpenPullRequestDetails,
@@ -525,6 +528,14 @@ const repositorySettingsSchema = z.object({
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
     })
     .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
+});
+
+// Maintainer BYOK provider key. Write-only: the key is encrypted at rest and never returned. A loose
+// shape check (sk-ant-… / sk-…) catches obvious paste errors without coupling to provider key formats.
+const repositoryAiKeySchema = z.object({
+  provider: z.enum(["anthropic", "openai"]),
+  key: z.string().trim().min(20).max(400),
+  model: z.string().trim().min(1).max(120).nullable().optional(),
 });
 
 const contributorIssueDraftGenerateSchema = z.object({
@@ -2460,6 +2471,41 @@ export function createApp() {
         commandAuthorization: normalizeCommandAuthorizationPolicy(parsed.data.commandAuthorization).policy,
       }),
     );
+  });
+
+  // Maintainer BYOK provider key. GET returns secret-free status only; POST stores it encrypted at rest;
+  // DELETE removes it. The plaintext key is never logged and never returned.
+  app.get("/v1/internal/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    return c.json(await getRepositoryAiKeyStatus(c.env, fullName));
+  });
+
+  app.post("/v1/internal/repos/:owner/:repo/ai-key", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = repositoryAiKeySchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_ai_key", issues: parsed.error.issues }, 400);
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    try {
+      const status = await upsertRepositoryAiKey(c.env, {
+        repoFullName: fullName,
+        provider: parsed.data.provider,
+        key: parsed.data.key,
+        model: parsed.data.model ?? null,
+      });
+      return c.json(status);
+    } catch (error) {
+      // The only expected throw is a missing encryption secret — never echo key material in the error.
+      if (error instanceof Error && error.message === "missing_encryption_secret") {
+        return c.json({ error: "encryption_unavailable", detail: "TOKEN_ENCRYPTION_SECRET is not configured." }, 503);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/v1/internal/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    await deleteRepositoryAiKey(c.env, fullName);
+    return c.json({ configured: false });
   });
 
   app.get("/v1/internal/repos/:owner/:repo/contribution-policy", async (c) => {

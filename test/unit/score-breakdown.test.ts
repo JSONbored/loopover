@@ -137,4 +137,76 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.gateHighlights[0]?.explanation).toMatch(/private context|estimated score/i);
     expect(JSON.stringify(breakdown.gateHighlights)).not.toMatch(FORBIDDEN);
   });
+
+  it("covers healthy multiplier branches and contribution bonus density messaging", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 120,
+        totalTokenScore: 1600,
+        sourceLines: 120,
+        openPrCount: 0,
+        existingContributorTokenScore: 1200,
+        credibility: 1,
+        changesRequestedCount: 0,
+        labels: ["bug"],
+        linkedIssueMode: "none",
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "densityMultiplier")?.summary).toMatch(/Contribution bonus is already contributing/i);
+    expect(breakdown.components.find((entry) => entry.component === "labelMultiplier")).toMatchObject({ band: "full" });
+    expect(breakdown.components.find((entry) => entry.component === "issueMultiplier")).toMatchObject({ band: "neutral" });
+    expect(breakdown.components.find((entry) => entry.component === "openPrMultiplier")).toMatchObject({ band: "full" });
+    expect(breakdown.components.find((entry) => entry.component === "credibilityMultiplier")).toMatchObject({ band: "full" });
+    expect(breakdown.components.find((entry) => entry.component === "reviewPenaltyMultiplier")).toMatchObject({ band: "full" });
+  });
+
+  it("explains failed base-token and invalid linked-issue branches", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 0,
+        totalTokenScore: 0,
+        sourceLines: 10,
+        openPrCount: 0,
+        credibility: 1,
+        linkedIssueMode: "standard",
+        linkedIssueContext: { status: "invalid", source: "github_cache", issueNumbers: [9], reason: "Issue #9 is closed." },
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "densityMultiplier")).toMatchObject({ band: "blocked" });
+    expect(breakdown.components.find((entry) => entry.component === "issueMultiplier")?.lever).toMatch(/Fix linked issue state/i);
+    expect(breakdown.highestLeverageLever.component).toBe("densityMultiplier");
+  });
+
+  it("selects a reduced multiplier as highest leverage when nothing is fully blocked", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 80,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 1,
+        existingContributorTokenScore: 1200,
+        credibility: 0.7,
+        changesRequestedCount: 1,
+        linkedIssueMode: "standard",
+        linkedIssueContext: { status: "plausible", source: "github_cache", issueNumbers: [4] },
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.highestLeverageLever.reason).toMatch(/reducer|optimization lever/i);
+    expect(breakdown.highestLeverageLever.component).toMatch(/credibilityMultiplier|issueMultiplier|reviewPenaltyMultiplier/);
+  });
 });

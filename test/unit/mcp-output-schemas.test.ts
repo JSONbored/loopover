@@ -176,6 +176,29 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
+  it("gittensory_explain_score_breakdown returns validated structured content", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_explain_score_breakdown",
+      arguments: {
+        repoFullName: "octo/demo",
+        contributorLogin: "octo",
+        sourceTokenScore: 40,
+        totalTokenScore: 60,
+        sourceLines: 80,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(Array.isArray(data.components)).toBe(true);
+    expect(data.highestLeverageLever).toBeTruthy();
+  });
+
   it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "computed", full_name: "owner/computed", private: false, owner: { login: "owner" }, default_branch: "main" });

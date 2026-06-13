@@ -7,7 +7,7 @@ export const MCP_PACKAGE_ENCODED_NAME = "@jsonbored%2fgittensory-mcp";
 export const MCP_PACKAGE_REGISTRY_URL = `https://registry.npmjs.org/${MCP_PACKAGE_ENCODED_NAME}`;
 export const MCP_PACKAGE_NPM_URL = `https://www.npmjs.com/package/${MCP_PACKAGE_NAME}`;
 export const MCP_PACKAGE_KNOWN_LATEST_VERSION = "0.5.0";
-export const MCP_MINIMUM_SUPPORTED_VERSION = "0.2.0";
+export const MCP_MINIMUM_SUPPORTED_VERSION = "0.5.0";
 
 export type NpmPackageMetadata = {
   "dist-tags": { latest?: string };

@@ -110,7 +110,11 @@ jobs:
           echo "Artifact validated: no symlinks, expected SSR structure, allowlisted file types only."
 
       # The Wrangler config is written HERE (trusted) — never taken from the PR — so a fork cannot
-      # control bindings, routes, or vars. It points at the downloaded built bundle.
+      # control bindings, routes, or vars. It points at the downloaded built bundle. It deliberately
+      # OMITS the production custom-domain route: `wrangler versions upload` creates a 0%-traffic
+      # preview version (a workers.dev URL) and applies no routes, so the route is unused here — and
+      # omitting it guarantees that even a future switch to `wrangler deploy` could never point
+      # fork-built code at the production domain. Do not add a `routes` block to this preview config.
       - name: Write trusted preview Wrangler config
         if: steps.cfg.outputs.ready == 'true'
         run: |
@@ -138,12 +142,6 @@ jobs:
             "vars": {
               "VITE_GITTENSORY_API_ORIGIN": "https://gittensory-api.aethereal.dev"
             },
-            "routes": [
-              {
-                "pattern": "gittensory.aethereal.dev",
-                "custom_domain": true
-              }
-            ],
             "main": "index.mjs",
             "assets": {
               "binding": "ASSETS",

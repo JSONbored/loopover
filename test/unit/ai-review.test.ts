@@ -172,6 +172,8 @@ describe("pure helpers", () => {
     expect(toPublicSafe("This change is solid.")).toBe("This change is solid.");
     expect(toPublicSafe("Boost your reward payout")).toBeNull();
     expect(toPublicSafe("")).toBeNull();
+    expect(toPublicSafe(null)).toBeNull();
+    expect(toPublicSafe(undefined)).toBeNull();
   });
 
   it("coerceAiText handles string, {response}, OpenAI choices, Anthropic content, and output_text shapes", () => {
@@ -181,6 +183,9 @@ describe("pure helpers", () => {
     expect(coerceAiText({ content: [{ type: "text", text: "a" }] })).toBe("a");
     expect(coerceAiText({ content: [] })).toBe(""); // empty content array
     expect(coerceAiText({ content: [{ type: "image" }], output_text: "fallback" })).toBe("fallback"); // non-text parts → fall through
+    expect(coerceAiText({ response: {} })).toBe("{}"); // object response → JSON.stringify
+    expect(coerceAiText({ response: "" })).toBe(""); // empty-string response → fall through
+    expect(coerceAiText({ choices: [{ text: "t" }] })).toBe("t"); // content via first.text fallback
     expect(coerceAiText({ output_text: "o" })).toBe("o");
     expect(coerceAiText(42)).toBe("");
   });

@@ -1,5 +1,8 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { getDb } from "../../src/db/client";
+import { repositoryAiKeys } from "../../src/db/schema";
 import { decryptSecret, encryptSecret } from "../../src/utils/crypto";
 import { deleteRepositoryAiKey, getDecryptedRepositoryAiKey, getRepositoryAiKeyStatus, upsertRepositoryAiKey } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
@@ -56,6 +59,16 @@ describe("repository BYOK key storage", () => {
     await expect(getDecryptedRepositoryAiKey(env, "acme/widgets")).resolves.toBeNull();
   });
 
+  it("stores real ISO timestamps when created_at/updated_at are omitted (no literal default)", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const db = getDb(env.DB);
+    await db.insert(repositoryAiKeys).values({ repoFullName: "acme/widgets", provider: "anthropic", ciphertext: "ct", iv: "iv", last4: "7890" });
+    const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, "acme/widgets")).limit(1);
+    expect(row?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(row?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(row?.createdAt).not.toBe("CURRENT_TIMESTAMP");
+  });
+
   it("refuses to store a key and cannot decrypt without the encryption secret", async () => {
     const noSecret = createTestEnv({});
     await expect(upsertRepositoryAiKey(noSecret, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-xyz" })).rejects.toThrow("missing_encryption_secret");
@@ -103,6 +116,11 @@ describe("BYOK API routes", () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
     const bad = await app.request("/v1/internal/repos/acme/widgets/ai-key", { method: "POST", headers: authHeaders(env), body: JSON.stringify({ provider: "anthropic", key: "short" }) }, env);
     expect(bad.status).toBe(400);
+
+    // A key set without a model is valid; the stored model is null.
+    const noModel = await app.request("/v1/internal/repos/acme/widgets/ai-key", { method: "POST", headers: authHeaders(env), body: JSON.stringify({ provider: "openai", key: "sk-openai-no-model-1234" }) }, env);
+    expect(noModel.status).toBe(200);
+    expect(await noModel.json()).toMatchObject({ configured: true, provider: "openai", model: null });
 
     const noSecretEnv = createTestEnv({});
     const unavailable = await app.request(

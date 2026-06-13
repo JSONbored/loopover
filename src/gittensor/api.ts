@@ -251,12 +251,18 @@ async function buildGittensorContributorSnapshot(miner: ConfirmedGittensorMinerS
   };
 }
 
+/** Hard cap on a single Gittensor API request so a slow/half-open upstream connection can never hang the
+ *  Worker indefinitely (it would otherwise stall the webhook between posting and completing the Gate
+ *  check, leaving the check in_progress forever — see the gate-finalization fix). */
+const GITTENSOR_FETCH_TIMEOUT_MS = 10_000;
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
       accept: "application/json",
       "user-agent": "gittensory/0.1",
     },
+    signal: AbortSignal.timeout(GITTENSOR_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Gittensor API failed for ${url} (${response.status})`);
   return (await response.json()) as T;

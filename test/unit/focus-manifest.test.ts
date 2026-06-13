@@ -856,6 +856,19 @@ describe("parseFocusManifest review config", () => {
     expect(m.warnings.some((w) => /review\.note.*public-safe/.test(w))).toBe(true);
   });
 
+  it("drops review override terms covered by the public comment sanitizer", () => {
+    const m = parseFocusManifest({
+      review: {
+        footer: { text: "Maintainer note: include seed phrase details." },
+        note: "Intro note mentions private rankings.",
+      },
+    });
+    expect(m.review.footerText).toBeNull();
+    expect(m.review.note).toBeNull();
+    expect(m.warnings.some((w) => /review\.footer\.text.*public-safe/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /review\.note.*public-safe/.test(w))).toBe(true);
+  });
+
   it("ignores invalid field toggles and non-mapping footer/fields with warnings", () => {
     const m = parseFocusManifest({ review: { footer: ["nope"], fields: "nope" } });
     expect(m.review.present).toBe(false);

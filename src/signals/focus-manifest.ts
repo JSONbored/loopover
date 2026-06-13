@@ -161,7 +161,7 @@ const EMPTY_MANIFEST: FocusManifest = {
  * text must not leak reward, wallet/key, ranking, or local filesystem path material.
  */
 export function isFocusManifestPublicSafe(text: string): boolean {
-  return !/\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-\s]?trust|trust score|private[-\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(text);
+  return !/\b(reward\w*|score\w*|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|farming|payouts?|rankings?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|private[-\s]?reviewability|reviewability(?:[-\s]?internals?)?|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)s?|estimated[-\s]?scores?|score[-\s]?(?:estimate|prediction|preview)s?)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:\\Users\\/i.test(text);
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {

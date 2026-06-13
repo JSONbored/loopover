@@ -64,6 +64,8 @@
     "agents": "^0.13.3",
     "drizzle-orm": "^0.45.0",
     "hono": "^4.12.23",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
@@ -71,6 +73,8 @@
     "@cloudflare/vitest-pool-workers": "^0.16.10",
     "@tktco/node-actionlint": "^1.6.0",
     "@types/node": "^24.10.1",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.7",
     "drizzle-kit": "^0.31.7",
     "git-cliff": "^2.13.1",

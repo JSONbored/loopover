@@ -46,6 +46,9 @@ gate:
   readiness:
     mode: advisory             # block | advisory | off — readiness-score floor
     minScore: 60
+  # aiReview:                  # opt-in AI maintainer review (off by default; needs the AI flags enabled)
+  #   mode: advisory           # block | advisory | off — block only blocks on a dual-model consensus defect
+  #   byok: false              # use a maintainer Anthropic/OpenAI key for the write-up; consensus stays free Workers AI
 
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.

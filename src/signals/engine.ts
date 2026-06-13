@@ -21,6 +21,7 @@ import type {
 } from "../types";
 import type { PublicContributorProfile } from "../github/public";
 import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
+import type { FocusManifestReviewConfig, ReviewFieldKey } from "./focus-manifest";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
@@ -3857,6 +3858,7 @@ export function buildPublicPrIntelligenceComment(args: {
   preflight: PreflightResult;
   settings: RepositorySettings;
   gate?: PublicPrPanelGateEvaluation | undefined;
+  review?: FocusManifestReviewConfig | undefined;
 }): string {
   const publicFindings = args.preflight.findings
     .filter((finding) => finding.severity !== "critical")
@@ -3935,22 +3937,21 @@ export function buildPublicPrIntelligenceComment(args: {
   const changeScopeComponent = readinessByKey.get("change_scope");
   const queueComponent = readinessByKey.get("queue_pressure");
   const contributorContext = contributorContextPanelResult(args.pr, args.profile, args.detection, confirmedMiner);
-  const rows: Array<[string, string, string, string]> = [
-    [
-      "Linked issue",
-      linkedIssueResult.result,
-      linkedIssueResult.evidence,
-      linkedIssueResult.action,
-    ],
-    ["Related work", relatedWorkResult.result, relatedWorkResult.evidence, relatedWorkResult.action],
+  // Each row carries a stable key so a maintainer can show/hide it from `.gittensory.yml review.fields`
+  // (default: shown). Hiding a row is cosmetic — the underlying signal/gate still functions.
+  const allRows: Array<{ key: ReviewFieldKey; cells: [string, string, string, string] }> = [
+    { key: "linkedIssue", cells: ["Linked issue", linkedIssueResult.result, linkedIssueResult.evidence, linkedIssueResult.action] },
+    { key: "relatedWork", cells: ["Related work", relatedWorkResult.result, relatedWorkResult.evidence, relatedWorkResult.action] },
     /* v8 ignore start -- Readiness components are built as a fixed key set; fallbacks guard future partial score shapes. */
-    ["Review load", scoreResultIcon(changeScopeComponent), changeScopeComponent?.evidence ?? "No public scope metadata found.", changeScopeComponent?.action ?? "No action."],
-    ["Validation evidence", scoreResultIcon(validationComponent), validationComponent?.evidence ?? "No validation signal found.", validationComponent?.action ?? "Add validation note."],
-    ["Open PR queue", scoreResultIcon(queueComponent), queueComponent?.evidence ?? "Open PR queue unavailable.", queueComponent?.action ?? "No action."],
+    { key: "reviewLoad", cells: ["Review load", scoreResultIcon(changeScopeComponent), changeScopeComponent?.evidence ?? "No public scope metadata found.", changeScopeComponent?.action ?? "No action."] },
+    { key: "validationEvidence", cells: ["Validation evidence", scoreResultIcon(validationComponent), validationComponent?.evidence ?? "No validation signal found.", validationComponent?.action ?? "Add validation note."] },
+    { key: "openPrQueue", cells: ["Open PR queue", scoreResultIcon(queueComponent), queueComponent?.evidence ?? "Open PR queue unavailable.", queueComponent?.action ?? "No action."] },
     /* v8 ignore stop */
-    ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action],
-    ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."],
+    { key: "contributorContext", cells: ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action] },
+    { key: "gateResult", cells: ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."] },
   ];
+  const reviewFields = args.review?.fields;
+  const rows: Array<[string, string, string, string]> = allRows.filter((row) => reviewFields?.[row.key] !== false).map((row) => row.cells);
   const overlapDetails = relatedWorkDetails(args.pr, scopedOverlapClusters);
   const maintainerNotes =
     publicFindings.length > 0
@@ -3959,7 +3960,9 @@ export function buildPublicPrIntelligenceComment(args: {
   // Always-on earn CTA — a permanent, free marketing surface on every reviewed PR. For a registered
   // repo the CTA points at this repo's public Gittensor miner page (social proof for THIS repo + a
   // path to register); for an unregistered repo it falls back to the general Gittensor home URL.
-  const footer = gittensoryFooter({ earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName) });
+  // The earn CTA stays a permanent marketing surface; `.gittensory.yml review.footer.text` can replace
+  // the lead copy (already public-safe-validated) but the Gittensor register link + attribution remain.
+  const footer = gittensoryFooter({ earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName), customText: args.review?.footerText ?? undefined });
   return [
     "<!-- gittensory-pr-panel:v1 -->",
     "",
@@ -3967,6 +3970,8 @@ export function buildPublicPrIntelligenceComment(args: {
       `[!${alert}]`,
       `## ${panelTitle}`,
       panelSummary,
+      // Optional maintainer intro note (public-safe-validated at parse time; re-sanitized here).
+      ...(args.review?.note ? ["", sanitizePanelText(args.review.note)] : []),
       "",
       `**Readiness score: ${readiness.total}/100**`,
       "",
@@ -4023,7 +4028,7 @@ export function buildPublicPrIntelligenceComment(args: {
  *  analysis is for registered Gittensor contributors, so we skip the panel and post a brief welcome
  *  + earn invite; the always-on footer CTA does the conversion. Carries the same panel marker so it
  *  updates in place if the author later registers (the full panel then replaces it). */
-function buildMinimalInviteComment(args: { repo: RepositoryRecord | null; pr: PullRequestRecord }): string {
+function buildMinimalInviteComment(args: { repo: RepositoryRecord | null; pr: PullRequestRecord; review?: FocusManifestReviewConfig | undefined }): string {
   return [
     "<!-- gittensory-pr-panel:v1 -->",
     "",
@@ -4034,7 +4039,7 @@ function buildMinimalInviteComment(args: { repo: RepositoryRecord | null; pr: Pu
     ]),
     "",
     "---",
-    gittensoryFooter({ earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName) }),
+    gittensoryFooter({ earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName), customText: args.review?.footerText ?? undefined }),
   ].join("\n");
 }
 

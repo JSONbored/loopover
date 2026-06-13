@@ -25,8 +25,18 @@ export function gittensorRepoEarnUrl(repoFullName: string): string {
  *  invite and anyone viewing a registered contributor's PR sees it too. The registered/non-registered
  *  distinction lives in the review BODY (full panel vs. minimal), not here.
  *  Uses only "earn" wording — never reward/payout/score (forbidden in public comments). */
-export function gittensoryFooter(opts: { earnUrl?: string | undefined } = {}): string {
+export function gittensoryFooter(opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
   const earnUrl = opts.earnUrl ?? GITTENSOR_HOME_URL;
+  // Maintainer-customized footer (via `.gittensory.yml review.footer.text`): the maintainer's public-safe
+  // lead replaces the default CTA copy, but the Gittensor register link + Gittensory attribution are
+  // ALWAYS appended — the growth surface is preserved regardless of customization.
+  if (opts.customText) {
+    return [
+      opts.customText,
+      "",
+      `[Gittensor](${GITTENSOR_HOME_URL}) lets GitHub contributors earn for the work they already do — [register to start earning →](${earnUrl}). Checked by [Gittensory](${GITTENSORY_SITE_URL}).`,
+    ].join("\n");
+  }
   return [
     `💰 **Earn for open-source contributions like this.** [Gittensor](${GITTENSOR_HOME_URL}) lets GitHub contributors earn for the work they already do — [register to start earning →](${earnUrl}).`,
     "",

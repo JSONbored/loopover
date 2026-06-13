@@ -9,6 +9,7 @@ import {
   parseFocusManifest,
   parseFocusManifestContent,
   resolveEffectiveSettings,
+  reviewConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
 } from "../../src/signals/focus-manifest";
@@ -401,6 +402,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null },
       settings: {},
+      review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -834,5 +836,42 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.autoLabelEnabled).toBe(false); // settings: override (boolean)
     expect(eff.gateCheckMode).toBe("enabled"); // gate.enabled
     expect(eff.linkedIssueGateMode).toBe("block"); // gate: wins over settings:
+  });
+});
+
+describe("parseFocusManifest review config", () => {
+  it("parses footer text, field toggles, and a note", () => {
+    const m = parseFocusManifest({ review: { footer: { text: "Reviewed by the Acme bot." }, fields: { relatedWork: false, gateResult: true }, note: "Run npm test before pushing." } });
+    expect(m.present).toBe(true);
+    expect(m.review.footerText).toBe("Reviewed by the Acme bot.");
+    expect(m.review.note).toBe("Run npm test before pushing.");
+    expect(m.review.fields).toEqual({ relatedWork: false, gateResult: true });
+  });
+
+  it("drops footer/note content that is not public-safe, with a warning", () => {
+    const m = parseFocusManifest({ review: { footer: { text: "Estimate your reward payout here" }, note: "paste your wallet hotkey" } });
+    expect(m.review.footerText).toBeNull();
+    expect(m.review.note).toBeNull();
+    expect(m.warnings.some((w) => /review\.footer\.text.*public-safe/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /review\.note.*public-safe/.test(w))).toBe(true);
+  });
+
+  it("ignores invalid field toggles and non-mapping footer/fields with warnings", () => {
+    const m = parseFocusManifest({ review: { footer: ["nope"], fields: "nope" } });
+    expect(m.review.present).toBe(false);
+    expect(m.warnings.some((w) => /"review\.footer" must be a mapping/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /"review\.fields" must be a mapping/.test(w))).toBe(true);
+    const m2 = parseFocusManifest({ review: { fields: { gateResult: "yes" } } });
+    expect(m2.review.fields).toEqual({});
+    expect(m2.warnings.some((w) => /review\.fields\.gateResult/.test(w))).toBe(true);
+  });
+
+  it("ignores a non-mapping review block, treats a review-only manifest as present, and round-trips", () => {
+    expect(parseFocusManifest({ review: ["nope"] }).warnings.some((w) => /"review" must be a mapping/.test(w))).toBe(true);
+    const original = parseFocusManifest({ review: { footer: { text: "Custom." }, fields: { openPrQueue: false }, note: "Note." } });
+    expect(original.present).toBe(true);
+    const reparsed = parseFocusManifest({ review: reviewConfigToJson(original.review) });
+    expect(reparsed.review).toEqual(original.review);
+    expect(reviewConfigToJson(parseFocusManifest({}).review)).toBeNull();
   });
 });

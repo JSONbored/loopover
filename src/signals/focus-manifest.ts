@@ -54,6 +54,24 @@ export type FocusManifestSettings = Partial<
   >
 >;
 
+/** Field keys for the public review-panel rows a maintainer can show/hide via `review.fields`. */
+export const REVIEW_FIELD_KEYS = ["linkedIssue", "relatedWork", "reviewLoad", "validationEvidence", "openPrQueue", "contributorContext", "gateResult"] as const;
+export type ReviewFieldKey = (typeof REVIEW_FIELD_KEYS)[number];
+
+/**
+ * Maintainer overrides for the public review-panel CONTENT, declared under `review:`. Customizes the
+ * panel without changing what gittensory measures: a custom public-safe footer lead line, a custom intro
+ * note, and per-row show/hide toggles. The Gittensor attribution + register link is ALWAYS appended to
+ * the footer regardless (the growth surface is preserved); maintainer text that fails the public-safe
+ * filter is dropped, never published.
+ */
+export type FocusManifestReviewConfig = {
+  present: boolean;
+  footerText: string | null;
+  note: string | null;
+  fields: Partial<Record<ReviewFieldKey, boolean>>;
+};
+
 /**
  * Normalized maintainer focus manifest. Repo owners declare which work areas are wanted,
  * blocked, or preferred so Gittensory guidance can explain why a path is encouraged or
@@ -73,6 +91,7 @@ export type FocusManifest = {
   publicNotes: string[];
   gate: FocusManifestGateConfig;
   settings: FocusManifestSettings;
+  review: FocusManifestReviewConfig;
   warnings: string[];
 };
 
@@ -133,6 +152,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
+  review: { present: false, footerText: null, note: null, fields: {} },
   warnings: [],
 };
 
@@ -145,7 +165,7 @@ export function isFocusManifestPublicSafe(text: string): boolean {
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {
-  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {} };
+  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {} } };
 }
 
 function normalizeStringList(value: JsonValue | undefined, field: string, warnings: string[]): string[] {
@@ -327,6 +347,57 @@ export function settingsOverrideToJson(settings: FocusManifestSettings): JsonVal
   return { ...settings } as Record<string, JsonValue>;
 }
 
+/** A bounded, PUBLIC-SAFE maintainer string (footer/note). Trimmed, length-capped, and rejected with a
+ *  warning if it contains any forbidden public term — it is then dropped, never published. */
+function parsePublicSafeText(value: JsonValue | undefined, field: string, warnings: string[]): string | null {
+  const text = normalizeOptionalString(value, field, warnings);
+  if (text === null) return null;
+  const bounded = text.length > MAX_ITEM_LENGTH ? text.slice(0, MAX_ITEM_LENGTH) : text;
+  if (!isFocusManifestPublicSafe(bounded)) {
+    warnings.push(`Manifest "${field}" contains content that is not public-safe; ignoring it.`);
+    return null;
+  }
+  return bounded;
+}
+
+/**
+ * Parse the optional `review:` block — maintainer overrides for the public review-panel content. Never
+ * throws; invalid/unsafe values are dropped with warnings.
+ */
+function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {} };
+  if (value === undefined || value === null) return empty;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
+    return empty;
+  }
+  const r = value as Record<string, JsonValue>;
+  const footerRecord = r.footer !== null && typeof r.footer === "object" && !Array.isArray(r.footer) ? (r.footer as Record<string, JsonValue>) : undefined;
+  if (r.footer !== undefined && r.footer !== null && footerRecord === undefined) warnings.push(`Manifest "review.footer" must be a mapping; ignoring it.`);
+  const fieldsRecord = r.fields !== null && typeof r.fields === "object" && !Array.isArray(r.fields) ? (r.fields as Record<string, JsonValue>) : undefined;
+  if (r.fields !== undefined && r.fields !== null && fieldsRecord === undefined) warnings.push(`Manifest "review.fields" must be a mapping; ignoring it.`);
+  const fields: Partial<Record<ReviewFieldKey, boolean>> = {};
+  if (fieldsRecord) {
+    for (const key of REVIEW_FIELD_KEYS) {
+      const flag = normalizeOptionalBoolean(fieldsRecord[key], `review.fields.${key}`, warnings);
+      if (flag !== null) fields[key] = flag;
+    }
+  }
+  const footerText = footerRecord ? parsePublicSafeText(footerRecord.text, "review.footer.text", warnings) : null;
+  const note = parsePublicSafeText(r.note, "review.note", warnings);
+  return { present: footerText !== null || note !== null || Object.keys(fields).length > 0, footerText, note, fields };
+}
+
+/** Serialize the review config for the cache round-trip; returns null when nothing is set. */
+export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue {
+  if (!review.present) return null;
+  const out: Record<string, JsonValue> = {};
+  if (review.footerText !== null) out.footer = { text: review.footerText };
+  if (review.note !== null) out.note = review.note;
+  if (Object.keys(review.fields).length > 0) out.fields = { ...review.fields } as Record<string, JsonValue>;
+  return out;
+}
+
 /**
  * Resolve the EFFECTIVE repository settings a webhook should act on: `.gittensory.yml` > DB settings >
  * safe defaults. The generic `settings:` override applies first; the friendly `gate:` alias then wins
@@ -369,6 +440,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     publicNotes: normalizeStringList(record.publicNotes, "publicNotes", warnings).filter(isFocusManifestPublicSafe),
     gate: parseGateConfig(record.gate, warnings),
     settings: parseSettingsOverride(record.settings, warnings),
+    review: parseReviewConfig(record.review, warnings),
     warnings,
   };
   if (
@@ -381,7 +453,8 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     manifest.linkedIssuePolicy === "optional" &&
     manifest.issueDiscoveryPolicy === "neutral" &&
     !manifest.gate.present &&
-    Object.keys(manifest.settings).length === 0
+    Object.keys(manifest.settings).length === 0 &&
+    !manifest.review.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");
     manifest.present = false;

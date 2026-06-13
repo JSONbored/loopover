@@ -201,11 +201,17 @@ Config as code (`.gittensory.yml`) — every repository setting is controllable 
   `backfillEnabled`, etc.
 - **`gate:`** is a friendly typed alias for the gate subset — `enabled` (on/off), `linkedIssue`,
   `duplicates`, `readiness: { mode, minScore }` (each `off | advisory | block`).
+- **`review:`** customizes the public review-panel CONTENT: `footer: { text }` (custom lead copy — the
+  Gittensor register link + attribution are always appended), `note` (a custom intro line), and
+  `fields: { <row>: false }` to show/hide individual panel rows (`linkedIssue`, `relatedWork`, `reviewLoad`,
+  `validationEvidence`, `openPrQueue`, `contributorContext`, `gateResult`). Maintainer text that fails the
+  public-safe filter (reward/score/wallet/hotkey/etc.) is dropped, never published.
 - Precedence: `.gittensory.yml` `gate:` > `.gittensory.yml` `settings:` > dashboard repository settings >
   safe defaults; unset fields fall back to the next layer. The committed root `.gittensory.yml` is the
   worked example. Resolved once in `resolveRepositorySettings`, so the whole app honours the file.
-- The config chooses **what** gittensory does (gate on/off, blockers, comments, labels, surface); it never
-  changes **who** can be blocked — only confirmed Gittensor contributors are ever hard-blocked.
+- The config chooses **what** gittensory does (gate on/off, blockers, comments, labels, surface, panel
+  content); it never changes **who** can be blocked — only confirmed Gittensor contributors are ever
+  hard-blocked, and the footer's Gittensor attribution/register link always remains.
 
 ## Commit And PR Titles
 

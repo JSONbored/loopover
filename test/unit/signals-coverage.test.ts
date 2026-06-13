@@ -788,6 +788,24 @@ describe("signal coverage edge cases", () => {
     expect(passingGateComment).toContain("> | Gate result | ✅ Passing | No configured blocker found. | No action. |");
     expect(passingGateComment).toContain("Public GitHub metadata was checked");
 
+    // .gittensory.yml review overrides: custom footer lead, an intro note, and a hidden row.
+    const customizedComment = buildPublicPrIntelligenceComment({
+      repo: directRepo,
+      pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },
+      profile,
+      detection,
+      queueHealth: buildQueueHealth(directRepo, [], [currentPr], buildCollisionReport(directRepo.fullName, [], [currentPr])),
+      collisions: buildCollisionReport(directRepo.fullName, [], [currentPr]),
+      preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
+      settings: gateSettings,
+      review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false } },
+    });
+    expect(customizedComment).toContain("Reviewed by the Acme maintainer bot."); // custom footer lead
+    expect(customizedComment).toContain("register to start earning"); // mandatory attribution/earn link kept
+    expect(customizedComment).toContain("Run npm test before pushing."); // intro note
+    expect(customizedComment).not.toContain("| Related work |"); // hidden row
+    expect(customizedComment).toContain("| Gate result |"); // non-hidden rows still rendered
+
     const advisoryOnlyComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
       pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },

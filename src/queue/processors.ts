@@ -1047,7 +1047,10 @@ async function maybePublishPrPublicSurface(
   }
 
   if (decision.willComment) {
-    const commentArgs = { repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation };
+    // Maintainer review-content overrides from `.gittensory.yml` (footer text, row toggles, intro note).
+    // Cached, so this is a DB read after the settings resolution already loaded the manifest.
+    const reviewConfig = (await loadRepoFocusManifest(env, repoFullName)).review;
+    const commentArgs = { repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation, review: reviewConfig };
     const deterministicBody = buildPublicPrIntelligenceComment(commentArgs);
     try {
       await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, deterministicBody);

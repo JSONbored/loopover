@@ -725,6 +725,24 @@ describe("api routes", () => {
     );
     expect(invalidValidateLinkedIssue.status).toBe(400);
 
+    const checkBeforeStart = await app.request(
+      "/v1/repos/entrius/allways-ui/check-before-start",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ issueNumber: 7 }) },
+      env,
+    );
+    expect(checkBeforeStart.status).toBe(200);
+    const checkBeforeStartBody = await checkBeforeStart.json();
+    expect(checkBeforeStartBody).toMatchObject({ repoFullName: "entrius/allways-ui", recommendation: expect.any(String) });
+    expect(["go", "raise", "avoid"]).toContain((checkBeforeStartBody as { recommendation: string }).recommendation);
+    expect(JSON.stringify(checkBeforeStartBody)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+
+    const invalidCheckBeforeStart = await app.request(
+      "/v1/repos/entrius/allways-ui/check-before-start",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ issueNumber: -3 }) },
+      env,
+    );
+    expect(invalidCheckBeforeStart.status).toBe(400);
+
     const contributorProfile = await app.request("/v1/contributors/oktofeesh1/profile", { headers: apiHeaders(env) }, env);
     expect(contributorProfile.status).toBe(200);
     await expect(contributorProfile.json()).resolves.toMatchObject({ login: "oktofeesh1", github: { topLanguages: ["TypeScript", "Python"] } });
@@ -1481,6 +1499,13 @@ describe("api routes", () => {
     );
     expect(forbiddenValidateLinkedIssue.status).toBe(403);
 
+    const forbiddenCheckBeforeStart = await app.request(
+      "/v1/repos/entrius/allways-ui/check-before-start",
+      { method: "POST", headers: { authorization: `Bearer ${unrelatedIssueQualityToken}` }, body: JSON.stringify({ issueNumber: 7 }) },
+      env,
+    );
+    expect(forbiddenCheckBeforeStart.status).toBe(403);
+
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "entrius/uncached", private: false, owner: { login: "entrius" }, default_branch: "main" });
     const computedIssueQuality = await app.request("/v1/repos/entrius/uncached/issue-quality", { headers: apiHeaders(env) }, env);
     expect(computedIssueQuality.status).toBe(200);
@@ -1497,6 +1522,21 @@ describe("api routes", () => {
       const legacy = await app.request(path, { headers: apiHeaders(env) }, env);
       expect(legacy.status).toBe(404);
     }
+  });
+
+  it("allows an authorized operator session to run pre-start checks", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "operator-admin" });
+    await upsertRepositoryFromGitHub(env, { name: "widget", full_name: "operator-admin/widget", private: false, owner: { login: "operator-admin" }, default_branch: "main" });
+    const { token } = await createSessionForGitHubUser(env, { login: "operator-admin", id: 99 });
+    const res = await app.request(
+      "/v1/repos/operator-admin/widget/check-before-start",
+      { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ issueNumber: 1 }) },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { recommendation: string };
+    expect(["go", "raise", "avoid"]).toContain(body.recommendation);
   });
 
   it("serves installation repair diagnostics and refreshes installation health", async () => {

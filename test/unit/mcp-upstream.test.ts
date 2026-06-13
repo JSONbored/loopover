@@ -44,6 +44,22 @@ describe("MCP contributor access", () => {
     expect(JSON.stringify(payload)).not.toContain("SECRET private issue");
   });
 
+  it("blocks session actors from pre-start checks for inaccessible repos", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim/private-repo", private: true, owner: { login: "victim" }, default_branch: "main" });
+    const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
+    const identity = await authenticatePrivateToken(env, token);
+    if (!identity || identity.kind !== "session") throw new Error("expected session identity");
+
+    const payload = await (
+      new GittensoryMcp(env, identity) as unknown as {
+        checkBeforeStart(input: { owner: string; repo: string; issueNumber?: number }): Promise<{ data: Record<string, unknown> }>;
+      }
+    ).checkBeforeStart({ owner: "victim", repo: "private-repo", issueNumber: 1 });
+
+    expect(payload.data).toEqual({ status: "forbidden", repoFullName: "victim/private-repo" });
+  });
+
   it("does not reveal inaccessible bounty ids through advisory errors", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim/private-repo", private: true, owner: { login: "victim" }, default_branch: "main" });

@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "deploy:api": "wrangler deploy",
+    "deploy:api": "wrangler d1 migrations apply gittensory --remote && wrangler deploy",
     "cf-typegen": "wrangler types && perl -pi -e 's/[[:blank:]]+$//' worker-configuration.d.ts",
     "db:migrate:local": "wrangler d1 migrations apply gittensory --local",
     "db:migrate:remote": "wrangler d1 migrations apply gittensory --remote",

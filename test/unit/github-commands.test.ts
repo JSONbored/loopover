@@ -1368,6 +1368,90 @@ describe("GitHub mention commands", () => {
     expect(duplicateBlockers.match(/Private readiness context available in authenticated Gittensory views/g)).toHaveLength(1);
   });
 
+  it("renders the new maintainer intelligence commands public-safely", () => {
+    const digest = sampleMaintainerDigest();
+    expect(digest.burdenForecast.repoFullName).toBe("owner/repo");
+    expect(digest.intakeHealth.repoFullName).toBe("owner/repo");
+    expect(digest.outcomePatterns.repoFullName).toBe("owner/repo");
+    expect(digest.noiseReport.repoFullName).toBe("owner/repo");
+
+    const FORBIDDEN = /wallet|hotkey|coldkey|mnemonic|raw trust score|trust score|payout|reward estimate|farming|private reviewability|scoreability/i;
+    const render = (mention: string) =>
+      buildPublicAgentCommandComment({
+        command: parseGittensoryMentionCommand(mention)!,
+        repo: { fullName: "owner/repo" } as any,
+        issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
+        pullRequest: null,
+        actorKind: "maintainer",
+        maintainerDigest: digest,
+      });
+
+    const burden = render("@gittensory burden-forecast");
+    expect(burden).toContain("**Gittensory burden forecast**");
+    expect(burden).toContain("**Burden forecast**");
+    expect(burden).toContain("Forecast level:");
+    expect(burden).not.toMatch(FORBIDDEN);
+
+    const intake = render("@gittensory intake-health");
+    expect(intake).toContain("**Contributor intake health**");
+    expect(intake).toContain("Intake level:");
+    expect(intake).not.toMatch(FORBIDDEN);
+
+    const outcomes = render("@gittensory outcome-patterns");
+    expect(outcomes).toContain("**Outcome patterns**");
+    expect(outcomes).toContain("Lane:");
+    expect(outcomes).not.toMatch(FORBIDDEN);
+
+    const noise = render("@gittensory noise-report");
+    expect(noise).toContain("**Noise report**");
+    expect(noise).toContain("Noise level:");
+    expect(noise).not.toMatch(FORBIDDEN);
+
+    expect(parseGittensoryMentionCommand("@gittensory burden-forecast")?.name).toBe("burden-forecast");
+    expect(isMaintainerOnlyCommand("noise-report")).toBe(true);
+  });
+
+  it("renders populated and empty outcome/noise report variants", () => {
+    const base = sampleMaintainerDigest();
+    const render = (mention: string, digest: typeof base) =>
+      buildPublicAgentCommandComment({
+        command: parseGittensoryMentionCommand(mention)!,
+        repo: { fullName: "owner/repo" } as any,
+        issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
+        pullRequest: null,
+        actorKind: "maintainer",
+        maintainerDigest: digest,
+      });
+
+    const populated = {
+      ...base,
+      outcomePatterns: {
+        ...base.outcomePatterns,
+        successPatterns: [{ title: "Linked + tested", detail: "Merged PRs link an issue and include validation notes.", confidence: "high" as const }],
+        riskPatterns: [{ title: "Unlinked churn", detail: "Closed PRs often lacked a linked issue.", confidence: "medium" as const }],
+      },
+      noiseReport: { ...base.noiseReport, noiseSources: ["3 open PR(s) lack linked issue context."], maintainerActions: ["needs_author" as const, "review_now" as const] },
+    };
+    const populatedOutcomes = render("@gittensory outcome-patterns", populated);
+    expect(populatedOutcomes).toContain("Merges when:");
+    expect(populatedOutcomes).toContain("Closes when:");
+    const populatedNoise = render("@gittensory noise-report", populated);
+    expect(populatedNoise).toContain("lack linked issue context");
+    expect(populatedNoise).toContain("Suggested triage:");
+
+    const empty = {
+      ...base,
+      outcomePatterns: { ...base.outcomePatterns, successPatterns: [], riskPatterns: [] },
+      noiseReport: { ...base.noiseReport, noiseSources: [], maintainerActions: [] },
+    };
+    const emptyOutcomes = render("@gittensory outcome-patterns", empty);
+    expect(emptyOutcomes).not.toContain("Merges when:");
+    expect(emptyOutcomes).not.toContain("Closes when:");
+    const emptyNoise = render("@gittensory noise-report", empty);
+    expect(emptyNoise).toContain("No obvious queue noise source");
+    expect(emptyNoise).not.toContain("Suggested triage:");
+  });
+
   it("builds maintainer-only queue digests with safe routing, sorting, and private-detail pointers", () => {
     const digest = sampleMaintainerDigest();
     expect(digest.totals.confirmedMinerPullRequests).toBe(2);

@@ -69,6 +69,7 @@ import {
   buildLinkedIssueValidation,
   buildLocalDiffPreflightResult,
   buildPreflightResult,
+  buildPreStartCheck,
   buildQueueHealth,
   buildRegistryChangeReport,
   buildRoleContext,
@@ -123,6 +124,14 @@ const validateLinkedIssueShape = {
       contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
     })
     .optional(),
+};
+
+const checkBeforeStartShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  issueNumber: z.number().int().positive().optional(),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
+  plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
 };
 
 const preflightShape = {
@@ -393,6 +402,18 @@ const validateLinkedIssueOutputSchema = {
   report: z.unknown().optional(),
 };
 
+const checkBeforeStartOutputSchema = {
+  status: z.string().optional(),
+  repoFullName: z.string().optional(),
+  found: z.boolean().optional(),
+  claimStatus: z.string().optional(),
+  duplicateClusterRisk: z.string().optional(),
+  recommendation: z.string().optional(),
+  reasons: z.unknown().optional(),
+  blockers: z.unknown().optional(),
+  report: z.unknown().optional(),
+};
+
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
   const identity = await authenticateMcpRequest(c);
@@ -592,6 +613,17 @@ export class GittensoryMcp {
         outputSchema: validateLinkedIssueOutputSchema,
       },
       async (input) => this.toolResult(await this.validateLinkedIssue(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_before_start",
+      {
+        description:
+          "Before any code is written, check whether an issue is already claimed or solved, whether a duplicate cluster is forming, and whether it is a valid target. Returns a go/raise/avoid recommendation with public-safe reasons from cached metadata. No GitHub writes.",
+        inputSchema: checkBeforeStartShape,
+        outputSchema: checkBeforeStartOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkBeforeStart(input)),
     );
 
     server.registerTool(
@@ -969,6 +1001,41 @@ export class GittensoryMcp {
         multiplierWouldApply: report.multiplierWouldApply,
         ...(report.blockingReason === undefined ? {} : { blockingReason: report.blockingReason }),
         reasons: report.reasons,
+        report: report as unknown as Record<string, unknown>,
+      },
+    };
+  }
+
+  private async checkBeforeStart(input: { owner: string; repo: string; issueNumber?: number | undefined; title?: string | undefined; plannedPaths?: string[] | undefined }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    if (!(await this.canAccessRepo(fullName))) {
+      return {
+        summary: `Forbidden: session cannot access pre-start checks for ${fullName}.`,
+        data: { status: "forbidden", repoFullName: fullName },
+      };
+    }
+    const [repo, issues, pullRequests, recentMergedPullRequests] = await Promise.all([
+      getRepository(this.env, fullName),
+      listIssueSignalSample(this.env, fullName),
+      listOpenPullRequests(this.env, fullName),
+      listRecentMergedPullRequests(this.env, fullName),
+    ]);
+    const report = buildPreStartCheck(repo, issues, pullRequests, recentMergedPullRequests, fullName, {
+      issueNumber: input.issueNumber,
+      title: input.title,
+      plannedPaths: input.plannedPaths,
+    });
+    return {
+      summary: `Gittensory pre-start check for ${fullName}: ${report.recommendation.toUpperCase()}.`,
+      data: {
+        status: "ok",
+        repoFullName: fullName,
+        found: report.found,
+        claimStatus: report.claimStatus,
+        duplicateClusterRisk: report.duplicateClusterRisk,
+        recommendation: report.recommendation,
+        reasons: report.reasons,
+        blockers: report.blockers,
         report: report as unknown as Record<string, unknown>,
       },
     };

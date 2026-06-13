@@ -87,7 +87,15 @@
     "node": ">=22.0.0"
   },
   "overrides": {
-    "esbuild": "^0.25.4"
+    "@lovable.dev/vite-plugin-dev-server-bridge": "1.0.1",
+    "@lovable.dev/vite-plugin-hmr-gate": "1.0.1",
+    "esbuild": "^0.28.1",
+    "lovable-tagger@1.2.0": {
+      "esbuild": "^0.28.1"
+    },
+    "vite": {
+      "esbuild": "^0.28.1"
+    }
   },
   "main": "index.js",
   "directories": {

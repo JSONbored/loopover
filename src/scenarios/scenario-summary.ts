@@ -178,8 +178,12 @@ function extractDataClassification(scenarioInput: AgentScenarioInput | undefined
 }
 
 function assertPublicSummaryClean(summary: PublicScenarioSummary): void {
-  const serialized = JSON.stringify(summary);
-  /* v8 ignore start -- All text fields are sanitized before this guard; defensive check for future fields. */
+  // Scan only rendered free-text fields. repoFullName/generatedAt are structural identifiers (the repo
+  // the summary is about), not sanitized content -- a legitimately named repo (e.g. "owner/hotkey-vault")
+  // must not make this guard throw and fail the whole summary.
+  const { repoFullName: _repoFullName, generatedAt: _generatedAt, ...renderedContent } = summary;
+  const serialized = JSON.stringify(renderedContent);
+  /* v8 ignore start -- Defensive: every rendered field is individually sanitized; this guards a future unsanitized field. */
   if (FORBIDDEN_PUBLIC_LANGUAGE.test(serialized)) {
     throw new Error("Public scenario summary still contains forbidden language.");
   }

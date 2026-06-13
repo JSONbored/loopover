@@ -3723,6 +3723,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
+  if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
@@ -3738,6 +3739,10 @@ function isRepoOnboardingPackPreviewPath(path: string): boolean {
 
 function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/contributor-issue-drafts\/generate$/.test(path);
+}
+
+function isRepoCheckBeforeStartPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/check-before-start$/.test(path);
 }
 
 function isIssueQualityPath(path: string): boolean {

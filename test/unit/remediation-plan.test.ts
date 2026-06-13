@@ -138,4 +138,26 @@ describe("buildRemediationPlan", () => {
 
     expect(plan.recommendedRerunCondition).toMatch(/branch, base, or PR state changes/i);
   });
+
+  it("uses account-state fallback copy when a blocker is fully redacted", () => {
+    const plan = buildRemediationPlan({
+      login: "miner",
+      repoFullName: "octo/demo",
+      accountStateBlockers: ["wallet hotkey payout"],
+      branchQualityBlockers: [],
+      scoreBlockers: ["reward farming score preview"],
+      recommendedRerunCondition: "Rerun after any branch, base, or PR state changes before opening/submitting.",
+    });
+
+    expect(plan.items).toEqual([
+      expect.objectContaining({
+        source: "account_state",
+        step: "Clear account or queue maturity blockers before opening more work.",
+      }),
+      expect.objectContaining({
+        source: "score",
+        step: "Resolve scoreability blockers before relying on this preview.",
+      }),
+    ]);
+  });
 });

@@ -1185,6 +1185,38 @@ describe("api routes", () => {
     });
     expect(JSON.stringify(localBranchPayload.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
 
+    const remediationPlan = await app.request(
+      "/v1/local/remediation-plan",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          baseRef: "origin/test",
+          headRef: "fix-cache",
+          branchName: "fix-cache-reconnect",
+          title: "Fix dashboard cache refresh after reconnect",
+          body: "Fixes #7",
+          labels: ["bug"],
+          changedFiles: [
+            { path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" },
+            { path: "test/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+          ],
+          validation: [{ command: "npm test -- cache", status: "failed", summary: "cache regression failed" }],
+          localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 66, sourceLines: 44, testTokenScore: 20 },
+          branchEligibility: { status: "eligible", source: "github_metadata", checkedAt: "2026-05-30T00:00:00.000Z" },
+        }),
+      },
+      env,
+    );
+    expect(remediationPlan.status).toBe(200);
+    await expect(remediationPlan.json()).resolves.toMatchObject({
+      login: "oktofeesh1",
+      repoFullName: "entrius/allways-ui",
+      items: expect.arrayContaining([expect.objectContaining({ rank: 1, step: expect.any(String), rerunCondition: expect.any(String) })]),
+    });
+
     const localBranchWithMcpToken = await app.request(
       "/v1/local/branch-analysis",
       {

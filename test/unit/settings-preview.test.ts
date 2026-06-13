@@ -51,6 +51,8 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     requireLinkedIssue: false,
     backfillEnabled: true,
     privateTrustEnabled: true,
+    aiReviewMode: "off",
+    aiReviewByok: false,
     ...overrides,
   };
 }

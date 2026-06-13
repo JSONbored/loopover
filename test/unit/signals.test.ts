@@ -337,6 +337,8 @@ describe("world-class backend signals", () => {
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      aiReviewMode: "off" as const,
+      aiReviewByok: false,
     };
     const collisions = buildCollisionReport(repo.fullName, issues, pullRequests);
     const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
@@ -380,6 +382,8 @@ describe("world-class backend signals", () => {
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      aiReviewMode: "off" as const,
+      aiReviewByok: false,
     };
     const collisions = buildCollisionReport(repo.fullName, issues, pullRequests);
     const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
@@ -443,6 +447,8 @@ describe("world-class backend signals", () => {
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      aiReviewMode: "off" as const,
+      aiReviewByok: false,
     };
     const collisions = buildCollisionReport(repo.fullName, issues, pullRequests);
     const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
@@ -527,6 +533,8 @@ describe("world-class backend signals", () => {
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      aiReviewMode: "off" as const,
+      aiReviewByok: false,
     };
     const undetected = detectGittensorContributor("newbie", currentPr, [currentPr], []);
     const cachedDetected = detectGittensorContributor("oktofeesh1", currentPr, [currentPr, { ...currentPr, number: 10, mergedAt: "2026-05-01T00:00:00.000Z" }], []);
@@ -586,6 +594,8 @@ describe("world-class backend signals", () => {
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      aiReviewMode: "off" as const,
+      aiReviewByok: false,
     };
 
     const comment = buildPublicPrIntelligenceComment({ repo, pr: currentPr, profile, detection, queueHealth, collisions, preflight, settings });

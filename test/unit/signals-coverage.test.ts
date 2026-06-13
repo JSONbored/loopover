@@ -1533,6 +1533,8 @@ function repoSettings(repoFullName: string): RepositorySettings {
     requireLinkedIssue: false,
     backfillEnabled: true,
     privateTrustEnabled: true,
+    aiReviewMode: "off",
+    aiReviewByok: false,
   };
 }
 

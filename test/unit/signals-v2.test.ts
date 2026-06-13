@@ -1625,6 +1625,8 @@ describe("v2 signal builders", () => {
         requireLinkedIssue: false,
         backfillEnabled: true,
         privateTrustEnabled: true,
+        aiReviewMode: "off",
+        aiReviewByok: false,
       },
     });
     expect(comment).toContain("Author: `unknown`");

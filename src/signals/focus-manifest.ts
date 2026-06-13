@@ -21,6 +21,8 @@ export type FocusManifestGateConfig = {
   duplicates: GateRuleMode | null;
   readinessMode: GateRuleMode | null;
   readinessMinScore: number | null;
+  aiReviewMode: GateRuleMode | null;
+  aiReviewByok: boolean | null;
 };
 
 /**
@@ -43,6 +45,8 @@ export type FocusManifestSettings = Partial<
     | "duplicatePrGateMode"
     | "qualityGateMode"
     | "qualityGateMinScore"
+    | "aiReviewMode"
+    | "aiReviewByok"
     | "autoLabelEnabled"
     | "gittensorLabel"
     | "createMissingLabel"
@@ -137,6 +141,8 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   duplicates: null,
   readinessMode: null,
   readinessMinScore: null,
+  aiReviewMode: null,
+  aiReviewByok: null,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -252,6 +258,11 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   if (readiness !== undefined && readiness !== null && readinessRecord === undefined) {
     warnings.push(`Manifest gate field "gate.readiness" must be a mapping; ignoring it.`);
   }
+  const aiReview = record.aiReview;
+  const aiReviewRecord = aiReview !== null && typeof aiReview === "object" && !Array.isArray(aiReview) ? (aiReview as Record<string, JsonValue>) : undefined;
+  if (aiReview !== undefined && aiReview !== null && aiReviewRecord === undefined) {
+    warnings.push(`Manifest gate field "gate.aiReview" must be a mapping; ignoring it.`);
+  }
   const gate: FocusManifestGateConfig = {
     present: false,
     enabled: normalizeOptionalBoolean(record.enabled, "gate.enabled", warnings),
@@ -259,9 +270,17 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
     readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
+    aiReviewMode: normalizeOptionalGateMode(aiReviewRecord?.mode, "gate.aiReview.mode", warnings),
+    aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
   };
   gate.present =
-    gate.enabled !== null || gate.linkedIssue !== null || gate.duplicates !== null || gate.readinessMode !== null || gate.readinessMinScore !== null;
+    gate.enabled !== null ||
+    gate.linkedIssue !== null ||
+    gate.duplicates !== null ||
+    gate.readinessMode !== null ||
+    gate.readinessMinScore !== null ||
+    gate.aiReviewMode !== null ||
+    gate.aiReviewByok !== null;
   return gate;
 }
 
@@ -280,6 +299,12 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.readinessMode !== null) readiness.mode = gate.readinessMode;
     if (gate.readinessMinScore !== null) readiness.minScore = gate.readinessMinScore;
     out.readiness = readiness;
+  }
+  if (gate.aiReviewMode !== null || gate.aiReviewByok !== null) {
+    const aiReview: Record<string, JsonValue> = {};
+    if (gate.aiReviewMode !== null) aiReview.mode = gate.aiReviewMode;
+    if (gate.aiReviewByok !== null) aiReview.byok = gate.aiReviewByok;
+    out.aiReview = aiReview;
   }
   return out;
 }
@@ -330,11 +355,13 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (qualityGateMode !== null) out.qualityGateMode = qualityGateMode;
   const qualityGateMinScore = normalizeOptionalScore(r.qualityGateMinScore, "settings.qualityGateMinScore", warnings);
   if (qualityGateMinScore !== null) out.qualityGateMinScore = qualityGateMinScore;
+  const aiReviewMode = normalizeOptionalGateMode(r.aiReviewMode, "settings.aiReviewMode", warnings);
+  if (aiReviewMode !== null) out.aiReviewMode = aiReviewMode;
   const gittensorLabel = normalizeOptionalString(r.gittensorLabel, "settings.gittensorLabel", warnings);
   if (gittensorLabel !== null) out.gittensorLabel = gittensorLabel;
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
   if (publicSurface !== null) out.publicSurface = publicSurface;
-  for (const key of ["autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled"] as const) {
+  for (const key of ["aiReviewByok", "autoLabelEnabled", "createMissingLabel", "includeMaintainerAuthors", "requireLinkedIssue", "backfillEnabled", "privateTrustEnabled"] as const) {
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
   }
@@ -412,6 +439,8 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
+  if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
+  if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   return effective;
 }
 

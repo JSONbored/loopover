@@ -67,6 +67,8 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     requireLinkedIssue: false,
     backfillEnabled: true,
     privateTrustEnabled: true,
+    aiReviewMode: "off",
+    aiReviewByok: false,
     ...overrides,
   };
 }

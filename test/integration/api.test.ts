@@ -4373,6 +4373,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_rank_local_next_actions");
     expect(toolNames).toContain("gittensory_compare_local_variants");
     expect(toolNames).toContain("gittensory_explain_local_blockers");
+    expect(toolNames).toContain("gittensory_remediation_plan");
     expect(toolNames).toContain("gittensory_prepare_pr_packet");
     expect(toolNames).toContain("gittensory_agent_plan_next_work");
     expect(toolNames).toContain("gittensory_agent_start_run");

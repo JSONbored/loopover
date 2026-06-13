@@ -126,6 +126,7 @@ import {
   preflightBranchWithAgent,
   startAgentRun,
 } from "../services/agent-orchestrator";
+import { buildRemediationPlan } from "../services/remediation-plan";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildAndPersistContributorDecisionPack,
@@ -1994,6 +1995,59 @@ export function createApp() {
       metadata: { hasLocalScorer: Boolean(parsed.data.localScorer), changedFileCount: parsed.data.changedFiles?.length ?? 0, linkedIssueCount: parsed.data.linkedIssues?.length ?? 0 },
     });
     return c.json(response);
+  });
+
+  app.post("/v1/local/remediation-plan", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = localBranchAnalysisSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
+    const unauthorized = await requireContributorAccess(c, parsed.data.login);
+    if (unauthorized) return unauthorized;
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([
+      loadContributorFastContext(c.env, parsed.data.login),
+      getRepository(c.env, parsed.data.repoFullName),
+      listIssues(c.env, parsed.data.repoFullName),
+      listPullRequests(c.env, parsed.data.repoFullName),
+      listRecentMergedPullRequests(c.env, parsed.data.repoFullName),
+      listBountiesByRepo(c.env, parsed.data.repoFullName),
+      getOrCreateScoringModelSnapshot(c.env),
+      loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
+      loadRepoFocusManifest(c.env, parsed.data.repoFullName),
+    ]);
+    const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
+    const scoringProfile = buildContributorScoringProfile({ login: parsed.data.login, fit, scoringSnapshot: snapshot });
+    const checkSummaries = await loadCheckSummariesForPullRequests(c.env, parsed.data.repoFullName, parsed.data, pullRequests);
+    const analysisInput = parsed.data.focusManifest !== undefined || !repoManifest.present
+      ? parsed.data
+      : { ...parsed.data, focusManifest: repoManifest as unknown };
+    const analysis = buildLocalBranchAnalysis({
+      input: analysisInput,
+      repo,
+      issues,
+      pullRequests,
+      contributorPullRequests: context.contributorPullRequests,
+      recentMergedPullRequests,
+      bounties,
+      repositories: context.repositories,
+      checkSummaries,
+      profile: context.profile,
+      outcomeHistory: context.outcomeHistory,
+      scoringSnapshot: snapshot,
+      scoringProfile,
+      issueQuality: issueQuality?.report,
+      gittensorSnapshot: context.gittensorSnapshot,
+    });
+    return c.json(
+      buildRemediationPlan({
+        login: analysis.login,
+        repoFullName: analysis.repoFullName,
+        branchQualityBlockers: analysis.branchQualityBlockers,
+        accountStateBlockers: analysis.accountStateBlockers,
+        scoreBlockers: analysis.scoreBlockers,
+        recommendedRerunCondition: analysis.recommendedRerunCondition,
+        localFindings: analysis.localFindings,
+      }),
+    );
   });
 
   app.post("/v1/agent/runs", async (c) => {

@@ -502,6 +502,20 @@ server.registerTool(
 );
 
 server.registerTool(
+  "gittensory_remediation_plan",
+  {
+    description: "Analyze the current git branch and return an ordered public-safe remediation checklist with rerun conditions.",
+    inputSchema: currentBranchShape,
+  },
+  async (input) => {
+    const workspaceInput = await withClientWorkspaceRoots(input);
+    const payload = buildBranchAnalysisPayload({ ...workspaceInput, cwd: resolveWorkspaceCwd(workspaceInput).cwd });
+    const { localScorerStatus: _localScorerStatus, ...body } = payload;
+    return toolResult("Gittensory remediation plan.", await apiPost("/v1/local/remediation-plan", body));
+  },
+);
+
+server.registerTool(
   "gittensory_prepare_pr_packet",
   {
     description: "Analyze the current git branch and return a public-safe PR packet. Sends metadata only.",

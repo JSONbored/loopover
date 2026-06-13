@@ -32,6 +32,13 @@ concurrency:
 jobs:
   deploy:
     name: Deploy UI preview version
+    # Bind the ONE job that holds Cloudflare credentials to a GitHub deployment environment, so the org
+    # can attach approval gating and/or environment-scoped secrets to it. Unprotected by default (so
+    # previews stay automatic); add required reviewers in Settings → Environments → preview to require a
+    # manual approval before any (fork) preview deploys.
+    environment:
+      name: preview
+      url: ${{ steps.upload.outputs.preview_url }}
     # Only successful build runs that originated from a pull_request (incl forks). A path-skipped or
     # failed build still fires workflow_run with a non-success conclusion — ignore those.
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
@@ -70,6 +77,37 @@ jobs:
           path: preview-dist
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
+
+      # The artifact was produced by the UNTRUSTED build (fork code). Validate it before handing it to
+      # wrangler: reject symlinks (a path-traversal / exfil vector when the bundle is processed), require
+      # the expected SSR build structure, and allowlist file extensions so a malicious build can't smuggle
+      # scripts/binaries/unexpected paths into the deploy.
+      - name: Validate downloaded artifact
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          cd preview-dist
+          # 1) No symlinks anywhere in the bundle.
+          symlinks="$(find . -type l)"
+          if [ -n "$symlinks" ]; then
+            echo "::error::Artifact contains symlinks — refusing to deploy:"
+            printf '%s\n' "$symlinks"
+            exit 1
+          fi
+          # 2) Required SSR build structure (server worker entry + client assets dir).
+          test -f server/index.mjs || { echo "::error::artifact missing server/index.mjs"; exit 1; }
+          test -d client || { echo "::error::artifact missing client/ assets dir"; exit 1; }
+          # 3) Allowlist file extensions — fail on anything that isn't a normal web/build output (blocks
+          #    smuggled scripts/binaries). A few extensionless CF asset files are explicitly permitted.
+          unexpected="$(find . -regextype posix-extended -type f \
+            -not -iregex '.*\.(mjs|js|cjs|map|json|css|html?|txt|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|wasm|xml|webmanifest|md|csv|wgsl|glb|gltf)$' \
+            -not -name '_headers' -not -name '_redirects' -not -name '_routes.json' -not -name '.assetsignore')"
+          if [ -n "$unexpected" ]; then
+            echo "::error::Artifact contains unexpected file types — refusing to deploy:"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+          echo "Artifact validated: no symlinks, expected SSR structure, allowlisted file types only."
 
       # The Wrangler config is written HERE (trusted) — never taken from the PR — so a fork cannot
       # control bindings, routes, or vars. It points at the downloaded built bundle.
@@ -130,9 +168,12 @@ jobs:
         run: |
           set -o pipefail
           out=$(wrangler versions upload --config preview-dist/server/wrangler.preview.json 2>&1 | tee /dev/stderr)
-          url=$(printf '%s\n' "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -n1)
+          # Take a workers.dev URL that belongs to the gittensory-ui worker, so any other URL in the logs
+          # (or a changed output format) can't be recorded as the preview by mistake. Tolerant of the
+          # version-alias prefix (`<alias>-gittensory-ui.<sub>.workers.dev`).
+          url=$(printf '%s\n' "$out" | grep -oiE 'https://[a-z0-9.-]+\.workers\.dev' | grep -i 'gittensory-ui' | head -n1)
           if [ -z "$url" ]; then
-            echo "::error::Could not parse a preview URL from wrangler output"
+            echo "::error::Could not parse an expected gittensory-ui preview URL from wrangler output"
             exit 1
           fi
           echo "preview_url=$url" >> "$GITHUB_OUTPUT"

@@ -936,6 +936,7 @@ export async function runAiReviewForAdvisory(
 export async function runAiSlopForAdvisory(
   env: Env,
   args: {
+    settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
     repoFullName: string;
     pr: { number: number; title: string; body?: string | null | undefined };
@@ -946,6 +947,14 @@ export async function runAiSlopForAdvisory(
 ): Promise<void> {
   if (!args.advisory.headSha) return;
   try {
+    // BYOK (opt-in): reuse the repo's encrypted key + aiReviewByok flag — one BYOK key serves both AI
+    // features. A declared provider must match the stored key's provider, else skip BYOK (Workers-AI
+    // fallback). The slop advisory stays advisory-only regardless of which model writes it.
+    const storedKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
+    const providerKey =
+      storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
+        ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
+        : null;
     const result = await runGittensoryAiSlopAdvisory(env, {
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
@@ -954,6 +963,7 @@ export async function runAiSlopForAdvisory(
       diff: buildAiReviewDiff(args.files),
       actor: args.author,
       deterministicBand: args.deterministicBand,
+      providerKey,
     });
     if (result.status === "ok" && result.finding) args.advisory.findings.push(result.finding);
   } catch (error) {
@@ -1159,7 +1169,7 @@ async function maybePublishPrPublicSurface(
       // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (settings.slopAiAdvisory) {
-        await runAiSlopForAdvisory(env, { advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band });
+        await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band });
       }
     }
 

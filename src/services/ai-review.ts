@@ -16,7 +16,7 @@
 // that trips the public/private boundary is dropped, not published. Free Workers-AI calls are metered against
 // the shared daily neuron budget; maintainer-paid BYOK calls have a separate repo/day cap. All calls
 // are audited via `recordAiUsageEvent`.
-import { countByokAiReviewEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 
 /**
@@ -230,16 +230,24 @@ const PROVIDER_DEFAULT_MODEL: Record<AiReviewProviderKey["provider"], string> = 
  *  the existing fail-safe null path. Mirrors the github/gittensor fetch-timeout convention. */
 const AI_PROVIDER_TIMEOUT_MS = 20_000;
 
-/** Default per-repository/day cap for maintainer-paid BYOK advisory calls. */
-const DEFAULT_BYOK_DAILY_REPO_LIMIT = 25;
+/** Default per-repository/day cap for maintainer-paid BYOK calls (shared across all BYOK AI features). */
+export const DEFAULT_BYOK_DAILY_REPO_LIMIT = 25;
 
-/** Why a BYOK advisory call produced no review — surfaced in the audit event for observability (never a key). */
-type ProviderFailure = "timeout" | "http_error" | "exception";
+/** Why a BYOK call produced no usable output — surfaced in the audit event for observability (never a key). */
+export type ProviderFailure = "timeout" | "http_error" | "exception";
 type ProviderReviewOutcome = { review: ModelReview | null; failure?: ProviderFailure };
 
-/** Run the maintainer's BYOK frontier model for the advisory write-up. Never throws; the review is null on
- *  any error and `failure` names the reason (timeout/http_error/exception) for the audit trail. */
-async function runProviderReview(providerKey: AiReviewProviderKey, system: string, user: string, maxTokens: number): Promise<ProviderReviewOutcome> {
+/**
+ * POST to the maintainer's BYOK provider and return the raw response text (or null + a failure reason).
+ * Never throws. Shared by every BYOK AI path (review, slop, …) so the endpoint/timeout/error handling
+ * lives in one place; callers parse the returned text into their own shape.
+ */
+export async function callAiProvider(
+  providerKey: AiReviewProviderKey,
+  system: string,
+  user: string,
+  maxTokens: number,
+): Promise<{ text: string | null; failure?: ProviderFailure }> {
   const model = providerKey.model || PROVIDER_DEFAULT_MODEL[providerKey.provider];
   try {
     let response: Response;
@@ -265,13 +273,20 @@ async function runProviderReview(providerKey: AiReviewProviderKey, system: strin
         signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       });
     }
-    if (!response.ok) return { review: null, failure: "http_error" };
-    return { review: parseModelReview(coerceAiText(await response.json())) };
+    if (!response.ok) return { text: null, failure: "http_error" };
+    return { text: coerceAiText(await response.json()) };
   } catch (error) {
     // AbortSignal.timeout rejects with a TimeoutError; everything else is a network/parse exception.
     const failure: ProviderFailure = (error as { name?: string } | null)?.name === "TimeoutError" ? "timeout" : "exception";
-    return { review: null, failure };
+    return { text: null, failure };
   }
+}
+
+/** Run the maintainer's BYOK frontier model for the advisory write-up. Never throws; the review is null on
+ *  any error and `failure` names the reason (timeout/http_error/exception) for the audit trail. */
+async function runProviderReview(providerKey: AiReviewProviderKey, system: string, user: string, maxTokens: number): Promise<ProviderReviewOutcome> {
+  const { text, failure } = await callAiProvider(providerKey, system, user, maxTokens);
+  return { review: text ? parseModelReview(text) : null, ...(failure ? { failure } : {}) };
 }
 
 /** Compose a public-safe markdown advisory blurb from one or two model reviews. Null if nothing safe. */
@@ -336,7 +351,7 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
 
   if (input.providerKey) {
     const byokDailyLimit = clampNumber(Number(env.AI_BYOK_DAILY_REPO_LIMIT || DEFAULT_BYOK_DAILY_REPO_LIMIT), 0, 10_000);
-    const byokUsed = await countByokAiReviewEventsForRepoSince(env, input.repoFullName, utcDayStartIso());
+    const byokUsed = await countByokAiEventsForRepoSince(env, input.repoFullName, utcDayStartIso());
     if (byokUsed >= byokDailyLimit) {
       await record(env, input, "quota_exceeded", 0, `BYOK daily repo limit ${byokDailyLimit} reached`);
       return { status: "quota_exceeded", estimatedNeurons, remainingBudget };

@@ -2169,7 +2169,12 @@ export async function sumAiEstimatedNeuronsSince(env: Env, sinceIso: string): Pr
   return Number(row?.total ?? 0);
 }
 
-export async function countByokAiReviewEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
+/**
+ * Count a repo's maintainer-billed (BYOK) AI calls since `sinceIso`, across ALL AI features (review +
+ * slop + any future BYOK path). One shared per-repo/day budget governs every BYOK feature, so a repo
+ * cannot multiply its frontier-model spend by enabling more capabilities.
+ */
+export async function countByokAiEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
   const db = getDb(env.DB);
   const [row] = await db
     .select({ total: sql<number>`count(*)` })
@@ -2177,7 +2182,6 @@ export async function countByokAiReviewEventsForRepoSince(env: Env, repoFullName
     .where(
       and(
         gte(aiUsageEvents.createdAt, sinceIso),
-        eq(aiUsageEvents.feature, "ai_review_pr"),
         eq(aiUsageEvents.status, "ok"),
         sql`${aiUsageEvents.model} like 'byok:%'`,
         sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,

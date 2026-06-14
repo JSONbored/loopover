@@ -7,7 +7,8 @@ import {
 } from "../../src/services/ai-slop";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { runAiSlopForAdvisory } from "../../src/queue/processors";
-import type { Advisory, PullRequestFileRecord } from "../../src/types";
+import { recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
+import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 const { parseSlopOpinion, slopFindingFromOpinion, buildUserPrompt } = __aiSlopInternals;
@@ -187,6 +188,20 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.band).toBe("low");
   });
+
+  it("enforces the shared BYOK daily repo cap before any provider call (BYOK does not draw on the free budget)", async () => {
+    const run = vi.fn();
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1", AI_BYOK_DAILY_REPO_LIMIT: "1" });
+    // Seed one prior BYOK event for this repo so the cap (1) is already reached.
+    await recordAiUsageEvent(env, { feature: "ai_review_pr", actor: null, route: "x", model: "byok:anthropic", status: "ok", estimatedNeurons: 1, detail: "seed", metadata: { repoFullName: baseInput.repoFullName } });
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    // Free budget is exhausted (1 neuron) but BYOK skips it; the BYOK cap is what stops the call.
+    const result = await runGittensoryAiSlopAdvisory(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
+    expect(result.status).toBe("quota_exceeded");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
 });
 
 describe("the AI slop advisory can never become a gate blocker", () => {
@@ -248,10 +263,12 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     { repoFullName: "acme/widgets", pullNumber: 3, path: "src/a.ts", status: "modified", additions: 80, deletions: 2, changes: 82, payload: { patch: "@@\n+// set x\n+const x = 1;" } },
   ];
   const pr = { number: 3, title: "Tidy", body: "cleanup" };
+  const noByok = { aiReviewByok: false } as RepositorySettings;
 
   it("appends a single ai_slop_advisory finding when the model flags slop", async () => {
     const adv = advisory();
     await runAiSlopForAdvisory(enabledEnv(async () => ({ response: slopJson({ band: "high" }) })), {
+      settings: noByok,
       advisory: adv,
       repoFullName: "acme/widgets",
       pr,
@@ -266,7 +283,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
     const run = vi.fn();
-    await runAiSlopForAdvisory(enabledEnv(run), { advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "low" });
+    await runAiSlopForAdvisory(enabledEnv(run), { settings: noByok, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "low" });
     expect(noSha.findings).toEqual([]);
     expect(run).not.toHaveBeenCalled();
   });
@@ -274,6 +291,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
   it("adds nothing when the model judges the change clean", async () => {
     const adv = advisory();
     await runAiSlopForAdvisory(enabledEnv(async () => ({ response: slopJson({ band: "clean", rationale: "genuine", signals: [] }) })), {
+      settings: noByok,
       advisory: adv,
       repoFullName: "acme/widgets",
       pr,
@@ -287,7 +305,35 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
   it("is fail-safe: a thrown error (broken DB) yields no finding and never throws", async () => {
     const adv = advisory();
     const env = { ...enabledEnv(async () => ({ response: slopJson() })), DB: undefined } as unknown as Env;
-    await expect(runAiSlopForAdvisory(env, { advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high" })).resolves.toBeUndefined();
+    await expect(runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high" })).resolves.toBeUndefined();
     expect(adv.findings).toEqual([]);
+  });
+
+  it("uses the maintainer's BYOK frontier model (not Workers AI) when aiReviewByok is on and a key is configured", async () => {
+    const run = vi.fn(async () => ({ response: slopJson({ band: "clean" }) })); // Workers AI must NOT be used
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      TOKEN_ENCRYPTION_SECRET: "ai-slop-byok-test-encryption-secret-32b",
+    });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-slop-9999", model: null });
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ content: [{ type: "text", text: slopJson({ band: "high" }) }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = advisory();
+    await runAiSlopForAdvisory(env, {
+      settings: { aiReviewByok: true } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      files,
+      deterministicBand: "elevated",
+    });
+    // The advisory came from the BYOK provider (high band → finding), and Workers AI was never called.
+    expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.anthropic.com/v1/messages");
+    expect(run).not.toHaveBeenCalled();
   });
 });

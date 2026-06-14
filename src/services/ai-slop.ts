@@ -17,10 +17,13 @@
 // forced through `toPublicSafe`; anything tripping the public/private boundary is dropped, not published.
 import type { SignalFinding } from "../signals/engine";
 import type { SlopBand } from "../signals/slop";
-import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import {
+  type AiReviewProviderKey,
   BEST_REVIEW_MODELS,
+  DEFAULT_BYOK_DAILY_REPO_LIMIT,
   RELIABLE_FALLBACK_MODELS,
+  callAiProvider,
   clampNumber,
   coerceAiText,
   estimateNeurons,
@@ -59,6 +62,10 @@ export type AiSlopInput = {
   /** The deterministic band already computed for this PR — passed as context so the model can corroborate
    *  or temper it. Never used to override the model's own judgement. */
   deterministicBand?: SlopBand | undefined;
+  /** Optional BYOK: when present, the maintainer's frontier model writes the advisory (billed to their
+   *  account, counted against the shared per-repo/day BYOK cap) instead of free Workers AI. Advisory-only
+   *  either way — BYOK never changes whether this can block (it can't). */
+  providerKey?: AiReviewProviderKey | null | undefined;
 };
 
 export type AiSlopResult =
@@ -173,7 +180,10 @@ export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput):
 
   const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
   const user = buildUserPrompt(input);
-  const estimatedNeurons = estimateNeurons(SLOP_SYSTEM_PROMPT.length + user.length, maxTokens, 1);
+  // BYOK bills the maintainer's own account, so it does NOT draw on the free neuron budget — it has a
+  // separate per-repo/day cap shared with the AI review path. Free Workers-AI = one metered call.
+  const freeCalls = input.providerKey ? 0 : 1;
+  const estimatedNeurons = freeCalls === 0 ? 0 : estimateNeurons(SLOP_SYSTEM_PROMPT.length + user.length, maxTokens, 1);
   const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
@@ -181,12 +191,28 @@ export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput):
     await record(env, input, "quota_exceeded", 0, `estimated ${estimatedNeurons} neurons exceeds remaining ${remainingBudget}`);
     return { status: "quota_exceeded", estimatedNeurons, remainingBudget };
   }
+  if (input.providerKey) {
+    const byokDailyLimit = clampNumber(Number(env.AI_BYOK_DAILY_REPO_LIMIT || DEFAULT_BYOK_DAILY_REPO_LIMIT), 0, 10_000);
+    const byokUsed = await countByokAiEventsForRepoSince(env, input.repoFullName, utcDayStartIso());
+    if (byokUsed >= byokDailyLimit) {
+      await record(env, input, "quota_exceeded", 0, `BYOK daily repo limit ${byokDailyLimit} reached`);
+      return { status: "quota_exceeded", estimatedNeurons, remainingBudget };
+    }
+  }
 
-  const opinion = await runWorkersSlopOpinion(env, SLOP_SYSTEM_PROMPT, user, maxTokens);
+  // BYOK frontier model if configured, else the free Workers-AI primary (with fallback). Both fail-safe to null.
+  let opinion: SlopOpinion | null;
+  if (input.providerKey) {
+    const { text } = await callAiProvider(input.providerKey, SLOP_SYSTEM_PROMPT, user, maxTokens);
+    opinion = text ? parseSlopOpinion(text) : null;
+  } else {
+    opinion = await runWorkersSlopOpinion(env, SLOP_SYSTEM_PROMPT, user, maxTokens);
+  }
   const finding = opinion ? slopFindingFromOpinion(opinion) : null;
   await record(env, input, "ok", estimatedNeurons, finding ? `advisory finding (${opinion?.band})` : opinion ? `clean/no-op (${opinion.band})` : "no usable output", {
     band: opinion?.band ?? null,
     surfaced: Boolean(finding),
+    byok: Boolean(input.providerKey),
   });
   return { status: "ok", finding, band: opinion?.band ?? null, estimatedNeurons };
 }
@@ -196,7 +222,8 @@ async function record(env: Env, input: AiSlopInput, status: string, estimatedNeu
     feature: "ai_slop_pr",
     actor: input.actor ?? null,
     route: "github_app.ai_slop",
-    model: BEST_REVIEW_MODELS.join("+"),
+    // `byok:<provider>` so countByokAiEventsForRepoSince (model LIKE 'byok:%') counts it toward the cap.
+    model: input.providerKey ? `byok:${input.providerKey.provider}` : BEST_REVIEW_MODELS.join("+"),
     status,
     estimatedNeurons,
     detail,

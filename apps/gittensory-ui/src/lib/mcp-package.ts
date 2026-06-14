@@ -6,7 +6,9 @@ export const MCP_PACKAGE_NAME = "@jsonbored/gittensory-mcp";
 export const MCP_PACKAGE_ENCODED_NAME = "@jsonbored%2fgittensory-mcp";
 export const MCP_PACKAGE_REGISTRY_URL = `https://registry.npmjs.org/${MCP_PACKAGE_ENCODED_NAME}`;
 export const MCP_PACKAGE_NPM_URL = `https://www.npmjs.com/package/${MCP_PACKAGE_NAME}`;
-export const MCP_PACKAGE_KNOWN_LATEST_VERSION = "0.6.0";
+// Lags one release behind by design: ui:version-audit requires this to equal npm dist-tags.latest, so it is
+// bumped to the new version only AFTER that version publishes (npm latest is still 0.5.0 until mcp-v0.6.0 ships).
+export const MCP_PACKAGE_KNOWN_LATEST_VERSION = "0.5.0";
 export const MCP_MINIMUM_SUPPORTED_VERSION = "0.5.0";
 
 export type NpmPackageMetadata = {

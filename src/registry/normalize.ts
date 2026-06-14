@@ -1,4 +1,4 @@
-import type { JsonValue, RegistryRepoConfig, RegistrySnapshot } from "../types";
+import type { JsonValue, RegistryRepoConfig, RegistrySnapshot, RepoTimeDecayOverrides } from "../types";
 
 type RawRepoConfig = Record<string, JsonValue>;
 
@@ -66,8 +66,26 @@ function normalizeRepo(repo: string, config: RawRepoConfig): RegistryRepoConfig 
     defaultLabelMultiplier: numberValue(config.default_label_multiplier),
     fixedBaseScore: numberValue(config.fixed_base_score),
     eligibilityMode: stringValue(config.eligibility_mode),
+    timeDecay: parseTimeDecayOverrides(config.scoring),
     raw: config,
   };
+}
+
+// Per-repo time-decay overrides (#703), from the registry's nested `scoring.time_decay` (the same source
+// upstream reads). Each key is optional; absent/non-numeric → null (resolveTimeDecay falls back to the
+// global default). Returns null when there is no usable override, so a repo without one uses all defaults.
+function parseTimeDecayOverrides(scoring: JsonValue | undefined): RepoTimeDecayOverrides | null {
+  if (!scoring || typeof scoring !== "object" || Array.isArray(scoring)) return null;
+  const raw = (scoring as Record<string, JsonValue>).time_decay;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const td = raw as Record<string, JsonValue>;
+  const overrides: RepoTimeDecayOverrides = {
+    gracePeriodHours: numberValue(td.grace_period_hours),
+    sigmoidMidpointDays: numberValue(td.sigmoid_midpoint_days),
+    sigmoidSteepness: numberValue(td.sigmoid_steepness),
+    minMultiplier: numberValue(td.min_multiplier),
+  };
+  return Object.values(overrides).some((value) => value !== null) ? overrides : null;
 }
 
 function numberValue(value: JsonValue | undefined): number | null {

@@ -1,4 +1,4 @@
-import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, ScoringModelSnapshotRecord, ScorePreviewRecord } from "../types";
+import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, RepoTimeDecayOverrides, ScoringModelSnapshotRecord, ScorePreviewRecord } from "../types";
 import { nowIso } from "../utils/json";
 
 export type ScorePreviewInput = {
@@ -328,7 +328,8 @@ function computeScoreCore(
   // Upstream time-decay (#703): mirrors upstream's `scored.time_decay_multiplier` applied to a PR's score.
   // Opt-in + env-gated (default off). A fresh PR (prAgeHours below the grace period) yields 1.0, so a normal
   // new-PR preview is unchanged even when enabled — only an aged-PR projection decays.
-  const timeDecayMultiplier = input.applyTimeDecay ? calculateTimeDecay(nonNegative(input.prAgeHours), constants) : 1;
+  // Per-repo curve (#703): the repo's registry `scoring.time_decay` overrides overlay the snapshot defaults.
+  const timeDecayMultiplier = input.applyTimeDecay ? calculateTimeDecay(nonNegative(input.prAgeHours), constants, config?.timeDecay) : 1;
   const estimatedMergedScore = roundScore(
     baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier * timeDecayMultiplier,
   );
@@ -903,20 +904,39 @@ function constant(constants: Record<string, number>, key: string, fallback: numb
 }
 
 /**
- * Upstream gittensor's sigmoid time-decay multiplier (#703), ported verbatim from the validator's
- * `calculate_time_decay` (gittensor/validator/utils/datetime_utils.py): for the first
- * TIME_DECAY_GRACE_PERIOD_HOURS the multiplier is exactly 1.0 (hard grace cutoff); after that it follows a
- * logistic on days-since-merge centred at TIME_DECAY_SIGMOID_MIDPOINT (50% at that point) with
- * TIME_DECAY_SIGMOID_STEEPNESS_SCALAR, floored at TIME_DECAY_MIN_MULTIPLIER. Pure + deterministic.
+ * Resolve a repo's time-decay curve: each parameter is the repo's per-repo override (from the registry's
+ * `scoring.time_decay`) when present, else the global default constant from the live scoring snapshot.
+ * Mirrors upstream's `resolve_time_decay` (RepoTimeDecayConfig overlaid on the module constants).
  */
-export function calculateTimeDecay(prAgeHours: number, constants: Record<string, number>): number {
-  const grace = constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS", 12);
-  if (!Number.isFinite(prAgeHours) || prAgeHours < grace) return 1;
+export function resolveTimeDecay(
+  constants: Record<string, number>,
+  overrides?: RepoTimeDecayOverrides | null,
+): { gracePeriodHours: number; sigmoidMidpointDays: number; sigmoidSteepness: number; minMultiplier: number } {
+  return {
+    gracePeriodHours: pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS", 12)),
+    sigmoidMidpointDays: pickOverride(overrides?.sigmoidMidpointDays, constant(constants, "TIME_DECAY_SIGMOID_MIDPOINT", 10)),
+    sigmoidSteepness: pickOverride(overrides?.sigmoidSteepness, constant(constants, "TIME_DECAY_SIGMOID_STEEPNESS_SCALAR", 0.4)),
+    minMultiplier: pickOverride(overrides?.minMultiplier, constant(constants, "TIME_DECAY_MIN_MULTIPLIER", 0.05)),
+  };
+}
+
+function pickOverride(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Upstream gittensor's sigmoid time-decay multiplier (#703), ported verbatim from the validator's
+ * `calculate_time_decay` (gittensor/validator/utils/datetime_utils.py): for the first grace-period hours the
+ * multiplier is exactly 1.0 (hard cutoff); after that it follows a logistic on days-since-merge centred at
+ * the sigmoid midpoint (50% at that point), floored at the minimum multiplier. The curve params are
+ * resolved PER-REPO (overrides ?? snapshot defaults), so each maintainer's registry hyperparameters apply.
+ * Pure + deterministic.
+ */
+export function calculateTimeDecay(prAgeHours: number, constants: Record<string, number>, overrides?: RepoTimeDecayOverrides | null): number {
+  const { gracePeriodHours, sigmoidMidpointDays, sigmoidSteepness, minMultiplier } = resolveTimeDecay(constants, overrides);
+  if (!Number.isFinite(prAgeHours) || prAgeHours < gracePeriodHours) return 1;
   const days = prAgeHours / 24;
-  const midpoint = constant(constants, "TIME_DECAY_SIGMOID_MIDPOINT", 10);
-  const steepness = constant(constants, "TIME_DECAY_SIGMOID_STEEPNESS_SCALAR", 0.4);
-  const minMultiplier = constant(constants, "TIME_DECAY_MIN_MULTIPLIER", 0.05);
-  const sigmoid = 1 / (1 + Math.exp(steepness * (days - midpoint)));
+  const sigmoid = 1 / (1 + Math.exp(sigmoidSteepness * (days - sigmoidMidpointDays)));
   return Math.max(sigmoid, minMultiplier);
 }
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
 import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
-import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord } from "../../src/scoring/preview";
+import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -792,6 +792,41 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
       expect(trajectory[1]!.after).toBeGreaterThan(trajectory[2]!.after);
       expect(trajectory[2]!.after).toBeGreaterThan(trajectory[3]!.after);
       expect(trajectory[3]!.after).toBeLessThan(before);
+    });
+
+    it("resolveTimeDecay overlays per-repo overrides on snapshot defaults, per-field (mirrors upstream)", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // No overrides → all snapshot defaults.
+      expect(resolveTimeDecay(c, null)).toEqual({ gracePeriodHours: 12, sigmoidMidpointDays: 10, sigmoidSteepness: 0.4, minMultiplier: 0.05 });
+      // Partial override (JSONbored/gittensory's real config: grace 24, midpoint 10, min 0.05, no steepness)
+      // → overridden fields apply, the absent steepness falls back to the default.
+      expect(resolveTimeDecay(c, { gracePeriodHours: 24, sigmoidMidpointDays: 10, minMultiplier: 0.05 })).toEqual({
+        gracePeriodHours: 24,
+        sigmoidMidpointDays: 10,
+        sigmoidSteepness: 0.4,
+        minMultiplier: 0.05,
+      });
+      // A non-finite/absent field falls back, not NaN.
+      expect(resolveTimeDecay(c, { sigmoidSteepness: Number.NaN }).sigmoidSteepness).toBe(0.4);
+    });
+
+    it("calculateTimeDecay honours a repo's per-repo curve (grace + midpoint overrides)", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // Default 12h grace would decay at 18h; this repo's 24h grace keeps an 18h-old PR fresh.
+      expect(calculateTimeDecay(18, c)).toBeLessThan(1);
+      expect(calculateTimeDecay(18, c, { gracePeriodHours: 24 })).toBe(1);
+      // A shorter midpoint decays faster: 50% point moves from 10d to 5d (120h).
+      expect(calculateTimeDecay(120, c, { sigmoidMidpointDays: 5 })).toBeCloseTo(0.5, 5);
+    });
+
+    it("applies each live repo's resolved curve in the preview (per-repo, not global)", () => {
+      const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 58, totalTokenScore: 600, sourceLines: 60, openPrCount: 0, credibility: 1, applyTimeDecay: true, prAgeHours: 18 };
+      // Repo with a 24h grace override (like JSONbored/gittensory) → an 18h-old PR is still fresh.
+      const repo24: RepositoryRecord = { ...repo, registryConfig: { ...repo.registryConfig!, timeDecay: { gracePeriodHours: 24 } } };
+      expect(buildScorePreview({ repo: repo24, snapshot, input }).scoreEstimate.timeDecayMultiplier).toBe(1);
+      // Same PR on a repo using the default 12h grace → past grace, so it decays.
+      const repoDefault: RepositoryRecord = { ...repo, registryConfig: { ...repo.registryConfig!, timeDecay: null } };
+      expect(buildScorePreview({ repo: repoDefault, snapshot, input }).scoreEstimate.timeDecayMultiplier).toBeLessThan(1);
     });
   });
 });

@@ -219,6 +219,34 @@ describe("issue quality reports", () => {
     expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/direct-PR first/i)]));
   });
 
+  it("warns to confirm scope on a maintainer-authored issue but still lets a clean one read ready (#186)", () => {
+    const repo = issueDiscoveryRepo("owner/maintainer-open");
+    const report = buildIssueQualityReport(
+      repo,
+      [issue(repo.fullName, 30, "Maintainer-created: add reconnect backoff", { body: "x".repeat(220), labels: ["feature"], authorAssociation: "OWNER", updatedAt: now() })],
+      [],
+      repo.fullName,
+    );
+    expect(report.issues[0]).toMatchObject({
+      status: "ready",
+      warnings: expect.arrayContaining(["Maintainer-authored; confirm it is open for outside contribution before starting."]),
+    });
+  });
+
+  it("never reads a maintainer-authored WIP/internal issue as ready (#186)", () => {
+    const repo = issueDiscoveryRepo("owner/maintainer-wip");
+    const report = buildIssueQualityReport(
+      repo,
+      [issue(repo.fullName, 31, "Maintainer-created: internal refactor", { body: "x".repeat(220), labels: ["feature", "internal"], authorAssociation: "OWNER", updatedAt: now() })],
+      [],
+      repo.fullName,
+    );
+    expect(report.issues[0]).toMatchObject({
+      status: "needs_proof",
+      warnings: expect.arrayContaining(["Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation."]),
+    });
+  });
+
   it("respects a worker-budget cap of 100 issues per repo", () => {
     const repo = issueDiscoveryRepo("owner/big");
     const issues = Array.from({ length: 150 }, (_, index) => issue(repo.fullName, index + 1, `bulk ${index}`, { body: "x".repeat(220) }));

@@ -15,6 +15,8 @@ export type SlopAssessmentInput = {
   changedFiles?: SlopChangedFile[] | undefined;
   tests?: string[] | undefined;
   testFiles?: string[] | undefined;
+  /** PR/branch description. An empty/whitespace description on a code change is a weak-effort signal. */
+  description?: string | null | undefined;
 };
 
 export type SlopAssessment = {
@@ -23,9 +25,13 @@ export type SlopAssessment = {
   findings: SignalFinding[];
 };
 
+// Deterministic, high-precision signals only — this score is the ONLY thing allowed to gate (block), so it
+// must be false-positive-averse. Heuristic/AI "this reads low-effort" judgments stay ADVISORY elsewhere and
+// never feed this score. Weights sum to 75 so the `high` band (>=60) is reachable from two strong signals.
 export const SLOP_WEIGHTS = {
+  trivialWhitespaceChurn: 30,
   missingTestEvidence: 30,
-  trivialWhitespaceChurn: 25,
+  emptyDescription: 15,
 } as const;
 
 export const SLOP_RUBRIC_MARKDOWN = [
@@ -37,8 +43,9 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "- `high`: 60-100",
   "",
   "Current deterministic signals:",
-  "- missing test evidence",
   "- trivial / whitespace-only churn",
+  "- missing test evidence",
+  "- empty pull request description on a code change",
 ].join("\n");
 
 const MIN_CHURN_LINES = 40;
@@ -46,14 +53,17 @@ const MAX_SOURCE_LINE_SHARE = 0.15;
 
 export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment {
   const findings: SignalFinding[] = [];
-  const missingTestEvidenceFinding = buildMissingTestEvidenceFinding(input);
   const trivialChurnFinding = buildTrivialWhitespaceChurnFinding(input);
-  if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
+  const missingTestEvidenceFinding = buildMissingTestEvidenceFinding(input);
+  const emptyDescriptionFinding = buildEmptyDescriptionFinding(input);
   if (trivialChurnFinding) findings.push(trivialChurnFinding);
+  if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
+  if (emptyDescriptionFinding) findings.push(emptyDescriptionFinding);
 
   const slopRisk = clamp(
-    (missingTestEvidenceFinding ? SLOP_WEIGHTS.missingTestEvidence : 0) +
-      (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0),
+    (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0) +
+      (missingTestEvidenceFinding ? SLOP_WEIGHTS.missingTestEvidence : 0) +
+      (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0),
     0,
     100,
   );
@@ -62,6 +72,27 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
     slopRisk,
     band: slopBandFor(slopRisk),
     findings,
+  };
+}
+
+// Fires only when a real code change ships with an empty / whitespace-only description — a high-precision
+// weak-effort signal. A non-empty description (even a terse one) never trips it, to avoid false positives.
+export function buildEmptyDescriptionFinding(input: SlopAssessmentInput): SignalFinding | null {
+  const codePaths = (input.changedFiles ?? []).map((file) => file.path).filter(Boolean).filter(isCodeFile);
+  if (codePaths.length === 0) return null;
+  if ((input.description ?? "").trim().length > 0) return null;
+
+  const detail = ensurePublicSafeText(
+    `${codePaths.length} code file(s) changed with an empty pull request description.`,
+    "Code changed with an empty pull request description.",
+  );
+  return {
+    code: "empty_pr_description",
+    title: "Code change has no description",
+    severity: "warning",
+    detail,
+    action: "Describe what changed and why so reviewers can evaluate it.",
+    publicText: detail,
   };
 }
 

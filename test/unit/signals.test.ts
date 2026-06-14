@@ -145,6 +145,66 @@ describe("world-class backend signals", () => {
     const opportunities = buildContributorOpportunities(profile, [repo], issues, pullRequests);
     expect(profile.trustSignals.level).toBe("new");
     expect(opportunities[0]?.repoFullName).toBe(repo.fullName);
+    for (const opportunity of opportunities) {
+      expect(opportunity.multiplierTier).toBe("community");
+      expect(opportunity.availability).toBe("ready");
+    }
+  });
+
+  it("ranks grabbable maintainer-created issues above community issues and downgrades maintainer WIP (#699/#186)", () => {
+    const profile = buildContributorProfile("scout", { login: "scout", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const maintainerOpen: IssueRecord = {
+      repoFullName: repo.fullName,
+      number: 40,
+      title: "Maintainer-created: implement reconnect backoff",
+      state: "open",
+      authorLogin: "entrius",
+      authorAssociation: "OWNER",
+      labels: ["feature"],
+      linkedPrs: [],
+    };
+    const maintainerWip: IssueRecord = {
+      repoFullName: repo.fullName,
+      number: 41,
+      title: "Maintainer-created: internal refactor",
+      state: "open",
+      authorLogin: "entrius",
+      authorAssociation: "OWNER",
+      labels: ["feature", "WIP"],
+      linkedPrs: [],
+    };
+    const community: IssueRecord = {
+      repoFullName: repo.fullName,
+      number: 42,
+      title: "Community-reported: same feature label",
+      state: "open",
+      authorLogin: "outsider",
+      authorAssociation: "NONE",
+      labels: ["feature"],
+      linkedPrs: [],
+    };
+
+    const opportunities = buildContributorOpportunities(profile, [repo], [maintainerOpen, maintainerWip, community], []);
+    const byNumber = new Map(opportunities.map((opportunity) => [opportunity.issueNumber, opportunity]));
+
+    const open = byNumber.get(40)!;
+    expect(open.multiplierTier).toBe("maintainer_created");
+    expect(open.availability).toBe("ready");
+    expect(open.reasons).toContain("Maintainer-created issue — typically the highest contribution multiplier on Gittensor.");
+    expect(open.warnings).toContain("Maintainer-authored; confirm it is open for outside contribution before starting.");
+
+    const wip = byNumber.get(41)!;
+    expect(wip.multiplierTier).toBe("maintainer_created");
+    expect(wip.availability).toBe("maintainer_wip");
+    expect(wip.fit).toBe("hold");
+    expect(wip.warnings).toContain("Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation.");
+
+    const open42 = byNumber.get(42)!;
+    expect(open42.multiplierTier).toBe("community");
+
+    // Same labels/lane: the grabbable maintainer-created issue outscores the community one and the WIP one.
+    expect(open.score).toBeGreaterThan(open42.score);
+    expect(open.score).toBeGreaterThan(wip.score);
   });
 
   it("profiles contributors from cached repo stats when sampled PR rows miss their history", () => {
@@ -325,9 +385,11 @@ describe("world-class backend signals", () => {
       checkRunMode: "off" as const,
       checkRunDetailLevel: "minimal" as const,
       gateCheckMode: "off" as const,
+      gatePack: "gittensor" as const,
       linkedIssueGateMode: "advisory" as const,
       duplicatePrGateMode: "advisory" as const,
       qualityGateMode: "advisory" as const,
+      slopGateMode: "off" as const,
       qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
@@ -370,9 +432,11 @@ describe("world-class backend signals", () => {
       checkRunMode: "off" as const,
       checkRunDetailLevel: "minimal" as const,
       gateCheckMode: "off" as const,
+      gatePack: "gittensor" as const,
       linkedIssueGateMode: "advisory" as const,
       duplicatePrGateMode: "advisory" as const,
       qualityGateMode: "advisory" as const,
+      slopGateMode: "off" as const,
       qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
@@ -435,9 +499,11 @@ describe("world-class backend signals", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
       qualityGateMode: "advisory",
+      slopGateMode: "off",
       qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
@@ -521,9 +587,11 @@ describe("world-class backend signals", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
       qualityGateMode: "advisory",
+      slopGateMode: "off",
       qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
@@ -582,9 +650,11 @@ describe("world-class backend signals", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "advisory",
       qualityGateMode: "advisory",
+      slopGateMode: "off",
       qualityGateMinScore: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",

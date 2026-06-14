@@ -161,3 +161,46 @@ describe("detectNotificationEvents", () => {
     ).toEqual([]);
   });
 });
+
+describe("detectNotificationEvents — merged PR (#702)", () => {
+  const mergedPayload: GitHubWebhookPayload = {
+    action: "closed",
+    repository: { name: "gittensory", full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } },
+    pull_request: {
+      number: 42,
+      title: "Add feature",
+      state: "closed",
+      user: { login: "contributor", type: "User" },
+      html_url: "https://github.com/JSONbored/gittensory/pull/42",
+      merged_at: "2026-05-29T00:00:00.000Z",
+    },
+  };
+
+  it("emits one self-attributed merged event for the PR author", () => {
+    const events = detectNotificationEvents("pull_request", mergedPayload, "2026-05-29T00:00:01.000Z");
+    expect(events).toEqual([
+      {
+        eventType: "pull_request_merged",
+        recipientLogin: "contributor",
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 42,
+        dedupKey: "pull_request_merged:JSONbored/gittensory#42:2026-05-29T00:00:00.000Z",
+        deeplink: "https://github.com/JSONbored/gittensory/pull/42",
+        actorLogin: "contributor",
+        detectedAt: "2026-05-29T00:00:01.000Z",
+      },
+    ]);
+  });
+
+  it("ignores a close-without-merge, a bot author, and missing author metadata", () => {
+    expect(detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, merged_at: null } })).toEqual([]);
+    expect(detectNotificationEvents("pull_request", { ...mergedPayload, action: "opened" })).toEqual([]);
+    expect(detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, user: { login: "bot", type: "Bot" } } })).toEqual([]);
+    expect(detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, user: undefined as never } })).toEqual([]);
+  });
+
+  it("falls back to the canonical PR URL when html_url is absent", () => {
+    const events = detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, html_url: undefined as never } }, "2026-05-29T00:00:01.000Z");
+    expect(events[0]?.deeplink).toBe("https://github.com/JSONbored/gittensory/pull/42");
+  });
+});

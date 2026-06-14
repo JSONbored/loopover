@@ -138,3 +138,42 @@ describe("AI consensus defect gate blocker", () => {
     expect(result.blockers).toEqual([]);
   });
 });
+
+describe("slop gate (#530/#532)", () => {
+  function cleanAdvisory(): Advisory {
+    return { ...missingIssueAdvisory(), findings: [] };
+  }
+
+  it("never blocks on slop in advisory/off mode, even at a high slop score", () => {
+    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "advisory", slopRisk: 90, slopGateMinScore: 60, confirmedContributor: true }).conclusion).toBe("success");
+    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "off", slopRisk: 90, confirmedContributor: true }).conclusion).toBe("success");
+  });
+
+  it("blocks when slop: block and slopRisk is at/above the threshold", () => {
+    const blocked = evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopGateMinScore: 60, slopRisk: 70, confirmedContributor: true });
+    expect(blocked.conclusion).toBe("failure");
+    expect(blocked.blockers.map((finding) => finding.code)).toContain("slop_risk_above_threshold");
+  });
+
+  it("does not block when slopRisk is below the threshold", () => {
+    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopGateMinScore: 60, slopRisk: 40, confirmedContributor: true }).conclusion).toBe("success");
+  });
+
+  it("defaults the block threshold to 60 when no minScore is set", () => {
+    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopRisk: 60, confirmedContributor: true }).conclusion).toBe("failure");
+    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopRisk: 59, confirmedContributor: true }).conclusion).toBe("success");
+  });
+
+  it("respects the confirmed-contributor gate (never blocks a non-confirmed author)", () => {
+    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopGateMinScore: 60, slopRisk: 90, confirmedContributor: false }).conclusion).toBe("neutral");
+  });
+
+  it("gateCheckPolicy threads slop settings + the live slopRisk into the policy (incl. .gittensory.yml)", () => {
+    const eff = resolveEffectiveSettings(settings({ slopGateMode: "off" }), parseFocusManifest({ gate: { slop: { mode: "block", minScore: 50 } } }));
+    expect(eff.slopGateMode).toBe("block");
+    expect(eff.slopGateMinScore).toBe(50);
+    const blocked = evaluateGateCheck(cleanAdvisory(), gateCheckPolicy(eff, null, true, 80));
+    expect(blocked.conclusion).toBe("failure");
+    expect(blocked.blockers.map((finding) => finding.code)).toContain("slop_risk_above_threshold");
+  });
+});

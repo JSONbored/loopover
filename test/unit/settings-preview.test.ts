@@ -43,6 +43,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
     qualityGateMode: "advisory",
+    slopGateMode: "off",
     qualityGateMinScore: null,
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",

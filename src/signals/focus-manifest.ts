@@ -22,6 +22,8 @@ export type FocusManifestGateConfig = {
   duplicates: GateRuleMode | null;
   readinessMode: GateRuleMode | null;
   readinessMinScore: number | null;
+  slopMode: GateRuleMode | null;
+  slopMinScore: number | null;
   aiReviewMode: GateRuleMode | null;
   aiReviewByok: boolean | null;
   aiReviewProvider: "anthropic" | "openai" | null;
@@ -147,6 +149,8 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   duplicates: null,
   readinessMode: null,
   readinessMinScore: null,
+  slopMode: null,
+  slopMinScore: null,
   aiReviewMode: null,
   aiReviewByok: null,
   aiReviewProvider: null,
@@ -271,6 +275,11 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   if (aiReview !== undefined && aiReview !== null && aiReviewRecord === undefined) {
     warnings.push(`Manifest gate field "gate.aiReview" must be a mapping; ignoring it.`);
   }
+  const slop = record.slop;
+  const slopRecord = slop !== null && typeof slop === "object" && !Array.isArray(slop) ? (slop as Record<string, JsonValue>) : undefined;
+  if (slop !== undefined && slop !== null && slopRecord === undefined) {
+    warnings.push(`Manifest gate field "gate.slop" must be a mapping; ignoring it.`);
+  }
   const gate: FocusManifestGateConfig = {
     present: false,
     enabled: normalizeOptionalBoolean(record.enabled, "gate.enabled", warnings),
@@ -279,6 +288,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
     readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
+    slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
+    slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
     aiReviewMode: normalizeOptionalGateMode(aiReviewRecord?.mode, "gate.aiReview.mode", warnings),
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
@@ -291,6 +302,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.duplicates !== null ||
     gate.readinessMode !== null ||
     gate.readinessMinScore !== null ||
+    gate.slopMode !== null ||
+    gate.slopMinScore !== null ||
     gate.aiReviewMode !== null ||
     gate.aiReviewByok !== null ||
     gate.aiReviewProvider !== null ||
@@ -314,6 +327,12 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.readinessMode !== null) readiness.mode = gate.readinessMode;
     if (gate.readinessMinScore !== null) readiness.minScore = gate.readinessMinScore;
     out.readiness = readiness;
+  }
+  if (gate.slopMode !== null || gate.slopMinScore !== null) {
+    const slop: Record<string, JsonValue> = {};
+    if (gate.slopMode !== null) slop.mode = gate.slopMode;
+    if (gate.slopMinScore !== null) slop.minScore = gate.slopMinScore;
+    out.slop = slop;
   }
   if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null) {
     const aiReview: Record<string, JsonValue> = {};
@@ -461,6 +480,8 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
+  if (gate.slopMode !== null) effective.slopGateMode = gate.slopMode;
+  if (gate.slopMinScore !== null) effective.slopGateMinScore = gate.slopMinScore;
   if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;

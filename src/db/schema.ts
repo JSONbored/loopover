@@ -51,6 +51,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   duplicatePrGateMode: text("duplicate_pr_gate_mode").notNull().default("block"),
   qualityGateMode: text("quality_gate_mode").notNull().default("advisory"),
   qualityGateMinScore: integer("quality_gate_min_score"),
+  slopGateMode: text("slop_gate_mode").notNull().default("off"),
+  slopGateMinScore: integer("slop_gate_min_score"),
   aiReviewMode: text("ai_review_mode").notNull().default("off"),
   aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
   aiReviewProvider: text("ai_review_provider"),

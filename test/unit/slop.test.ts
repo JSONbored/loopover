@@ -24,6 +24,7 @@ describe("buildSlopAssessment", () => {
   it("raises missing-test-evidence slop for code-only diffs without tests", () => {
     const result = buildSlopAssessment({
       changedFiles: [{ path: "src/registry/sync.ts", additions: 24, deletions: 2 }],
+      description: "Add retry-with-backoff to the registry sync client.",
     });
 
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence);
@@ -45,6 +46,7 @@ describe("buildSlopAssessment", () => {
         { path: "src/widget.ts", additions: 2, deletions: 1 },
         { path: "test/unit/widget.test.ts", additions: 4, deletions: 0 },
       ],
+      description: "Documentation refresh plus a tiny widget tweak.",
     });
 
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.trivialWhitespaceChurn);
@@ -65,6 +67,7 @@ describe("buildSlopAssessment", () => {
           { path: "src/registry/sync.ts", additions: 24, deletions: 2 },
           { path: "test/unit/registry-sync.test.ts", additions: 18, deletions: 0 },
         ],
+        description: "Add a retry path with regression coverage.",
       }),
     ).toEqual({ slopRisk: 0, band: "clean", findings: [] });
   });
@@ -74,6 +77,7 @@ describe("buildSlopAssessment", () => {
       buildSlopAssessment({
         changedFiles: [{ path: "src/registry/sync.ts", additions: 12, deletions: 0 }],
         testFiles: ["internal/cache_test.go"],
+        description: "Add a retry path, covered by cache_test.go.",
       }),
     ).toEqual({ slopRisk: 0, band: "clean", findings: [] });
   });
@@ -85,6 +89,7 @@ describe("buildSlopAssessment", () => {
           { path: "src/registry/sync.ts", additions: 80, deletions: 20 },
           { path: "test/unit/registry-sync.test.ts", additions: 40, deletions: 5 },
         ],
+        description: "Substantive sync refactor with tests.",
       }),
     ).toEqual({ slopRisk: 0, band: "clean", findings: [] });
   });
@@ -108,12 +113,43 @@ describe("buildSlopAssessment", () => {
   it("raises trivial-churn for non-code-only high-churn diffs", () => {
     expect(
       buildSlopAssessment({
+        // Docs-only churn: no code files, so neither missing-test-evidence nor empty-description fires.
         changedFiles: [
           { path: "README.md", additions: 25, deletions: 20 },
           { path: "docs/guide.md", additions: 20, deletions: 15 },
         ],
       }).findings.map((finding) => finding.code),
     ).toEqual(["trivial_whitespace_churn"]);
+  });
+
+  it("raises empty-description slop only for a code change with no description", () => {
+    const flagged = buildSlopAssessment({ changedFiles: [{ path: "src/api/routes.ts", additions: 5, deletions: 1 }], description: "", tests: ["ok"], testFiles: ["test/x.test.ts"] });
+    expect(flagged.findings.map((finding) => finding.code)).toContain("empty_pr_description");
+    expect(flagged.slopRisk).toBe(SLOP_WEIGHTS.emptyDescription);
+
+    // An omitted (undefined) description on a code change also trips it.
+    expect(buildSlopAssessment({ changedFiles: [{ path: "src/api/routes.ts", additions: 5, deletions: 1 }], tests: ["ok"], testFiles: ["test/x.test.ts"] }).findings.map((finding) => finding.code)).toContain("empty_pr_description");
+
+    // A non-empty description never trips it; docs-only with no description never trips it.
+    expect(buildSlopAssessment({ changedFiles: [{ path: "src/api/routes.ts", additions: 5, deletions: 1 }], description: "Adds a header.", tests: ["ok"], testFiles: ["test/x.test.ts"] }).findings).toEqual([]);
+    expect(buildSlopAssessment({ changedFiles: [{ path: "README.md", additions: 5, deletions: 1 }] }).findings).toEqual([]);
+  });
+
+  it("reaches the high band when multiple strong signals stack", () => {
+    // Code change, no tests, no description: missing-test-evidence (30) + empty-description (15) = elevated.
+    const elevated = buildSlopAssessment({ changedFiles: [{ path: "src/x.ts", additions: 10, deletions: 1 }], description: "" });
+    expect(elevated.band).toBe("elevated");
+
+    // High-whitespace-churn code change + no tests + no description: 30 + 30 + 15 = 75 -> high (>=60).
+    const high = buildSlopAssessment({
+      changedFiles: [
+        { path: "src/x.ts", additions: 2, deletions: 1 },
+        { path: "src/generated.snap", additions: 60, deletions: 40 },
+      ],
+      description: "",
+    });
+    expect(high.slopRisk).toBeGreaterThanOrEqual(60);
+    expect(high.band).toBe("high");
   });
 });
 

@@ -32,7 +32,7 @@ function Quickstart() {
       title="Quickstart"
       description="Install the MCP, sign in, and run your first analysis. About two minutes."
     >
-      <h2>1. Install</h2>
+      <h2>1. Install (preview check)</h2>
       <p>
         The MCP is published as <code>@jsonbored/gittensory-mcp</code>. You can run it with{" "}
         <code>npx</code>, or install it globally.

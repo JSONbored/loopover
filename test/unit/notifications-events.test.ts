@@ -200,7 +200,7 @@ describe("detectNotificationEvents — merged PR (#702)", () => {
   });
 
   it("falls back to the canonical PR URL when html_url is absent", () => {
-    const events = detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, html_url: undefined } }, "2026-05-29T00:00:01.000Z");
+    const events = detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, html_url: undefined as never } }, "2026-05-29T00:00:01.000Z");
     expect(events[0]?.deeplink).toBe("https://github.com/JSONbored/gittensory/pull/42");
   });
 });

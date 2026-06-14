@@ -400,7 +400,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
@@ -688,7 +688,19 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
+  });
+
+  it("parses the gate.slop block, round-trips it, and warns on a non-mapping (#530/#532)", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "block", minScore: 55 } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.slopMode).toBe("block");
+    expect(m.gate.slopMinScore).toBe(55);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ slop: { mode: "block", minScore: 55 } });
+
+    const bad = parseFocusManifest({ gate: { slop: "block" } });
+    expect(bad.gate.slopMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.slop/.test(w))).toBe(true);
   });
 
   it("parses gate.pack and ignores an unknown pack with a warning (#692)", () => {

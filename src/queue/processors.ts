@@ -131,6 +131,7 @@ import {
   PR_PANEL_RETRIGGER_MARKER,
   unionScopedOverlapClusters,
 } from "../signals/engine";
+import { buildSlopAssessment } from "../signals/slop";
 import { decidePublicSurface } from "../signals/settings-preview";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
@@ -814,7 +815,7 @@ function shouldProcessPullRequestPublicSurface(action: string | undefined): bool
   return PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") || PR_GATE_CLOSED_ACTIONS.has(action ?? "");
 }
 
-export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null, confirmedContributor?: boolean) {
+export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null, confirmedContributor?: boolean, slopRisk?: number | null) {
   // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
   // resolveRepositorySettings, so the blocker modes here reflect the repo's config file directly.
   // The `oss-anti-slop` pack (#692) is repo-agnostic: it blocks ANY author whose PR trips an opted-in
@@ -828,6 +829,9 @@ export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: n
     qualityGateMinScore: settings.qualityGateMinScore ?? null,
     aiReviewGateMode: settings.aiReviewMode,
     readinessScore: readinessScore ?? null,
+    slopGateMode: settings.slopGateMode,
+    slopGateMinScore: settings.slopGateMinScore ?? null,
+    slopRisk: slopRisk ?? null,
     confirmedContributor: confirmedContributorForPack,
   };
 }
@@ -1101,6 +1105,20 @@ async function maybePublishPrPublicSurface(
       scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
     });
 
+    // Anti-slop (#530/#532): only when opted in (slopGateMode !== "off"). Surface the deterministic slop
+    // findings as advisory context, and feed the score to the gate (it only blocks under slop: block + the
+    // threshold). Loads files lazily so disabled repos pay nothing.
+    let slopRisk: number | null = null;
+    if (settings.slopGateMode !== "off") {
+      const slopFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      const slop = buildSlopAssessment({
+        changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
+        description: pr.body,
+      });
+      slopRisk = slop.slopRisk;
+      advisory.findings.push(...slop.findings);
+    }
+
     if (gateEnabled && author && !publicSurfaceSkipped && !official) {
       official = await getCachedOfficialMinerDetection(env, author, {
         targetKey: `${repoFullName}#${pr.number}`,
@@ -1118,7 +1136,7 @@ async function maybePublishPrPublicSurface(
     // failure is caught and the gate is still finalized (never left in_progress).
     aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
 
-    gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total, confirmedContributor)) : undefined;
+    gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk)) : undefined;
     if (gateEnabled) {
       const gateCheckResult = await createOrUpdateGateCheckRun(
         env,

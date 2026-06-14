@@ -7963,6 +7963,18 @@
               "gittensor",
               "oss-anti-slop"
             ]
+          },
+          "slopGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "slopGateMinScore": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [
@@ -7977,6 +7989,7 @@
           "linkedIssueGateMode",
           "duplicatePrGateMode",
           "qualityGateMode",
+          "slopGateMode",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",
@@ -8543,6 +8556,18 @@
                   "gittensor",
                   "oss-anti-slop"
                 ]
+              },
+              "slopGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "slopGateMinScore": {
+                "type": "number",
+                "nullable": true
               }
             },
             "required": [
@@ -8557,6 +8582,7 @@
               "linkedIssueGateMode",
               "duplicatePrGateMode",
               "qualityGateMode",
+              "slopGateMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",

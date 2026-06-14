@@ -275,6 +275,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       author: "alice",
       files,
       deterministicBand: "elevated",
+      confirmedContributor: true,
     });
     expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
   });
@@ -283,7 +284,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
     const run = vi.fn();
-    await runAiSlopForAdvisory(enabledEnv(run), { settings: noByok, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "low" });
+    await runAiSlopForAdvisory(enabledEnv(run), { settings: noByok, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "low", confirmedContributor: true });
     expect(noSha.findings).toEqual([]);
     expect(run).not.toHaveBeenCalled();
   });
@@ -298,6 +299,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       author: "alice",
       files,
       deterministicBand: "clean",
+      confirmedContributor: true,
     });
     expect(adv.findings).toEqual([]);
   });
@@ -305,7 +307,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
   it("is fail-safe: a thrown error (broken DB) yields no finding and never throws", async () => {
     const adv = advisory();
     const env = { ...enabledEnv(async () => ({ response: slopJson() })), DB: undefined } as unknown as Env;
-    await expect(runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high" })).resolves.toBeUndefined();
+    await expect(runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true })).resolves.toBeUndefined();
     expect(adv.findings).toEqual([]);
   });
 
@@ -330,10 +332,41 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       author: "alice",
       files,
       deterministicBand: "elevated",
+      confirmedContributor: true,
     });
     // The advisory came from the BYOK provider (high band → finding), and Workers AI was never called.
     expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.anthropic.com/v1/messages");
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("does not use the maintainer BYOK key for unconfirmed contributors", async () => {
+    const run = vi.fn(async () => ({ response: slopJson({ band: "high" }) }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      TOKEN_ENCRYPTION_SECRET: "ai-slop-byok-test-encryption-secret-32b",
+    });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-slop-9999", model: null });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: slopJson({ band: "high" }) }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = advisory();
+    await runAiSlopForAdvisory(env, {
+      settings: { aiReviewByok: true } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "mallory",
+      files,
+      deterministicBand: "elevated",
+      confirmedContributor: false,
+    });
+
+    expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalled();
+  });
+
 });

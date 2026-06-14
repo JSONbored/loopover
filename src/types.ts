@@ -370,6 +370,12 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: only confirmed
+ *  Gittensor contributors are hard-blocked (registry/emissions-aware). `oss-anti-slop` = a general, repo-
+ *  agnostic pack: the same deterministic rules (slop/duplicate/linked-issue/readiness/AI-consensus) block
+ *  ANY author, with no emissions/registry/confirmed-contributor coupling — so the gate runs on any repo. */
+export type GatePolicyPack = "gittensor" | "oss-anti-slop";
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
@@ -378,6 +384,9 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  /** Policy pack the gate evaluates under (#692). Default `gittensor` (confirmed-contributor-gated,
+   *  registry-aware). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
+  gatePack: GatePolicyPack;
   linkedIssueGateMode: GateRuleMode;
   duplicatePrGateMode: GateRuleMode;
   qualityGateMode: GateRuleMode;

@@ -39,6 +39,7 @@ import {
   upsertRepoLabel,
   upsertRepoSyncState,
   upsertRepositoryFromGitHub,
+  upsertRepositorySettings,
 } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
@@ -234,7 +235,13 @@ describe("data spine repositories", () => {
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       publicSurface: "comment_and_label",
+      gatePack: "gittensor",
     });
+    // gatePack (#692) round-trips and defaults to gittensor.
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "oss-anti-slop" });
+    expect((await getRepositorySettings(env, "owner/repo")).gatePack).toBe("oss-anti-slop");
+    await upsertRepositorySettings(env, { repoFullName: "owner/defaultpack" });
+    expect((await getRepositorySettings(env, "owner/defaultpack")).gatePack).toBe("gittensor");
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();
     expect(await getIssue(env, "owner/repo", 404)).toBeNull();

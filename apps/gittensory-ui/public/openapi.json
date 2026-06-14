@@ -7956,6 +7956,13 @@
           "qualityGateMinScore": {
             "type": "number",
             "nullable": true
+          },
+          "gatePack": {
+            "type": "string",
+            "enum": [
+              "gittensor",
+              "oss-anti-slop"
+            ]
           }
         },
         "required": [
@@ -7966,6 +7973,7 @@
           "checkRunMode",
           "checkRunDetailLevel",
           "gateCheckMode",
+          "gatePack",
           "linkedIssueGateMode",
           "duplicatePrGateMode",
           "qualityGateMode",
@@ -8528,6 +8536,13 @@
               "qualityGateMinScore": {
                 "type": "number",
                 "nullable": true
+              },
+              "gatePack": {
+                "type": "string",
+                "enum": [
+                  "gittensor",
+                  "oss-anti-slop"
+                ]
               }
             },
             "required": [
@@ -8538,6 +8553,7 @@
               "checkRunMode",
               "checkRunDetailLevel",
               "gateCheckMode",
+              "gatePack",
               "linkedIssueGateMode",
               "duplicatePrGateMode",
               "qualityGateMode",

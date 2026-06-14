@@ -393,6 +393,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "block",
       qualityGateMode: "advisory",
@@ -420,6 +421,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    gatePack: parseGatePack(row.gatePack),
     linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
     duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
     qualityGateMode: parseGateRuleMode(row.qualityGateMode),
@@ -451,6 +453,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
+    gatePack: parseGatePack(settings.gatePack),
     linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
     duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
     qualityGateMode: settings.qualityGateMode ?? "advisory",
@@ -480,6 +483,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
+      gatePack: resolved.gatePack,
       linkedIssueGateMode: resolved.linkedIssueGateMode,
       duplicatePrGateMode: resolved.duplicatePrGateMode,
       qualityGateMode: resolved.qualityGateMode,
@@ -4708,6 +4712,10 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 
 function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
   return value === "enabled" ? "enabled" : "off";
+}
+
+function parseGatePack(value: string | null | undefined): RepositorySettings["gatePack"] {
+  return value === "oss-anti-slop" ? "oss-anti-slop" : "gittensor";
 }
 
 function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMode"] {

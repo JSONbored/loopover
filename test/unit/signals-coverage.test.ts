@@ -1525,6 +1525,7 @@ function repoSettings(repoFullName: string): RepositorySettings {
     checkRunMode: "off",
     checkRunDetailLevel: "minimal",
     gateCheckMode: "off",
+    gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
     qualityGateMode: "advisory",

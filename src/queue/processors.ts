@@ -817,7 +817,10 @@ function shouldProcessPullRequestPublicSurface(action: string | undefined): bool
 export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null, confirmedContributor?: boolean) {
   // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
   // resolveRepositorySettings, so the blocker modes here reflect the repo's config file directly.
-  // confirmedContributor governs WHO can be blocked, downstream in evaluateGateCheck.
+  // The `oss-anti-slop` pack (#692) is repo-agnostic: it blocks ANY author whose PR trips an opted-in
+  // deterministic rule, so it drops the confirmed-contributor gate entirely (no Gittensor coupling). The
+  // `gittensor` pack keeps the contributor gate — only confirmed contributors are hard-blocked.
+  const confirmedContributorForPack = settings.gatePack === "oss-anti-slop" ? undefined : confirmedContributor;
   return {
     linkedIssueGateMode: settings.linkedIssueGateMode,
     duplicatePrGateMode: settings.duplicatePrGateMode,
@@ -825,7 +828,7 @@ export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: n
     qualityGateMinScore: settings.qualityGateMinScore ?? null,
     aiReviewGateMode: settings.aiReviewMode,
     readinessScore: readinessScore ?? null,
-    confirmedContributor,
+    confirmedContributor: confirmedContributorForPack,
   };
 }
 

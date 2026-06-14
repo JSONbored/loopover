@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import type { GateRuleMode, JsonValue, RepositorySettings } from "../types";
+import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
 export type FocusManifestLinkedIssuePolicy = "required" | "preferred" | "optional";
@@ -17,6 +17,7 @@ export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "disc
 export type FocusManifestGateConfig = {
   present: boolean;
   enabled: boolean | null;
+  pack: GatePolicyPack | null;
   linkedIssue: GateRuleMode | null;
   duplicates: GateRuleMode | null;
   readinessMode: GateRuleMode | null;
@@ -141,6 +142,7 @@ export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   present: false,
   enabled: null,
+  pack: null,
   linkedIssue: null,
   duplicates: null,
   readinessMode: null,
@@ -272,6 +274,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   const gate: FocusManifestGateConfig = {
     present: false,
     enabled: normalizeOptionalBoolean(record.enabled, "gate.enabled", warnings),
+    pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
     readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
@@ -283,6 +286,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   };
   gate.present =
     gate.enabled !== null ||
+    gate.pack !== null ||
     gate.linkedIssue !== null ||
     gate.duplicates !== null ||
     gate.readinessMode !== null ||
@@ -302,6 +306,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (!gate.present) return null;
   const out: Record<string, JsonValue> = {};
   if (gate.enabled !== null) out.enabled = gate.enabled;
+  if (gate.pack !== null) out.pack = gate.pack;
   if (gate.linkedIssue !== null) out.linkedIssue = gate.linkedIssue;
   if (gate.duplicates !== null) out.duplicates = gate.duplicates;
   if (gate.readinessMode !== null || gate.readinessMinScore !== null) {
@@ -451,6 +456,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   const effective: RepositorySettings = { ...dbSettings, ...manifest.settings };
   const gate = manifest.gate;
   if (gate.enabled !== null) effective.gateCheckMode = gate.enabled ? "enabled" : "off";
+  if (gate.pack !== null) effective.gatePack = gate.pack;
   if (gate.linkedIssue !== null) effective.linkedIssueGateMode = gate.linkedIssue;
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;

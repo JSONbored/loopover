@@ -84,6 +84,36 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
   });
 });
 
+describe("policy pack (#692)", () => {
+  it("gittensor pack hard-blocks only confirmed contributors", () => {
+    const gittensor = settings({ gatePack: "gittensor", linkedIssueGateMode: "block" });
+    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(gittensor, null, false)).conclusion).toBe("neutral");
+    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(gittensor, null, true)).conclusion).toBe("failure");
+  });
+
+  it("oss-anti-slop pack blocks ANY author whose PR trips an opted-in rule (no confirmed-contributor gate)", () => {
+    const oss = settings({ gatePack: "oss-anti-slop", linkedIssueGateMode: "block" });
+    const blocked = evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(oss, null, false));
+    expect(blocked.conclusion).toBe("failure");
+    expect(blocked.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue"]);
+    // Still passes a clean PR (no opted-in blocker) regardless of author.
+    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(settings({ gatePack: "oss-anti-slop", linkedIssueGateMode: "advisory" }), null, false)).conclusion).toBe("success");
+  });
+
+  it("gateCheckPolicy drops confirmedContributor under oss-anti-slop and keeps it (incl. default) under gittensor", () => {
+    expect(gateCheckPolicy(settings({ gatePack: "oss-anti-slop" }), null, false).confirmedContributor).toBeUndefined();
+    expect(gateCheckPolicy(settings({ gatePack: "oss-anti-slop" }), null, true).confirmedContributor).toBeUndefined();
+    expect(gateCheckPolicy(settings({ gatePack: "gittensor" }), null, false).confirmedContributor).toBe(false);
+    expect(gateCheckPolicy(settings({ gatePack: "gittensor" }), null, true).confirmedContributor).toBe(true);
+  });
+
+  it(".gittensory.yml gate.pack overlays the pack and flips the gate to block any author end-to-end", () => {
+    const eff = resolveEffectiveSettings(settings({ gatePack: "gittensor", linkedIssueGateMode: "block" }), parseFocusManifest({ gate: { pack: "oss-anti-slop" } }));
+    expect(eff.gatePack).toBe("oss-anti-slop");
+    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(eff, null, false)).conclusion).toBe("failure");
+  });
+});
+
 describe("AI consensus defect gate blocker", () => {
   function aiDefectAdvisory(): Advisory {
     return { ...missingIssueAdvisory(), findings: [{ code: "ai_consensus_defect", title: "AI reviewers agree on a likely critical defect", severity: "critical", detail: "Both models flagged a null deref.", action: "Resolve it." }] };

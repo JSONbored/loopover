@@ -23,6 +23,8 @@ export type FocusManifestGateConfig = {
   readinessMinScore: number | null;
   aiReviewMode: GateRuleMode | null;
   aiReviewByok: boolean | null;
+  aiReviewProvider: "anthropic" | "openai" | null;
+  aiReviewModel: string | null;
 };
 
 /**
@@ -47,6 +49,8 @@ export type FocusManifestSettings = Partial<
     | "qualityGateMinScore"
     | "aiReviewMode"
     | "aiReviewByok"
+    | "aiReviewProvider"
+    | "aiReviewModel"
     | "autoLabelEnabled"
     | "gittensorLabel"
     | "createMissingLabel"
@@ -143,6 +147,8 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   readinessMinScore: null,
   aiReviewMode: null,
   aiReviewByok: null,
+  aiReviewProvider: null,
+  aiReviewModel: null,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -272,6 +278,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
     aiReviewMode: normalizeOptionalGateMode(aiReviewRecord?.mode, "gate.aiReview.mode", warnings),
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
+    aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
+    aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
   };
   gate.present =
     gate.enabled !== null ||
@@ -280,7 +288,9 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.readinessMode !== null ||
     gate.readinessMinScore !== null ||
     gate.aiReviewMode !== null ||
-    gate.aiReviewByok !== null;
+    gate.aiReviewByok !== null ||
+    gate.aiReviewProvider !== null ||
+    gate.aiReviewModel !== null;
   return gate;
 }
 
@@ -300,10 +310,12 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.readinessMinScore !== null) readiness.minScore = gate.readinessMinScore;
     out.readiness = readiness;
   }
-  if (gate.aiReviewMode !== null || gate.aiReviewByok !== null) {
+  if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null) {
     const aiReview: Record<string, JsonValue> = {};
     if (gate.aiReviewMode !== null) aiReview.mode = gate.aiReviewMode;
     if (gate.aiReviewByok !== null) aiReview.byok = gate.aiReviewByok;
+    if (gate.aiReviewProvider !== null) aiReview.provider = gate.aiReviewProvider;
+    if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
     out.aiReview = aiReview;
   }
   return out;
@@ -357,6 +369,10 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (qualityGateMinScore !== null) out.qualityGateMinScore = qualityGateMinScore;
   const aiReviewMode = normalizeOptionalGateMode(r.aiReviewMode, "settings.aiReviewMode", warnings);
   if (aiReviewMode !== null) out.aiReviewMode = aiReviewMode;
+  const aiReviewProvider = normalizeOptionalEnum(r.aiReviewProvider, "settings.aiReviewProvider", ["anthropic", "openai"] as const, warnings);
+  if (aiReviewProvider !== null) out.aiReviewProvider = aiReviewProvider;
+  const aiReviewModel = normalizeOptionalString(r.aiReviewModel, "settings.aiReviewModel", warnings);
+  if (aiReviewModel !== null) out.aiReviewModel = aiReviewModel;
   const gittensorLabel = normalizeOptionalString(r.gittensorLabel, "settings.gittensorLabel", warnings);
   if (gittensorLabel !== null) out.gittensorLabel = gittensorLabel;
   const publicSurface = normalizeOptionalEnum(r.publicSurface, "settings.publicSurface", ["off", "comment_and_label", "comment_only", "label_only"] as const, warnings);
@@ -441,6 +457,8 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
   if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
+  if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
+  if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
   return effective;
 }
 

@@ -400,7 +400,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, aiReviewMode: null, aiReviewByok: null },
+      gate: { present: false, enabled: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
@@ -688,7 +688,7 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, aiReviewMode: null, aiReviewByok: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
   });
 
   it("parses gate.enabled (on/off) and ignores non-boolean values with a warning", () => {
@@ -764,6 +764,18 @@ describe("parseFocusManifest gate config", () => {
     expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate);
     expect(parseFocusManifest({ gate: { aiReview: ["nope"] } }).warnings.some((w) => /gate\.aiReview" must be a mapping/.test(w))).toBe(true);
     expect(parseFocusManifest({ gate: { aiReview: { mode: "loud" } } }).warnings.some((w) => /gate\.aiReview\.mode/.test(w))).toBe(true);
+  });
+
+  it("parses gate.aiReview provider + model (config-as-code) and rejects an unknown provider", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { mode: "advisory", byok: true, provider: "anthropic", model: "claude-3-5-sonnet-latest" } } });
+    expect(m.gate.aiReviewProvider).toBe("anthropic");
+    expect(m.gate.aiReviewModel).toBe("claude-3-5-sonnet-latest");
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    expect(parseFocusManifest({ gate: { aiReview: { provider: "grok" } } }).warnings.some((w) => /gate\.aiReview\.provider/.test(w))).toBe(true);
+    // resolveEffectiveSettings carries provider/model through (gate alias).
+    const eff = resolveEffectiveSettings({ aiReviewProvider: null, aiReviewModel: null } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewProvider).toBe("anthropic");
+    expect(eff.aiReviewModel).toBe("claude-3-5-sonnet-latest");
   });
 });
 

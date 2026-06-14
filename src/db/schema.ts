@@ -52,6 +52,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   qualityGateMinScore: integer("quality_gate_min_score"),
   aiReviewMode: text("ai_review_mode").notNull().default("off"),
   aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
+  aiReviewProvider: text("ai_review_provider"),
+  aiReviewModel: text("ai_review_model"),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),
   createMissingLabel: integer("create_missing_label", { mode: "boolean" }).notNull().default(true),

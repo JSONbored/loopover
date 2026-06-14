@@ -166,6 +166,42 @@ describe("runAiReviewForAdvisory", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.anthropic.com/v1/messages");
   });
 
+  it("applies the config-as-code model override and sends it to the provider", async () => {
+    const env = createTestEnv({ AI: { run: async () => ({ response: notesOnlyJson() }) } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", TOKEN_ENCRYPTION_SECRET: "advisory-test-encryption-secret-32bytes" });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-key-9999", model: "claude-stored" });
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ content: [{ type: "text", text: notesOnlyJson() }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory", aiReviewByok: true, aiReviewProvider: "anthropic", aiReviewModel: "claude-from-yml" } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    // The yml model override wins over the stored key's model.
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)).model).toBe("claude-from-yml");
+  });
+
+  it("skips BYOK (falls back to Workers AI) when the declared provider doesn't match the stored key", async () => {
+    const run = vi.fn(async () => ({ response: notesOnlyJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", TOKEN_ENCRYPTION_SECRET: "advisory-test-encryption-secret-32bytes" });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-key-9999", model: null });
+    const fetchMock = vi.fn(async () => new Response("should not be called", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory", aiReviewByok: true, aiReviewProvider: "openai" } as RepositorySettings, // declared openai, stored anthropic → mismatch
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+    });
+    expect(result?.notes).toContain("Add a test."); // produced via Workers AI fallback
+    expect(fetchMock).not.toHaveBeenCalled(); // no provider call
+    expect(run).toHaveBeenCalled(); // Workers AI used instead
+  });
+
   it("is fail-safe: a thrown error (e.g. broken DB) yields no finding and no notes", async () => {
     const adv = advisory();
     const env = aiEnv(async () => ({ response: defectJson() }));

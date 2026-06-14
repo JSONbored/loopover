@@ -872,7 +872,13 @@ export async function runAiReviewForAdvisory(
   try {
     // BYOK: decrypt the maintainer's provider key only when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
-    const providerKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
+    // Apply config-as-code provider/model: a declared provider must match the stored key's provider (else
+    // skip BYOK → Workers-AI fallback); a declared model overrides the stored/default model.
+    const storedKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
+    const providerKey =
+      storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
+        ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
+        : null;
     const files = await listPullRequestFiles(env, args.repoFullName, args.pr.number);
     const result = await runGittensoryAiReview(env, {
       repoFullName: args.repoFullName,

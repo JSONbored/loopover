@@ -949,14 +949,17 @@ export async function runAiSlopForAdvisory(
     author: string | null;
     files: Awaited<ReturnType<typeof listPullRequestFiles>>;
     deterministicBand: SlopBand;
+    confirmedContributor: boolean;
   },
 ): Promise<void> {
   if (!args.advisory.headSha) return;
   try {
     // BYOK (opt-in): reuse the repo's encrypted key + aiReviewByok flag — one BYOK key serves both AI
     // features. A declared provider must match the stored key's provider, else skip BYOK (Workers-AI
-    // fallback). The slop advisory stays advisory-only regardless of which model writes it.
-    const storedKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
+    // fallback). Because BYOK bills the maintainer, only confirmed contributors may use it;
+    // unconfirmed PRs fall back to Workers AI. The slop advisory stays advisory-only regardless of
+    // which model writes it.
+    const storedKey = args.settings.aiReviewByok && args.confirmedContributor ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
     const providerKey =
       storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
         ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
@@ -1157,6 +1160,18 @@ async function maybePublishPrPublicSurface(
       scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
     });
 
+    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
+      official = await getCachedOfficialMinerDetection(env, author, {
+        targetKey: `${repoFullName}#${pr.number}`,
+        deliveryId: webhook.deliveryId,
+      });
+    }
+
+    // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
+    // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
+    // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
+    const confirmedContributor = official?.status === "confirmed";
+
     // Anti-slop (#530/#532): only when opted in (slopGateMode !== "off"). Surface the deterministic slop
     // findings as advisory context, and feed the score to the gate (it only blocks under slop: block + the
     // threshold). Loads files lazily so disabled repos pay nothing.
@@ -1175,21 +1190,9 @@ async function maybePublishPrPublicSurface(
       // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (settings.slopAiAdvisory) {
-        await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band });
+        await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band, confirmedContributor });
       }
     }
-
-    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
-      official = await getCachedOfficialMinerDetection(env, author, {
-        targetKey: `${repoFullName}#${pr.number}`,
-        deliveryId: webhook.deliveryId,
-      });
-    }
-
-    // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
-    // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
-    // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
-    const confirmedContributor = official?.status === "confirmed";
 
     // AI maintainer review (opt-in via aiReviewMode). Mutates `advisory` with a consensus defect (if any)
     // BEFORE the gate evaluates, and returns advisory notes for the panel. Inside the try so any AI

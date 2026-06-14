@@ -523,6 +523,120 @@ const lintPrTextOutputSchema = {
   summary: z.string().optional(),
   generatedAt: z.string().optional(),
 };
+// #550: output schemas for the remaining tools (preflight/score/local-branch/agent), so MCP clients can
+// machine-validate their results. Same lenient style as the schemas above — documented top-level keys,
+// all optional, complex values as z.unknown(). No behavior change; these mirror the existing payloads.
+const preflightResultOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  status: z.string().optional(),
+  lane: z.unknown().optional(),
+  reviewBurden: z.unknown().optional(),
+  linkedIssues: z.unknown().optional(),
+  findings: z.array(z.unknown()).optional(),
+  collisions: z.unknown().optional(),
+};
+const bountyAdvisoryOutputSchema = {
+  id: z.string().optional(),
+  repoFullName: z.string().optional(),
+  issueNumber: z.number().optional(),
+  status: z.string().optional(),
+  lifecycle: z.unknown().optional(),
+  isActiveOpportunity: z.boolean().optional(),
+  fundingStatus: z.unknown().optional(),
+  consensusRisk: z.unknown().optional(),
+  source: z.unknown().optional(),
+  linkedPrs: z.unknown().optional(),
+  findings: z.array(z.unknown()).optional(),
+};
+const preflightLocalDiffOutputSchema = {
+  ...preflightResultOutputSchema,
+  localDiff: z.unknown().optional(),
+};
+const scorePreviewRecordOutputSchema = {
+  id: z.string().optional(),
+  scoringModelSnapshotId: z.string().optional(),
+  repoFullName: z.string().optional(),
+  targetType: z.string().optional(),
+  targetKey: z.string().optional(),
+  contributorLogin: z.string().optional(),
+  input: z.unknown().optional(),
+  result: z.unknown().optional(),
+  generatedAt: z.string().optional(),
+};
+const explainReviewRiskOutputSchema = {
+  preflight: z.unknown().optional(),
+  roleContext: z.unknown().optional(),
+  recommendation: z.string().optional(),
+};
+const variantsOutputSchema = {
+  variants: z.array(z.unknown()).optional(),
+};
+const preflightCurrentBranchOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  preflight: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const previewCurrentBranchScoreOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  scorePreview: z.unknown().optional(),
+  scenarioScorePreview: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const rankLocalNextActionsOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  nextActions: z.array(z.unknown()).optional(),
+  recommendedRerunCondition: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const explainLocalBlockersOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  scoreBlockers: z.unknown().optional(),
+  scenarioScorePreview: z.unknown().optional(),
+  branchQualityBlockers: z.unknown().optional(),
+  accountStateBlockers: z.unknown().optional(),
+  recommendedRerunCondition: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const prepareLocalPrPacketOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  prPacket: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const draftPrBodyOutputSchema = {
+  repoFullName: z.string().optional(),
+  title: z.string().optional(),
+  sections: z.unknown().optional(),
+  markdown: z.string().optional(),
+  caveats: z.array(z.unknown()).optional(),
+  excludedPrivateFields: z.array(z.unknown()).optional(),
+  sourceUploadDisabled: z.boolean().optional(),
+};
+const agentRunBundleOutputSchema = {
+  run: z.unknown().optional(),
+  actions: z.array(z.unknown()).optional(),
+  contextSnapshots: z.array(z.unknown()).optional(),
+  summary: z.unknown().optional(),
+};
+const agentPlanNextWorkOutputSchema = {
+  ...agentRunBundleOutputSchema,
+  planningElicitation: z.unknown().optional(),
+  planningChoices: z.unknown().optional(),
+};
+const agentExplainNextActionOutputSchema = {
+  ...agentRunBundleOutputSchema,
+  topAction: z.unknown().optional(),
+};
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204 });
@@ -737,6 +851,7 @@ export class GittensoryMcp {
       {
         description: "Preflight a planned PR for lane correctness, duplicate risk, linked issues, and review burden.",
         inputSchema: preflightShape,
+        outputSchema: preflightResultOutputSchema,
       },
       async (input) => this.toolResult(await this.preflightPr(input)),
     );
@@ -746,6 +861,7 @@ export class GittensoryMcp {
       {
         description: "Return lifecycle, funding, and consensus-risk context for a cached Gittensor bounty.",
         inputSchema: bountyShape,
+        outputSchema: bountyAdvisoryOutputSchema,
       },
       async (input) => this.toolResult(await this.getBountyAdvisory(input.id)),
     );
@@ -818,6 +934,7 @@ export class GittensoryMcp {
       {
         description: "Preflight local git-diff metadata without uploading code content.",
         inputSchema: localDiffPreflightShape,
+        outputSchema: preflightLocalDiffOutputSchema,
       },
       async (input) => this.toolResult(await this.preflightLocalDiff(input)),
     );
@@ -827,6 +944,7 @@ export class GittensoryMcp {
       {
         description: "Return a private scoring preview from local diff metrics or supplied metadata. Source contents are not required.",
         inputSchema: scorePreviewShape,
+        outputSchema: scorePreviewRecordOutputSchema,
       },
       async (input) => this.toolResult(await this.previewScore(input)),
     );
@@ -836,6 +954,7 @@ export class GittensoryMcp {
       {
         description: "Explain review risk for a planned PR using preflight, lane, duplicate, and role context.",
         inputSchema: preflightShape,
+        outputSchema: explainReviewRiskOutputSchema,
       },
       async (input) => this.toolResult(await this.explainReviewRisk(input)),
     );
@@ -845,6 +964,7 @@ export class GittensoryMcp {
       {
         description: "Compare private scoring previews for multiple PR variants.",
         inputSchema: variantsShape,
+        outputSchema: variantsOutputSchema,
       },
       async (input) => this.toolResult(await this.comparePrVariants(input.variants)),
     );
@@ -883,6 +1003,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata supplied by a local MCP wrapper and return PR readiness.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: preflightCurrentBranchOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "preflight")),
     );
@@ -892,6 +1013,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and return private scoreability context.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: previewCurrentBranchScoreOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scorePreview")),
     );
@@ -901,6 +1023,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and rank local next actions by private reward/risk signals.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: rankLocalNextActionsOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "nextActions")),
     );
@@ -910,6 +1033,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and explain private scoreability and review blockers.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: explainLocalBlockersOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
     );
@@ -919,6 +1043,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and return a public-safe PR packet for coding agents.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: prepareLocalPrPacketOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "prPacket")),
     );
@@ -928,6 +1053,7 @@ export class GittensoryMcp {
       {
         description: "Draft a public-safe, copy/paste PR body from local branch metadata (changed files, tests run, linked issue, duplicate/WIP caution, branch freshness, next steps). Private scoreability/reward/trust context is excluded; source contents are not uploaded.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: draftPrBodyOutputSchema,
       },
       async (input) => this.toolResult(await this.draftPrBody(input)),
     );
@@ -937,6 +1063,7 @@ export class GittensoryMcp {
       {
         description: "Compare private local-branch analysis variants without source uploads.",
         inputSchema: localBranchVariantsShape,
+        outputSchema: variantsOutputSchema,
       },
       async (input) => this.toolResult(await this.compareLocalVariants(input.variants)),
     );
@@ -946,6 +1073,7 @@ export class GittensoryMcp {
       {
         description: "Run the deterministic Gittensory base-agent planner and rank the next Gittensor OSS contribution actions.",
         inputSchema: agentPlanShape,
+        outputSchema: agentPlanNextWorkOutputSchema,
       },
       async (input, extra) => this.toolResult(await this.agentPlanNextWork(input, extra, server)),
     );
@@ -955,6 +1083,7 @@ export class GittensoryMcp {
       {
         description: "Create a queued copilot-only Gittensory agent run. The agent plans and explains; it does not edit code or open PRs.",
         inputSchema: agentRunShape,
+        outputSchema: agentRunBundleOutputSchema,
       },
       async (input) => this.toolResult(await this.agentStartRun(input)),
     );
@@ -964,6 +1093,7 @@ export class GittensoryMcp {
       {
         description: "Fetch a persisted Gittensory agent run with ranked actions and context snapshots.",
         inputSchema: agentRunIdShape,
+        outputSchema: agentRunBundleOutputSchema,
       },
       async (input) => this.toolResult(await this.agentGetRun(input.runId)),
     );
@@ -973,6 +1103,7 @@ export class GittensoryMcp {
       {
         description: "Explain the top deterministic next action and its scoreability/risk/maintainer impact.",
         inputSchema: agentPlanShape,
+        outputSchema: agentExplainNextActionOutputSchema,
       },
       async (input) => this.toolResult(await this.agentExplainNextAction(input)),
     );
@@ -982,6 +1113,7 @@ export class GittensoryMcp {
       {
         description: "Prepare a public-safe PR packet from local branch metadata. Source contents are not uploaded.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: agentRunBundleOutputSchema,
       },
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
     );

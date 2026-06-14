@@ -196,6 +196,7 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -2081,7 +2082,26 @@ export function createApp() {
       issueQuality: issueQuality?.report,
       gittensorSnapshot: context.gittensorSnapshot,
     });
-    const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
+    // Pre-submission gate prediction: the SAME advisory + evaluateGateCheck the maintainer PR pipeline
+    // runs, over a synthetic PR from this local branch, using ONLY the repo's PUBLIC .gittensory.yml gate
+    // policy (never the maintainer's private DB settings). Self-scoped (requireContributorAccess above).
+    const predictedGate = buildPredictedGateVerdict({
+      input: {
+        repoFullName: parsed.data.repoFullName,
+        contributorLogin: parsed.data.login,
+        title: parsed.data.title ?? analysis.prPacket.titleSuggestion,
+        body: parsed.data.body,
+        labels: parsed.data.labels,
+        linkedIssues: parsed.data.linkedIssues,
+      },
+      manifest: repoManifest,
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality: issueQuality?.report,
+    });
+    const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
     await recordRouteProductUsage(c, {
       surface: "api",

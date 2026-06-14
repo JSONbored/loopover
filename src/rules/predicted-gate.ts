@@ -1,0 +1,144 @@
+import {
+  buildCollisionReport,
+  buildPreflightResult,
+  buildPublicReadinessScore,
+  buildQueueHealth,
+  unionScopedOverlapClusters,
+  type IssueQualityReport,
+} from "../signals/engine";
+import type { FocusManifest } from "../signals/focus-manifest";
+import { sanitizePublicComment } from "../github/commands";
+import type { BountyRecord, IssueRecord, PullRequestRecord, RepositoryRecord } from "../types";
+import { buildPullRequestAdvisory, evaluateGateCheck, type GateCheckConclusion } from "./advisory";
+
+/**
+ * Pre-submission "will my PR pass the gate?" prediction for a MINER, computed BEFORE a PR exists.
+ *
+ * Parity: it runs the EXACT same engine the maintainer PR pipeline runs — buildPullRequestAdvisory +
+ * evaluateGateCheck over a synthetic PR built from the contributor's local branch metadata. The verdict a
+ * miner sees pre-submission is therefore the same verdict the gate would compute post-submission.
+ *
+ * Boundary: the gate POLICY is sourced ONLY from the repo's PUBLIC `.gittensory.yml` (`manifest.gate`) +
+ * safe defaults — never the maintainer's private dashboard/DB settings. The `.gittensory.yml` is in the
+ * repo and publicly viewable, so this leaks nothing a contributor could not already read. The result is
+ * explicitly labelled "predicted" and notes that private overrides and AI-consensus blockers are not
+ * evaluated pre-submission.
+ */
+export type PredictedGateVerdict = {
+  predicted: true;
+  basis: "public_config";
+  conclusion: GateCheckConclusion;
+  title: string;
+  summary: string;
+  readinessScore: number | null;
+  confirmedContributor: boolean | undefined;
+  blockers: Array<{ code: string; title: string; detail: string; action?: string | undefined }>;
+  warnings: Array<{ code: string; title: string; detail: string; action?: string | undefined }>;
+  note: string;
+};
+
+const PREDICTED_GATE_NOTE =
+  "Predicted from the repo's public .gittensory.yml gate config + safe defaults. The maintainer may have " +
+  "private dashboard overrides not reflected here, and the dual-model AI-consensus blocker is only " +
+  "evaluated on a real PR. Only confirmed Gittensor contributors are ever hard-blocked.";
+
+export type PredictedGateInput = {
+  repoFullName: string;
+  contributorLogin: string;
+  title: string;
+  body?: string | undefined;
+  labels?: string[] | undefined;
+  linkedIssues?: number[] | undefined;
+  authorAssociation?: string | undefined;
+};
+
+function publicSafeFinding(finding: { code: string; title: string; detail: string; action?: string | undefined }) {
+  return {
+    code: finding.code,
+    title: sanitizePublicComment(finding.title),
+    detail: sanitizePublicComment(finding.detail),
+    action: finding.action ? sanitizePublicComment(finding.action) : undefined,
+  };
+}
+
+export function buildPredictedGateVerdict(args: {
+  input: PredictedGateInput;
+  manifest: FocusManifest;
+  repo: RepositoryRecord | null;
+  issues: IssueRecord[];
+  pullRequests: PullRequestRecord[];
+  bounties?: BountyRecord[] | undefined;
+  issueQuality?: IssueQualityReport | null | undefined;
+  /** The contributor's OWN confirmed-Gittensor status (self-data). `false` → the real gate would stay
+   *  neutral for them; `undefined` → not gated on contributor status. */
+  confirmedContributor?: boolean | undefined;
+}): PredictedGateVerdict {
+  const { input, manifest, repo, issues, pullRequests } = args;
+  const gate = manifest.gate;
+
+  // A synthetic open PR from the local branch metadata — fed to the SAME advisory builder as a real PR.
+  const syntheticPr: PullRequestRecord = {
+    repoFullName: input.repoFullName,
+    number: 0,
+    title: input.title,
+    state: "open",
+    authorLogin: input.contributorLogin,
+    authorAssociation: input.authorAssociation ?? null,
+    body: input.body ?? null,
+    labels: input.labels ?? [],
+    linkedIssues: input.linkedIssues ?? [],
+  };
+
+  const preflight = buildPreflightResult(
+    {
+      repoFullName: input.repoFullName,
+      contributorLogin: input.contributorLogin,
+      title: input.title,
+      body: input.body,
+      labels: input.labels,
+      linkedIssues: input.linkedIssues,
+      authorAssociation: input.authorAssociation,
+    },
+    repo,
+    issues,
+    pullRequests,
+    args.bounties ?? [],
+    args.issueQuality,
+  );
+  const collisions = buildCollisionReport(input.repoFullName, issues, pullRequests);
+  const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
+  const readiness = buildPublicReadinessScore({
+    pr: syntheticPr,
+    preflight,
+    queueHealth,
+    scopedOverlapCount: unionScopedOverlapClusters(collisions, syntheticPr, preflight.collisions).length,
+  });
+
+  // Linked-issue finding is surfaced when the repo's public policy treats it as anything but `off`, so the
+  // gate can evaluate it; evaluateGateCheck decides whether it actually blocks (block) or stays advisory.
+  const requireLinkedIssue = gate.linkedIssue !== null && gate.linkedIssue !== "off";
+  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue });
+
+  const evaluation = evaluateGateCheck(advisory, {
+    linkedIssueGateMode: gate.linkedIssue ?? undefined,
+    duplicatePrGateMode: gate.duplicates ?? undefined,
+    qualityGateMode: gate.readinessMode ?? undefined,
+    qualityGateMinScore: gate.readinessMinScore ?? null,
+    aiReviewGateMode: gate.aiReviewMode ?? undefined,
+    readinessScore: readiness.total,
+    confirmedContributor: args.confirmedContributor,
+  });
+
+  return {
+    predicted: true,
+    basis: "public_config",
+    conclusion: evaluation.conclusion,
+    title: sanitizePublicComment(evaluation.title),
+    summary: sanitizePublicComment(evaluation.summary),
+    readinessScore: readiness.total,
+    confirmedContributor: args.confirmedContributor,
+    blockers: evaluation.blockers.map(publicSafeFinding),
+    warnings: evaluation.warnings.map(publicSafeFinding),
+    note: PREDICTED_GATE_NOTE,
+  };
+}

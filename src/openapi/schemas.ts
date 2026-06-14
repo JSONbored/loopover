@@ -565,6 +565,7 @@ export const RepositorySettingsSchema = z
     qualityGateMinScore: z.number().nullable().optional(),
     slopGateMode: z.enum(["off", "advisory", "block"]),
     slopGateMinScore: z.number().nullable().optional(),
+    slopAiAdvisory: z.boolean(),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string(),
     createMissingLabel: z.boolean(),

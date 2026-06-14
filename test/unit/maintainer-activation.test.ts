@@ -33,6 +33,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     duplicatePrGateMode: "advisory",
     qualityGateMode: "advisory",
     slopGateMode: "off",
+    slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",

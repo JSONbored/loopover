@@ -7975,6 +7975,9 @@
           "slopGateMinScore": {
             "type": "number",
             "nullable": true
+          },
+          "slopAiAdvisory": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -7990,6 +7993,7 @@
           "duplicatePrGateMode",
           "qualityGateMode",
           "slopGateMode",
+          "slopAiAdvisory",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",

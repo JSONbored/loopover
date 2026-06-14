@@ -131,7 +131,8 @@ import {
   PR_PANEL_RETRIGGER_MARKER,
   unionScopedOverlapClusters,
 } from "../signals/engine";
-import { buildSlopAssessment } from "../signals/slop";
+import { buildSlopAssessment, type SlopBand } from "../signals/slop";
+import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
@@ -925,6 +926,40 @@ export async function runAiReviewForAdvisory(
   }
 }
 
+/**
+ * AI-assisted slop advisory (opt-in `slopAiAdvisory`). Appends at most one ADVISORY-only `ai_slop_advisory`
+ * finding to the advisory; NEVER touches slopRisk or the gate (only the deterministic core can block). The
+ * caller gates on `settings.slopAiAdvisory` and reuses the already-fetched changed files. Fail-safe: any AI
+ * error is swallowed so the gate still finalizes.
+ */
+export async function runAiSlopForAdvisory(
+  env: Env,
+  args: {
+    advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
+    repoFullName: string;
+    pr: { number: number; title: string; body?: string | null | undefined };
+    author: string | null;
+    files: Awaited<ReturnType<typeof listPullRequestFiles>>;
+    deterministicBand: SlopBand;
+  },
+): Promise<void> {
+  if (!args.advisory.headSha) return;
+  try {
+    const result = await runGittensoryAiSlopAdvisory(env, {
+      repoFullName: args.repoFullName,
+      prNumber: args.pr.number,
+      title: args.pr.title,
+      body: args.pr.body ?? undefined,
+      diff: buildAiReviewDiff(args.files),
+      actor: args.author,
+      deterministicBand: args.deterministicBand,
+    });
+    if (result.status === "ok" && result.finding) args.advisory.findings.push(result.finding);
+  } catch (error) {
+    console.error(JSON.stringify({ level: "warn", event: "ai_slop_failed", repository: args.repoFullName, pullNumber: args.pr.number, error: errorMessage(error) }));
+  }
+}
+
 function linkedIssueDuplicatePullRequestsForGate(pr: PullRequestRecord, pullRequests: PullRequestRecord[]): number[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
@@ -1117,6 +1152,11 @@ async function maybePublishPrPublicSurface(
       });
       slopRisk = slop.slopRisk;
       advisory.findings.push(...slop.findings);
+      // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
+      // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
+      if (settings.slopAiAdvisory) {
+        await runAiSlopForAdvisory(env, { advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band });
+      }
     }
 
     if (gateEnabled && author && !publicSurfaceSkipped && !official) {

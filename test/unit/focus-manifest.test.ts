@@ -400,7 +400,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
@@ -688,7 +688,7 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
   });
 
   it("parses the gate.slop block, round-trips it, and warns on a non-mapping (#530/#532)", () => {
@@ -701,6 +701,22 @@ describe("parseFocusManifest gate config", () => {
     const bad = parseFocusManifest({ gate: { slop: "block" } });
     expect(bad.gate.slopMode).toBeNull();
     expect(bad.warnings.some((w) => /gate\.slop/.test(w))).toBe(true);
+  });
+
+  it("parses gate.slop.aiAdvisory, round-trips it, resolves it, and warns on a non-boolean", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "advisory", aiAdvisory: true } } });
+    expect(m.gate.slopMode).toBe("advisory");
+    expect(m.gate.slopAiAdvisory).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ slop: { mode: "advisory", aiAdvisory: true } });
+
+    // aiAdvisory layers onto the effective settings (off by default in the DB row).
+    const eff = resolveEffectiveSettings({ slopGateMode: "off", slopAiAdvisory: false } as RepositorySettings, m);
+    expect(eff.slopGateMode).toBe("advisory");
+    expect(eff.slopAiAdvisory).toBe(true);
+
+    const bad = parseFocusManifest({ gate: { slop: { aiAdvisory: "yes please" } } });
+    expect(bad.gate.slopAiAdvisory).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.slop\.aiAdvisory/.test(w))).toBe(true);
   });
 
   it("parses gate.pack and ignores an unknown pack with a warning (#692)", () => {

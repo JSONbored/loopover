@@ -60,6 +60,7 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     duplicatePrGateMode: "advisory",
     qualityGateMode: "advisory",
     slopGateMode: "off",
+    slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",

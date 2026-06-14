@@ -87,21 +87,23 @@ type ModelReview = {
 type AiGatewayOptions = { gateway?: { id: string } };
 type AiRunner = { run?: (model: string, options: Record<string, unknown>, extra?: AiGatewayOptions) => Promise<unknown> };
 
-function isEnabled(value: string | undefined): boolean {
+// Exported so the sibling AI-advisory features (e.g. the slop advisory in `./ai-slop`) share ONE budget
+// window + neuron estimator and never drift from the review path's accounting.
+export function isEnabled(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value ?? "");
 }
 
-function clampNumber(value: number, min: number, max: number): number {
+export function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
-function utcDayStartIso(): string {
+export function utcDayStartIso(): string {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
 }
 
-function estimateNeurons(promptChars: number, maxOutputTokens: number, calls: number): number {
+export function estimateNeurons(promptChars: number, maxOutputTokens: number, calls: number): number {
   const inputTokens = Math.ceil(promptChars / 4);
   return Math.max(1, Math.ceil((inputTokens + maxOutputTokens) * 0.035) * Math.max(1, calls));
 }

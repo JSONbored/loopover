@@ -53,6 +53,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   qualityGateMinScore: integer("quality_gate_min_score"),
   slopGateMode: text("slop_gate_mode").notNull().default("off"),
   slopGateMinScore: integer("slop_gate_min_score"),
+  slopAiAdvisory: integer("slop_ai_advisory", { mode: "boolean" }).notNull().default(false),
   aiReviewMode: text("ai_review_mode").notNull().default("off"),
   aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
   aiReviewProvider: text("ai_review_provider"),

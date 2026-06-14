@@ -397,6 +397,11 @@ export type RepositorySettings = {
   slopGateMode: GateRuleMode;
   /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
   slopGateMinScore?: number | null | undefined;
+  /** AI-assisted slop advisory (the `slopAiAdvisory` capability). When true AND `slopGateMode != off`, a
+   *  free Workers-AI pass adds an ADVISORY-only `ai_slop_advisory` finding for semantic slop the
+   *  deterministic detector cannot quantify. It NEVER feeds slopRisk or the gate (only the deterministic
+   *  core blocks). Default false — opt-in via `.gittensory.yml gate.slop.aiAdvisory`. */
+  slopAiAdvisory: boolean;
   /** AI maintainer review. `off` = no AI; `advisory` = post AI review notes only; `block` = ALSO let a
    *  dual-model high-confidence consensus defect become a gate blocker (confirmed-contributors only,
    *  like every other blocker). Default `off` — AI is opt-in. */

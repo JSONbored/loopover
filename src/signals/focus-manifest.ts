@@ -24,6 +24,7 @@ export type FocusManifestGateConfig = {
   readinessMinScore: number | null;
   slopMode: GateRuleMode | null;
   slopMinScore: number | null;
+  slopAiAdvisory: boolean | null;
   aiReviewMode: GateRuleMode | null;
   aiReviewByok: boolean | null;
   aiReviewProvider: "anthropic" | "openai" | null;
@@ -151,6 +152,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   readinessMinScore: null,
   slopMode: null,
   slopMinScore: null,
+  slopAiAdvisory: null,
   aiReviewMode: null,
   aiReviewByok: null,
   aiReviewProvider: null,
@@ -290,6 +292,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
     slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
     slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
+    slopAiAdvisory: normalizeOptionalBoolean(slopRecord?.aiAdvisory, "gate.slop.aiAdvisory", warnings),
     aiReviewMode: normalizeOptionalGateMode(aiReviewRecord?.mode, "gate.aiReview.mode", warnings),
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
@@ -304,6 +307,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.readinessMinScore !== null ||
     gate.slopMode !== null ||
     gate.slopMinScore !== null ||
+    gate.slopAiAdvisory !== null ||
     gate.aiReviewMode !== null ||
     gate.aiReviewByok !== null ||
     gate.aiReviewProvider !== null ||
@@ -328,10 +332,11 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.readinessMinScore !== null) readiness.minScore = gate.readinessMinScore;
     out.readiness = readiness;
   }
-  if (gate.slopMode !== null || gate.slopMinScore !== null) {
+  if (gate.slopMode !== null || gate.slopMinScore !== null || gate.slopAiAdvisory !== null) {
     const slop: Record<string, JsonValue> = {};
     if (gate.slopMode !== null) slop.mode = gate.slopMode;
     if (gate.slopMinScore !== null) slop.minScore = gate.slopMinScore;
+    if (gate.slopAiAdvisory !== null) slop.aiAdvisory = gate.slopAiAdvisory;
     out.slop = slop;
   }
   if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null) {
@@ -482,6 +487,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
   if (gate.slopMode !== null) effective.slopGateMode = gate.slopMode;
   if (gate.slopMinScore !== null) effective.slopGateMinScore = gate.slopMinScore;
+  if (gate.slopAiAdvisory !== null) effective.slopAiAdvisory = gate.slopAiAdvisory;
   if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;

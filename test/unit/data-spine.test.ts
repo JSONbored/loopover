@@ -246,11 +246,20 @@ describe("data spine repositories", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/defaultpack" });
     expect((await getRepositorySettings(env, "owner/defaultpack")).gatePack).toBe("gittensor");
     // slop gate (#530/#532) round-trips and defaults to off.
-    await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "block", slopGateMinScore: 55 });
+    await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "block", slopGateMinScore: 55, slopAiAdvisory: true });
     const slopSettings = await getRepositorySettings(env, "owner/sloprepo");
     expect(slopSettings.slopGateMode).toBe("block");
     expect(slopSettings.slopGateMinScore).toBe(55);
+    expect(slopSettings.slopAiAdvisory).toBe(true); // AI advisory opt-in round-trips
     expect((await getRepositorySettings(env, "owner/defaultpack")).slopGateMode).toBe("off");
+    expect((await getRepositorySettings(env, "owner/defaultpack")).slopAiAdvisory).toBe(false); // defaults off
+    // Persist-on-UPDATE: re-upserting an existing row must persist slop_* (these were previously missing
+    // from the onConflictDoUpdate SET clause, so updates silently dropped them).
+    await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "advisory", slopGateMinScore: 40, slopAiAdvisory: false });
+    const updated = await getRepositorySettings(env, "owner/sloprepo");
+    expect(updated.slopGateMode).toBe("advisory");
+    expect(updated.slopGateMinScore).toBe(40);
+    expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();
     expect(await getIssue(env, "owner/repo", 404)).toBeNull();

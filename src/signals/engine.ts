@@ -214,6 +214,15 @@ function isMaintainerWipIssue(issue: IssueRecord): boolean {
   return isMaintainerAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
 }
 
+/**
+ * True iff an issue is the highest-multiplier, immediately-grabbable target (#699): open, maintainer-created
+ * (the biggest reward multiplier), and NOT flagged as the maintainer's own WIP/internal work. This is the
+ * exact condition the issue-watch monitor (#699 path B) notifies subscribers about.
+ */
+export function isGrabbableHighMultiplierIssue(issue: IssueRecord): boolean {
+  return issue.state === "open" && isMaintainerAssociation(issue.authorAssociation) && !isMaintainerWipIssue(issue);
+}
+
 export type ContributorFit = {
   login: string;
   generatedAt: string;

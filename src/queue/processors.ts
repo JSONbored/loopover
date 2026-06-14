@@ -82,7 +82,7 @@ import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
-import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
+import { deliverNotification, detectIssueWatchEvents, evaluateNotificationEvent } from "../notifications/service";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import {
@@ -139,7 +139,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
-import type { AdvisoryFinding, ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
+import type { AdvisoryFinding, ContributorEvidenceRecord, DetectedNotificationEvent, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -759,6 +759,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       }
     }
 
+    let issueWatchEvents: DetectedNotificationEvent[] = [];
     if (payload.repository?.full_name && payload.issue && !payload.issue.pull_request) {
       const issue = await upsertIssueFromGitHub(env, payload.repository.full_name, payload.issue);
       const repo = await getRepository(env, payload.repository.full_name);
@@ -770,9 +771,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
         advisory.findings.push(...buildIssueSlopAssessment({ title: issue.title, body: issue.body }).findings);
       }
       await persistAdvisory(env, advisory);
+      // #699 path B: a newly opened grabbable, high-multiplier issue notifies the miners watching this repo
+      // (fanned out through the same #535 pipeline below).
+      if (payload.action === "opened") issueWatchEvents = await detectIssueWatchEvents(env, payload.repository.full_name, issue);
     }
 
-    for (const notificationEvent of detectNotificationEvents(eventName, payload)) {
+    for (const notificationEvent of [...detectNotificationEvents(eventName, payload), ...issueWatchEvents]) {
       await recordAuditEvent(env, {
         eventType: "notification.event_detected",
         actor: notificationEvent.actorLogin,

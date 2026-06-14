@@ -25,6 +25,7 @@ import {
   upsertInstallation,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
+  upsertIssueWatchSubscription,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
 } from "../../src/db/repositories";
@@ -3802,6 +3803,33 @@ describe("queue processors", () => {
     const evaluateJob = enqueued.find((message): message is { type: "notify-evaluate"; event: { recipientLogin: string } } => message.type === "notify-evaluate");
     expect(evaluateJob).toBeDefined();
     expect(evaluateJob!.event.recipientLogin).toBe("contributor");
+  });
+
+  it("notifies issue-watchers when a new grabbable maintainer-created issue opens (#699 path B)", async () => {
+    const enqueued: Array<{ type: string; event?: { eventType: string; recipientLogin: string; pullNumber: number } }> = [];
+    const env = createTestEnv({ JOBS: { async send(message: { type: string }) { enqueued.push(message); } } as unknown as Queue });
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+    await upsertIssueWatchSubscription(env, { login: "watcher", repoFullName: "JSONbored/gittensory" });
+    await upsertIssueWatchSubscription(env, { login: "maintainer", repoFullName: "JSONbored/gittensory" }); // the author — should be skipped
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "issue-watch-open",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Add caching to the registry sync", state: "open", user: { login: "maintainer" }, author_association: "OWNER", body: "We should cache the registry fetch." },
+      },
+    });
+
+    const watchEvents = enqueued.filter((m): m is { type: "notify-evaluate"; event: { eventType: string; recipientLogin: string; pullNumber: number } } => m.type === "notify-evaluate" && m.event?.eventType === "issue_watch_match");
+    expect(watchEvents.map((m) => m.event.recipientLogin)).toEqual(["watcher"]); // maintainer (author) skipped
+    expect(watchEvents[0]!.event.pullNumber).toBe(91);
+
+    const detected = await env.DB.prepare("select metadata_json from audit_events where event_type = 'notification.event_detected' and target_key = ?").bind("watcher").first<{ metadata_json: string }>();
+    expect(JSON.parse(detected!.metadata_json)).toMatchObject({ eventType: "issue_watch_match", recipientLogin: "watcher", repoFullName: "JSONbored/gittensory" });
   });
 
   it("appends issue-side slop findings to the issue advisory only when slop is opted in (#533)", async () => {

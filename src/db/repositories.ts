@@ -27,6 +27,7 @@ import {
   issues,
   githubRateLimitObservations,
   notificationDeliveries,
+  issueWatchSubscriptions,
   notificationSubscriptions,
   officialMinerDetections,
   pullRequestFiles,
@@ -100,6 +101,7 @@ import type {
   NotificationChannel,
   NotificationDeliveryRecord,
   NotificationDeliveryStatus,
+  IssueWatchSubscription,
   NotificationSubscriptionRecord,
   ProductUsageActivationFunnel,
   ProductUsageDailyRollupRecord,
@@ -1301,6 +1303,54 @@ export async function listNotificationSubscriptionsForLogin(env: Env, login: str
   const db = getDb(env.DB);
   const rows = await db.select().from(notificationSubscriptions).where(eq(notificationSubscriptions.login, login.toLowerCase())).limit(20);
   return rows.map(toNotificationSubscriptionRecord);
+}
+
+// ─── Issue-watch subscriptions (#699 path B) ─────────────────────────────────────────────────────────
+
+function toIssueWatchSubscription(row: typeof issueWatchSubscriptions.$inferSelect): IssueWatchSubscription {
+  return { login: row.login, repoFullName: row.repoFullName, labels: parseJson<string[]>(row.labelsJson, []), createdAt: row.createdAt, updatedAt: row.updatedAt };
+}
+
+/** Subscribe a miner to a repo's new grabbable issues; idempotent on (login, repo) — re-subscribing just
+ *  updates the label filter. `labels` ([]=any) are lowercased for case-insensitive matching at delivery. */
+export async function upsertIssueWatchSubscription(env: Env, input: { login: string; repoFullName: string; labels?: string[] | undefined }): Promise<IssueWatchSubscription> {
+  const db = getDb(env.DB);
+  const login = input.login.toLowerCase();
+  const labels = [...new Set((input.labels ?? []).map((label) => label.toLowerCase().trim()).filter(Boolean))];
+  await db
+    .insert(issueWatchSubscriptions)
+    .values({ id: crypto.randomUUID(), login, repoFullName: input.repoFullName, labelsJson: jsonString(labels), updatedAt: nowIso() })
+    .onConflictDoUpdate({ target: [issueWatchSubscriptions.login, issueWatchSubscriptions.repoFullName], set: { labelsJson: jsonString(labels), updatedAt: nowIso() } });
+  const [row] = await db
+    .select()
+    .from(issueWatchSubscriptions)
+    .where(and(eq(issueWatchSubscriptions.login, login), eq(issueWatchSubscriptions.repoFullName, input.repoFullName)));
+  return row ? toIssueWatchSubscription(row) : { login, repoFullName: input.repoFullName, labels };
+}
+
+export async function listIssueWatchSubscriptionsForLogin(env: Env, login: string): Promise<IssueWatchSubscription[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.login, login.toLowerCase())).limit(200);
+  return rows.map(toIssueWatchSubscription);
+}
+
+/** Returns whether a watch existed and was removed (so the caller can report it accurately). */
+export async function deleteIssueWatchSubscription(env: Env, login: string, repoFullName: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const existing = await db
+    .select({ id: issueWatchSubscriptions.id })
+    .from(issueWatchSubscriptions)
+    .where(and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  if (existing.length === 0) return false;
+  await db.delete(issueWatchSubscriptions).where(and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  return true;
+}
+
+/** All miners watching a repo — the candidate recipients when a new grabbable issue opens there. */
+export async function listIssueWatchersForRepo(env: Env, repoFullName: string): Promise<IssueWatchSubscription[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.repoFullName, repoFullName)).limit(5000);
+  return rows.map(toIssueWatchSubscription);
 }
 
 // Idempotency guard: UNIQUE(dedup_key, channel) means a duplicate webhook / queue retry inserts nothing

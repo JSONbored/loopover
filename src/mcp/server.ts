@@ -22,7 +22,10 @@ import {
   listContributorPullRequests,
   listIssueSignalSample,
   listIssues,
+  deleteIssueWatchSubscription,
+  listIssueWatchSubscriptionsForLogin,
   listNotificationDeliveriesForRecipient,
+  upsertIssueWatchSubscription,
   listOpenPullRequests,
   listPullRequests,
   listRecentMergedPullRequests,
@@ -451,6 +454,20 @@ const markNotificationsReadShape = {
     .optional(),
 };
 
+// #699 path B: a miner's self-scoped issue-watch subscriptions. `action` defaults to `list`; `watch`/`unwatch`
+// require repoFullName. `labels` ([]/omitted = any) filters which new issues notify.
+const watchIssuesShape = {
+  login: z.string().min(1),
+  action: z.enum(["watch", "unwatch", "list"]).default("list"),
+  repoFullName: z.string().min(3).max(200).optional(),
+  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+};
+
+const watchIssuesOutputSchema = {
+  watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
+  changed: z.string().optional(),
+};
+
 const explainRepoDecisionOutputSchema = {
   status: z.string().optional(),
   login: z.string().optional(),
@@ -834,6 +851,17 @@ export class GittensoryMcp {
         outputSchema: markNotificationsReadOutputSchema,
       },
       async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
+    );
+
+    server.registerTool(
+      "gittensory_watch_issues",
+      {
+        description:
+          "Watch repos for NEW grabbable, high-multiplier issues (maintainer-created, not WIP). action=watch subscribes a repo (optional label filter), unwatch removes it, list (default) returns your watches. When a matching issue opens you're notified via gittensory_list_notifications. Self-scoped to the authenticated login.",
+        inputSchema: watchIssuesShape,
+        outputSchema: watchIssuesOutputSchema,
+      },
+      async (input) => this.toolResult(await this.watchIssues(input)),
     );
 
     server.registerTool(
@@ -1522,6 +1550,27 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory notifications for ${login}: ${feed.unreadCount} unread.`,
       data: feed as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #699 path B: manage a miner's issue-watch subscriptions. Self-scoped; watch/unwatch need repoFullName.
+  private async watchIssues(input: z.infer<z.ZodObject<typeof watchIssuesShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    let changed: string | undefined;
+    if (input.action === "watch" || input.action === "unwatch") {
+      if (!input.repoFullName) return { summary: `${input.action} requires repoFullName.`, data: {} };
+      if (input.action === "watch") {
+        await upsertIssueWatchSubscription(this.env, { login: input.login, repoFullName: input.repoFullName, labels: input.labels });
+        changed = `watching ${input.repoFullName}${input.labels && input.labels.length > 0 ? ` (labels: ${input.labels.join(", ")})` : ""}`;
+      } else {
+        const removed = await deleteIssueWatchSubscription(this.env, input.login, input.repoFullName);
+        changed = removed ? `unwatched ${input.repoFullName}` : `was not watching ${input.repoFullName}`;
+      }
+    }
+    const watching = (await listIssueWatchSubscriptionsForLogin(this.env, input.login)).map((sub) => ({ repoFullName: sub.repoFullName, labels: sub.labels }));
+    return {
+      summary: `Watching ${watching.length} repo(s) for new grabbable issues${changed ? ` (${changed})` : ""}.`,
+      data: { watching, ...(changed ? { changed } : {}) } as unknown as Record<string, unknown>,
     };
   }
 

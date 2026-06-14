@@ -75,6 +75,23 @@ describe("runGittensoryAiReview gating", () => {
   });
 });
 
+describe("AI Gateway routing for free Workers-AI calls", () => {
+  it("routes through the gateway when AI_GATEWAY_ID is set", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", AI_GATEWAY_ID: "gtsy-gw" });
+    await runGittensoryAiReview(env, baseInput);
+    expect(run).toHaveBeenCalled();
+    expect((run.mock.calls[0] as unknown[] | undefined)?.[2]).toEqual({ gateway: { id: "gtsy-gw" } });
+  });
+
+  it("calls the binding directly (no gateway arg) when AI_GATEWAY_ID is unset", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
+    await runGittensoryAiReview(env, baseInput);
+    expect((run.mock.calls[0] as unknown[] | undefined)?.[2]).toBeUndefined();
+  });
+});
+
 describe("runGittensoryAiReview advisory mode", () => {
   it("produces public-safe advisory notes from one Workers-AI opinion and no defect", async () => {
     const run = vi.fn(async (_model: string) => ({ response: reviewJson() }));

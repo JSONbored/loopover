@@ -155,6 +155,7 @@ import {
 } from "../services/mcp-compatibility";
 import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
 import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
+import { buildSubnetInterfaceDescriptor } from "../services/subnet-interface";
 import {
   buildWeeklyValueReport,
   formatWeeklyValueReportMarkdown,
@@ -196,6 +197,8 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -671,6 +674,14 @@ export function createApp() {
   app.get("/v1/mcp/compatibility", (c) => c.json(buildMcpCompatibilityMetadata(nowIso())));
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
+
+  // Public SN74 contribution-interface descriptor (#695): metagraphed (and any agent) fetches this to route
+  // gittensor discovery → Gittensory. Unauthenticated product metadata; excluded from requiresApiToken below.
+  app.get("/v1/public/subnet-interface", (c) => {
+    const origin = c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin;
+    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+    return c.json(buildSubnetInterfaceDescriptor({ origin, generatedAt: nowIso(), appSlug: c.env.GITHUB_APP_SLUG, upstreamRepo: c.env.GITTENSOR_UPSTREAM_REPO }));
+  });
 
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
     try {
@@ -1779,9 +1790,46 @@ export function createApp() {
     );
   });
 
+  // Repo gittensory settings (gate config, AI-review mode/provider/model — NON-secret; the BYOK key is
+  // never here). Maintainer DATA: session callers must be a verified maintainer of THIS repo (per-repo
+  // scope), so a maintainer of repo A cannot read repo B's config. Server-to-server tokens are exempt.
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
     return c.json(await getRepositorySettings(c.env, fullName));
+  });
+
+  // Maintainer activation demo (#701): a repo-specific "here's what Gittensory would have surfaced" preview
+  // over recent PRs, plus a one-click advisory ramp. Maintainer-scoped + per-repo. Deterministic (no AI run).
+  app.get("/v1/repos/:owner/:repo/activation-preview", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const [repo, settings, pullRequests] = await Promise.all([
+      getRepository(c.env, fullName),
+      getRepositorySettings(c.env, fullName),
+      listPullRequests(c.env, fullName),
+    ]);
+    return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso() }));
+  });
+
+  // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
+  // mode. Merges onto current settings so unrelated fields are preserved.
+  app.post("/v1/repos/:owner/:repo/activation", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const current = await getRepositorySettings(c.env, fullName);
+    const updated = await upsertRepositorySettings(c.env, { ...current, ...recommendedAdvisoryActivationSettings() });
+    return c.json({
+      repoFullName: fullName,
+      gateCheckMode: updated.gateCheckMode,
+      checkRunMode: updated.checkRunMode,
+      linkedIssueGateMode: updated.linkedIssueGateMode,
+      duplicatePrGateMode: updated.duplicatePrGateMode,
+      qualityGateMode: updated.qualityGateMode,
+    });
   });
 
   // Maintainer self-serve AI-review config (non-secret: mode/byok/provider/model). Session-authenticated +
@@ -2076,7 +2124,26 @@ export function createApp() {
       issueQuality: issueQuality?.report,
       gittensorSnapshot: context.gittensorSnapshot,
     });
-    const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
+    // Pre-submission gate prediction: the SAME advisory + evaluateGateCheck the maintainer PR pipeline
+    // runs, over a synthetic PR from this local branch, using ONLY the repo's PUBLIC .gittensory.yml gate
+    // policy (never the maintainer's private DB settings). Self-scoped (requireContributorAccess above).
+    const predictedGate = buildPredictedGateVerdict({
+      input: {
+        repoFullName: parsed.data.repoFullName,
+        contributorLogin: parsed.data.login,
+        title: parsed.data.title ?? analysis.prPacket.titleSuggestion,
+        body: parsed.data.body,
+        labels: parsed.data.labels,
+        linkedIssues: parsed.data.linkedIssues,
+      },
+      manifest: repoManifest,
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality: issueQuality?.report,
+    });
+    const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
     await recordRouteProductUsage(c, {
       surface: "api",
@@ -3856,10 +3923,27 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
   return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
 }
 
+// ─── Authorization model (the miner ⊕ maintainer boundary) ──────────────────────────────────────
+// Identity is per-LOGIN; authority is per-REPO. Two independent axes a single session can hold at once:
+//   • MINER (gittensor contributor): may read ONLY its own contributor/miner data — enforced by
+//     `requireContributorAccess` (HTTP) and `GittensoryMcp.requireContributorAccess` (MCP), which 403/throw
+//     unless `session.actor === requestedLogin`. Being a miner grants ZERO maintainer visibility.
+//   • MAINTAINER OF A SPECIFIC REPO: may read/write maintainer data ONLY for repos it is a verified
+//     maintainer of — enforced by `requireSessionRepoAccess` / `requireRepoMaintainer` (HTTP) and
+//     `GittensoryMcp.canAccessRepo` (MCP). Maintainer-of-repo-A grants ZERO access to repo B.
+// Two maintainer tiers: (a) affiliation (owns/installed the repo, or authored a PR there with a
+// maintainer association) gates maintainer-DATA reads; (b) verified write/admin/maintain permission,
+// resolved live via the installation, additionally gates the SECRET BYOK key writes (`requireRepoKeyWriteAccess`).
+// Operators (ADMIN_GITHUB_LOGINS) and server-to-server tokens bypass per-repo scope by design.
+// `canSessionAccessPath` is the coarse path allowlist that runs in the global middleware BEFORE a route
+// handler; it only decides whether a session may REACH a path — the per-route guards above enforce the
+// actual identity/repo scope. A path added here MUST be scoped by a per-route guard in its handler.
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
   if (isIssueQualityPath(path)) return true;
+  if (isRepoSettingsPath(path)) return true;
+  if (isRepoActivationPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
@@ -3868,6 +3952,14 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoSettingsPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/settings$/.test(path);
+}
+
+function isRepoActivationPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/activation(?:-preview)?$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {
@@ -4061,6 +4153,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
   if (path === "/v1/mcp/compatibility") return false;
   if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
+  if (path === "/v1/public/subnet-interface") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   if (path.startsWith("/v1/auth/")) return false;

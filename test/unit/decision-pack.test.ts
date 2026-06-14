@@ -850,6 +850,8 @@ describe("decision-pack service", () => {
           fit: "good",
           score: 82,
           lane: "split",
+          multiplierTier: "community",
+          availability: "ready",
           reasons: ["Active bounty context is available."],
           warnings: [],
         },

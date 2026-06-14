@@ -3740,7 +3740,14 @@ describe("queue processors", () => {
   });
 
   it("detects a changes-requested review notification for the PR author", async () => {
-    const env = createTestEnv();
+    const enqueued: Array<{ type: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: { type: string }) {
+          enqueued.push(message);
+        },
+      } as unknown as Queue,
+    });
 
     await processJob(env, {
       type: "github-webhook",
@@ -3786,6 +3793,10 @@ describe("queue processors", () => {
       dedupKey: "changes_requested:JSONbored/gittensory#42:maintainer:2026-05-28T12:00:00.000Z",
     });
     expect(JSON.stringify(detected.results[0])).not.toMatch(/trust score|wallet|hotkey|reward estimate|reviewability/i);
+
+    const evaluateJob = enqueued.find((message): message is { type: "notify-evaluate"; event: { recipientLogin: string } } => message.type === "notify-evaluate");
+    expect(evaluateJob).toBeDefined();
+    expect(evaluateJob!.event.recipientLogin).toBe("contributor");
   });
 });
 

@@ -240,6 +240,8 @@ describe("data spine repositories", () => {
     // gatePack (#692) round-trips and defaults to gittensor.
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "oss-anti-slop" });
     expect((await getRepositorySettings(env, "owner/repo")).gatePack).toBe("oss-anti-slop");
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "gittensor", linkedIssueGateMode: "block" });
+    expect(await getRepositorySettings(env, "owner/repo")).toMatchObject({ gatePack: "gittensor", linkedIssueGateMode: "block" });
     await upsertRepositorySettings(env, { repoFullName: "owner/defaultpack" });
     expect((await getRepositorySettings(env, "owner/defaultpack")).gatePack).toBe("gittensor");
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();

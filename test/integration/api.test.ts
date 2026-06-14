@@ -5596,6 +5596,7 @@ describe("api routes", () => {
         body: JSON.stringify({
           commentMode: "detected_contributors_only",
           publicSignalLevel: "minimal",
+          gatePack: "oss-anti-slop",
           commandAuthorization: { default: ["maintainer"], commands: { preflight: ["pr_author"], "queue-summary": ["maintainer", "collaborator"] } },
         }),
       },
@@ -5605,12 +5606,13 @@ describe("api routes", () => {
     await expect(updated.json()).resolves.toMatchObject({
       commentMode: "detected_contributors_only",
       publicSignalLevel: "minimal",
+      gatePack: "oss-anti-slop",
       commandAuthorization: { default: ["maintainer"], commands: expect.objectContaining({ preflight: ["pr_author"] }) },
     });
 
     const settings = await app.request("/v1/repos/entrius/allways-ui/settings", { headers: apiHeaders(env) }, env);
     expect(settings.status).toBe(200);
-    await expect(settings.json()).resolves.toMatchObject({ commentMode: "detected_contributors_only", commandAuthorization: { commands: expect.objectContaining({ preflight: ["pr_author"] }) } });
+    await expect(settings.json()).resolves.toMatchObject({ commentMode: "detected_contributors_only", gatePack: "oss-anti-slop", commandAuthorization: { commands: expect.objectContaining({ preflight: ["pr_author"] }) } });
 
     const preview = await app.request(
       "/v1/repos/entrius/allways-ui/settings-preview",

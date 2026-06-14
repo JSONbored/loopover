@@ -46,14 +46,17 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
   const [keyInput, setKeyInput] = useState("");
   const [keyStatus, setKeyStatus] = useState<AiKeyStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
 
   const base = repoApiBase(repoFullName);
+  const hasRepos = repoOptions.length > 0;
 
   const load = useCallback(async () => {
     const apiBase = repoApiBase(repoFullName);
     if (!apiBase) return;
     setMessage(null);
+    setLoading(true);
     const [settings, key] = await Promise.all([
       apiFetch<RepoSettingsResponse>(`${apiBase}/settings`, {
         label: "AI review settings",
@@ -73,6 +76,7 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
       setModel(settings.data.aiReviewModel ?? "");
     }
     setKeyStatus(key.ok ? key.data : null);
+    setLoading(false);
   }, [repoFullName]);
 
   useEffect(() => {
@@ -198,6 +202,12 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
                 <option key={repo} value={repo} />
               ))}
             </datalist>
+            {!hasRepos ? (
+              <span className="mt-1 block text-token-2xs text-muted-foreground">
+                No registered repositories detected yet — type an installed{" "}
+                <code className="font-mono">owner/repo</code> to configure it.
+              </span>
+            ) : null}
           </label>
 
           <label className="block">
@@ -248,12 +258,17 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
 
           <button
             type="button"
-            disabled={busy || !base}
+            disabled={busy || loading || !base}
+            aria-busy={busy}
             onClick={() => void saveConfig()}
             className="inline-flex items-center gap-2 rounded-token border border-mint/40 bg-mint px-3 py-2 text-token-xs font-medium text-primary-foreground transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            Save configuration
+            {busy || loading ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Save className="size-3.5" />
+            )}
+            {loading ? "Loading…" : "Save configuration"}
           </button>
         </div>
 
@@ -286,7 +301,8 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={busy || !base}
+              disabled={busy || loading || !base}
+              aria-busy={busy}
               onClick={() => void saveKey()}
               className="inline-flex items-center gap-2 rounded-token border border-mint/40 bg-mint px-3 py-2 text-token-xs font-medium text-primary-foreground transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -296,7 +312,8 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
             {keyStatus?.configured ? (
               <button
                 type="button"
-                disabled={busy || !base}
+                disabled={busy || loading || !base}
+                aria-busy={busy}
                 onClick={() => void removeKey()}
                 className="inline-flex items-center gap-2 rounded-token border border-border px-3 py-2 text-token-xs font-medium text-foreground transition-colors hover:border-warning/50 hover:text-warning disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -307,11 +324,13 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
         </div>
       </div>
 
-      {message ? (
-        <p className={`mt-4 text-token-xs ${message.kind === "ok" ? "text-mint" : "text-warning"}`}>
-          {message.text}
-        </p>
-      ) : null}
+      <p
+        role="status"
+        aria-live="polite"
+        className={`mt-4 text-token-xs ${message ? (message.kind === "ok" ? "text-mint" : "text-warning") : "sr-only"}`}
+      >
+        {message?.text ?? ""}
+      </p>
     </section>
   );
 }

@@ -64,7 +64,7 @@ jobs:
       - name: UI check
         env:
           VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
-        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run ui:build
+        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build
 
       - name: Audit dependencies
         run: npm audit --audit-level=moderate

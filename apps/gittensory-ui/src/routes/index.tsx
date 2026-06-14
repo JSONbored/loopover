@@ -68,7 +68,7 @@ function Hero() {
           </div>
           <h1 className="mt-5 text-token-3xl font-medium leading-token-tight tracking-tight text-foreground">
             Mine Gittensor like an engineer.
-            <span className="block text-muted-foreground">Not like a bot.</span>
+            <span className="block text-muted-foreground">Not like a bot. (preview check)</span>
           </h1>
           <p className="mt-5 max-w-lg text-token-md leading-token-normal text-muted-foreground">
             Gittensory is the deterministic base-agent layer for Gittensor OSS contribution mining.

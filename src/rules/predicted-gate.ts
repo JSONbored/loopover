@@ -76,19 +76,6 @@ export function buildPredictedGateVerdict(args: {
   const { input, manifest, repo, issues, pullRequests } = args;
   const gate = manifest.gate;
 
-  // A synthetic open PR from the local branch metadata — fed to the SAME advisory builder as a real PR.
-  const syntheticPr: PullRequestRecord = {
-    repoFullName: input.repoFullName,
-    number: 0,
-    title: input.title,
-    state: "open",
-    authorLogin: input.contributorLogin,
-    authorAssociation: input.authorAssociation ?? null,
-    body: input.body ?? null,
-    labels: input.labels ?? [],
-    linkedIssues: input.linkedIssues ?? [],
-  };
-
   const preflight = buildPreflightResult(
     {
       repoFullName: input.repoFullName,
@@ -105,6 +92,21 @@ export function buildPredictedGateVerdict(args: {
     args.bounties ?? [],
     args.issueQuality,
   );
+
+  // A synthetic open PR from the local branch metadata — fed to the SAME advisory builder as a real PR.
+  // Use preflight's normalized linked issues so body references like "Closes #7" match real PR parity.
+  const syntheticPr: PullRequestRecord = {
+    repoFullName: input.repoFullName,
+    number: 0,
+    title: input.title,
+    state: "open",
+    authorLogin: input.contributorLogin,
+    authorAssociation: input.authorAssociation ?? null,
+    body: input.body ?? null,
+    labels: input.labels ?? [],
+    linkedIssues: preflight.linkedIssues,
+  };
+
   const collisions = buildCollisionReport(input.repoFullName, issues, pullRequests);
   const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
   const readiness = buildPublicReadinessScore({

@@ -2100,6 +2100,7 @@ export function createApp() {
       pullRequests,
       bounties,
       issueQuality: issueQuality?.report,
+      confirmedContributor: Boolean(context.gittensorSnapshot),
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);

@@ -66,6 +66,12 @@ describe("buildPredictedGateVerdict", () => {
     expect(advisory.blockers.some((b) => b.code === "missing_linked_issue")).toBe(false);
   });
 
+  it("uses linked issues inferred from the body for gate advisory parity", () => {
+    const result = verdict({ gate: { linkedIssue: "block" }, input: { body: "Closes #7", linkedIssues: [] } });
+    expect(result.conclusion).toBe("success");
+    expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(false);
+  });
+
   it("forces a neutral prediction for a self-declared non-confirmed contributor", () => {
     const result = buildPredictedGateVerdict({
       input: { ...BASE_INPUT, body: "no issue", linkedIssues: [] },

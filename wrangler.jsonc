@@ -30,6 +30,10 @@
     "GITTENSOR_UPSTREAM_REPO": "entrius/gittensor",
     "GITTENSOR_UPSTREAM_REF": "test",
     "GITTENSOR_REGISTRY_URL": "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",
+    // #703: apply upstream sigmoid time-decay in score previews, using each repo's resolved per-repo
+    // hyperparameters (registry scoring.time_decay overlaid on the upstream defaults). A fresh PR is
+    // unaffected (decay 1.0); only aged-PR projections decay. Owner-reviewed; this is the go-live switch.
+    "SCORING_TIME_DECAY_ENABLED": "true",
     "GITTENSORY_AUTO_FILE_DRIFT_ISSUES": "false",
     "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
     "PUBLIC_API_ORIGIN": "https://gittensory-api.aethereal.dev",

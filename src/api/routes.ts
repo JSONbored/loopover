@@ -515,6 +515,8 @@ const repositorySettingsSchema = z.object({
   qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),
   aiReviewMode: z.enum(["off", "advisory", "block"]).default("off"),
   aiReviewByok: z.boolean().default(false),
+  aiReviewProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
+  aiReviewModel: z.string().trim().min(1).max(120).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   createMissingLabel: z.boolean().default(true),
@@ -536,6 +538,15 @@ const repositorySettingsSchema = z.object({
 const repositoryAiKeySchema = z.object({
   provider: z.enum(["anthropic", "openai"]),
   key: z.string().trim().min(20).max(400),
+  model: z.string().trim().min(1).max(120).nullable().optional(),
+});
+
+// Maintainer-settable AI-review config (the non-secret subset of settings). The secret key is set
+// separately via the ai-key route; never here.
+const repositoryAiReviewSchema = z.object({
+  mode: z.enum(["off", "advisory", "block"]),
+  byok: z.boolean().default(false),
+  provider: z.enum(["anthropic", "openai"]).nullable().optional(),
   model: z.string().trim().min(1).max(120).nullable().optional(),
 });
 
@@ -1765,6 +1776,66 @@ export function createApp() {
     return c.json(await getRepositorySettings(c.env, fullName));
   });
 
+  // Maintainer self-serve AI-review config (non-secret: mode/byok/provider/model). Session-authenticated +
+  // scoped to repos the maintainer owns/maintains. The secret provider key goes through the ai-key route.
+  // Merges onto current settings so unrelated settings are preserved.
+  app.put("/v1/repos/:owner/:repo/ai-review", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const parsed = repositoryAiReviewSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_ai_review_config", issues: parsed.error.issues }, 400);
+    const current = await getRepositorySettings(c.env, fullName);
+    const updated = await upsertRepositorySettings(c.env, {
+      ...current,
+      aiReviewMode: parsed.data.mode,
+      aiReviewByok: parsed.data.byok,
+      aiReviewProvider: parsed.data.provider,
+      aiReviewModel: parsed.data.model,
+    });
+    // getRepositorySettings normalizes these to a concrete value or null (never undefined).
+    return c.json({
+      aiReviewMode: updated.aiReviewMode,
+      aiReviewByok: updated.aiReviewByok,
+      aiReviewProvider: updated.aiReviewProvider ?? null,
+      aiReviewModel: updated.aiReviewModel ?? null,
+    });
+  });
+
+  // Maintainer self-serve BYOK provider key. Write-only + maintainer-scoped. GET returns only
+  // {configured, provider, last4, model}; the key is never returned, logged, or surfaced.
+  app.get("/v1/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    return c.json(await getRepositoryAiKeyStatus(c.env, fullName));
+  });
+
+  app.post("/v1/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const parsed = repositoryAiKeySchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_ai_key", issues: parsed.error.issues }, 400);
+    const createdBy = gate.identity?.kind === "session" ? gate.identity.actor : null;
+    try {
+      return c.json(await upsertRepositoryAiKey(c.env, { repoFullName: fullName, provider: parsed.data.provider, key: parsed.data.key, model: parsed.data.model ?? null, createdBy }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "missing_encryption_secret") {
+        return c.json({ error: "encryption_unavailable", detail: "Key storage is not configured on the server." }, 503);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/v1/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    await deleteRepositoryAiKey(c.env, fullName);
+    return c.json({ configured: false });
+  });
+
   app.post("/v1/repos/:owner/:repo/settings-preview", async (c) => {
     const identity = await authenticateRequestIdentity(c);
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
@@ -2461,6 +2532,8 @@ export function createApp() {
         qualityGateMinScore: parsed.data.qualityGateMinScore,
         aiReviewMode: parsed.data.aiReviewMode,
         aiReviewByok: parsed.data.aiReviewByok,
+        aiReviewProvider: parsed.data.aiReviewProvider,
+        aiReviewModel: parsed.data.aiReviewModel,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         createMissingLabel: parsed.data.createMissingLabel,
@@ -3781,6 +3854,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
+  if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
@@ -3809,6 +3883,10 @@ function isIssueQualityPath(path: string): boolean {
 
 function isRepoFocusManifestPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/focus-manifest(?:\/refresh)?$/.test(path);
+}
+
+function isRepoAiConfigPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/ai-(?:review|key)$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
@@ -3882,6 +3960,20 @@ async function requireSessionRepoAccess(
   if (scopedRepoNames.has(requestedRepo)) return null;
   if (repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase())) return null;
   return c.json({ error: "forbidden_repo" }, 403);
+}
+
+/** Gate a maintainer-scoped repo route: requires a maintainer/owner/operator role and, for session
+ *  callers, access to that specific repo. Returns the resolved identity, or a Response to short-circuit. */
+async function requireRepoMaintainer(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
+  const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+  if (forbidden) return forbidden;
+  const identity = await authenticateRequestIdentity(c);
+  if (identity?.kind === "session") {
+    const repo = await getRepository(c.env, fullName);
+    const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+    if (repoForbidden) return repoForbidden;
+  }
+  return { identity };
 }
 
 async function skippedPrAuditRepoScope(

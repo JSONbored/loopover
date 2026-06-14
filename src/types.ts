@@ -381,6 +381,13 @@ export type RepositorySettings = {
    *  consensus blocker always uses the free Workers-AI model pair regardless, so BYOK never changes who
    *  can be blocked. Default false. */
   aiReviewByok: boolean;
+  /** Config-as-code BYOK provider for the advisory write-up. `null` = use the configured key's own
+   *  provider. When set, it must match the stored key's provider or BYOK is skipped (Workers-AI fallback).
+   *  The secret key itself is never here — only via the encrypted key store. */
+  aiReviewProvider?: "anthropic" | "openai" | null | undefined;
+  /** Config-as-code model override for the BYOK advisory write-up (e.g. "claude-3-5-sonnet-latest").
+   *  `null` = use the key record's model, else a conservative per-provider default. */
+  aiReviewModel?: string | null | undefined;
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;

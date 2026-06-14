@@ -393,6 +393,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       qualityGateMinScore: null,
       aiReviewMode: "off",
       aiReviewByok: false,
+      aiReviewProvider: null,
+      aiReviewModel: null,
       autoLabelEnabled: true,
       gittensorLabel: "gittensor",
       createMissingLabel: true,
@@ -418,6 +420,8 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
     aiReviewMode: parseGateRuleMode(row.aiReviewMode),
     aiReviewByok: row.aiReviewByok,
+    aiReviewProvider: normalizeAiReviewProvider(row.aiReviewProvider),
+    aiReviewModel: row.aiReviewModel ?? null,
     autoLabelEnabled: row.autoLabelEnabled,
     gittensorLabel: row.gittensorLabel,
     createMissingLabel: row.createMissingLabel,
@@ -447,6 +451,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
     aiReviewMode: settings.aiReviewMode ?? "off",
     aiReviewByok: settings.aiReviewByok ?? false,
+    aiReviewProvider: normalizeAiReviewProvider(settings.aiReviewProvider),
+    aiReviewModel: typeof settings.aiReviewModel === "string" && settings.aiReviewModel.trim() ? settings.aiReviewModel.trim() : null,
     autoLabelEnabled: settings.autoLabelEnabled ?? true,
     gittensorLabel: settings.gittensorLabel ?? "gittensor",
     createMissingLabel: settings.createMissingLabel ?? true,
@@ -474,6 +480,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       qualityGateMinScore: resolved.qualityGateMinScore,
       aiReviewMode: resolved.aiReviewMode,
       aiReviewByok: resolved.aiReviewByok,
+      aiReviewProvider: resolved.aiReviewProvider,
+      aiReviewModel: resolved.aiReviewModel,
       autoLabelEnabled: resolved.autoLabelEnabled,
       gittensorLabel: resolved.gittensorLabel,
       createMissingLabel: resolved.createMissingLabel,
@@ -500,6 +508,8 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         qualityGateMinScore: resolved.qualityGateMinScore,
         aiReviewMode: resolved.aiReviewMode,
         aiReviewByok: resolved.aiReviewByok,
+        aiReviewProvider: resolved.aiReviewProvider,
+        aiReviewModel: resolved.aiReviewModel,
         autoLabelEnabled: resolved.autoLabelEnabled,
         gittensorLabel: resolved.gittensorLabel,
         createMissingLabel: resolved.createMissingLabel,
@@ -4455,6 +4465,10 @@ function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] 
 function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMode"] {
   if (value === "off" || value === "block") return value;
   return "advisory";
+}
+
+function normalizeAiReviewProvider(value: string | null | undefined): "anthropic" | "openai" | null {
+  return value === "anthropic" || value === "openai" ? value : null;
 }
 
 function normalizeQualityGateMinScore(value: number | null | undefined): number | null {

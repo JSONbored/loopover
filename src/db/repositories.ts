@@ -1954,6 +1954,24 @@ export async function sumAiEstimatedNeuronsSince(env: Env, sinceIso: string): Pr
   return Number(row?.total ?? 0);
 }
 
+export async function countByokAiReviewEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(aiUsageEvents)
+    .where(
+      and(
+        gte(aiUsageEvents.createdAt, sinceIso),
+        eq(aiUsageEvents.feature, "ai_review_pr"),
+        eq(aiUsageEvents.status, "ok"),
+        sql`${aiUsageEvents.model} like 'byok:%'`,
+        sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
+      ),
+    );
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
+  return Number(row?.total ?? 0);
+}
+
 export async function upsertContributorScoringProfile(env: Env, profile: ContributorScoringProfileRecord): Promise<void> {
   const db = getDb(env.DB);
   await db

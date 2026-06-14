@@ -83,7 +83,7 @@ import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-mo
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
-import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
+import { buildIssueSlopAssessment, buildSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -403,6 +403,15 @@ const checkSlopRiskOutputSchema = {
   rubric: z.string().optional(),
 };
 
+// Issue-side slop triage (#533): pure local-metadata, like checkSlopRisk — the agent supplies the issue
+// title + body, nothing to scope. Advisory-only; issues never block.
+const checkIssueSlopShape = {
+  title: z.string().max(500).optional(),
+  body: z.string().max(40000).optional(),
+};
+
+const checkIssueSlopOutputSchema = checkSlopRiskOutputSchema;
+
 const predictGateOutputSchema = {
   predicted: z.boolean().optional(),
   basis: z.string().optional(),
@@ -650,6 +659,17 @@ export class GittensoryMcp {
         outputSchema: checkSlopRiskOutputSchema,
       },
       async (input) => this.toolResult(await this.checkSlopRisk(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_issue_slop",
+      {
+        description:
+          "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only: issues never block.",
+        inputSchema: checkIssueSlopShape,
+        outputSchema: checkIssueSlopOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkIssueSlop(input)),
     );
 
     server.registerTool(
@@ -1265,6 +1285,14 @@ export class GittensoryMcp {
     return {
       summary: `Slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
       data: { ...assessment, rubric: SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async checkIssueSlop(input: z.infer<z.ZodObject<typeof checkIssueSlopShape>>): Promise<ToolPayload> {
+    const assessment = buildIssueSlopAssessment(input);
+    return {
+      summary: `Issue slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
+      data: { ...assessment, rubric: ISSUE_SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
     };
   }
 

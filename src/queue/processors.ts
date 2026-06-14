@@ -132,7 +132,7 @@ import {
   PR_PANEL_RETRIGGER_MARKER,
   unionScopedOverlapClusters,
 } from "../signals/engine";
-import { buildSlopAssessment, type SlopBand } from "../signals/slop";
+import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -763,6 +763,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       const issue = await upsertIssueFromGitHub(env, payload.repository.full_name, payload.issue);
       const repo = await getRepository(env, payload.repository.full_name);
       const advisory = buildIssueAdvisory(repo, issue);
+      // Issue-side slop triage (#533): opt-in via slopGateMode, advisory-only (issues have no gate, and
+      // the issue advisory is maintainer-facing — never a public comment). Flags clearly low-effort issues.
+      const issueSettings = await resolveRepositorySettings(env, payload.repository.full_name);
+      if (issueSettings.slopGateMode !== "off") {
+        advisory.findings.push(...buildIssueSlopAssessment({ title: issue.title, body: issue.body }).findings);
+      }
       await persistAdvisory(env, advisory);
     }
 

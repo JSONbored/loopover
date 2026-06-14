@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildEmptyIssueBodyFinding,
+  buildIssueSlopAssessment,
   buildMissingTestEvidenceFinding,
   buildSlopAssessment,
   buildTrivialWhitespaceChurnFinding,
+  buildUnfilledIssueTemplateFinding,
+  ISSUE_SLOP_WEIGHTS,
   SLOP_RUBRIC_MARKDOWN,
   SLOP_WEIGHTS,
 } from "../../src/signals/slop";
@@ -181,5 +185,50 @@ describe("buildTrivialWhitespaceChurnFinding", () => {
       publicText: expect.any(String),
     });
     expect(JSON.stringify(finding)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+});
+
+describe("buildIssueSlopAssessment (#533 issue-side triage)", () => {
+  it("flags an empty/whitespace body", () => {
+    const result = buildIssueSlopAssessment({ title: "It is broken", body: "   \n  " });
+    expect(result.findings.map((f) => f.code)).toEqual(["empty_issue_body"]);
+    expect(result.slopRisk).toBe(ISSUE_SLOP_WEIGHTS.emptyBody);
+    expect(result.band).toBe("elevated");
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("treats an omitted body as empty", () => {
+    expect(buildIssueSlopAssessment({ title: "No body at all" }).findings.map((f) => f.code)).toEqual(["empty_issue_body"]);
+  });
+
+  it("flags a body that is only an unfilled template (headings + comment placeholders)", () => {
+    const body = "### Description\n<!-- describe the bug here -->\n\n### Steps to reproduce\n\n- [ ]\n";
+    const result = buildIssueSlopAssessment({ title: "Bug", body });
+    expect(result.findings.map((f) => f.code)).toEqual(["unfilled_issue_template"]);
+    expect(result.slopRisk).toBe(ISSUE_SLOP_WEIGHTS.unfilledTemplate);
+    expect(result.band).toBe("elevated");
+  });
+
+  it("does NOT flag a genuine issue, even a terse one (conservative, advisory-only)", () => {
+    expect(buildIssueSlopAssessment({ title: "Typo", body: "The README says 'recieve' on line 12; should be 'receive'." })).toEqual({
+      slopRisk: 0,
+      band: "clean",
+      findings: [],
+    });
+    // A filled template (prose under the headings) is clean.
+    expect(buildIssueSlopAssessment({ title: "Bug", body: "### Description\nClicking save throws a 500.\n### Steps\nOpen /save and submit." }).findings).toEqual([]);
+  });
+
+  it("empty body and unfilled template are mutually exclusive (never both)", () => {
+    // An empty body fires only empty_issue_body; a comment-only body fires only unfilled_issue_template.
+    expect(buildIssueSlopAssessment({ body: "" }).findings.map((f) => f.code)).toEqual(["empty_issue_body"]);
+    expect(buildIssueSlopAssessment({ body: "<!-- nothing here -->" }).findings.map((f) => f.code)).toEqual(["unfilled_issue_template"]);
+  });
+
+  it("finding builders are correct when called directly (the standalone guards)", () => {
+    // The unfilled-template builder guards an empty body for direct callers (assessment handles it upstream).
+    expect(buildUnfilledIssueTemplateFinding({ body: "" })).toBeNull();
+    expect(buildUnfilledIssueTemplateFinding({ body: "Real prose explaining the bug." })).toBeNull();
+    expect(buildEmptyIssueBodyFinding({ body: "has content" })).toBeNull();
   });
 });

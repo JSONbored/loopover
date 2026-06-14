@@ -3803,6 +3803,34 @@ describe("queue processors", () => {
     expect(evaluateJob).toBeDefined();
     expect(evaluateJob!.event.recipientLogin).toBe("contributor");
   });
+
+  it("appends issue-side slop findings to the issue advisory only when slop is opted in (#533)", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "other", full_name: "JSONbored/other", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", slopGateMode: "advisory" });
+    // JSONbored/other keeps the default slopGateMode "off".
+
+    const emptyBodyIssue = (repoFull: string, name: string, number: number) => ({
+      type: "github-webhook" as const,
+      deliveryId: `issue-slop-${number}`,
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name, full_name: repoFull, private: false, owner: { login: "JSONbored" } },
+        issue: { number, title: "Something is broken", state: "open", user: { login: "reporter" }, body: "   " },
+      },
+    });
+    await processJob(env, emptyBodyIssue("JSONbored/gittensory", "gittensory", 501));
+    await processJob(env, emptyBodyIssue("JSONbored/other", "other", 502));
+
+    const slopOn = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/gittensory").first<{ findings_json: string }>();
+    const slopOff = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/other").first<{ findings_json: string }>();
+    expect(slopOn?.findings_json).toContain("empty_issue_body"); // opted in → triage finding present
+    expect(slopOff?.findings_json ?? "").not.toContain("empty_issue_body"); // default off → no slop finding
+  });
 });
 
 function completeSegment(repoFullName: string, segment: "labels" | "open_issues" | "open_pull_requests") {

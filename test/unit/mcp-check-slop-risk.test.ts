@@ -44,3 +44,27 @@ describe("MCP gittensory_check_slop_risk", () => {
     expect(data.band).toBe("clean");
   });
 });
+
+describe("MCP gittensory_check_issue_slop (#533)", () => {
+  it("flags a low-effort issue (empty body) from title+body alone and returns the issue rubric", async () => {
+    const client = await connect();
+    const result = await client.callTool({ name: "gittensory_check_issue_slop", arguments: { title: "broken", body: "  " } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { slopRisk: number; band: string; findings: Array<{ code: string }>; rubric: string };
+    expect(data.slopRisk).toBeGreaterThan(0);
+    expect(data.findings.map((f) => f.code)).toEqual(["empty_issue_body"]);
+    expect(data.rubric).toContain("issue slop triage rubric");
+    expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward|payout|trust score/i);
+  });
+
+  it("returns a clean assessment for a genuine issue", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "gittensory_check_issue_slop",
+      arguments: { title: "500 on save", body: "Clicking Save on /settings returns a 500; expected a redirect. Repro: open /settings, submit." },
+    });
+    const data = result.structuredContent as { slopRisk: number; band: string };
+    expect(data.slopRisk).toBe(0);
+    expect(data.band).toBe("clean");
+  });
+});

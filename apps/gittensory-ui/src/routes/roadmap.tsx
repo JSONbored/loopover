@@ -119,7 +119,7 @@ function RoadmapPage() {
       <Reveal className="max-w-3xl">
         <Eyebrow>Roadmap</Eyebrow>
         <h1 className="mt-4 text-token-2xl font-medium tracking-tight text-foreground">
-          What&apos;s next for Gittensory
+          What&apos;s next for Gittensory (preview check)
         </h1>
         <p className="mt-3 text-muted-foreground">
           This reflects the live roadmap issue #127 and phase epics #233-#238. Project-board linkage

@@ -2142,6 +2142,12 @@ export function createApp() {
       pullRequests,
       bounties,
       issueQuality: issueQuality?.report,
+      // Parity with the maintainer gate: only CONFIRMED Gittensor contributors are ever hard-blocked, so
+      // the prediction must be told the caller's own confirmed status — otherwise it over-reports `failure`
+      // for non-confirmed contributors whose synthetic PR trips a blocker. `gittensorSnapshot` is non-null
+      // only when the official Gittensor API confirms this login (fetchGittensorContributorSnapshot), which
+      // matches the pipeline's `official?.status === "confirmed"`. Ignored under the oss-anti-slop pack.
+      confirmedContributor: context.gittensorSnapshot !== null,
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);

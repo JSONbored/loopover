@@ -79,3 +79,51 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers).toHaveLength(0);
   });
 });
+
+describe("pack-aware prediction (#693)", () => {
+  it("defaults to the gittensor pack and surfaces it", () => {
+    expect(verdict({ gate: { duplicates: "block" } }).pack).toBe("gittensor");
+  });
+
+  it("under oss-anti-slop, blocks ANY author — even a self-declared non-confirmed contributor", () => {
+    const result = buildPredictedGateVerdict({
+      input: { ...BASE_INPUT, body: "no issue", linkedIssues: [] },
+      manifest: parseFocusManifest({ gate: { pack: "oss-anti-slop", linkedIssue: "block" } }),
+      repo: REPO,
+      issues: [],
+      pullRequests: [],
+      confirmedContributor: false, // ignored under oss-anti-slop
+    });
+    expect(result.pack).toBe("oss-anti-slop");
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+    expect(result.confirmedContributor).toBeUndefined();
+  });
+
+  it("under gittensor, the same non-confirmed contributor stays neutral (matches the real gate)", () => {
+    const result = buildPredictedGateVerdict({
+      input: { ...BASE_INPUT, body: "no issue", linkedIssues: [] },
+      manifest: parseFocusManifest({ gate: { pack: "gittensor", linkedIssue: "block" } }),
+      repo: REPO,
+      issues: [],
+      pullRequests: [],
+      confirmedContributor: false,
+    });
+    expect(result.pack).toBe("gittensor");
+    expect(result.conclusion).toBe("neutral");
+  });
+
+  it("runs on a non-Gittensor (app-installed, unregistered) repo under oss-anti-slop with no Gittensor account", () => {
+    const result = buildPredictedGateVerdict({
+      input: { ...BASE_INPUT, body: "no issue", linkedIssues: [] },
+      manifest: parseFocusManifest({ gate: { pack: "oss-anti-slop", linkedIssue: "block" } }),
+      // App-installed but NOT Gittensor-registered: a real repo record (not null → gittensory has "seen" it).
+      repo: { ...REPO, isRegistered: false },
+      issues: [],
+      pullRequests: [],
+    });
+    expect(result.pack).toBe("oss-anti-slop");
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+  });
+});

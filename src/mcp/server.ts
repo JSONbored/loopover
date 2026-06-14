@@ -80,6 +80,7 @@ import {
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -360,6 +361,29 @@ const notificationsOutputSchema = {
   notifications: z.unknown().optional(),
 };
 
+const predictGateShape = {
+  login: z.string().min(1),
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string().optional(),
+  labels: z.array(z.string()).optional(),
+  linkedIssues: z.array(z.number().int().positive()).optional(),
+};
+
+const predictGateOutputSchema = {
+  predicted: z.boolean().optional(),
+  basis: z.string().optional(),
+  pack: z.enum(["gittensor", "oss-anti-slop"]).optional(),
+  conclusion: z.string().optional(),
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  readinessScore: z.number().nullable().optional(),
+  blockers: z.unknown().optional(),
+  warnings: z.unknown().optional(),
+  note: z.string().optional(),
+};
+
 const markNotificationsReadOutputSchema = {
   login: z.string().optional(),
   marked: z.number().optional(),
@@ -568,6 +592,17 @@ export class GittensoryMcp {
         outputSchema: openPrMonitorOutputSchema,
       },
       async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_predict_gate",
+      {
+        description:
+          "Predict whether a planned PR would pass the repo's Gittensory gate, from its PUBLIC .gittensory.yml only — an agent-native pre-submission self-check that works on ANY repo (no Gittensor account). Under the oss-anti-slop pack the verdict applies to any author; self-scoped to the authenticated login.",
+        inputSchema: predictGateShape,
+        outputSchema: predictGateOutputSchema,
+      },
+      async (input) => this.toolResult(await this.predictGate(input)),
     );
 
     server.registerTool(
@@ -1164,6 +1199,39 @@ export class GittensoryMcp {
     return {
       summary: monitor.summary,
       data: monitor as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    const repoFullName = `${input.owner}/${input.repo}`;
+    const [repo, issues, pullRequests, bounties, issueQuality, manifest] = await Promise.all([
+      getRepository(this.env, repoFullName),
+      listIssues(this.env, repoFullName),
+      listPullRequests(this.env, repoFullName),
+      listBountiesByRepo(this.env, repoFullName),
+      loadOrComputeIssueQualityResponse(this.env, repoFullName),
+      loadRepoFocusManifest(this.env, repoFullName),
+    ]);
+    const verdict = buildPredictedGateVerdict({
+      input: {
+        repoFullName,
+        contributorLogin: input.login,
+        title: input.title,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+        ...(input.linkedIssues === undefined ? {} : { linkedIssues: input.linkedIssues }),
+      },
+      manifest,
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality: issueQuality?.report,
+    });
+    return {
+      summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
+      data: verdict as unknown as Record<string, unknown>,
     };
   }
 

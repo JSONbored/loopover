@@ -236,12 +236,19 @@ describe("data spine repositories", () => {
       checkRunDetailLevel: "minimal",
       publicSurface: "comment_and_label",
       gatePack: "gittensor",
+      slopGateMode: "off",
     });
     // gatePack (#692) round-trips and defaults to gittensor.
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "oss-anti-slop" });
     expect((await getRepositorySettings(env, "owner/repo")).gatePack).toBe("oss-anti-slop");
     await upsertRepositorySettings(env, { repoFullName: "owner/defaultpack" });
     expect((await getRepositorySettings(env, "owner/defaultpack")).gatePack).toBe("gittensor");
+    // slop gate (#530/#532) round-trips and defaults to off.
+    await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "block", slopGateMinScore: 55 });
+    const slopSettings = await getRepositorySettings(env, "owner/sloprepo");
+    expect(slopSettings.slopGateMode).toBe("block");
+    expect(slopSettings.slopGateMinScore).toBe(55);
+    expect((await getRepositorySettings(env, "owner/defaultpack")).slopGateMode).toBe("off");
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();
     expect(await getIssue(env, "owner/repo", 404)).toBeNull();

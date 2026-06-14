@@ -81,6 +81,7 @@ import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-mo
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -382,6 +383,24 @@ const predictGateShape = {
   linkedIssues: z.array(z.number().int().positive()).optional(),
 };
 
+// Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
+// (paths + line counts, never source), so there is nothing to scope. Mirrors the other local-* tools.
+const checkSlopRiskShape = {
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000),
+  description: z.string().max(20000).optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+
+const checkSlopRiskOutputSchema = {
+  slopRisk: z.number().optional(),
+  band: z.enum(["clean", "low", "elevated", "high"]).optional(),
+  findings: z.unknown().optional(),
+  rubric: z.string().optional(),
+};
+
 const predictGateOutputSchema = {
   predicted: z.boolean().optional(),
   basis: z.string().optional(),
@@ -615,6 +634,17 @@ export class GittensoryMcp {
         outputSchema: predictGateOutputSchema,
       },
       async (input) => this.toolResult(await this.predictGate(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_slop_risk",
+      {
+        description:
+          "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+        inputSchema: checkSlopRiskShape,
+        outputSchema: checkSlopRiskOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkSlopRisk(input)),
     );
 
     server.registerTool(
@@ -1222,6 +1252,14 @@ export class GittensoryMcp {
     return {
       summary: monitor.summary,
       data: monitor as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async checkSlopRisk(input: z.infer<z.ZodObject<typeof checkSlopRiskShape>>): Promise<ToolPayload> {
+    const assessment = buildSlopAssessment(input);
+    return {
+      summary: `Slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
+      data: { ...assessment, rubric: SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
     };
   }
 

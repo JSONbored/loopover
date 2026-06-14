@@ -391,6 +391,12 @@ export type RepositorySettings = {
   duplicatePrGateMode: GateRuleMode;
   qualityGateMode: GateRuleMode;
   qualityGateMinScore?: number | null | undefined;
+  /** Deterministic anti-slop signal (#530/#532). `off` = no slop score; `advisory` = surface the slop
+   *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
+   *  only, confirmed-contributor-gated like every blocker). Default `off` — opt-in via .gittensory.yml. */
+  slopGateMode: GateRuleMode;
+  /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
+  slopGateMinScore?: number | null | undefined;
   /** AI maintainer review. `off` = no AI; `advisory` = post AI review notes only; `block` = ALSO let a
    *  dual-model high-confidence consensus defect become a gate blocker (confirmed-contributors only,
    *  like every other blocker). Default `off` — AI is opt-in. */

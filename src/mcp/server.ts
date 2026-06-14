@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
-import { loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
+import { canLoginAccessRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -1266,11 +1266,7 @@ export class GittensoryMcp {
 
   private async canAccessRepo(fullName: string): Promise<boolean> {
     if (this.identity.kind !== "session") return true;
-    const [scope, repo] = await Promise.all([this.loadSessionAccessScope(), getRepository(this.env, fullName)]);
-    if (scope.operator) return true;
-    const requestedRepo = fullName.toLowerCase();
-    if (scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo)) return true;
-    return Boolean(repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase()));
+    return canLoginAccessRepo(this.env, this.identity.actor, fullName);
   }
 
   private async getRepoOutcomePatterns(input: { owner: string; repo: string }): Promise<ToolPayload> {
@@ -1427,6 +1423,7 @@ export class GittensoryMcp {
     let changed: string | undefined;
     if (input.action === "watch" || input.action === "unwatch") {
       if (!input.repoFullName) return { summary: `${input.action} requires repoFullName.`, data: {} };
+      await this.requireRepoAccess(input.repoFullName);
       if (input.action === "watch") {
         await upsertIssueWatchSubscription(this.env, { login: input.login, repoFullName: input.repoFullName, labels: input.labels });
         changed = `watching ${input.repoFullName}${input.labels && input.labels.length > 0 ? ` (labels: ${input.labels.join(", ")})` : ""}`;

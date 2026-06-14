@@ -8,6 +8,7 @@ import {
   markNotificationDeliveryDelivered,
 } from "../db/repositories";
 import { isGrabbableHighMultiplierIssue } from "../signals/engine";
+import { canLoginAccessRepo } from "../services/control-panel-roles";
 import type { DetectedNotificationEvent, IssueRecord, NotificationChannel, NotificationDeliveryRecord, NotificationSubscriptionRecord } from "../types";
 import { nowIso } from "../utils/json";
 
@@ -76,21 +77,27 @@ export async function detectIssueWatchEvents(env: Env, repoFullName: string, iss
   const detectedAt = nowIso();
   const issueLabels = new Set(issue.labels.map((label) => label.toLowerCase().trim()));
   const authorLogin = issue.authorLogin?.toLowerCase();
-  return watchers
-    // An empty label filter matches any issue; otherwise at least one watched label must be present.
-    .filter((watcher) => watcher.labels.length === 0 || watcher.labels.some((label) => issueLabels.has(label)))
-    // Don't ping the maintainer who opened the issue about their own issue.
-    .filter((watcher) => watcher.login.toLowerCase() !== authorLogin)
-    .map((watcher) => ({
-      eventType: "issue_watch_match" as const,
-      recipientLogin: watcher.login,
-      repoFullName,
-      pullNumber: issue.number, // carries the ISSUE number for this eventType
-      dedupKey: `issue_watch_match:${repoFullName}#${issue.number}:${watcher.login.toLowerCase()}`,
-      deeplink: `https://github.com/${repoFullName}/issues/${issue.number}`,
-      actorLogin: issue.authorLogin ?? "unknown",
-      detectedAt,
-    }));
+  const authorizedWatchers = (
+    await Promise.all(
+      watchers
+        // An empty label filter matches any issue; otherwise at least one watched label must be present.
+        .filter((watcher) => watcher.labels.length === 0 || watcher.labels.some((label) => issueLabels.has(label)))
+        // Don't ping the maintainer who opened the issue about their own issue.
+        .filter((watcher) => watcher.login.toLowerCase() !== authorLogin)
+        .map(async (watcher) => ((await canLoginAccessRepo(env, watcher.login, repoFullName)) ? watcher : null)),
+    )
+  ).filter((watcher) => watcher !== null);
+
+  return authorizedWatchers.map((watcher) => ({
+    eventType: "issue_watch_match" as const,
+    recipientLogin: watcher.login,
+    repoFullName,
+    pullNumber: issue.number, // carries the ISSUE number for this eventType
+    dedupKey: `issue_watch_match:${repoFullName}#${issue.number}:${watcher.login.toLowerCase()}`,
+    deeplink: `https://github.com/${repoFullName}/issues/${issue.number}`,
+    actorLogin: issue.authorLogin ?? "unknown",
+    detectedAt,
+  }));
 }
 
 function rateLimitWindowStart(now: string): string {

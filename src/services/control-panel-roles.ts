@@ -1,5 +1,5 @@
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
-import { getFreshOfficialMinerDetection, listAllPullRequests, listInstallations, listRepositories } from "../db/repositories";
+import { getFreshOfficialMinerDetection, getRepository, listAllPullRequests, listInstallations, listRepositories } from "../db/repositories";
 import type { ControlPanelRoleCard, ControlPanelRoleName, ControlPanelRoleSummary, InstallationRecord, PullRequestRecord, RepositoryRecord } from "../types";
 import { nowIso } from "../utils/json";
 
@@ -31,6 +31,14 @@ export async function loadControlPanelAccessScope(env: Env, login: string): Prom
     installations,
     pullRequests,
   });
+}
+
+export async function canLoginAccessRepo(env: Env, login: string, fullName: string): Promise<boolean> {
+  const [scope, repo] = await Promise.all([loadControlPanelAccessScope(env, login), getRepository(env, fullName)]);
+  if (scope.operator) return true;
+  const requestedRepo = fullName.toLowerCase();
+  if (scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo)) return true;
+  return Boolean(repo && scope.accountLogins.some((accountLogin) => accountLogin.toLowerCase() === repo.owner.toLowerCase()));
 }
 
 export async function loadControlPanelRoleSummary(env: Env, login: string): Promise<ControlPanelRoleSummary> {

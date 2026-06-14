@@ -8,6 +8,7 @@ import {
   listIssueWatchSubscriptionsForLogin,
   listIssueWatchersForRepo,
   upsertIssueWatchSubscription,
+  upsertRepositoryFromGitHub,
 } from "../../src/db/repositories";
 import { isGrabbableHighMultiplierIssue } from "../../src/signals/engine";
 import { buildIssueWatchNotification, buildNotificationContent, detectIssueWatchEvents } from "../../src/notifications/service";
@@ -53,7 +54,7 @@ describe("issue-watch subscriptions (CRUD)", () => {
 
 describe("detectIssueWatchEvents", () => {
   it("fans out one event per matching watcher, skips the author, honours the label filter", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "alice bob maintainer" });
     await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "owner/repo" }); // any label
     await upsertIssueWatchSubscription(env, { login: "bob", repoFullName: "owner/repo", labels: ["bug"] }); // bug only
     await upsertIssueWatchSubscription(env, { login: "maintainer", repoFullName: "owner/repo" }); // the issue's author
@@ -71,15 +72,24 @@ describe("detectIssueWatchEvents", () => {
   });
 
   it("returns nothing for a non-grabbable issue or when there are no watchers", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "alice" });
     await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "owner/repo" });
     expect(await detectIssueWatchEvents(env, "owner/repo", issue({ authorAssociation: "NONE" }))).toEqual([]); // community-authored
     expect(await detectIssueWatchEvents(env, "owner/repo", issue({ labels: ["wip"] }))).toEqual([]); // maintainer WIP
     expect(await detectIssueWatchEvents(env, "unwatched/repo", issue())).toEqual([]); // no watchers
   });
 
-  it("handles an issue with no recorded author (actor falls back to 'unknown', no one is skipped)", async () => {
+
+  it("filters legacy watchers that no longer have repository access", async () => {
     const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private", full_name: "victim/private", private: true, owner: { login: "victim" }, default_branch: "main" }, 123);
+    await upsertIssueWatchSubscription(env, { login: "attacker", repoFullName: "victim/private" });
+
+    await expect(detectIssueWatchEvents(env, "victim/private", issue({ repoFullName: "victim/private", number: 77 }))).resolves.toEqual([]);
+  });
+
+  it("handles an issue with no recorded author (actor falls back to 'unknown', no one is skipped)", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "alice" });
     await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "owner/repo" });
     const events = await detectIssueWatchEvents(env, "owner/repo", issue({ number: 12, authorLogin: undefined, authorAssociation: "MEMBER" }));
     expect(events).toHaveLength(1);
@@ -132,6 +142,20 @@ describe("MCP gittensory_watch_issues", () => {
 
     const unwatched = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "unwatch", repoFullName: "owner/repo" } });
     expect((unwatched.structuredContent as { watching: unknown[] }).watching).toHaveLength(0);
+  });
+
+
+  it("blocks session actors from watching inaccessible repositories", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private", full_name: "victim/private", private: true, owner: { login: "victim" }, default_branch: "main" }, 321);
+    const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });
+    const client = await connect(env, { kind: "session", actor: "miner", session });
+
+    const result = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "victim/private" } });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("session cannot access this repository");
+    await expect(listIssueWatchSubscriptionsForLogin(env, "miner")).resolves.toEqual([]);
   });
 
   it("is self-scoped: a session cannot manage another login's watches", async () => {

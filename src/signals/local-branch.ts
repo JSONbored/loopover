@@ -19,6 +19,7 @@ import { buildRepoRewardRisk, type RepoRewardRisk, type RewardRiskAction } from 
 import { buildLocalWorkspaceIntelligence, type LocalWorkspaceIntelligence } from "./local-workspace-intelligence";
 import { buildFocusManifestGuidance, parseFocusManifest, type FocusManifestGuidance } from "./focus-manifest";
 import { sanitizeLocalScorerWarnings } from "./local-scorer-diagnostics";
+import { isPublicSafeText } from "./redaction";
 import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
@@ -1199,10 +1200,6 @@ function titleFromBranch(branchName: string | undefined): string | undefined {
 
 function firstCommitTitle(messages: string[] | undefined): string | undefined {
   return messages?.find((message) => message.trim().length > 0)?.split("\n")[0]?.trim() || undefined;
-}
-
-function isPublicSafeText(text: string): boolean {
-  return !/\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i.test(text);
 }
 
 function safeRepoPath(path: string): string {

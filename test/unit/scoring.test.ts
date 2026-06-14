@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
-import { detectActiveModel, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
+import { detectActiveModel, findUnmodeledUpstreamConstants, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../../src/scoring/preview";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
@@ -116,6 +116,30 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
 
     expect(refreshed.activeModel).toBe("unknown");
     expect(refreshed.warnings.join(" ")).toMatch(/recognized active-model indicator/i);
+  });
+
+  it("flags upstream scoring constants gittensory does not model (staleness visibility)", () => {
+    // SRC_TOK_SATURATION_SCALE is modeled; the TIME_DECAY_* constants are NOT — so they surface as unmodeled.
+    const unmodeled = findUnmodeledUpstreamConstants(
+      "SRC_TOK_SATURATION_SCALE = 58.0\nTIME_DECAY_GRACE_PERIOD_HOURS = 12\nTIME_DECAY_SIGMOID_MIDPOINT = 10\n",
+    );
+    expect(unmodeled).toEqual(["TIME_DECAY_GRACE_PERIOD_HOURS", "TIME_DECAY_SIGMOID_MIDPOINT"]);
+    expect(unmodeled).not.toContain("SRC_TOK_SATURATION_SCALE");
+  });
+
+  it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nTIME_DECAY_GRACE_PERIOD_HOURS = 12\n");
+      if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*TIME_DECAY_GRACE_PERIOD_HOURS/);
+    expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["TIME_DECAY_GRACE_PERIOD_HOURS"] });
   });
 
   it("uses saturation math as the active private preview model", () => {

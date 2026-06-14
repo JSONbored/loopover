@@ -16,7 +16,13 @@ export function detectNotificationEvents(
   payload: GitHubWebhookPayload,
   detectedAt: string = nowIso(),
 ): DetectedNotificationEvent[] {
-  if (eventName !== "pull_request_review") return [];
+  if (eventName === "pull_request_review") return detectChangesRequested(payload, detectedAt);
+  if (eventName === "pull_request") return detectMerged(payload, detectedAt);
+  return [];
+}
+
+// changes_requested → alert the author (#535).
+function detectChangesRequested(payload: GitHubWebhookPayload, detectedAt: string): DetectedNotificationEvent[] {
   if (payload.action !== "submitted" && payload.action !== "edited") return [];
 
   const repoFullName = payload.repository?.full_name;
@@ -44,6 +50,37 @@ export function detectNotificationEvents(
       dedupKey,
       deeplink: payload.review?.html_url ?? pullRequest.html_url ?? `https://github.com/${repoFullName}/pull/${pullNumber}`,
       actorLogin: reviewerLogin ?? "unknown",
+      detectedAt,
+    },
+  ];
+}
+
+// PR merged → a self-attributed post-merge outcome for the author (#702). Only fires on a real merge
+// (action "closed" + merged_at set), never a close-without-merge. The author is both recipient and actor.
+function detectMerged(payload: GitHubWebhookPayload, detectedAt: string): DetectedNotificationEvent[] {
+  if (payload.action !== "closed") return [];
+
+  const pullRequest = payload.pull_request;
+  const mergedAt = pullRequest?.merged_at;
+  if (!mergedAt) return [];
+
+  const repoFullName = payload.repository?.full_name;
+  const pullNumber = pullRequest?.number;
+  const authorLogin = pullRequest?.user?.login;
+  if (!repoFullName || !pullNumber || !authorLogin) return [];
+  if (isBotUser(pullRequest?.user)) return [];
+
+  const dedupKey = `pull_request_merged:${repoFullName}#${pullNumber}:${mergedAt}`;
+
+  return [
+    {
+      eventType: "pull_request_merged",
+      recipientLogin: authorLogin,
+      repoFullName,
+      pullNumber,
+      dedupKey,
+      deeplink: pullRequest.html_url ?? `https://github.com/${repoFullName}/pull/${pullNumber}`,
+      actorLogin: authorLogin,
       detectedAt,
     },
   ];

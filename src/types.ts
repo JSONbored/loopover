@@ -370,6 +370,12 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: only confirmed
+ *  Gittensor contributors are hard-blocked (registry/emissions-aware). `oss-anti-slop` = a general, repo-
+ *  agnostic pack: the same deterministic rules (slop/duplicate/linked-issue/readiness/AI-consensus) block
+ *  ANY author, with no emissions/registry/confirmed-contributor coupling — so the gate runs on any repo. */
+export type GatePolicyPack = "gittensor" | "oss-anti-slop";
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
@@ -378,10 +384,19 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  /** Policy pack the gate evaluates under (#692). Default `gittensor` (confirmed-contributor-gated,
+   *  registry-aware). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
+  gatePack: GatePolicyPack;
   linkedIssueGateMode: GateRuleMode;
   duplicatePrGateMode: GateRuleMode;
   qualityGateMode: GateRuleMode;
   qualityGateMinScore?: number | null | undefined;
+  /** Deterministic anti-slop signal (#530/#532). `off` = no slop score; `advisory` = surface the slop
+   *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
+   *  only, confirmed-contributor-gated like every blocker). Default `off` — opt-in via .gittensory.yml. */
+  slopGateMode: GateRuleMode;
+  /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
+  slopGateMinScore?: number | null | undefined;
   /** AI maintainer review. `off` = no AI; `advisory` = post AI review notes only; `block` = ALSO let a
    *  dual-model high-confidence consensus defect become a gate blocker (confirmed-contributors only,
    *  like every other blocker). Default `off` — AI is opt-in. */
@@ -1082,7 +1097,7 @@ export type DigestSubscriptionRecord = {
 // unless a row is `paused`).
 export type NotificationChannel = "badge" | "email";
 export type NotificationDeliveryStatus = "pending" | "delivered" | "read" | "suppressed";
-export type NotificationEventType = "pull_request_changes_requested";
+export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged";
 
 // A notification-worthy event extracted from a webhook payload (src/notifications/events.ts).
 export type DetectedNotificationEvent = {

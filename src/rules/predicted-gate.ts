@@ -8,7 +8,15 @@ import {
 } from "../signals/engine";
 import type { FocusManifest } from "../signals/focus-manifest";
 import { sanitizePublicComment } from "../github/commands";
-import type { BountyRecord, IssueRecord, PullRequestRecord, RepositoryRecord } from "../types";
+import { GITTENSOR_HOME_URL } from "../github/footer";
+import type { BountyRecord, GatePolicyPack, IssueRecord, PullRequestRecord, RepositoryRecord } from "../types";
+
+// Opt-in funnel (#694): a non-Gittensor adopter running the `oss-anti-slop` pack learns that Gittensor pays
+// contributors for OSS work like this. Public-safe "earn" wording only (never reward/payout/score).
+const OSS_ANTI_SLOP_FUNNEL = {
+  message: "This repo runs the Gittensor anti-slop gate. Gittensor lets GitHub contributors earn for open-source work like this — register to start earning.",
+  registerUrl: GITTENSOR_HOME_URL,
+} as const;
 import { buildPullRequestAdvisory, evaluateGateCheck, type GateCheckConclusion } from "./advisory";
 
 /**
@@ -27,6 +35,10 @@ import { buildPullRequestAdvisory, evaluateGateCheck, type GateCheckConclusion }
 export type PredictedGateVerdict = {
   predicted: true;
   basis: "public_config";
+  /** Which policy pack the repo's public config selects (#692/#693). Under `oss-anti-slop` the predicted
+   *  verdict applies to ANY author (no confirmed-contributor gate) — so an agent on a non-Gittensor repo
+   *  gets a meaningful "will this pass?" answer with no Gittensor account. */
+  pack: GatePolicyPack;
   conclusion: GateCheckConclusion;
   title: string;
   summary: string;
@@ -34,6 +46,9 @@ export type PredictedGateVerdict = {
   confirmedContributor: boolean | undefined;
   blockers: Array<{ code: string; title: string; detail: string; action?: string | undefined }>;
   warnings: Array<{ code: string; title: string; detail: string; action?: string | undefined }>;
+  /** Opt-in conversion funnel (#694): present only under the `oss-anti-slop` pack — a non-Gittensor
+   *  adopter's path to "earn on Gittensor". `null` under `gittensor` (the contributor is already there). */
+  funnel: { message: string; registerUrl: string } | null;
   note: string;
 };
 
@@ -119,6 +134,11 @@ export function buildPredictedGateVerdict(args: {
   const requireLinkedIssue = gate.linkedIssue !== null && gate.linkedIssue !== "off";
   const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue });
 
+  // Pack-aware (#693): under `oss-anti-slop` the gate blocks ANY author, so drop the confirmed-contributor
+  // gate entirely (mirrors gateCheckPolicy). `gittensor` keeps it. Pack comes from the PUBLIC .gittensory.yml.
+  const pack: GatePolicyPack = gate.pack ?? "gittensor";
+  const effectiveConfirmedContributor = pack === "oss-anti-slop" ? undefined : args.confirmedContributor;
+
   const evaluation = evaluateGateCheck(advisory, {
     linkedIssueGateMode: gate.linkedIssue ?? undefined,
     duplicatePrGateMode: gate.duplicates ?? undefined,
@@ -126,19 +146,21 @@ export function buildPredictedGateVerdict(args: {
     qualityGateMinScore: gate.readinessMinScore ?? null,
     aiReviewGateMode: gate.aiReviewMode ?? undefined,
     readinessScore: readiness.total,
-    confirmedContributor: args.confirmedContributor,
+    confirmedContributor: effectiveConfirmedContributor,
   });
 
   return {
     predicted: true,
     basis: "public_config",
+    pack,
     conclusion: evaluation.conclusion,
     title: sanitizePublicComment(evaluation.title),
     summary: sanitizePublicComment(evaluation.summary),
     readinessScore: readiness.total,
-    confirmedContributor: args.confirmedContributor,
+    confirmedContributor: effectiveConfirmedContributor,
     blockers: evaluation.blockers.map(publicSafeFinding),
     warnings: evaluation.warnings.map(publicSafeFinding),
+    funnel: pack === "oss-anti-slop" ? { ...OSS_ANTI_SLOP_FUNNEL } : null,
     note: PREDICTED_GATE_NOTE,
   };
 }

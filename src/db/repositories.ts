@@ -393,10 +393,13 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       checkRunMode: "off",
       checkRunDetailLevel: "minimal",
       gateCheckMode: "off",
+      gatePack: "gittensor",
       linkedIssueGateMode: "advisory",
       duplicatePrGateMode: "block",
       qualityGateMode: "advisory",
       qualityGateMinScore: null,
+      slopGateMode: "off",
+      slopGateMinScore: null,
       aiReviewMode: "off",
       aiReviewByok: false,
       aiReviewProvider: null,
@@ -420,10 +423,13 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunMode: parseCheckRunMode(row.checkRunMode),
     checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
     gateCheckMode: parseGateCheckMode(row.gateCheckMode),
+    gatePack: parseGatePack(row.gatePack),
     linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
     duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
     qualityGateMode: parseGateRuleMode(row.qualityGateMode),
     qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
+    slopGateMode: parseGateRuleMode(row.slopGateMode),
+    slopGateMinScore: normalizeQualityGateMinScore(row.slopGateMinScore),
     aiReviewMode: parseGateRuleMode(row.aiReviewMode),
     aiReviewByok: row.aiReviewByok,
     aiReviewProvider: normalizeAiReviewProvider(row.aiReviewProvider),
@@ -451,10 +457,13 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunMode: settings.checkRunMode ?? "off",
     checkRunDetailLevel: settings.checkRunDetailLevel ?? "minimal",
     gateCheckMode: settings.gateCheckMode ?? "off",
+    gatePack: parseGatePack(settings.gatePack),
     linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
     duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
     qualityGateMode: settings.qualityGateMode ?? "advisory",
     qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
+    slopGateMode: settings.slopGateMode ?? "off",
+    slopGateMinScore: normalizeQualityGateMinScore(settings.slopGateMinScore),
     aiReviewMode: settings.aiReviewMode ?? "off",
     aiReviewByok: settings.aiReviewByok ?? false,
     aiReviewProvider: normalizeAiReviewProvider(settings.aiReviewProvider),
@@ -480,10 +489,13 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       checkRunMode: resolved.checkRunMode,
       checkRunDetailLevel: resolved.checkRunDetailLevel,
       gateCheckMode: resolved.gateCheckMode,
+      gatePack: resolved.gatePack,
       linkedIssueGateMode: resolved.linkedIssueGateMode,
       duplicatePrGateMode: resolved.duplicatePrGateMode,
       qualityGateMode: resolved.qualityGateMode,
       qualityGateMinScore: resolved.qualityGateMinScore,
+      slopGateMode: resolved.slopGateMode,
+      slopGateMinScore: resolved.slopGateMinScore,
       aiReviewMode: resolved.aiReviewMode,
       aiReviewByok: resolved.aiReviewByok,
       aiReviewProvider: resolved.aiReviewProvider,
@@ -1373,11 +1385,12 @@ export async function markNotificationDeliveryDelivered(env: Env, id: string): P
 export async function listNotificationDeliveriesForRecipient(
   env: Env,
   recipientLogin: string,
-  options: { channel?: NotificationChannel; unreadOnly?: boolean; limit?: number } = {},
+  options: { channel?: NotificationChannel; eventType?: string; unreadOnly?: boolean; limit?: number } = {},
 ): Promise<NotificationDeliveryRecord[]> {
   const db = getDb(env.DB);
   const conditions: SQL[] = [eq(notificationDeliveries.recipientLogin, recipientLogin.toLowerCase())];
   if (options.channel) conditions.push(eq(notificationDeliveries.channel, options.channel));
+  if (options.eventType) conditions.push(eq(notificationDeliveries.eventType, options.eventType));
   if (options.unreadOnly) conditions.push(eq(notificationDeliveries.status, "delivered"));
   const rows = await db
     .select()
@@ -4708,6 +4721,10 @@ function parseCheckRunDetailLevel(value: string): RepositorySettings["checkRunDe
 
 function parseGateCheckMode(value: string): RepositorySettings["gateCheckMode"] {
   return value === "enabled" ? "enabled" : "off";
+}
+
+function parseGatePack(value: string | null | undefined): RepositorySettings["gatePack"] {
+  return value === "oss-anti-slop" ? "oss-anti-slop" : "gittensor";
 }
 
 function parseGateRuleMode(value: string): RepositorySettings["linkedIssueGateMode"] {

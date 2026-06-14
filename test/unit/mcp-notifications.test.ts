@@ -50,6 +50,41 @@ describe("MCP notification tools", () => {
     expect((after.structuredContent as { unreadCount: number }).unreadCount).toBe(0);
   });
 
+  it("returns a contributor's own post-merge outcomes via gittensory_pr_outcome (#702)", async () => {
+    const env = createTestEnv();
+    // Seed a merged-PR outcome + a changes-requested delivery; only the merge should surface as an outcome.
+    await insertNotificationDeliveryIfAbsent(env, {
+      dedupKey: "pull_request_merged:owner/repo#7:m1",
+      channel: "badge",
+      recipientLogin: "miner",
+      eventType: "pull_request_merged",
+      repoFullName: "owner/repo",
+      pullNumber: 7,
+      title: "Merged: owner/repo#7",
+      body: "Your pull request owner/repo#7 merged. Merged contributions strengthen your standing on owner/repo.",
+      deeplink: "https://github.com/owner/repo/pull/7",
+      actorLogin: "miner",
+    });
+    await seedDelivered(env, "miner", "changes-requested-1");
+    const client = await connect(env);
+
+    const result = await client.callTool({ name: "gittensory_pr_outcome", arguments: { login: "miner" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { count: number; outcomes: Array<{ repoFullName: string; pullNumber: number; outcome: string }> };
+    expect(data.count).toBe(1);
+    expect(data.outcomes[0]).toMatchObject({ repoFullName: "owner/repo", pullNumber: 7, outcome: "merged" });
+    expect(JSON.stringify(data)).not.toMatch(/reward|payout|trust score|wallet|\$/i);
+  });
+
+  it("is self-scoped: a session cannot read another login's outcomes", async () => {
+    const env = createTestEnv();
+    const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });
+    const client = await connect(env, { kind: "session", actor: "miner", session });
+    const result = await client.callTool({ name: "gittensory_pr_outcome", arguments: { login: "other" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("authenticated GitHub login");
+  });
+
   it("forbids reading or clearing another login's notifications from a scoped session", async () => {
     const env = createTestEnv();
     const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });

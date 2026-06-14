@@ -17,6 +17,7 @@ import {
   StatusPill,
   type Status,
 } from "@/components/site/control-primitives";
+import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
 import { StatCard } from "@/components/site/primitives";
 import { StateBoundary } from "@/components/site/state-views";
 import { apiFetch } from "@/lib/api/request";
@@ -284,6 +285,8 @@ export function MaintainerPanel() {
           </section>
 
           <SurfacePreview reviewability={data.reviewability} />
+
+          <AiReviewSettings reviewability={data.reviewability} />
         </div>
       ) : null}
     </StateBoundary>

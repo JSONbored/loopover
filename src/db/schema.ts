@@ -265,6 +265,9 @@ export const pullRequests = sqliteTable(
     linkedIssuesJson: text("linked_issues_json").notNull().default("[]"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
+    // Latest deterministic slop assessment (gittensory-computed; written separately from the GitHub sync).
+    slopRisk: integer("slop_risk"),
+    slopBand: text("slop_band"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

@@ -26,6 +26,7 @@ import {
   recordAuditEvent,
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
+  updatePullRequestSlopAssessment,
   persistScoringModelSnapshot,
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
@@ -2314,14 +2315,16 @@ describe("api routes", () => {
       labels: [],
       body: "No linked issue here.",
     });
+    // PR2: a persisted slop assessment surfaces on the dashboard row; an unassessed PR carries slop: null.
+    await updatePullRequestSlopAssessment(env, "entrius/allways-ui", 14, { slopRisk: 80, slopBand: "high" });
     const maintainer = await app.request("/v1/app/maintainer-dashboard", { headers: apiHeaders(env) }, env);
     expect(maintainer.status).toBe(200);
     await expect(maintainer.json()).resolves.toMatchObject({
       installations: expect.any(Array),
       health: expect.arrayContaining([expect.objectContaining({ status: "healthy" })]),
       reviewability: expect.arrayContaining([
-        expect.objectContaining({ pr: "entrius/allways-ui#12" }),
-        expect.objectContaining({ pr: "entrius/allways-ui#14", author: "unknown", reason: "cached open PR without linked issue" }),
+        expect.objectContaining({ pr: "entrius/allways-ui#12", slop: null }),
+        expect.objectContaining({ pr: "entrius/allways-ui#14", author: "unknown", reason: "cached open PR without linked issue", slop: { risk: 80, band: "high" } }),
       ]),
       settingsPreview: { added: expect.any(Array), removed: expect.any(Array) },
     });

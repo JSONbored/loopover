@@ -1008,6 +1008,9 @@ export function createApp() {
         author: pull.authorLogin ?? "unknown",
         bucket: pull.state === "open" ? "review-now" : "watch",
         reason: pull.linkedIssues.length > 0 ? `linked issue #${pull.linkedIssues[0]}` : "cached open PR without linked issue",
+        // Latest deterministic slop assessment for this PR (null unless the repo opted into slop). Lets the
+        // maintainer panel render a per-PR slop band; never a private/scoreability signal.
+        slop: typeof pull.slopRisk === "number" && pull.slopBand ? { risk: pull.slopRisk, band: pull.slopBand } : null,
       })),
       settingsPreview: buildMaintainerSettingsPreview(),
     });

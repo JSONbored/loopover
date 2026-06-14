@@ -338,6 +338,10 @@ export type PullRequestRecord = {
   closedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
+  /** Latest deterministic slop assessment (0-100) and band, persisted by the public-surface processor when
+   *  the repo opted into slop. `null`/absent = not assessed (slop off, or PR not yet processed). */
+  slopRisk?: number | null | undefined;
+  slopBand?: string | null | undefined;
 };
 
 export type IssueRecord = {

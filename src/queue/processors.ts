@@ -27,6 +27,7 @@ import {
   listPullRequests,
   listPullRequestFiles,
   listRecentMergedPullRequests,
+  updatePullRequestSlopAssessment,
   listRepoLabels,
   listRepoPullRequestFiles,
   listRepoSyncStates,
@@ -1152,6 +1153,9 @@ async function maybePublishPrPublicSurface(
       });
       slopRisk = slop.slopRisk;
       advisory.findings.push(...slop.findings);
+      // Persist the assessment so the maintainer dashboard can show a per-PR slop score row without
+      // re-fetching changed files. Best-effort: a write hiccup must not abort gate evaluation.
+      await updatePullRequestSlopAssessment(env, repoFullName, pr.number, { slopRisk: slop.slopRisk, slopBand: slop.band }).catch(() => undefined);
       // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (settings.slopAiAdvisory) {

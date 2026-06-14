@@ -3538,7 +3538,27 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     closedAt: payload.closed_at,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
+    slopRisk: row.slopRisk,
+    slopBand: row.slopBand,
   };
+}
+
+/**
+ * Persist the latest deterministic slop assessment onto an existing cached PR row. Kept separate from the
+ * GitHub-sync upsert (whose SET clause never touches these columns) so a later sync cannot clobber the
+ * score. A no-op when the PR row does not exist yet — the sync upsert creates it first.
+ */
+export async function updatePullRequestSlopAssessment(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  assessment: { slopRisk: number; slopBand: string },
+): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ slopRisk: assessment.slopRisk, slopBand: assessment.slopBand, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pullNumber)));
 }
 
 function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRecord {

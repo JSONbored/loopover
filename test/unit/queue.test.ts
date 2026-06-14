@@ -1000,6 +1000,11 @@ describe("queue processors", () => {
       gateCheckMode: "enabled",
       linkedIssueGateMode: "off",
       aiReviewMode: "block",
+      // Also exercise the opt-in slop advisory in the same surface pass: it persists a per-PR assessment
+      // and runs the (advisory-only) AI slop pass, but never blocks — the gate still fails on the AI
+      // consensus defect alone.
+      slopGateMode: "advisory",
+      slopAiAdvisory: true,
     });
     let gatePatchBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

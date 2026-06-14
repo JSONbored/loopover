@@ -13,6 +13,9 @@ declare global {
     /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
     AI_BYOK_DAILY_REPO_LIMIT?: string;
     AI_MAX_OUTPUT_TOKENS?: string;
+    /** Optional Cloudflare AI Gateway id. When set, free Workers-AI review calls route through the gateway
+     *  for caching, rate-limiting, request logging, and fallback. Unset = direct binding calls (unchanged). */
+    AI_GATEWAY_ID?: string;
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;

@@ -84,7 +84,8 @@ type ModelReview = {
   criticalDefect: { present: boolean; confidence: number; title: string; detail: string };
 };
 
-type AiRunner = { run?: (model: string, options: Record<string, unknown>) => Promise<unknown> };
+type AiGatewayOptions = { gateway?: { id: string } };
+type AiRunner = { run?: (model: string, options: Record<string, unknown>, extra?: AiGatewayOptions) => Promise<unknown> };
 
 function isEnabled(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value ?? "");
@@ -187,17 +188,26 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
 async function runWorkersOpinion(env: Env, primary: string, fallback: string, system: string, user: string, maxTokens: number): Promise<ModelReview | null> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return null;
+  // Route through Cloudflare AI Gateway when configured (caching, rate-limiting, logging, fallback). The
+  // diff/prompt is the cache key input, scoped per model + content, so distinct PRs never share a cached
+  // review. Unset → direct binding call (unchanged behavior).
+  const gatewayId = env.AI_GATEWAY_ID?.trim();
+  const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
   for (const model of fallback && fallback !== primary ? [primary, fallback] : [primary]) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const result = await ai.run(model, {
-          max_tokens: maxTokens,
-          temperature: 0,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-        });
+        const result = await ai.run(
+          model,
+          {
+            max_tokens: maxTokens,
+            temperature: 0,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+          },
+          extra,
+        );
         const parsed = parseModelReview(coerceAiText(result));
         if (parsed) return parsed;
       } catch {

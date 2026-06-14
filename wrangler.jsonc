@@ -40,6 +40,7 @@
     "AI_DAILY_NEURON_BUDGET": "10000",
     "AI_BYOK_DAILY_REPO_LIMIT": "25",
     "AI_MAX_OUTPUT_TOKENS": "256",
+    "AI_GATEWAY_ID": "",
     "ADMIN_GITHUB_LOGINS": "JSONbored",
   },
   "routes": [

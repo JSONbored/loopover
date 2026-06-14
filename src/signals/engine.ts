@@ -181,9 +181,38 @@ export type ContributorOpportunity = {
   fit: "good" | "caution" | "hold";
   score: number;
   lane: ParticipationLane;
+  /** Reward-multiplier tier of the issue. Maintainer-CREATED issues typically carry the biggest Gittensor
+   *  multiplier, so they rank highest when grabbable — surfacing them is the core of issue-watch (#699). */
+  multiplierTier: "maintainer_created" | "community";
+  /** Whether the issue is a real outside-contributor target. `maintainer_wip` = maintainer-authored AND
+   *  labelled in-progress/internal → downgraded, not steered to outsiders (the #186 reconciliation). */
+  availability: "ready" | "maintainer_wip";
   reasons: string[];
   warnings: string[];
 };
+
+// Labels that signal a maintainer's OWN in-progress / internal work — NOT an open outside-contributor
+// target. Combined with a maintainer author association, these downgrade an issue (#186) even though
+// maintainer-CREATED open issues are otherwise the highest-multiplier targets (#699).
+const MAINTAINER_WIP_LABELS = new Set([
+  "wip",
+  "work in progress",
+  "work-in-progress",
+  "in progress",
+  "in-progress",
+  "blocked",
+  "on hold",
+  "on-hold",
+  "draft",
+  "do not work",
+  "do-not-work",
+  "internal",
+]);
+
+/** True iff a maintainer-authored issue is labelled as the maintainer's own in-progress/internal work. */
+function isMaintainerWipIssue(issue: IssueRecord): boolean {
+  return isMaintainerAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
+}
 
 export type ContributorFit = {
   login: string;
@@ -1302,6 +1331,14 @@ export function buildContributorOpportunities(
             : quality?.status === "hold"
               ? -15
               : 0;
+      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerWip = isMaintainerWipIssue(issue);
+      const multiplierTier: ContributorOpportunity["multiplierTier"] = maintainerAuthored ? "maintainer_created" : "community";
+      const availability: ContributorOpportunity["availability"] = maintainerWip ? "maintainer_wip" : "ready";
+      // Maintainer-CREATED grabbable issues carry the biggest Gittensor multiplier → rank them up (#699).
+      // A maintainer's own WIP/internal issue is heavily downgraded so outsiders aren't steered to it (#186).
+      const multiplierBoost = maintainerAuthored && !maintainerWip ? 12 : 0;
+      const maintainerWipPenalty = maintainerWip ? 45 : 0;
       const score = clamp(
         50 +
           (touchedRepos.has(repo.fullName) ? 20 : 0) +
@@ -1311,11 +1348,13 @@ export function buildContributorOpportunities(
           queuePenalty -
           bountyPenalty -
           (lane.lane === "inactive" || lane.lane === "unknown" ? 35 : 0) +
-          qualityAdjustment,
+          qualityAdjustment +
+          multiplierBoost -
+          maintainerWipPenalty,
         0,
         100,
       );
-      const baseFit = score >= 70 ? "good" : score >= 40 ? "caution" : "hold";
+      const baseFit = maintainerWip ? "hold" : score >= 70 ? "good" : score >= 40 ? "caution" : "hold";
       const downgradeToCaution = (bountyPenalty > 0 || quality?.status === "needs_proof") && baseFit === "good";
       repoOpportunities.push({
         repoFullName: repo.fullName,
@@ -1324,14 +1363,19 @@ export function buildContributorOpportunities(
         fit: downgradeToCaution ? "caution" : baseFit,
         score,
         lane: lane.lane,
+        multiplierTier,
+        availability,
         reasons: [
           lane.summary,
+          ...(maintainerAuthored && !maintainerWip ? ["Maintainer-created issue — typically the highest contribution multiplier on Gittensor."] : []),
           ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
           ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
           ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),
         ],
         warnings: [
+          ...(maintainerAuthored && !maintainerWip ? ["Maintainer-authored; confirm it is open for outside contribution before starting."] : []),
+          ...(maintainerWip ? ["Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation."] : []),
           ...(repoPullRequests.length >= 8 ? ["This repo has a busy open PR queue."] : []),
           ...(lane.lane === "issue_discovery" ? ["This repo is not a direct-PR-first lane."] : []),
           ...(lane.lane === "unknown" || lane.lane === "inactive" ? ["Gittensory cannot recommend this as a strong contribution target right now."] : []),
@@ -2749,6 +2793,10 @@ export function buildIssueQualityReport(
       const bountyContext = bounty ? buildBountyOpportunityContext(bounty, issue, linkedPrs, linkedMergedPrs) : undefined;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
       const linkage = buildIssueLinkageRecord(issue, lifecycleEntry, linkedPrs, linkedMergedPrs);
+      // #186: maintainer-authored issues must not silently read as "ready" for outside contributors —
+      // always warn to confirm intent, and downgrade ones labelled as the maintainer's own in-progress work.
+      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerWip = isMaintainerWipIssue(issue);
       const reasons = [
         ...(bodyLength >= 200 ? ["Issue has enough body detail to evaluate."] : []),
         ...(issue.labels.length > 0 ? [`Labels: ${issue.labels.join(", ")}.`] : []),
@@ -2769,6 +2817,8 @@ export function buildIssueQualityReport(
         ...(bountyLifecycle === "historical" ? ["Historical bounty context is attached; this is not an active opportunity without upstream confirmation."] : []),
         ...(bountyLifecycle === "stale" ? ["Bounty context for this issue looks stale; confirm it is still active before acting."] : []),
         ...(bountyLifecycle === "ambiguous" ? ["Bounty state for this issue is ambiguous; verify it before acting."] : []),
+        ...(maintainerAuthored && !maintainerWip ? ["Maintainer-authored; confirm it is open for outside contribution before starting."] : []),
+        ...(maintainerWip ? ["Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation."] : []),
       ];
       const score = clamp(100 - warnings.length * 18 + reasons.length * 5 - (age > 180 ? 15 : 0), 0, 100);
       const bountyBlocks = bountyLifecycle === "completed" || bountyLifecycle === "cancelled" || bountyLifecycle === "historical";
@@ -2776,7 +2826,7 @@ export function buildIssueQualityReport(
       const status: IssueQualityReport["issues"][number]["status"] =
         linkedWorkCount > 0 || issueCollisions.some((cluster) => cluster.risk === "high") || bountyBlocks || ["duplicate", "invalid", "solved", "valid_solved"].includes(lifecycle)
           ? "do_not_use"
-          : warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || bountyCaution || lifecycle === "stale"
+          : maintainerWip || warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || bountyCaution || lifecycle === "stale"
             ? "needs_proof"
             : score < 45
               ? "hold"

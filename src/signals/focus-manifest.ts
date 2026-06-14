@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import type { GateRuleMode, JsonValue, RepositorySettings } from "../types";
+import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
 export type FocusManifestLinkedIssuePolicy = "required" | "preferred" | "optional";
@@ -17,10 +17,13 @@ export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "disc
 export type FocusManifestGateConfig = {
   present: boolean;
   enabled: boolean | null;
+  pack: GatePolicyPack | null;
   linkedIssue: GateRuleMode | null;
   duplicates: GateRuleMode | null;
   readinessMode: GateRuleMode | null;
   readinessMinScore: number | null;
+  slopMode: GateRuleMode | null;
+  slopMinScore: number | null;
   aiReviewMode: GateRuleMode | null;
   aiReviewByok: boolean | null;
   aiReviewProvider: "anthropic" | "openai" | null;
@@ -141,10 +144,13 @@ export const MAX_FOCUS_MANIFEST_BYTES = 64 * 1024;
 const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   present: false,
   enabled: null,
+  pack: null,
   linkedIssue: null,
   duplicates: null,
   readinessMode: null,
   readinessMinScore: null,
+  slopMode: null,
+  slopMinScore: null,
   aiReviewMode: null,
   aiReviewByok: null,
   aiReviewProvider: null,
@@ -269,13 +275,21 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   if (aiReview !== undefined && aiReview !== null && aiReviewRecord === undefined) {
     warnings.push(`Manifest gate field "gate.aiReview" must be a mapping; ignoring it.`);
   }
+  const slop = record.slop;
+  const slopRecord = slop !== null && typeof slop === "object" && !Array.isArray(slop) ? (slop as Record<string, JsonValue>) : undefined;
+  if (slop !== undefined && slop !== null && slopRecord === undefined) {
+    warnings.push(`Manifest gate field "gate.slop" must be a mapping; ignoring it.`);
+  }
   const gate: FocusManifestGateConfig = {
     present: false,
     enabled: normalizeOptionalBoolean(record.enabled, "gate.enabled", warnings),
+    pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
     readinessMode: normalizeOptionalGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
+    slopMode: normalizeOptionalGateMode(slopRecord?.mode, "gate.slop.mode", warnings),
+    slopMinScore: normalizeOptionalScore(slopRecord?.minScore, "gate.slop.minScore", warnings),
     aiReviewMode: normalizeOptionalGateMode(aiReviewRecord?.mode, "gate.aiReview.mode", warnings),
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
@@ -283,10 +297,13 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   };
   gate.present =
     gate.enabled !== null ||
+    gate.pack !== null ||
     gate.linkedIssue !== null ||
     gate.duplicates !== null ||
     gate.readinessMode !== null ||
     gate.readinessMinScore !== null ||
+    gate.slopMode !== null ||
+    gate.slopMinScore !== null ||
     gate.aiReviewMode !== null ||
     gate.aiReviewByok !== null ||
     gate.aiReviewProvider !== null ||
@@ -302,6 +319,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (!gate.present) return null;
   const out: Record<string, JsonValue> = {};
   if (gate.enabled !== null) out.enabled = gate.enabled;
+  if (gate.pack !== null) out.pack = gate.pack;
   if (gate.linkedIssue !== null) out.linkedIssue = gate.linkedIssue;
   if (gate.duplicates !== null) out.duplicates = gate.duplicates;
   if (gate.readinessMode !== null || gate.readinessMinScore !== null) {
@@ -309,6 +327,12 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.readinessMode !== null) readiness.mode = gate.readinessMode;
     if (gate.readinessMinScore !== null) readiness.minScore = gate.readinessMinScore;
     out.readiness = readiness;
+  }
+  if (gate.slopMode !== null || gate.slopMinScore !== null) {
+    const slop: Record<string, JsonValue> = {};
+    if (gate.slopMode !== null) slop.mode = gate.slopMode;
+    if (gate.slopMinScore !== null) slop.minScore = gate.slopMinScore;
+    out.slop = slop;
   }
   if (gate.aiReviewMode !== null || gate.aiReviewByok !== null || gate.aiReviewProvider !== null || gate.aiReviewModel !== null) {
     const aiReview: Record<string, JsonValue> = {};
@@ -451,10 +475,13 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   const effective: RepositorySettings = { ...dbSettings, ...manifest.settings };
   const gate = manifest.gate;
   if (gate.enabled !== null) effective.gateCheckMode = gate.enabled ? "enabled" : "off";
+  if (gate.pack !== null) effective.gatePack = gate.pack;
   if (gate.linkedIssue !== null) effective.linkedIssueGateMode = gate.linkedIssue;
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;
+  if (gate.slopMode !== null) effective.slopGateMode = gate.slopMode;
+  if (gate.slopMinScore !== null) effective.slopGateMinScore = gate.slopMinScore;
   if (gate.aiReviewMode !== null) effective.aiReviewMode = gate.aiReviewMode;
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;

@@ -7956,6 +7956,25 @@
           "qualityGateMinScore": {
             "type": "number",
             "nullable": true
+          },
+          "gatePack": {
+            "type": "string",
+            "enum": [
+              "gittensor",
+              "oss-anti-slop"
+            ]
+          },
+          "slopGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "slopGateMinScore": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [
@@ -7966,9 +7985,11 @@
           "checkRunMode",
           "checkRunDetailLevel",
           "gateCheckMode",
+          "gatePack",
           "linkedIssueGateMode",
           "duplicatePrGateMode",
           "qualityGateMode",
+          "slopGateMode",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",
@@ -8528,6 +8549,25 @@
               "qualityGateMinScore": {
                 "type": "number",
                 "nullable": true
+              },
+              "gatePack": {
+                "type": "string",
+                "enum": [
+                  "gittensor",
+                  "oss-anti-slop"
+                ]
+              },
+              "slopGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "slopGateMinScore": {
+                "type": "number",
+                "nullable": true
               }
             },
             "required": [
@@ -8538,9 +8578,11 @@
               "checkRunMode",
               "checkRunDetailLevel",
               "gateCheckMode",
+              "gatePack",
               "linkedIssueGateMode",
               "duplicatePrGateMode",
               "qualityGateMode",
+              "slopGateMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",

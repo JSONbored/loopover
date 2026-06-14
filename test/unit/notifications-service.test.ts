@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildChangesRequestedNotification,
+  buildNotificationContent,
   buildNotificationFeed,
   deliverNotification,
   evaluateNotificationEvent,
@@ -98,6 +99,27 @@ describe("notification channel resolution + copy", () => {
     expect(feed.login).toBe("miner");
     expect(feed.unreadCount).toBe(1);
     expect(feed.notifications.map((item) => item.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("merged-PR outcome attribution (#702)", () => {
+  it("builds public-safe merge attribution copy and routes by event type", () => {
+    const merged = buildNotificationContent(event({ eventType: "pull_request_merged" }));
+    expect(merged.title.toLowerCase()).toContain("merged");
+    expect(merged.body.toLowerCase()).toContain("merged");
+    expect(merged.body).toContain("owner/repo");
+    expect(JSON.stringify(merged)).not.toMatch(/reward|payout|trust score|wallet|\$/i);
+    // The dispatcher still routes changes_requested to the review copy.
+    expect(buildNotificationContent(event()).title.toLowerCase()).toContain("changes requested");
+  });
+
+  it("persists a merged outcome as a retrievable, eventType-filtered delivery", async () => {
+    const env = createTestEnv();
+    await evaluateNotificationEvent(env, event({ eventType: "pull_request_merged", dedupKey: "pull_request_merged:owner/repo#7:m1" }));
+    await evaluateNotificationEvent(env, event({ dedupKey: "changes_requested:owner/repo#7:r:t" }));
+    const outcomes = await listNotificationDeliveriesForRecipient(env, "miner", { eventType: "pull_request_merged" });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ eventType: "pull_request_merged", repoFullName: "owner/repo", pullNumber: 7 });
   });
 });
 

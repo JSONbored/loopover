@@ -30,6 +30,21 @@ export function buildChangesRequestedNotification(event: DetectedNotificationEve
   };
 }
 
+// Post-merge self-attribution (#702): the miner's OWN outcome record for a merged PR. Public-safe — frames
+// what merged work does for the contributor's standing, never raw reward $/trust/score.
+export function buildMergedOutcomeNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+  const ref = `${event.repoFullName}#${event.pullNumber}`;
+  return {
+    title: sanitizePublicComment(`Merged: ${ref}`),
+    body: sanitizePublicComment(`Your pull request ${ref} merged. Merged contributions like this strengthen your standing and lane signals on ${event.repoFullName} — check your decision pack for the next high-fit issue to keep your momentum.`),
+  };
+}
+
+// Maps a detected event to its public-safe notification content.
+export function buildNotificationContent(event: DetectedNotificationEvent): { title: string; body: string } {
+  return event.eventType === "pull_request_merged" ? buildMergedOutcomeNotification(event) : buildChangesRequestedNotification(event);
+}
+
 function rateLimitWindowStart(now: string): string {
   return new Date(Date.parse(now) - NOTIFICATION_RATE_LIMIT.windowMinutes * 60_000).toISOString();
 }
@@ -42,7 +57,7 @@ export async function evaluateNotificationEvent(env: Env, event: DetectedNotific
   const channels = resolveNotificationChannels(subscriptions);
   if (channels.length === 0) return [];
 
-  const { title, body } = buildChangesRequestedNotification(event);
+  const { title, body } = buildNotificationContent(event);
   const now = nowIso();
   const windowStart = rateLimitWindowStart(now);
   const pending: NotificationDeliveryRecord[] = [];

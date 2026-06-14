@@ -121,7 +121,7 @@ import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { generateSignalSnapshots } from "../queue/processors";
 import { getLatestRegistrySnapshot, listLatestRegistrySnapshots, refreshRegistry } from "../registry/sync";
-import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
+import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../scoring/preview";
 import {
   explainBlockersWithAgent,
@@ -462,6 +462,7 @@ const scorePreviewSchema = z.object({
   testTokenScore: z.number().min(0).optional(),
   nonCodeTokenScore: z.number().min(0).optional(),
   existingContributorTokenScore: z.number().min(0).optional(),
+  prAgeHours: z.number().min(0).optional(),
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
@@ -1402,8 +1403,10 @@ export function createApp() {
       getOrCreateScoringModelSnapshot(c.env),
       parsed.data.contributorLogin ? getContributorEvidence(c.env, parsed.data.contributorLogin) : Promise.resolve(null),
     ]);
-    const result = buildScorePreview({ input: parsed.data, repo, snapshot, contributorEvidence: evidence });
-    const record = makeScorePreviewRecord(parsed.data, snapshot, result);
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    const record = makeScorePreviewRecord(input, snapshot, result);
     await persistScorePreview(c.env, record);
     return c.json(record);
   });

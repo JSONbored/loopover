@@ -4260,6 +4260,9 @@
                       },
                       "pendingSaturationScore": {
                         "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4271,6 +4274,7 @@
                       "credibilityMultiplier",
                       "reviewPenaltyMultiplier",
                       "openPrMultiplier",
+                      "timeDecayMultiplier",
                       "estimatedMergedScore",
                       "pendingSaturationScore"
                     ]
@@ -4508,6 +4512,9 @@
                       },
                       "pendingSaturationScore": {
                         "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4519,6 +4526,7 @@
                       "credibilityMultiplier",
                       "reviewPenaltyMultiplier",
                       "openPrMultiplier",
+                      "timeDecayMultiplier",
                       "estimatedMergedScore",
                       "pendingSaturationScore"
                     ]
@@ -4756,6 +4764,9 @@
                       },
                       "pendingSaturationScore": {
                         "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4767,6 +4778,7 @@
                       "credibilityMultiplier",
                       "reviewPenaltyMultiplier",
                       "openPrMultiplier",
+                      "timeDecayMultiplier",
                       "estimatedMergedScore",
                       "pendingSaturationScore"
                     ]
@@ -5004,6 +5016,9 @@
                       },
                       "pendingSaturationScore": {
                         "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -5015,6 +5030,7 @@
                       "credibilityMultiplier",
                       "reviewPenaltyMultiplier",
                       "openPrMultiplier",
+                      "timeDecayMultiplier",
                       "estimatedMergedScore",
                       "pendingSaturationScore"
                     ]
@@ -5252,6 +5268,9 @@
                       },
                       "pendingSaturationScore": {
                         "type": "number"
+                      },
+                      "timeDecayMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -5263,6 +5282,7 @@
                       "credibilityMultiplier",
                       "reviewPenaltyMultiplier",
                       "openPrMultiplier",
+                      "timeDecayMultiplier",
                       "estimatedMergedScore",
                       "pendingSaturationScore"
                     ]
@@ -6071,6 +6091,9 @@
               },
               "pendingSaturationScore": {
                 "type": "number"
+              },
+              "timeDecayMultiplier": {
+                "type": "number"
               }
             },
             "required": [
@@ -6082,6 +6105,7 @@
               "credibilityMultiplier",
               "reviewPenaltyMultiplier",
               "openPrMultiplier",
+              "timeDecayMultiplier",
               "estimatedMergedScore",
               "pendingSaturationScore"
             ]
@@ -6392,6 +6416,9 @@
                     },
                     "pendingSaturationScore": {
                       "type": "number"
+                    },
+                    "timeDecayMultiplier": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -6403,6 +6430,7 @@
                     "credibilityMultiplier",
                     "reviewPenaltyMultiplier",
                     "openPrMultiplier",
+                    "timeDecayMultiplier",
                     "estimatedMergedScore",
                     "pendingSaturationScore"
                   ]

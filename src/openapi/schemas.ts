@@ -1208,6 +1208,7 @@ const ScoreEstimateSchema = z.object({
   credibilityMultiplier: z.number(),
   reviewPenaltyMultiplier: z.number(),
   openPrMultiplier: z.number(),
+  timeDecayMultiplier: z.number(),
   estimatedMergedScore: z.number(),
   pendingSaturationScore: z.number(),
 });

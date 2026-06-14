@@ -38,7 +38,7 @@ import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
-import { getOrCreateScoringModelSnapshot } from "../scoring/model";
+import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../scoring/preview";
 import {
   explainBlockersWithAgent,
@@ -281,6 +281,7 @@ const scorePreviewShape = {
   testTokenScore: z.number().min(0).optional(),
   nonCodeTokenScore: z.number().min(0).optional(),
   existingContributorTokenScore: z.number().min(0).optional(),
+  prAgeHours: z.number().min(0).optional(),
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
@@ -1457,10 +1458,12 @@ export class GittensoryMcp {
       getOrCreateScoringModelSnapshot(this.env),
       input.contributorLogin ? getContributorEvidence(this.env, input.contributorLogin) : Promise.resolve(null),
     ]);
-    const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const result = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     return {
       summary: `Private Gittensory scoring preview for ${input.repoFullName}.`,
-      data: makeScorePreviewRecord(input, snapshot, result) as unknown as Record<string, unknown>,
+      data: makeScorePreviewRecord(scoreInput, snapshot, result) as unknown as Record<string, unknown>,
     };
   }
 

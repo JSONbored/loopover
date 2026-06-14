@@ -28,6 +28,8 @@ declare global {
     GITTENSOR_UPSTREAM_REF?: string;
     GITTENSOR_REGISTRY_URL: string;
     GITHUB_PUBLIC_TOKEN?: string;
+    /** #703: owner-gated global to apply upstream sigmoid time-decay in score previews. Default off. */
+    SCORING_TIME_DECAY_ENABLED?: string;
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;

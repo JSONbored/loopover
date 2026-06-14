@@ -52,6 +52,16 @@ gate:
   #   provider: anthropic      # anthropic | openai — which BYOK provider (the secret key is set via the dashboard, never here)
   #   model: claude-3-5-sonnet-latest   # optional model override for the BYOK write-up
 
+# Public review-panel content overrides (config-as-code). Maintainer text is dropped if it fails the
+# public-safe filter; the Gittensor attribution + register link always stay appended to the footer.
+# review:
+#   footer:
+#     text: "Reviewed by the Acme maintainer bot."     # custom lead line (attribution still appended)
+#   note: "Run the test suite before requesting review."   # short intro line shown above the panel
+#   fields:                                             # show/hide rows (default: all shown). Keys:
+#     relatedWork: false                                # linkedIssue | relatedWork | reviewLoad |
+#     openPrQueue: false                                # validationEvidence | openPrQueue | contributorContext | gateResult
+
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.
   - Focused control-panel UI changes are welcome when they use live API data or honest empty/error states and tie to safety, release readiness, or operator-facing analytics.

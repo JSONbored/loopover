@@ -66,6 +66,15 @@ describe("api routes", () => {
     const preflight = await app.request("/v1/repos", { method: "OPTIONS", headers: { origin: "https://gittensory.aethereal.dev" } }, env);
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("access-control-allow-origin")).toBe("https://gittensory.aethereal.dev");
+    expect(preflight.headers.get("access-control-allow-methods")).toBe("GET, POST, PUT, DELETE, OPTIONS");
+
+    const aiReviewPreflight = await app.request("/v1/repos/acme/widgets/ai-review", { method: "OPTIONS", headers: { origin: "https://gittensory.aethereal.dev", "access-control-request-method": "PUT" } }, env);
+    expect(aiReviewPreflight.status).toBe(204);
+    expect(aiReviewPreflight.headers.get("access-control-allow-methods")).toContain("PUT");
+
+    const aiKeyDeletePreflight = await app.request("/v1/repos/acme/widgets/ai-key", { method: "OPTIONS", headers: { origin: "https://gittensory.aethereal.dev", "access-control-request-method": "DELETE" } }, env);
+    expect(aiKeyDeletePreflight.status).toBe(204);
+    expect(aiKeyDeletePreflight.headers.get("access-control-allow-methods")).toContain("DELETE");
 
     const dynamicOriginEnv = createTestEnv({ PUBLIC_SITE_ORIGIN: "https://preview.gittensory.test/app", PUBLIC_API_ORIGIN: "not a url" });
     const dynamicPreflight = await app.request("/v1/repos", { method: "OPTIONS", headers: { origin: "https://preview.gittensory.test" } }, dynamicOriginEnv);
@@ -5596,6 +5605,7 @@ describe("api routes", () => {
         body: JSON.stringify({
           commentMode: "detected_contributors_only",
           publicSignalLevel: "minimal",
+          gatePack: "oss-anti-slop",
           commandAuthorization: { default: ["maintainer"], commands: { preflight: ["pr_author"], "queue-summary": ["maintainer", "collaborator"] } },
         }),
       },
@@ -5605,12 +5615,13 @@ describe("api routes", () => {
     await expect(updated.json()).resolves.toMatchObject({
       commentMode: "detected_contributors_only",
       publicSignalLevel: "minimal",
+      gatePack: "oss-anti-slop",
       commandAuthorization: { default: ["maintainer"], commands: expect.objectContaining({ preflight: ["pr_author"] }) },
     });
 
     const settings = await app.request("/v1/repos/entrius/allways-ui/settings", { headers: apiHeaders(env) }, env);
     expect(settings.status).toBe(200);
-    await expect(settings.json()).resolves.toMatchObject({ commentMode: "detected_contributors_only", commandAuthorization: { commands: expect.objectContaining({ preflight: ["pr_author"] }) } });
+    await expect(settings.json()).resolves.toMatchObject({ commentMode: "detected_contributors_only", gatePack: "oss-anti-slop", commandAuthorization: { commands: expect.objectContaining({ preflight: ["pr_author"] }) } });
 
     const preview = await app.request(
       "/v1/repos/entrius/allways-ui/settings-preview",

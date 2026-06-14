@@ -10,6 +10,8 @@ import {
 } from "../../src/notifications/service";
 import {
   getNotificationDeliveryById,
+  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
+  MAX_NOTIFICATION_MARK_READ_IDS,
   insertNotificationDeliveryIfAbsent,
   listNotificationDeliveriesForRecipient,
   listNotificationSubscriptionsForLogin,
@@ -228,6 +230,11 @@ describe("notification repository helpers", () => {
     await deliverNotification(env, first!.id);
     await deliverNotification(env, second!.id);
 
+    // Empty ids selects no specific notifications.
+    expect(await markNotificationDeliveriesRead(env, "miner", [])).toBe(0);
+    expect((await getNotificationDeliveryById(env, first!.id))?.status).toBe("delivered");
+    expect((await getNotificationDeliveryById(env, second!.id))?.status).toBe("delivered");
+
     // Mark only the first by id.
     expect(await markNotificationDeliveriesRead(env, "miner", [first!.id])).toBe(1);
     expect((await getNotificationDeliveryById(env, first!.id))?.status).toBe("read");
@@ -239,6 +246,20 @@ describe("notification repository helpers", () => {
 
     const feed = buildNotificationFeed("miner", await listNotificationDeliveriesForRecipient(env, "miner"));
     expect(feed.unreadCount).toBe(0);
+  });
+
+  it("rejects oversized mark-read id filters before building SQL", async () => {
+    const env = createTestEnv();
+    await expect(
+      markNotificationDeliveriesRead(
+        env,
+        "miner",
+        Array.from({ length: MAX_NOTIFICATION_MARK_READ_IDS + 1 }, (_, index) => `id-${index}`),
+      ),
+    ).rejects.toThrow(/at most/);
+    await expect(markNotificationDeliveriesRead(env, "miner", ["x".repeat(MAX_NOTIFICATION_DELIVERY_ID_LENGTH + 1)])).rejects.toThrow(
+      /at most/,
+    );
   });
 
   it("returns null for an unknown delivery id", async () => {

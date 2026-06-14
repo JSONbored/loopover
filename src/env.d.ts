@@ -10,6 +10,8 @@ declare global {
     AI_PUBLIC_COMMENTS_ENABLED?: string;
     WORKERS_AI_SUMMARY_MODEL?: string;
     AI_DAILY_NEURON_BUDGET?: string;
+    /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
+    AI_BYOK_DAILY_REPO_LIMIT?: string;
     AI_MAX_OUTPUT_TOKENS?: string;
     /** Optional Cloudflare AI Gateway id. When set, free Workers-AI review calls route through the gateway
      *  for caching, rate-limiting, request logging, and fallback. Unset = direct binding calls (unchanged). */

@@ -46,6 +46,21 @@ describe("MCP gittensory_predict_gate", () => {
     expect((minimal.structuredContent as { pack: string }).pack).toBe("oss-anti-slop");
   });
 
+  it("is repo-scoped: a session cannot predict against an inaccessible repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private-roadmap", full_name: "victimco/private-roadmap", private: true, owner: { login: "victimco" } });
+    await upsertRepoFocusManifest(env, "victimco/private-roadmap", { gate: { pack: "oss-anti-slop", linkedIssue: "block" } });
+    const { session } = await createSessionForGitHubUser(env, { login: "miner1", id: 1 });
+    const client = await connect(env, { kind: "session", actor: "miner1", session });
+
+    const result = await client.callTool({
+      name: "gittensory_predict_gate",
+      arguments: { login: "miner1", owner: "victimco", repo: "private-roadmap", title: "Probe private repo" },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("session cannot access this repository");
+  });
+
   it("is self-scoped: a session cannot predict for another login", async () => {
     const env = createTestEnv();
     const { session } = await createSessionForGitHubUser(env, { login: "miner1", id: 1 });

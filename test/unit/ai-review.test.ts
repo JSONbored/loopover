@@ -64,13 +64,28 @@ describe("runGittensoryAiReview gating", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: reviewJson({ assessment: "BYOK advisory." }) }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const run = vi.fn();
-    // Free budget is exhausted (1 neuron), but a BYOK advisory bills the maintainer's account, so it still runs.
-    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
+    // Free budget is exhausted (1 neuron), but a BYOK advisory bills the maintainer's account, so it still runs
+    // while the separate BYOK repo/day quota has capacity.
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1", AI_BYOK_DAILY_REPO_LIMIT: "1" });
     const result = await runGittensoryAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
     expect(result.status).toBe("ok");
     expect(result.status === "ok" && result.advisoryNotes).toContain("BYOK advisory.");
     expect(result.status === "ok" && result.estimatedNeurons).toBe(0); // advisory-only BYOK consumes no free budget
     expect(fetchMock).toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("enforces a separate per-repo daily quota before BYOK provider calls", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: reviewJson({ assessment: "BYOK advisory." }) }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const run = vi.fn();
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "0", AI_BYOK_DAILY_REPO_LIMIT: "1" });
+    const providerKey = { provider: "anthropic" as const, key: "sk-ant-secret" };
+
+    await expect(runGittensoryAiReview(env, { ...baseInput, providerKey })).resolves.toMatchObject({ status: "ok" });
+    await expect(runGittensoryAiReview(env, { ...baseInput, prNumber: 8, providerKey })).resolves.toMatchObject({ status: "quota_exceeded" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
   });
 });

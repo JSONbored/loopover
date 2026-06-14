@@ -3,7 +3,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
-import { insertNotificationDeliveryIfAbsent, markNotificationDeliveryDelivered } from "../../src/db/repositories";
+import {
+  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
+  MAX_NOTIFICATION_MARK_READ_IDS,
+  insertNotificationDeliveryIfAbsent,
+  markNotificationDeliveryDelivered,
+} from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity) {
@@ -48,6 +53,26 @@ describe("MCP notification tools", () => {
 
     const after = await client.callTool({ name: "gittensory_list_notifications", arguments: { login: "miner" } });
     expect((after.structuredContent as { unreadCount: number }).unreadCount).toBe(0);
+  });
+
+  it("rejects oversized mark-read id filters", async () => {
+    const env = createTestEnv();
+    const client = await connect(env);
+
+    const tooManyIds = await client.callTool({
+      name: "gittensory_mark_notifications_read",
+      arguments: {
+        login: "miner",
+        ids: Array.from({ length: MAX_NOTIFICATION_MARK_READ_IDS + 1 }, (_, index) => `id-${index}`),
+      },
+    });
+    expect(tooManyIds.isError).toBe(true);
+
+    const tooLongId = await client.callTool({
+      name: "gittensory_mark_notifications_read",
+      arguments: { login: "miner", ids: ["x".repeat(MAX_NOTIFICATION_DELIVERY_ID_LENGTH + 1)] },
+    });
+    expect(tooLongId.isError).toBe(true);
   });
 
   it("returns a contributor's own post-merge outcomes via gittensory_pr_outcome (#702)", async () => {

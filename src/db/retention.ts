@@ -5,14 +5,13 @@ import { nowIso } from "../utils/json";
  * pure history (logs, usage metrics, ephemeral observations) or snapshots where only the latest matters,
  * so rows older than the window can be safely deleted. Current-state and reference tables (repositories,
  * repository_settings, pull_requests, issues, contributors, registry/scoring snapshots, repository_ai_keys,
- * focus manifests, etc.) are intentionally EXCLUDED — they are not append-only logs.
+ * focus manifests, webhook delivery idempotency records, etc.) are intentionally EXCLUDED — they are not append-only logs.
  *
  * `column` is the row's primary timestamp (ISO-8601). Windows are deliberately conservative.
  */
 export type RetentionRule = { table: string; column: string; days: number };
 
 export const RETENTION_POLICY: readonly RetentionRule[] = [
-  { table: "webhook_events", column: "received_at", days: 30 },
   { table: "audit_events", column: "created_at", days: 90 },
   { table: "ai_usage_events", column: "created_at", days: 90 },
   { table: "product_usage_events", column: "occurred_at", days: 180 },

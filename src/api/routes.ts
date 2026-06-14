@@ -513,6 +513,7 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
+  gatePack: z.enum(["gittensor", "oss-anti-slop"]).default("gittensor"),
   linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("block"),
   qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
@@ -632,7 +633,7 @@ export function createApp() {
       c.header("Access-Control-Allow-Origin", allowedOrigin);
       c.header("Access-Control-Allow-Credentials", "true");
       c.header("Access-Control-Allow-Headers", "authorization, content-type, mcp-session-id, mcp-protocol-version");
-      c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
       c.header("Access-Control-Expose-Headers", "x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, retry-after");
       c.header("Access-Control-Max-Age", "600");
       c.header("Vary", "Origin", { append: true });
@@ -1818,7 +1819,7 @@ export function createApp() {
   // mode. Merges onto current settings so unrelated fields are preserved.
   app.post("/v1/repos/:owner/:repo/activation", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const current = await getRepositorySettings(c.env, fullName);
     const updated = await upsertRepositorySettings(c.env, { ...current, ...recommendedAdvisoryActivationSettings() });
@@ -1869,7 +1870,7 @@ export function createApp() {
 
   app.post("/v1/repos/:owner/:repo/ai-key", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoKeyWriteAccess(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const parsed = repositoryAiKeySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_ai_key", issues: parsed.error.issues }, 400);
@@ -1886,7 +1887,7 @@ export function createApp() {
 
   app.delete("/v1/repos/:owner/:repo/ai-key", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoKeyWriteAccess(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const actor = gate.identity?.kind === "session" ? gate.identity.actor : null;
     await deleteRepositoryAiKey(c.env, fullName, actor);
@@ -2142,6 +2143,7 @@ export function createApp() {
       pullRequests,
       bounties,
       issueQuality: issueQuality?.report,
+      confirmedContributor: Boolean(context.gittensorSnapshot),
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
@@ -2602,6 +2604,7 @@ export function createApp() {
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
         gateCheckMode: parsed.data.gateCheckMode,
+        gatePack: parsed.data.gatePack,
         linkedIssueGateMode: parsed.data.linkedIssueGateMode,
         duplicatePrGateMode: parsed.data.duplicatePrGateMode,
         qualityGateMode: parsed.data.qualityGateMode,
@@ -3933,7 +3936,8 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 //     `GittensoryMcp.canAccessRepo` (MCP). Maintainer-of-repo-A grants ZERO access to repo B.
 // Two maintainer tiers: (a) affiliation (owns/installed the repo, or authored a PR there with a
 // maintainer association) gates maintainer-DATA reads; (b) verified write/admin/maintain permission,
-// resolved live via the installation, additionally gates the SECRET BYOK key writes (`requireRepoKeyWriteAccess`).
+// resolved live via the installation, additionally gates repo-visible settings writes and SECRET BYOK key
+// writes (`requireRepoWriteAccess`).
 // Operators (ADMIN_GITHUB_LOGINS) and server-to-server tokens bypass per-repo scope by design.
 // `canSessionAccessPath` is the coarse path allowlist that runs in the global middleware BEFORE a route
 // handler; it only decides whether a session may REACH a path — the per-route guards above enforce the
@@ -4077,17 +4081,17 @@ async function requireRepoMaintainer(c: ProtectedRouteContext, fullName: string)
   return { identity };
 }
 
-// GitHub permissions that imply real write access to a repo (and thus authority to manage its secret
-// BYOK key). "maintain"/"write"/"admin" can push; "triage"/"read"/"none" cannot.
-const REPO_KEY_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+// GitHub permissions that imply real write access to a repo (and thus authority to change repo-visible
+// behavior or manage its secret BYOK key). "maintain"/"write"/"admin" can push; "triage"/"read"/"none" cannot.
+const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
 /**
- * Stricter gate for the secret-bearing BYOK key WRITES (POST/DELETE /ai-key). On top of the maintainer
- * gate, a session caller must have real GitHub write access to the repo — resolved via the installation,
- * not merely inferred from a PR author_association (which includes org MEMBER / read-only COLLABORATOR).
- * Operators and server-to-server tokens are exempt. Fails closed (403) if write access can't be verified.
+ * Stricter gate for repo-visible settings/secret WRITES. On top of the maintainer gate, a session caller
+ * must have real GitHub write access to the repo — resolved via the installation, not merely inferred
+ * from a PR author_association (which includes org MEMBER / read-only COLLABORATOR). Operators and
+ * server-to-server tokens are exempt. Fails closed (403) if write access can't be verified.
  */
-async function requireRepoKeyWriteAccess(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
+async function requireRepoWriteAccess(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
   const gate = await requireRepoMaintainer(c, fullName);
   if (gate instanceof Response) return gate;
   if (gate.identity?.kind !== "session") return gate; // server-to-server token: no per-repo push check
@@ -4104,7 +4108,7 @@ async function requireRepoKeyWriteAccess(c: ProtectedRouteContext, fullName: str
       permission = null;
     }
   }
-  if (!permission || !REPO_KEY_WRITE_PERMISSIONS.has(permission)) {
+  if (!permission || !REPO_WRITE_PERMISSIONS.has(permission)) {
     return c.json({ error: "insufficient_repo_permission" }, 403);
   }
   return gate;

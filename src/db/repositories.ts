@@ -520,6 +520,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
+        gatePack: resolved.gatePack,
         linkedIssueGateMode: resolved.linkedIssueGateMode,
         duplicatePrGateMode: resolved.duplicatePrGateMode,
         qualityGateMode: resolved.qualityGateMode,
@@ -1401,19 +1402,33 @@ export async function listNotificationDeliveriesForRecipient(
   return rows.map(toNotificationDeliveryRecord);
 }
 
+export const MAX_NOTIFICATION_MARK_READ_IDS = 100;
+export const MAX_NOTIFICATION_DELIVERY_ID_LENGTH = 128;
+
 // Marks a recipient's delivered notifications read (the badge-clear action). Scoped to recipientLogin so a
-// caller can never clear another user's notifications. Returns the number of rows transitioned.
+// caller can never clear another user's notifications. Passing an empty ids array is a no-op.
+// Returns the number of rows transitioned.
 export async function markNotificationDeliveriesRead(
   env: Env,
   recipientLogin: string,
   ids?: string[],
 ): Promise<number> {
+  if (ids) {
+    if (ids.length === 0) return 0;
+    if (ids.length > MAX_NOTIFICATION_MARK_READ_IDS) {
+      throw new RangeError(`ids must contain at most ${MAX_NOTIFICATION_MARK_READ_IDS} entries`);
+    }
+    if (ids.some((id) => id.length > MAX_NOTIFICATION_DELIVERY_ID_LENGTH)) {
+      throw new RangeError(`ids entries must be at most ${MAX_NOTIFICATION_DELIVERY_ID_LENGTH} characters`);
+    }
+  }
+
   const db = getDb(env.DB);
   const conditions: SQL[] = [
     eq(notificationDeliveries.recipientLogin, recipientLogin.toLowerCase()),
     eq(notificationDeliveries.status, "delivered"),
   ];
-  if (ids && ids.length > 0) conditions.push(inArray(notificationDeliveries.id, ids));
+  if (ids) conditions.push(inArray(notificationDeliveries.id, ids));
   const updated = await db
     .update(notificationDeliveries)
     .set({ status: "read", readAt: nowIso() })
@@ -2142,6 +2157,24 @@ export async function sumAiEstimatedNeuronsSince(env: Env, sinceIso: string): Pr
     .from(aiUsageEvents)
     .where(and(gte(aiUsageEvents.createdAt, sinceIso), eq(aiUsageEvents.status, "ok")));
   /* v8 ignore next -- SQL aggregate sum always returns one row; fallback protects D1 driver anomalies. */
+  return Number(row?.total ?? 0);
+}
+
+export async function countByokAiReviewEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(aiUsageEvents)
+    .where(
+      and(
+        gte(aiUsageEvents.createdAt, sinceIso),
+        eq(aiUsageEvents.feature, "ai_review_pr"),
+        eq(aiUsageEvents.status, "ok"),
+        sql`${aiUsageEvents.model} like 'byok:%'`,
+        sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
+      ),
+    );
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   return Number(row?.total ?? 0);
 }
 

@@ -13,9 +13,10 @@
 //     confirmed Gittensor contributors (the gate enforces that downstream).
 //
 // Every public string (notes + defect title/detail) is forced through `sanitizePublicComment`; anything
-// that trips the public/private boundary is dropped, not published. Every model call is metered against
-// the shared daily neuron budget and audited via `recordAiUsageEvent`.
-import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+// that trips the public/private boundary is dropped, not published. Free Workers-AI calls are metered against
+// the shared daily neuron budget; maintainer-paid BYOK calls have a separate repo/day cap. All calls
+// are audited via `recordAiUsageEvent`.
+import { countByokAiReviewEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 
 /**
@@ -227,6 +228,9 @@ const PROVIDER_DEFAULT_MODEL: Record<AiReviewProviderKey["provider"], string> = 
  *  the existing fail-safe null path. Mirrors the github/gittensor fetch-timeout convention. */
 const AI_PROVIDER_TIMEOUT_MS = 20_000;
 
+/** Default per-repository/day cap for maintainer-paid BYOK advisory calls. */
+const DEFAULT_BYOK_DAILY_REPO_LIMIT = 25;
+
 /** Why a BYOK advisory call produced no review — surfaced in the audit event for observability (never a key). */
 type ProviderFailure = "timeout" | "http_error" | "exception";
 type ProviderReviewOutcome = { review: ModelReview | null; failure?: ProviderFailure };
@@ -326,6 +330,15 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   if (estimatedNeurons > remainingBudget) {
     await record(env, input, "quota_exceeded", 0, `estimated ${estimatedNeurons} neurons exceeds remaining ${remainingBudget}`);
     return { status: "quota_exceeded", estimatedNeurons, remainingBudget };
+  }
+
+  if (input.providerKey) {
+    const byokDailyLimit = clampNumber(Number(env.AI_BYOK_DAILY_REPO_LIMIT || DEFAULT_BYOK_DAILY_REPO_LIMIT), 0, 10_000);
+    const byokUsed = await countByokAiReviewEventsForRepoSince(env, input.repoFullName, utcDayStartIso());
+    if (byokUsed >= byokDailyLimit) {
+      await record(env, input, "quota_exceeded", 0, `BYOK daily repo limit ${byokDailyLimit} reached`);
+      return { status: "quota_exceeded", estimatedNeurons, remainingBudget };
+    }
   }
 
   // Advisory write-up: BYOK frontier model if configured, else the free Workers-AI primary (with fallback).

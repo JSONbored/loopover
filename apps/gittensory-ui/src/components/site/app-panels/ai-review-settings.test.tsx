@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the API layer so the component never touches the network.
-const apiFetch = vi.fn();
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock("@/lib/api/request", () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 vi.mock("@/lib/api/origin", () => ({ getApiOrigin: () => "https://api.test" }));
 

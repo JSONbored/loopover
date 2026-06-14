@@ -10,20 +10,29 @@ import { createTestEnv } from "../helpers/d1";
 const SECRET = "unit-test-encryption-secret-at-least-32-bytes-long";
 
 describe("encryptSecret / decryptSecret (AES-256-GCM)", () => {
-  it("round-trips a secret and produces a fresh IV each time", async () => {
+  it("round-trips a secret with a fresh IV and a fresh per-record salt each time (v2 envelope)", async () => {
     const a = await encryptSecret("sk-ant-supersecret", SECRET);
     const b = await encryptSecret("sk-ant-supersecret", SECRET);
     expect(a.iv).not.toBe(b.iv); // random IV per encryption
+    expect(a.salt).not.toBe(b.salt); // random per-record salt per encryption
     expect(a.ciphertext).not.toBe(b.ciphertext);
-    expect(a.version).toBe(1);
-    await expect(decryptSecret(a.ciphertext, a.iv, SECRET)).resolves.toBe("sk-ant-supersecret");
+    expect(a.version).toBe(2);
+    await expect(decryptSecret(a.ciphertext, a.iv, SECRET, a.salt)).resolves.toBe("sk-ant-supersecret");
+  });
+
+  it("decrypts legacy v1 rows (no per-record salt) with the constant salt", async () => {
+    const legacy = await encryptSecret("sk-ant-legacy-key", SECRET, 1);
+    expect(legacy.version).toBe(1);
+    expect(legacy.salt).toBeNull();
+    // A v1 row stores salt = NULL; decrypt without a salt falls back to the constant salt.
+    await expect(decryptSecret(legacy.ciphertext, legacy.iv, SECRET)).resolves.toBe("sk-ant-legacy-key");
   });
 
   it("fails to decrypt with the wrong secret and throws without a key", async () => {
-    const { ciphertext, iv } = await encryptSecret("sk-secret", SECRET);
-    await expect(decryptSecret(ciphertext, iv, "a-different-secret-of-sufficient-length-here")).rejects.toThrow();
+    const { ciphertext, iv, salt } = await encryptSecret("sk-secret", SECRET);
+    await expect(decryptSecret(ciphertext, iv, "a-different-secret-of-sufficient-length-here", salt)).rejects.toThrow();
     await expect(encryptSecret("x", "")).rejects.toThrow("missing_encryption_secret");
-    await expect(decryptSecret(ciphertext, iv, "")).rejects.toThrow("missing_encryption_secret");
+    await expect(decryptSecret(ciphertext, iv, "", salt)).rejects.toThrow("missing_encryption_secret");
   });
 });
 
@@ -33,12 +42,13 @@ describe("repository BYOK key storage", () => {
     await expect(getRepositoryAiKeyStatus(env, "acme/widgets")).resolves.toEqual({ configured: false });
 
     const status = await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-abc123XYZ7890", model: "claude-3-5-sonnet-latest", createdBy: "maintainer" });
-    expect(status).toEqual({ configured: true, provider: "anthropic", last4: "7890", model: "claude-3-5-sonnet-latest" });
+    expect(status).toMatchObject({ configured: true, provider: "anthropic", last4: "7890", model: "claude-3-5-sonnet-latest", createdBy: "maintainer" });
+    expect(status.configured && status.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    // Status surface never includes the key or ciphertext.
+    // Status surface never includes the key or ciphertext, but does surface who set it + when.
     const fetched = await getRepositoryAiKeyStatus(env, "acme/widgets");
     expect(JSON.stringify(fetched)).not.toContain("sk-ant");
-    expect(fetched).toMatchObject({ configured: true, last4: "7890" });
+    expect(fetched).toMatchObject({ configured: true, last4: "7890", createdBy: "maintainer" });
 
     // Decrypt only happens at call time.
     await expect(getDecryptedRepositoryAiKey(env, "acme/widgets")).resolves.toEqual({ provider: "anthropic", key: "sk-ant-abc123XYZ7890", model: "claude-3-5-sonnet-latest" });
@@ -57,6 +67,26 @@ describe("repository BYOK key storage", () => {
     await deleteRepositoryAiKey(env, "acme/widgets");
     await expect(getRepositoryAiKeyStatus(env, "acme/widgets")).resolves.toEqual({ configured: false });
     await expect(getDecryptedRepositoryAiKey(env, "acme/widgets")).resolves.toBeNull();
+  });
+
+  it("audits the key lifecycle (set → replace → delete) without ever recording key material", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-first-key-0000", createdBy: "alice" });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "openai", key: "sk-openai-second-1111", createdBy: "bob" });
+    await deleteRepositoryAiKey(env, "acme/widgets", "carol");
+
+    const events = await env.DB.prepare("select actor, status, model, metadata_json from ai_usage_events where feature = ? order by rowid asc").bind("ai_key_change").all<{ actor: string; status: string; model: string; metadata_json: string }>();
+    expect(events.results.map((e) => e.status)).toEqual(["set", "replace", "delete"]);
+    expect(events.results.map((e) => e.actor)).toEqual(["alice", "bob", "carol"]);
+    // Audit rows never contain key material — only the display-only last4.
+    const blob = JSON.stringify(events.results);
+    expect(blob).not.toContain("sk-ant");
+    expect(blob).not.toContain("sk-openai");
+
+    // A delete with no key present records nothing.
+    await deleteRepositoryAiKey(env, "acme/widgets", "carol");
+    const after = await env.DB.prepare("select count(*) as n from ai_usage_events where feature = ?").bind("ai_key_change").first<{ n: number }>();
+    expect(after?.n).toBe(3);
   });
 
   it("stores real ISO timestamps when created_at/updated_at are omitted (no literal default)", async () => {

@@ -304,9 +304,12 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
 
   const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
   const user = buildUserPrompt(input);
-  // block mode = advisory pass + consensus pass (2 models each, minus 1 when BYOK writes the advisory).
-  const calls = input.mode === "block" ? 3 : input.providerKey ? 1 : 2;
-  const estimatedNeurons = estimateNeurons(REVIEW_SYSTEM_PROMPT.length + user.length, maxTokens, calls);
+  // The daily neuron budget governs FREE Workers-AI spend only. BYOK advisory calls bill the maintainer's
+  // own provider account, so they are not counted here (and a BYOK advisory still runs when the free
+  // budget is exhausted). Free calls = the consensus pair in block mode (always Workers AI), plus the
+  // advisory leg only when it is NOT BYOK.
+  const freeAiCalls = (input.mode === "block" ? 2 : 0) + (input.providerKey ? 0 : 1);
+  const estimatedNeurons = freeAiCalls === 0 ? 0 : estimateNeurons(REVIEW_SYSTEM_PROMPT.length + user.length, maxTokens, freeAiCalls);
   const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);

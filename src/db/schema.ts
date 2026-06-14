@@ -75,6 +75,10 @@ export const repositoryAiKeys = sqliteTable("repository_ai_keys", {
   provider: text("provider").notNull(),
   ciphertext: text("ciphertext").notNull(),
   iv: text("iv").notNull(),
+  // Per-record PBKDF2 salt (base64) for the v2 crypto envelope; null for legacy v1 rows (constant salt).
+  salt: text("salt"),
+  // Crypto-envelope version (NOT a key-rotation counter): 1 = legacy constant-salt, 2 = per-record salt.
+  // upsert overwrites in place; there is no rotation history. See src/utils/crypto.ts.
   keyVersion: integer("key_version").notNull().default(1),
   model: text("model"),
   last4: text("last4").notNull(),

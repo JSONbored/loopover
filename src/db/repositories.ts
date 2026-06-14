@@ -531,7 +531,7 @@ export type AiKeyProvider = "anthropic" | "openai";
 
 /** Public, secret-free status of a repo's BYOK key. NEVER includes the key or ciphertext. */
 export type RepositoryAiKeyStatus =
-  | { configured: true; provider: AiKeyProvider; last4: string; model: string | null }
+  | { configured: true; provider: AiKeyProvider; last4: string; model: string | null; createdBy: string | null; updatedAt: string | null }
   | { configured: false };
 
 /** A decrypted provider key for use at AI-call time only. Never returned from the API, never logged. */
@@ -546,7 +546,7 @@ export async function getRepositoryAiKeyStatus(env: Env, fullName: string): Prom
   const db = getDb(env.DB);
   const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName)).limit(1);
   if (!row) return { configured: false };
-  return { configured: true, provider: normalizeAiKeyProvider(row.provider), last4: row.last4, model: row.model ?? null };
+  return { configured: true, provider: normalizeAiKeyProvider(row.provider), last4: row.last4, model: row.model ?? null, createdBy: row.createdBy, updatedAt: row.updatedAt };
 }
 
 /**
@@ -561,24 +561,53 @@ export async function upsertRepositoryAiKey(
   const secret = env.TOKEN_ENCRYPTION_SECRET;
   if (!secret) throw new Error("missing_encryption_secret");
   const trimmedKey = input.key.trim();
-  const { ciphertext, iv, version } = await encryptSecret(trimmedKey, secret);
+  const existing = await getRepositoryAiKeyStatus(env, input.repoFullName);
+  const { ciphertext, iv, salt, version } = await encryptSecret(trimmedKey, secret);
   const last4 = trimmedKey.slice(-4);
   const model = input.model?.trim() ? input.model.trim() : null;
+  const createdBy = input.createdBy ?? null;
+  const updatedAt = nowIso();
   const db = getDb(env.DB);
   await db
     .insert(repositoryAiKeys)
-    .values({ repoFullName: input.repoFullName, provider: input.provider, ciphertext, iv, keyVersion: version, model, last4, createdBy: input.createdBy ?? null, updatedAt: nowIso() })
+    .values({ repoFullName: input.repoFullName, provider: input.provider, ciphertext, iv, salt, keyVersion: version, model, last4, createdBy, updatedAt })
     .onConflictDoUpdate({
       target: repositoryAiKeys.repoFullName,
-      set: { provider: input.provider, ciphertext, iv, keyVersion: version, model, last4, createdBy: input.createdBy ?? null, updatedAt: nowIso() },
+      set: { provider: input.provider, ciphertext, iv, salt, keyVersion: version, model, last4, createdBy, updatedAt },
     });
-  return { configured: true, provider: input.provider, last4, model };
+  await recordAiKeyChange(env, { repoFullName: input.repoFullName, action: existing.configured ? "replace" : "set", provider: input.provider, last4, actor: createdBy });
+  return { configured: true, provider: input.provider, last4, model, createdBy, updatedAt };
 }
 
-/** Remove a repo's BYOK key. */
-export async function deleteRepositoryAiKey(env: Env, fullName: string): Promise<void> {
+/** Remove a repo's BYOK key. Records a lifecycle audit event when a key was actually present. */
+export async function deleteRepositoryAiKey(env: Env, fullName: string, actor?: string | null): Promise<void> {
+  const existing = await getRepositoryAiKeyStatus(env, fullName);
   const db = getDb(env.DB);
   await db.delete(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName));
+  if (existing.configured) {
+    await recordAiKeyChange(env, { repoFullName: fullName, action: "delete", provider: existing.provider, last4: existing.last4, actor: actor ?? null });
+  }
+}
+
+/**
+ * Audit a BYOK key lifecycle change (set/replace/delete). Stored in ai_usage_events as a non-"ok"
+ * status so it never counts toward the daily neuron budget. NEVER includes any key material — only the
+ * display-only last4 and the actor who made the change.
+ */
+async function recordAiKeyChange(
+  env: Env,
+  input: { repoFullName: string; action: "set" | "replace" | "delete"; provider: AiKeyProvider; last4: string; actor: string | null },
+): Promise<void> {
+  await recordAiUsageEvent(env, {
+    feature: "ai_key_change",
+    actor: input.actor,
+    route: "maintainer.ai_key",
+    model: `byok:${input.provider}`,
+    status: input.action,
+    estimatedNeurons: 0,
+    detail: `provider key ${input.action}`,
+    metadata: { repoFullName: input.repoFullName, action: input.action, provider: input.provider, last4: input.last4 },
+  });
 }
 
 /**
@@ -593,7 +622,7 @@ export async function getDecryptedRepositoryAiKey(env: Env, fullName: string): P
   const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName)).limit(1);
   if (!row) return null;
   try {
-    const key = await decryptSecret(row.ciphertext, row.iv, secret);
+    const key = await decryptSecret(row.ciphertext, row.iv, secret, row.salt);
     return { provider: normalizeAiKeyProvider(row.provider), key, model: row.model ?? null };
   } catch {
     return null;

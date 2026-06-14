@@ -52,6 +52,27 @@ describe("runGittensoryAiReview gating", () => {
     await expect(runGittensoryAiReview(env, baseInput)).resolves.toMatchObject({ status: "quota_exceeded" });
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("clamps a non-numeric AI_MAX_OUTPUT_TOKENS back to the default", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", AI_MAX_OUTPUT_TOKENS: "not-a-number" });
+    const result = await runGittensoryAiReview(env, baseInput);
+    expect(result.status).toBe("ok"); // NaN → clamped to the 256 floor, review still runs
+  });
+
+  it("does NOT count a BYOK advisory against the free neuron budget (it bills the maintainer)", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: reviewJson({ assessment: "BYOK advisory." }) }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const run = vi.fn();
+    // Free budget is exhausted (1 neuron), but a BYOK advisory bills the maintainer's account, so it still runs.
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
+    const result = await runGittensoryAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
+    expect(result.status).toBe("ok");
+    expect(result.status === "ok" && result.advisoryNotes).toContain("BYOK advisory.");
+    expect(result.status === "ok" && result.estimatedNeurons).toBe(0); // advisory-only BYOK consumes no free budget
+    expect(fetchMock).toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
 });
 
 describe("runGittensoryAiReview advisory mode", () => {

@@ -1839,7 +1839,8 @@ export function createApp() {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const gate = await requireRepoMaintainer(c, fullName);
     if (gate instanceof Response) return gate;
-    await deleteRepositoryAiKey(c.env, fullName);
+    const actor = gate.identity?.kind === "session" ? gate.identity.actor : null;
+    await deleteRepositoryAiKey(c.env, fullName, actor);
     return c.json({ configured: false });
   });
 

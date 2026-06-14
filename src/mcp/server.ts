@@ -1228,6 +1228,7 @@ export class GittensoryMcp {
   private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     const repoFullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(repoFullName);
     const [repo, issues, pullRequests, bounties, issueQuality, manifest] = await Promise.all([
       getRepository(this.env, repoFullName),
       listIssues(this.env, repoFullName),

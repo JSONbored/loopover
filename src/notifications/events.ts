@@ -1,18 +1,7 @@
-import type { GitHubWebhookPayload } from "../types";
+import type { DetectedNotificationEvent, GitHubWebhookPayload } from "../types";
 import { nowIso } from "../utils/json";
 
-export type NotificationEventType = "pull_request_changes_requested";
-
-export type DetectedNotificationEvent = {
-  eventType: NotificationEventType;
-  recipientLogin: string;
-  repoFullName: string;
-  pullNumber: number;
-  dedupKey: string;
-  deeplink: string;
-  actorLogin: string;
-  detectedAt: string;
-};
+export type { DetectedNotificationEvent, NotificationEventType } from "../types";
 
 function isBotUser(user: { login?: string; type?: string } | undefined): boolean {
   return user?.type === "Bot";

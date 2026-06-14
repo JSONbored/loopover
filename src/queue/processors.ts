@@ -81,6 +81,7 @@ import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
+import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import {
@@ -273,6 +274,14 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "run-agent":
       await executeAgentRun(env, message.runId);
+      return;
+    case "notify-evaluate": {
+      const deliveries = await evaluateNotificationEvent(env, message.event);
+      await Promise.all(deliveries.map((delivery) => env.JOBS.send({ type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: delivery.id })));
+      return;
+    }
+    case "notify-deliver":
+      await deliverNotification(env, message.deliveryId);
       return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);
@@ -771,6 +780,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
           deeplink: notificationEvent.deeplink,
         },
       });
+      await env.JOBS.send({ type: "notify-evaluate", requestedBy: "webhook", event: notificationEvent });
     }
 
     await recordWebhookEvent(env, {

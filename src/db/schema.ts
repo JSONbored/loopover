@@ -808,6 +808,50 @@ export const digestSubscriptions = sqliteTable(
   }),
 );
 
+export const notificationSubscriptions = sqliteTable(
+  "notification_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    channel: text("channel").notNull(),
+    status: text("status").notNull().default("active"),
+    destination: text("destination"),
+    source: text("source").notNull().default("app"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    loginChannel: uniqueIndex("notification_subscriptions_login_channel_unique").on(table.login, table.channel),
+    login: index("notification_subscriptions_login_idx").on(table.login),
+  }),
+);
+
+export const notificationDeliveries = sqliteTable(
+  "notification_deliveries",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    channel: text("channel").notNull(),
+    recipientLogin: text("recipient_login").notNull(),
+    eventType: text("event_type").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    deeplink: text("deeplink").notNull(),
+    actorLogin: text("actor_login"),
+    status: text("status").notNull().default("pending"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    deliveredAt: text("delivered_at"),
+    readAt: text("read_at"),
+  },
+  (table) => ({
+    dedupChannel: uniqueIndex("notification_deliveries_dedup_channel_unique").on(table.dedupKey, table.channel),
+    recipientStatus: index("notification_deliveries_recipient_status_idx").on(table.recipientLogin, table.status),
+    recipientChannelCreated: index("notification_deliveries_recipient_channel_created_idx").on(table.recipientLogin, table.channel, table.createdAt),
+  }),
+);
+
 export const githubAgentCommandAnswers = sqliteTable(
   "github_agent_command_answers",
   {

@@ -114,6 +114,16 @@ export type JobMessage =
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
+    }
+  | {
+      type: "notify-evaluate";
+      requestedBy: "webhook" | "test";
+      event: DetectedNotificationEvent;
+    }
+  | {
+      type: "notify-deliver";
+      requestedBy: "notify-evaluate" | "test";
+      deliveryId: string;
     };
 
 export type GitHubWebhookPayload = {
@@ -1065,6 +1075,54 @@ export type DigestSubscriptionRecord = {
   source: string;
   createdAt: string;
   updatedAt: string;
+};
+
+// Notifications (#535). `badge` is the pull-based extension/harness channel shipped first; `email`
+// (#570) is a later opt-in channel. Subscriptions store per-channel opt-out (badge is on by default
+// unless a row is `paused`).
+export type NotificationChannel = "badge" | "email";
+export type NotificationDeliveryStatus = "pending" | "delivered" | "read" | "suppressed";
+export type NotificationEventType = "pull_request_changes_requested";
+
+// A notification-worthy event extracted from a webhook payload (src/notifications/events.ts).
+export type DetectedNotificationEvent = {
+  eventType: NotificationEventType;
+  recipientLogin: string;
+  repoFullName: string;
+  pullNumber: number;
+  dedupKey: string;
+  deeplink: string;
+  actorLogin: string;
+  detectedAt: string;
+};
+
+export type NotificationSubscriptionRecord = {
+  id: string;
+  login: string;
+  channel: NotificationChannel;
+  status: "active" | "paused";
+  destination: string | null;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationDeliveryRecord = {
+  id: string;
+  dedupKey: string;
+  channel: NotificationChannel;
+  recipientLogin: string;
+  eventType: string;
+  repoFullName: string;
+  pullNumber: number | null;
+  title: string;
+  body: string;
+  deeplink: string;
+  actorLogin: string | null;
+  status: NotificationDeliveryStatus;
+  createdAt: string;
+  deliveredAt: string | null;
+  readAt: string | null;
 };
 
 export type CommandFeedbackVote = "useful" | "not_useful";

@@ -22,14 +22,17 @@ import {
   listContributorPullRequests,
   listIssueSignalSample,
   listIssues,
+  listNotificationDeliveriesForRecipient,
   listOpenPullRequests,
   listPullRequests,
   listRecentMergedPullRequests,
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
+  markNotificationDeliveriesRead,
   recordProductUsageEvent,
 } from "../db/repositories";
+import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
@@ -351,6 +354,26 @@ const openPrMonitorOutputSchema = {
   pullRequests: z.unknown().optional(),
 };
 
+const notificationsOutputSchema = {
+  login: z.string().optional(),
+  unreadCount: z.number().optional(),
+  notifications: z.unknown().optional(),
+};
+
+const markNotificationsReadOutputSchema = {
+  login: z.string().optional(),
+  marked: z.number().optional(),
+};
+
+const listNotificationsShape = {
+  login: z.string().min(1),
+};
+
+const markNotificationsReadShape = {
+  login: z.string().min(1),
+  ids: z.array(z.string().min(1)).optional(),
+};
+
 const explainRepoDecisionOutputSchema = {
   status: z.string().optional(),
   login: z.string().optional(),
@@ -545,6 +568,28 @@ export class GittensoryMcp {
         outputSchema: openPrMonitorOutputSchema,
       },
       async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_list_notifications",
+      {
+        description:
+          "Return a contributor's own Gittensory notifications (e.g. changes requested on their PRs) and unread badge count. Self-scoped: only the authenticated login's notifications.",
+        inputSchema: listNotificationsShape,
+        outputSchema: notificationsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.listNotifications(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_mark_notifications_read",
+      {
+        description:
+          "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all.",
+        inputSchema: markNotificationsReadShape,
+        outputSchema: markNotificationsReadOutputSchema,
+      },
+      async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
     );
 
     server.registerTool(
@@ -1119,6 +1164,25 @@ export class GittensoryMcp {
     return {
       summary: monitor.summary,
       data: monitor as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async listNotifications(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const deliveries = await listNotificationDeliveriesForRecipient(this.env, login, { channel: "badge", limit: 50 });
+    const feed = buildNotificationFeed(login, deliveries);
+    return {
+      summary: `Gittensory notifications for ${login}: ${feed.unreadCount} unread.`,
+      data: feed as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async markNotificationsRead(login: string, ids?: string[]): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const marked = await markNotificationDeliveriesRead(this.env, login, ids);
+    return {
+      summary: `Marked ${marked} Gittensory notification(s) read for ${login}.`,
+      data: { login: login.toLowerCase(), marked },
     };
   }
 

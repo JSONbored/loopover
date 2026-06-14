@@ -26,6 +26,8 @@ import {
   issueQualityReports,
   issues,
   githubRateLimitObservations,
+  notificationDeliveries,
+  notificationSubscriptions,
   officialMinerDetections,
   pullRequestFiles,
   pullRequestDetailSyncState,
@@ -95,6 +97,10 @@ import type {
   IssueQualityReportRecord,
   JsonValue,
   McpCompatibilityAdoptionSummary,
+  NotificationChannel,
+  NotificationDeliveryRecord,
+  NotificationDeliveryStatus,
+  NotificationSubscriptionRecord,
   ProductUsageActivationFunnel,
   ProductUsageDailyRollupRecord,
   ProductUsageDailyRollupStatus,
@@ -1229,6 +1235,178 @@ export async function countActiveDigestSubscriptions(env: Env): Promise<number> 
   const [row] = await db.select({ count: sql<number>`count(*)` }).from(digestSubscriptions).where(eq(digestSubscriptions.status, "active"));
   /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   return Number(row?.count ?? 0);
+}
+
+export async function upsertNotificationSubscription(
+  env: Env,
+  input: { login: string; channel: NotificationChannel; status?: NotificationSubscriptionRecord["status"]; destination?: string | null; source?: string },
+): Promise<NotificationSubscriptionRecord> {
+  const db = getDb(env.DB);
+  const now = nowIso();
+  const record: NotificationSubscriptionRecord = {
+    id: crypto.randomUUID(),
+    login: input.login.toLowerCase(),
+    channel: input.channel,
+    status: input.status ?? "active",
+    destination: input.destination ?? null,
+    source: input.source ?? "app",
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db
+    .insert(notificationSubscriptions)
+    .values({
+      id: record.id,
+      login: record.login,
+      channel: record.channel,
+      status: record.status,
+      destination: record.destination,
+      source: record.source,
+    })
+    .onConflictDoUpdate({
+      target: [notificationSubscriptions.login, notificationSubscriptions.channel],
+      set: { status: record.status, destination: record.destination, source: record.source, updatedAt: now },
+    });
+  const [row] = await db
+    .select()
+    .from(notificationSubscriptions)
+    .where(and(eq(notificationSubscriptions.login, record.login), eq(notificationSubscriptions.channel, record.channel)))
+    .limit(1);
+  return row ? toNotificationSubscriptionRecord(row) : record;
+}
+
+export async function listNotificationSubscriptionsForLogin(env: Env, login: string): Promise<NotificationSubscriptionRecord[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(notificationSubscriptions).where(eq(notificationSubscriptions.login, login.toLowerCase())).limit(20);
+  return rows.map(toNotificationSubscriptionRecord);
+}
+
+// Idempotency guard: UNIQUE(dedup_key, channel) means a duplicate webhook / queue retry inserts nothing
+// and returns the existing row. Returns whether THIS call created the row (so only the first enqueues delivery).
+export async function insertNotificationDeliveryIfAbsent(
+  env: Env,
+  input: Omit<NotificationDeliveryRecord, "id" | "createdAt" | "deliveredAt" | "readAt" | "status"> & { status?: NotificationDeliveryStatus },
+): Promise<{ delivery: NotificationDeliveryRecord; created: boolean }> {
+  const db = getDb(env.DB);
+  const now = nowIso();
+  const record: NotificationDeliveryRecord = {
+    id: crypto.randomUUID(),
+    dedupKey: input.dedupKey,
+    channel: input.channel,
+    recipientLogin: input.recipientLogin.toLowerCase(),
+    eventType: input.eventType,
+    repoFullName: input.repoFullName,
+    pullNumber: input.pullNumber,
+    title: input.title,
+    body: input.body,
+    deeplink: input.deeplink,
+    actorLogin: input.actorLogin,
+    status: input.status ?? "pending",
+    createdAt: now,
+    deliveredAt: null,
+    readAt: null,
+  };
+  const inserted = await db
+    .insert(notificationDeliveries)
+    .values({
+      id: record.id,
+      dedupKey: record.dedupKey,
+      channel: record.channel,
+      recipientLogin: record.recipientLogin,
+      eventType: record.eventType,
+      repoFullName: record.repoFullName,
+      pullNumber: record.pullNumber,
+      title: record.title,
+      body: record.body,
+      deeplink: record.deeplink,
+      actorLogin: record.actorLogin,
+      status: record.status,
+    })
+    .onConflictDoNothing({ target: [notificationDeliveries.dedupKey, notificationDeliveries.channel] })
+    .returning();
+  if (inserted.length > 0 && inserted[0]) return { delivery: toNotificationDeliveryRecord(inserted[0]), created: true };
+  const [existing] = await db
+    .select()
+    .from(notificationDeliveries)
+    .where(and(eq(notificationDeliveries.dedupKey, record.dedupKey), eq(notificationDeliveries.channel, record.channel)))
+    .limit(1);
+  /* v8 ignore next -- onConflictDoNothing only skips when a row already exists, so the re-select always returns it. */
+  return { delivery: existing ? toNotificationDeliveryRecord(existing) : record, created: false };
+}
+
+export async function countRecentNotificationDeliveries(
+  env: Env,
+  recipientLogin: string,
+  channel: NotificationChannel,
+  sinceIso: string,
+): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(notificationDeliveries)
+    .where(
+      and(
+        eq(notificationDeliveries.recipientLogin, recipientLogin.toLowerCase()),
+        eq(notificationDeliveries.channel, channel),
+        not(eq(notificationDeliveries.status, "suppressed")),
+        gte(notificationDeliveries.createdAt, sinceIso),
+      ),
+    );
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
+  return Number(row?.count ?? 0);
+}
+
+export async function getNotificationDeliveryById(env: Env, id: string): Promise<NotificationDeliveryRecord | null> {
+  const db = getDb(env.DB);
+  const [row] = await db.select().from(notificationDeliveries).where(eq(notificationDeliveries.id, id)).limit(1);
+  return row ? toNotificationDeliveryRecord(row) : null;
+}
+
+export async function markNotificationDeliveryDelivered(env: Env, id: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(notificationDeliveries)
+    .set({ status: "delivered", deliveredAt: nowIso() })
+    .where(and(eq(notificationDeliveries.id, id), eq(notificationDeliveries.status, "pending")));
+}
+
+export async function listNotificationDeliveriesForRecipient(
+  env: Env,
+  recipientLogin: string,
+  options: { channel?: NotificationChannel; unreadOnly?: boolean; limit?: number } = {},
+): Promise<NotificationDeliveryRecord[]> {
+  const db = getDb(env.DB);
+  const conditions: SQL[] = [eq(notificationDeliveries.recipientLogin, recipientLogin.toLowerCase())];
+  if (options.channel) conditions.push(eq(notificationDeliveries.channel, options.channel));
+  if (options.unreadOnly) conditions.push(eq(notificationDeliveries.status, "delivered"));
+  const rows = await db
+    .select()
+    .from(notificationDeliveries)
+    .where(and(...conditions))
+    .orderBy(desc(notificationDeliveries.createdAt))
+    .limit(Math.min(Math.max(options.limit ?? 50, 1), 100));
+  return rows.map(toNotificationDeliveryRecord);
+}
+
+// Marks a recipient's delivered notifications read (the badge-clear action). Scoped to recipientLogin so a
+// caller can never clear another user's notifications. Returns the number of rows transitioned.
+export async function markNotificationDeliveriesRead(
+  env: Env,
+  recipientLogin: string,
+  ids?: string[],
+): Promise<number> {
+  const db = getDb(env.DB);
+  const conditions: SQL[] = [
+    eq(notificationDeliveries.recipientLogin, recipientLogin.toLowerCase()),
+    eq(notificationDeliveries.status, "delivered"),
+  ];
+  if (ids && ids.length > 0) conditions.push(inArray(notificationDeliveries.id, ids));
+  const updated = await db
+    .update(notificationDeliveries)
+    .set({ status: "read", readAt: nowIso() })
+    .where(and(...conditions))
+    .returning({ id: notificationDeliveries.id });
+  return updated.length;
 }
 
 export async function recordProductUsageEvent(
@@ -3678,6 +3856,47 @@ function toDigestSubscriptionRecord(row: typeof digestSubscriptions.$inferSelect
     source: row.source,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toNotificationChannel(value: string): NotificationChannel {
+  return value === "email" ? "email" : "badge";
+}
+
+function toNotificationSubscriptionRecord(row: typeof notificationSubscriptions.$inferSelect): NotificationSubscriptionRecord {
+  return {
+    id: row.id,
+    login: row.login,
+    channel: toNotificationChannel(row.channel),
+    status: row.status === "paused" ? "paused" : "active",
+    destination: row.destination ?? null,
+    source: row.source,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toNotificationDeliveryStatus(value: string): NotificationDeliveryStatus {
+  return value === "delivered" || value === "read" || value === "suppressed" ? value : "pending";
+}
+
+function toNotificationDeliveryRecord(row: typeof notificationDeliveries.$inferSelect): NotificationDeliveryRecord {
+  return {
+    id: row.id,
+    dedupKey: row.dedupKey,
+    channel: toNotificationChannel(row.channel),
+    recipientLogin: row.recipientLogin,
+    eventType: row.eventType,
+    repoFullName: row.repoFullName,
+    pullNumber: row.pullNumber ?? null,
+    title: row.title,
+    body: row.body,
+    deeplink: row.deeplink,
+    actorLogin: row.actorLogin ?? null,
+    status: toNotificationDeliveryStatus(row.status),
+    createdAt: row.createdAt,
+    deliveredAt: row.deliveredAt ?? null,
+    readAt: row.readAt ?? null,
   };
 }
 

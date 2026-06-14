@@ -340,7 +340,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("does not use the maintainer BYOK key for unconfirmed contributors", async () => {
+  it("no-ops entirely for unconfirmed contributors — neither the maintainer BYOK key nor free Workers AI is spent", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "high" }) }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
@@ -364,9 +364,9 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       confirmedContributor: false,
     });
 
-    expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
+    // Matches the AI review path: an unconfirmed author triggers no AI spend at all, so no finding lands.
+    expect(adv.findings).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(run).toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
   });
-
 });

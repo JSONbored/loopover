@@ -940,8 +940,10 @@ export async function runAiReviewForAdvisory(
 /**
  * AI-assisted slop advisory (opt-in `slopAiAdvisory`). Appends at most one ADVISORY-only `ai_slop_advisory`
  * finding to the advisory; NEVER touches slopRisk or the gate (only the deterministic core can block). The
- * caller gates on `settings.slopAiAdvisory` and reuses the already-fetched changed files. Fail-safe: any AI
- * error is swallowed so the gate still finalizes.
+ * caller gates on `settings.slopAiAdvisory` and reuses the already-fetched changed files. Like the AI review
+ * path, it runs ONLY for confirmed contributors so an unconfirmed/untrusted PR author cannot spend either the
+ * shared Workers AI budget or the maintainer-paid BYOK quota. Fail-safe: any AI error is swallowed so the
+ * gate still finalizes.
  */
 export async function runAiSlopForAdvisory(
   env: Env,
@@ -956,14 +958,15 @@ export async function runAiSlopForAdvisory(
     confirmedContributor: boolean;
   },
 ): Promise<void> {
-  if (!args.advisory.headSha) return;
+  // Confirmed-contributor gate (matches runAiReviewForAdvisory): no AI spend — free OR BYOK — on a PR from
+  // an unconfirmed author. The deterministic slop core still ran for everyone; only the AI layer is gated.
+  if (!args.confirmedContributor || !args.advisory.headSha) return;
   try {
     // BYOK (opt-in): reuse the repo's encrypted key + aiReviewByok flag — one BYOK key serves both AI
     // features. A declared provider must match the stored key's provider, else skip BYOK (Workers-AI
-    // fallback). Because BYOK bills the maintainer, only confirmed contributors may use it;
-    // unconfirmed PRs fall back to Workers AI. The slop advisory stays advisory-only regardless of
-    // which model writes it.
-    const storedKey = args.settings.aiReviewByok && args.confirmedContributor ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
+    // fallback). The contributor is already confirmed (early return above), so BYOK billing is authorized.
+    // The slop advisory stays advisory-only regardless of which model writes it.
+    const storedKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
     const providerKey =
       storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
         ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }

@@ -1,6 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { createOpaqueToken, hashToken, timingSafeEqual } from "../../src/auth/security";
-import { verifyGitHubSignature } from "../../src/utils/crypto";
+import { base64UrlEncode, sha256Hex, timingSafeEqualHex, verifyGitHubSignature } from "../../src/utils/crypto";
+
+describe("crypto helpers", () => {
+  it("hashes input with sha256Hex", async () => {
+    const digest = await sha256Hex("gittensory");
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(digest).toBe(await sha256Hex("gittensory"));
+    expect(digest).not.toBe(await sha256Hex("gittensory-x"));
+  });
+
+  it("compares hex strings in constant time and rejects malformed input", () => {
+    expect(timingSafeEqualHex("ab12", "ab12")).toBe(true);
+    expect(timingSafeEqualHex("ab12", "ab13")).toBe(false);
+    expect(timingSafeEqualHex("ab12", "ab1234")).toBe(false);
+    expect(timingSafeEqualHex("zz", "00")).toBe(false);
+    expect(timingSafeEqualHex("abc", "def")).toBe(true);
+  });
+
+  it("base64url-encodes strings and byte arrays without padding", () => {
+    expect(base64UrlEncode("hello")).toBe("aGVsbG8");
+    expect(base64UrlEncode(new Uint8Array([255, 254]))).toBe("__4");
+    expect(base64UrlEncode("subjects?_d")).toBe(base64UrlEncode("subjects?_d"));
+  });
+});
 
 describe("webhook signature verification", () => {
   it("accepts valid GitHub HMAC signatures and rejects tampering", async () => {

@@ -249,6 +249,18 @@ export type GitHubIssueCommentPayload = {
   updated_at?: string | null;
 };
 
+/**
+ * Per-repo time-decay overrides (#703), parsed from the registry's nested `scoring.time_decay`. Mirrors
+ * upstream's RepoTimeDecayConfig: every field optional; a missing/invalid field resolves to the global
+ * default constant (see resolveTimeDecay). The repo maintainer sets these in master_repositories.json.
+ */
+export type RepoTimeDecayOverrides = {
+  gracePeriodHours?: number | null | undefined;
+  sigmoidMidpointDays?: number | null | undefined;
+  sigmoidSteepness?: number | null | undefined;
+  minMultiplier?: number | null | undefined;
+};
+
 export type RegistryRepoConfig = {
   repo: string;
   emissionShare: number;
@@ -259,6 +271,8 @@ export type RegistryRepoConfig = {
   defaultLabelMultiplier?: number | null;
   fixedBaseScore?: number | null;
   eligibilityMode?: string | null;
+  /** Per-repo time-decay curve overrides (#703); null/absent = use the global defaults for every field. */
+  timeDecay?: RepoTimeDecayOverrides | null;
   raw: Record<string, JsonValue>;
 };
 
@@ -1106,7 +1120,17 @@ export type DigestSubscriptionRecord = {
 // unless a row is `paused`).
 export type NotificationChannel = "badge" | "email";
 export type NotificationDeliveryStatus = "pending" | "delivered" | "read" | "suppressed";
-export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged";
+export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged" | "issue_watch_match";
+
+/** #699 path B: a miner's standing watch on a repo for new grabbable issues. `labels` ([]=any) filters
+ *  which issues notify. The `pullNumber` field of the resulting notification event carries the ISSUE number. */
+export type IssueWatchSubscription = {
+  login: string;
+  repoFullName: string;
+  labels: string[];
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+};
 
 // A notification-worthy event extracted from a webhook payload (src/notifications/events.ts).
 export type DetectedNotificationEvent = {

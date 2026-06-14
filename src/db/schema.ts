@@ -859,6 +859,24 @@ export const notificationDeliveries = sqliteTable(
   }),
 );
 
+// #699 path B: a miner's standing watch on a repo for NEW grabbable, high-multiplier issues. `labelsJson`
+// is an optional label filter ([] = any). UNIQUE(login, repoFullName) makes subscribe idempotent.
+export const issueWatchSubscriptions = sqliteTable(
+  "issue_watch_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    labelsJson: text("labels_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    loginRepo: uniqueIndex("issue_watch_subscriptions_login_repo_unique").on(table.login, table.repoFullName),
+    repo: index("issue_watch_subscriptions_repo_idx").on(table.repoFullName),
+  }),
+);
+
 export const githubAgentCommandAnswers = sqliteTable(
   "github_agent_command_answers",
   {

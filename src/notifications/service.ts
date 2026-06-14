@@ -3,10 +3,12 @@ import {
   countRecentNotificationDeliveries,
   getNotificationDeliveryById,
   insertNotificationDeliveryIfAbsent,
+  listIssueWatchersForRepo,
   listNotificationSubscriptionsForLogin,
   markNotificationDeliveryDelivered,
 } from "../db/repositories";
-import type { DetectedNotificationEvent, NotificationChannel, NotificationDeliveryRecord, NotificationSubscriptionRecord } from "../types";
+import { isGrabbableHighMultiplierIssue } from "../signals/engine";
+import type { DetectedNotificationEvent, IssueRecord, NotificationChannel, NotificationDeliveryRecord, NotificationSubscriptionRecord } from "../types";
 import { nowIso } from "../utils/json";
 
 // Per-recipient, per-channel safety cap. The killer event (changes_requested) delivers immediately, but a
@@ -40,9 +42,55 @@ export function buildMergedOutcomeNotification(event: DetectedNotificationEvent)
   };
 }
 
+// #699 path B: a repo a miner watches opened a NEW grabbable, high-multiplier issue. For this eventType the
+// `pullNumber` field carries the ISSUE number. Public-safe — "open to grab" framing, never raw reward/score.
+export function buildIssueWatchNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+  const ref = `${event.repoFullName}#${event.pullNumber}`;
+  return {
+    title: sanitizePublicComment(`New issue to grab on ${ref}`),
+    body: sanitizePublicComment(`A new maintainer-created issue opened on ${ref} that is open for you to grab. Maintainer-created issues are strong early targets on ${event.repoFullName} — claim it to line up your next contribution.`),
+  };
+}
+
 // Maps a detected event to its public-safe notification content.
 export function buildNotificationContent(event: DetectedNotificationEvent): { title: string; body: string } {
-  return event.eventType === "pull_request_merged" ? buildMergedOutcomeNotification(event) : buildChangesRequestedNotification(event);
+  switch (event.eventType) {
+    case "pull_request_merged":
+      return buildMergedOutcomeNotification(event);
+    case "issue_watch_match":
+      return buildIssueWatchNotification(event);
+    default:
+      return buildChangesRequestedNotification(event);
+  }
+}
+
+/**
+ * #699 path B: when a webhook opens a NEW grabbable, high-multiplier issue, fan out one notification event
+ * per watching miner (matching their optional label filter), skipping the issue's own author. DB-backed
+ * (reads the repo's watchers), so it lives here rather than in the pure payload-only detectNotificationEvents.
+ */
+export async function detectIssueWatchEvents(env: Env, repoFullName: string, issue: IssueRecord): Promise<DetectedNotificationEvent[]> {
+  if (!isGrabbableHighMultiplierIssue(issue)) return [];
+  const watchers = await listIssueWatchersForRepo(env, repoFullName);
+  if (watchers.length === 0) return [];
+  const detectedAt = nowIso();
+  const issueLabels = new Set(issue.labels.map((label) => label.toLowerCase().trim()));
+  const authorLogin = issue.authorLogin?.toLowerCase();
+  return watchers
+    // An empty label filter matches any issue; otherwise at least one watched label must be present.
+    .filter((watcher) => watcher.labels.length === 0 || watcher.labels.some((label) => issueLabels.has(label)))
+    // Don't ping the maintainer who opened the issue about their own issue.
+    .filter((watcher) => watcher.login.toLowerCase() !== authorLogin)
+    .map((watcher) => ({
+      eventType: "issue_watch_match" as const,
+      recipientLogin: watcher.login,
+      repoFullName,
+      pullNumber: issue.number, // carries the ISSUE number for this eventType
+      dedupKey: `issue_watch_match:${repoFullName}#${issue.number}:${watcher.login.toLowerCase()}`,
+      deeplink: `https://github.com/${repoFullName}/issues/${issue.number}`,
+      actorLogin: issue.authorLogin ?? "unknown",
+      detectedAt,
+    }));
 }
 
 function rateLimitWindowStart(now: string): string {

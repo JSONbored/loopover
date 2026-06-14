@@ -181,6 +181,7 @@ import {
   buildLaneAdvice,
   buildLinkedIssueValidation,
   buildLocalDiffPreflightResult,
+  buildPrTextLint,
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
   buildPullRequestMaintainerPacket,
@@ -199,6 +200,8 @@ import { buildPullRequestReviewability, type PullRequestReviewability } from "..
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
+import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
+import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -350,6 +353,12 @@ const checkBeforeStartSchema = z.object({
   issueNumber: z.number().int().positive().optional(),
   title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
   plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+});
+
+const lintPrTextSchema = z.object({
+  commitMessages: z.array(z.string().max(PREFLIGHT_LIMITS.bodyChars)).max(50).optional(),
+  prBody: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  linkedIssue: z.number().int().positive().optional(),
 });
 
 const skippedPrAuditQuerySchema = z
@@ -993,6 +1002,26 @@ export function createApp() {
     const openPullRequests = (
       await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
     ).flat();
+    // Quality dashboard (#557): shape cached repo data into queue-health bands, duplicate trends, and
+    // top contributors by quality band — scoped to this maintainer's repos. Reads CACHED issue/PR data
+    // (no GitHub fetch), but does derive the collision/queue signals per load; the build is capped to
+    // QUALITY_DASHBOARD_REPO_CAP repos and `truncated` discloses when there are more. The `stale` flag
+    // reflects how fresh the underlying repo sync is.
+    const QUALITY_DASHBOARD_REPO_CAP = 12;
+    const qualityRepos = repositories.slice(0, QUALITY_DASHBOARD_REPO_CAP);
+    const [qualityRepoInputs, allSyncStates] = await Promise.all([
+      Promise.all(
+        qualityRepos.map(async (repo) => {
+          const [issues, pullRequests] = await Promise.all([listIssues(c.env, repo.fullName), listPullRequests(c.env, repo.fullName)]);
+          return { repo, issues, pullRequests };
+        }),
+      ),
+      listRepoSyncStates(c.env),
+    ]);
+    const qualityRepoNames = new Set(qualityRepos.map((repo) => repo.fullName.toLowerCase()));
+    const scopedSyncCompletions = allSyncStates.filter((state) => qualityRepoNames.has(state.repoFullName.toLowerCase())).map((state) => state.lastCompletedAt);
+    const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(nowIso()) });
+    const qualityDashboard = buildMaintainerQualityDashboard({ repos: qualityRepoInputs, generatedAt: nowIso(), stale: qualityStale, repoTotal: repositories.length });
     return c.json({
       generatedAt: nowIso(),
       installations,
@@ -1014,6 +1043,7 @@ export function createApp() {
         slop: typeof pull.slopRisk === "number" && pull.slopBand ? { risk: pull.slopRisk, band: pull.slopBand } : null,
       })),
       settingsPreview: buildMaintainerSettingsPreview(),
+      qualityDashboard,
     });
   });
 
@@ -1821,6 +1851,20 @@ export function createApp() {
     return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso() }));
   });
 
+  // #543 outcome-learning loop: is the slop score predictive, and are recommendations panning out? Read-only
+  // measurement over resolved PRs (slop band -> merge/close) + the recommendation-outcome ledger. Optional
+  // ?windowDays bounds the recommendation window.
+  app.get("/v1/repos/:owner/:repo/outcome-calibration", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    // A positive number opts into a bounded recommendation window; anything else (absent/0/NaN) → full
+    // history. The repository layer clamps + floors the value, so one comparison covers every input.
+    const windowDaysRaw = Number(c.req.query("windowDays"));
+    const windowDays = windowDaysRaw > 0 ? windowDaysRaw : undefined;
+    return c.json(await buildRepoOutcomeCalibration(c.env, fullName, windowDays));
+  });
+
   // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
   // mode. Merges onto current settings so unrelated fields are preserved.
   app.post("/v1/repos/:owner/:repo/activation", async (c) => {
@@ -2060,6 +2104,13 @@ export function createApp() {
       decision,
       dataQuality: pack.dataQuality,
     });
+  });
+
+  app.post("/v1/lint/pr-text", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = lintPrTextSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_lint_pr_text_request", issues: parsed.error.issues }, 400);
+    return c.json(buildPrTextLint(parsed.data));
   });
 
   app.post("/v1/preflight/pr", async (c) => {
@@ -3954,6 +4005,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isIssueQualityPath(path)) return true;
   if (isRepoSettingsPath(path)) return true;
   if (isRepoActivationPath(path)) return true;
+  if (isRepoOutcomeCalibrationPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
@@ -3970,6 +4022,10 @@ function isRepoSettingsPath(path: string): boolean {
 
 function isRepoActivationPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/activation(?:-preview)?$/.test(path);
+}
+
+function isRepoOutcomeCalibrationPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/outcome-calibration$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {

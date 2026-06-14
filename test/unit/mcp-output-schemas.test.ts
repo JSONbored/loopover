@@ -20,6 +20,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_issue_quality",
   "gittensory_validate_linked_issue",
   "gittensory_check_before_start",
+  "gittensory_lint_pr_text",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
   "gittensory_local_status",
@@ -173,6 +174,26 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(["go", "raise", "avoid"]).toContain(data.recommendation);
     expect(data.found).toBe(false);
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_lint_pr_text returns a deterministic verdict and fixes", async () => {
+    const { client } = await connectTestClient();
+    const weak = await client.callTool({ name: "gittensory_lint_pr_text", arguments: { commitMessages: ["wip"], prBody: "" } });
+    expect(weak.isError).toBeFalsy();
+    const weakData = weak.structuredContent as Record<string, unknown>;
+    expect(weakData.verdict).toBe("weak");
+    expect(Array.isArray(weakData.fixes)).toBe(true);
+    expect(JSON.stringify(weakData)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+
+    const strong = await client.callTool({
+      name: "gittensory_lint_pr_text",
+      arguments: {
+        commitMessages: ["feat(api): add cursor pagination to the labels endpoint for large repositories"],
+        prBody: "Adds cursor-based pagination to the labels endpoint so labels beyond the first cached page are returned. Tested with vitest.",
+        linkedIssue: 160,
+      },
+    });
+    expect((strong.structuredContent as Record<string, unknown>).verdict).toBe("strong");
   });
 
   it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {

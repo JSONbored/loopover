@@ -139,6 +139,12 @@ const checkBeforeStartShape = {
   plannedPaths: z.array(z.string()).optional(),
 };
 
+const lintPrTextShape = {
+  commitMessages: z.array(z.string()).max(50).optional(),
+  prBody: z.string().optional(),
+  linkedIssue: z.number().int().positive().optional(),
+};
+
 const preflightShape = {
   repoFullName: z.string().min(3),
   contributorLogin: z.string().min(1).optional(),
@@ -312,6 +318,16 @@ server.registerTool(
     };
     return toolResult("Gittensory pre-start check.", await apiPost(`${prefix}/check-before-start`, body));
   },
+);
+
+server.registerTool(
+  "gittensory_lint_pr_text",
+  {
+    description:
+      "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric before submitting. Returns a deterministic verdict (strong/adequate/weak) plus specific public-safe fixes. No source upload.",
+    inputSchema: lintPrTextShape,
+  },
+  async (input) => toolResult("Gittensory PR-text lint.", await apiPost("/v1/lint/pr-text", input)),
 );
 
 server.registerTool(

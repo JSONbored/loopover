@@ -22,7 +22,10 @@ import {
   listContributorPullRequests,
   listIssueSignalSample,
   listIssues,
+  deleteIssueWatchSubscription,
+  listIssueWatchSubscriptionsForLogin,
   listNotificationDeliveriesForRecipient,
+  upsertIssueWatchSubscription,
   listOpenPullRequests,
   listPullRequests,
   listRecentMergedPullRequests,
@@ -75,6 +78,7 @@ import {
   buildLocalDiffPreflightResult,
   buildPreflightResult,
   buildPreStartCheck,
+  buildPrTextLint,
   buildQueueHealth,
   buildRegistryChangeReport,
   buildRoleContext,
@@ -140,6 +144,12 @@ const checkBeforeStartShape = {
   issueNumber: z.number().int().positive().optional(),
   title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
   plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+};
+
+const lintPrTextShape = {
+  commitMessages: z.array(z.string().max(PREFLIGHT_LIMITS.bodyChars)).max(50).optional(),
+  prBody: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  linkedIssue: z.number().int().positive().optional(),
 };
 
 const preflightShape = {
@@ -444,6 +454,20 @@ const markNotificationsReadShape = {
     .optional(),
 };
 
+// #699 path B: a miner's self-scoped issue-watch subscriptions. `action` defaults to `list`; `watch`/`unwatch`
+// require repoFullName. `labels` ([]/omitted = any) filters which new issues notify.
+const watchIssuesShape = {
+  login: z.string().min(1),
+  action: z.enum(["watch", "unwatch", "list"]).default("list"),
+  repoFullName: z.string().min(3).max(200).optional(),
+  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+};
+
+const watchIssuesOutputSchema = {
+  watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
+  changed: z.string().optional(),
+};
+
 const explainRepoDecisionOutputSchema = {
   status: z.string().optional(),
   login: z.string().optional(),
@@ -506,6 +530,15 @@ const checkBeforeStartOutputSchema = {
   reasons: z.unknown().optional(),
   blockers: z.unknown().optional(),
   report: z.unknown().optional(),
+};
+
+const lintPrTextOutputSchema = {
+  verdict: z.string().optional(),
+  score: z.number().optional(),
+  components: z.unknown().optional(),
+  fixes: z.unknown().optional(),
+  summary: z.string().optional(),
+  generatedAt: z.string().optional(),
 };
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
@@ -707,6 +740,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_watch_issues",
+      {
+        description:
+          "Watch repos for NEW grabbable, high-multiplier issues (maintainer-created, not WIP). action=watch subscribes a repo (optional label filter), unwatch removes it, list (default) returns your watches. When a matching issue opens you're notified via gittensory_list_notifications. Self-scoped to the authenticated login.",
+        inputSchema: watchIssuesShape,
+        outputSchema: watchIssuesOutputSchema,
+      },
+      async (input) => this.toolResult(await this.watchIssues(input)),
+    );
+
+    server.registerTool(
       "gittensory_explain_repo_decision",
       {
         description: "Return the contributor/repo decision from the canonical decision pack.",
@@ -784,6 +828,17 @@ export class GittensoryMcp {
         outputSchema: checkBeforeStartOutputSchema,
       },
       async (input) => this.toolResult(await this.checkBeforeStart(input)),
+    );
+
+    server.registerTool(
+      "gittensory_lint_pr_text",
+      {
+        description:
+          "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric, before submitting. Returns a deterministic quality verdict (strong/adequate/weak) and specific public-safe fixes. Metadata only; no source upload, no GitHub writes.",
+        inputSchema: lintPrTextShape,
+        outputSchema: lintPrTextOutputSchema,
+      },
+      async (input) => this.toolResult(this.lintPrText(input)),
     );
 
     server.registerTool(
@@ -1201,6 +1256,14 @@ export class GittensoryMcp {
     };
   }
 
+  private lintPrText(input: { commitMessages?: string[] | undefined; prBody?: string | undefined; linkedIssue?: number | undefined }): ToolPayload {
+    const report = buildPrTextLint(input);
+    return {
+      summary: `Gittensory PR-text lint verdict: ${report.verdict}.`,
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
   private async canAccessRepo(fullName: string): Promise<boolean> {
     if (this.identity.kind !== "session") return true;
     const [scope, repo] = await Promise.all([this.loadSessionAccessScope(), getRepository(this.env, fullName)]);
@@ -1355,6 +1418,27 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory notifications for ${login}: ${feed.unreadCount} unread.`,
       data: feed as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #699 path B: manage a miner's issue-watch subscriptions. Self-scoped; watch/unwatch need repoFullName.
+  private async watchIssues(input: z.infer<z.ZodObject<typeof watchIssuesShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    let changed: string | undefined;
+    if (input.action === "watch" || input.action === "unwatch") {
+      if (!input.repoFullName) return { summary: `${input.action} requires repoFullName.`, data: {} };
+      if (input.action === "watch") {
+        await upsertIssueWatchSubscription(this.env, { login: input.login, repoFullName: input.repoFullName, labels: input.labels });
+        changed = `watching ${input.repoFullName}${input.labels && input.labels.length > 0 ? ` (labels: ${input.labels.join(", ")})` : ""}`;
+      } else {
+        const removed = await deleteIssueWatchSubscription(this.env, input.login, input.repoFullName);
+        changed = removed ? `unwatched ${input.repoFullName}` : `was not watching ${input.repoFullName}`;
+      }
+    }
+    const watching = (await listIssueWatchSubscriptionsForLogin(this.env, input.login)).map((sub) => ({ repoFullName: sub.repoFullName, labels: sub.labels }));
+    return {
+      summary: `Watching ${watching.length} repo(s) for new grabbable issues${changed ? ` (${changed})` : ""}.`,
+      data: { watching, ...(changed ? { changed } : {}) } as unknown as Record<string, unknown>,
     };
   }
 

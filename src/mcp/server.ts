@@ -22,14 +22,17 @@ import {
   listContributorPullRequests,
   listIssueSignalSample,
   listIssues,
+  listNotificationDeliveriesForRecipient,
   listOpenPullRequests,
   listPullRequests,
   listRecentMergedPullRequests,
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
+  markNotificationDeliveriesRead,
   recordProductUsageEvent,
 } from "../db/repositories";
+import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
@@ -77,6 +80,8 @@ import {
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -351,6 +356,79 @@ const openPrMonitorOutputSchema = {
   pullRequests: z.unknown().optional(),
 };
 
+const notificationsOutputSchema = {
+  login: z.string().optional(),
+  unreadCount: z.number().optional(),
+  notifications: z.unknown().optional(),
+};
+
+const prOutcomeShape = {
+  login: z.string().min(1),
+  limit: z.number().int().positive().max(100).optional(),
+};
+
+const prOutcomeOutputSchema = {
+  login: z.string().optional(),
+  count: z.number().optional(),
+  outcomes: z.unknown().optional(),
+};
+
+const predictGateShape = {
+  login: z.string().min(1),
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string().optional(),
+  labels: z.array(z.string()).optional(),
+  linkedIssues: z.array(z.number().int().positive()).optional(),
+};
+
+// Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
+// (paths + line counts, never source), so there is nothing to scope. Mirrors the other local-* tools.
+const checkSlopRiskShape = {
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000),
+  description: z.string().max(20000).optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+
+const checkSlopRiskOutputSchema = {
+  slopRisk: z.number().optional(),
+  band: z.enum(["clean", "low", "elevated", "high"]).optional(),
+  findings: z.unknown().optional(),
+  rubric: z.string().optional(),
+};
+
+const predictGateOutputSchema = {
+  predicted: z.boolean().optional(),
+  basis: z.string().optional(),
+  pack: z.enum(["gittensor", "oss-anti-slop"]).optional(),
+  conclusion: z.string().optional(),
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  readinessScore: z.number().nullable().optional(),
+  blockers: z.unknown().optional(),
+  warnings: z.unknown().optional(),
+  funnel: z.unknown().optional(),
+  note: z.string().optional(),
+};
+
+const markNotificationsReadOutputSchema = {
+  login: z.string().optional(),
+  marked: z.number().optional(),
+};
+
+const listNotificationsShape = {
+  login: z.string().min(1),
+};
+
+const markNotificationsReadShape = {
+  login: z.string().min(1),
+  ids: z.array(z.string().min(1)).optional(),
+};
+
 const explainRepoDecisionOutputSchema = {
   status: z.string().optional(),
   login: z.string().optional(),
@@ -545,6 +623,61 @@ export class GittensoryMcp {
         outputSchema: openPrMonitorOutputSchema,
       },
       async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_predict_gate",
+      {
+        description:
+          "Predict whether a planned PR would pass the repo's Gittensory gate, from its PUBLIC .gittensory.yml only — an agent-native pre-submission self-check that works on ANY repo (no Gittensor account). Under the oss-anti-slop pack the verdict applies to any author; self-scoped to the authenticated login.",
+        inputSchema: predictGateShape,
+        outputSchema: predictGateOutputSchema,
+      },
+      async (input) => this.toolResult(await this.predictGate(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_slop_risk",
+      {
+        description:
+          "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+        inputSchema: checkSlopRiskShape,
+        outputSchema: checkSlopRiskOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkSlopRisk(input)),
+    );
+
+    server.registerTool(
+      "gittensory_pr_outcome",
+      {
+        description:
+          "Return a contributor's own post-merge outcome records — for each merged PR, a public-safe attribution of what it did for their standing on the repo. Self-scoped: only the authenticated login's outcomes.",
+        inputSchema: prOutcomeShape,
+        outputSchema: prOutcomeOutputSchema,
+      },
+      async (input) => this.toolResult(await this.prOutcomes(input.login, input.limit)),
+    );
+
+    server.registerTool(
+      "gittensory_list_notifications",
+      {
+        description:
+          "Return a contributor's own Gittensory notifications (e.g. changes requested on their PRs) and unread badge count. Self-scoped: only the authenticated login's notifications.",
+        inputSchema: listNotificationsShape,
+        outputSchema: notificationsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.listNotifications(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_mark_notifications_read",
+      {
+        description:
+          "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all.",
+        inputSchema: markNotificationsReadShape,
+        outputSchema: markNotificationsReadOutputSchema,
+      },
+      async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
     );
 
     server.registerTool(
@@ -1119,6 +1252,83 @@ export class GittensoryMcp {
     return {
       summary: monitor.summary,
       data: monitor as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async checkSlopRisk(input: z.infer<z.ZodObject<typeof checkSlopRiskShape>>): Promise<ToolPayload> {
+    const assessment = buildSlopAssessment(input);
+    return {
+      summary: `Slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
+      data: { ...assessment, rubric: SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    const repoFullName = `${input.owner}/${input.repo}`;
+    const [repo, issues, pullRequests, bounties, issueQuality, manifest] = await Promise.all([
+      getRepository(this.env, repoFullName),
+      listIssues(this.env, repoFullName),
+      listPullRequests(this.env, repoFullName),
+      listBountiesByRepo(this.env, repoFullName),
+      loadOrComputeIssueQualityResponse(this.env, repoFullName),
+      loadRepoFocusManifest(this.env, repoFullName),
+    ]);
+    const verdict = buildPredictedGateVerdict({
+      input: {
+        repoFullName,
+        contributorLogin: input.login,
+        title: input.title,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+        ...(input.linkedIssues === undefined ? {} : { linkedIssues: input.linkedIssues }),
+      },
+      manifest,
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality: issueQuality?.report,
+    });
+    return {
+      summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
+      data: verdict as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async prOutcomes(login: string, limit?: number): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const deliveries = await listNotificationDeliveriesForRecipient(this.env, login, { eventType: "pull_request_merged", limit: limit ?? 50 });
+    const outcomes = deliveries.map((delivery) => ({
+      repoFullName: delivery.repoFullName,
+      pullNumber: delivery.pullNumber,
+      outcome: "merged" as const,
+      attribution: delivery.body,
+      deeplink: delivery.deeplink,
+      recordedAt: delivery.createdAt,
+    }));
+    return {
+      summary: `Gittensory post-merge outcomes for ${login}: ${outcomes.length} merged PR(s).`,
+      data: { login: login.toLowerCase(), count: outcomes.length, outcomes } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async listNotifications(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const deliveries = await listNotificationDeliveriesForRecipient(this.env, login, { channel: "badge", limit: 50 });
+    const feed = buildNotificationFeed(login, deliveries);
+    return {
+      summary: `Gittensory notifications for ${login}: ${feed.unreadCount} unread.`,
+      data: feed as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async markNotificationsRead(login: string, ids?: string[]): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const marked = await markNotificationDeliveriesRead(this.env, login, ids);
+    return {
+      summary: `Marked ${marked} Gittensory notification(s) read for ${login}.`,
+      data: { login: login.toLowerCase(), marked },
     };
   }
 

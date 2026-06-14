@@ -104,6 +104,7 @@ import {
   refreshInstallationHealth,
   refreshInstallationHealthForInstallation,
 } from "../github/backfill";
+import { getRepositoryCollaboratorPermission } from "../github/app";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/public";
 import {
@@ -154,6 +155,7 @@ import {
 } from "../services/mcp-compatibility";
 import { buildOperatorDashboardPayload } from "../services/operator-dashboard";
 import { buildSelfDogfoodRegistrationPack, resolveSelfDogfoodRepoFullName } from "../services/self-dogfood-registration-pack";
+import { buildSubnetInterfaceDescriptor } from "../services/subnet-interface";
 import {
   buildWeeklyValueReport,
   formatWeeklyValueReportMarkdown,
@@ -195,6 +197,8 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -515,6 +519,8 @@ const repositorySettingsSchema = z.object({
   qualityGateMinScore: z.number().int().min(0).max(100).nullable().optional(),
   aiReviewMode: z.enum(["off", "advisory", "block"]).default("off"),
   aiReviewByok: z.boolean().default(false),
+  aiReviewProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
+  aiReviewModel: z.string().trim().min(1).max(120).nullable().optional(),
   autoLabelEnabled: z.boolean().default(true),
   gittensorLabel: z.string().trim().min(1).max(50).default("gittensor"),
   createMissingLabel: z.boolean().default(true),
@@ -532,10 +538,26 @@ const repositorySettingsSchema = z.object({
 });
 
 // Maintainer BYOK provider key. Write-only: the key is encrypted at rest and never returned. A loose
-// shape check (sk-ant-… / sk-…) catches obvious paste errors without coupling to provider key formats.
-const repositoryAiKeySchema = z.object({
-  provider: z.enum(["anthropic", "openai"]),
-  key: z.string().trim().min(20).max(400),
+// prefix check catches the common provider/key mismatch (e.g. pasting an OpenAI key under Anthropic)
+// without coupling to exact provider key formats: Anthropic keys start with `sk-ant-`; OpenAI keys
+// start with `sk-` but never `sk-ant-`.
+const repositoryAiKeySchema = z
+  .object({
+    provider: z.enum(["anthropic", "openai"]),
+    key: z.string().trim().min(20).max(400),
+    model: z.string().trim().min(1).max(120).nullable().optional(),
+  })
+  .refine((value) => (value.provider === "anthropic" ? value.key.startsWith("sk-ant-") : value.key.startsWith("sk-") && !value.key.startsWith("sk-ant-")), {
+    message: "API key does not match the selected provider (Anthropic keys start with sk-ant-, OpenAI keys start with sk-).",
+    path: ["key"],
+  });
+
+// Maintainer-settable AI-review config (the non-secret subset of settings). The secret key is set
+// separately via the ai-key route; never here.
+const repositoryAiReviewSchema = z.object({
+  mode: z.enum(["off", "advisory", "block"]),
+  byok: z.boolean().default(false),
+  provider: z.enum(["anthropic", "openai"]).nullable().optional(),
   model: z.string().trim().min(1).max(120).nullable().optional(),
 });
 
@@ -652,6 +674,14 @@ export function createApp() {
   app.get("/v1/mcp/compatibility", (c) => c.json(buildMcpCompatibilityMetadata(nowIso())));
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
+
+  // Public SN74 contribution-interface descriptor (#695): metagraphed (and any agent) fetches this to route
+  // gittensor discovery → Gittensory. Unauthenticated product metadata; excluded from requiresApiToken below.
+  app.get("/v1/public/subnet-interface", (c) => {
+    const origin = c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin;
+    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+    return c.json(buildSubnetInterfaceDescriptor({ origin, generatedAt: nowIso(), appSlug: c.env.GITHUB_APP_SLUG, upstreamRepo: c.env.GITTENSOR_UPSTREAM_REPO }));
+  });
 
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
     try {
@@ -1760,9 +1790,107 @@ export function createApp() {
     );
   });
 
+  // Repo gittensory settings (gate config, AI-review mode/provider/model — NON-secret; the BYOK key is
+  // never here). Maintainer DATA: session callers must be a verified maintainer of THIS repo (per-repo
+  // scope), so a maintainer of repo A cannot read repo B's config. Server-to-server tokens are exempt.
   app.get("/v1/repos/:owner/:repo/settings", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
     return c.json(await getRepositorySettings(c.env, fullName));
+  });
+
+  // Maintainer activation demo (#701): a repo-specific "here's what Gittensory would have surfaced" preview
+  // over recent PRs, plus a one-click advisory ramp. Maintainer-scoped + per-repo. Deterministic (no AI run).
+  app.get("/v1/repos/:owner/:repo/activation-preview", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const [repo, settings, pullRequests] = await Promise.all([
+      getRepository(c.env, fullName),
+      getRepositorySettings(c.env, fullName),
+      listPullRequests(c.env, fullName),
+    ]);
+    return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso() }));
+  });
+
+  // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
+  // mode. Merges onto current settings so unrelated fields are preserved.
+  app.post("/v1/repos/:owner/:repo/activation", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const current = await getRepositorySettings(c.env, fullName);
+    const updated = await upsertRepositorySettings(c.env, { ...current, ...recommendedAdvisoryActivationSettings() });
+    return c.json({
+      repoFullName: fullName,
+      gateCheckMode: updated.gateCheckMode,
+      checkRunMode: updated.checkRunMode,
+      linkedIssueGateMode: updated.linkedIssueGateMode,
+      duplicatePrGateMode: updated.duplicatePrGateMode,
+      qualityGateMode: updated.qualityGateMode,
+    });
+  });
+
+  // Maintainer self-serve AI-review config (non-secret: mode/byok/provider/model). Session-authenticated +
+  // scoped to repos the maintainer owns/maintains. The secret provider key goes through the ai-key route.
+  // Merges onto current settings so unrelated settings are preserved.
+  app.put("/v1/repos/:owner/:repo/ai-review", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const parsed = repositoryAiReviewSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_ai_review_config", issues: parsed.error.issues }, 400);
+    const current = await getRepositorySettings(c.env, fullName);
+    const updated = await upsertRepositorySettings(c.env, {
+      ...current,
+      aiReviewMode: parsed.data.mode,
+      aiReviewByok: parsed.data.byok,
+      aiReviewProvider: parsed.data.provider,
+      aiReviewModel: parsed.data.model,
+    });
+    // getRepositorySettings normalizes these to a concrete value or null (never undefined).
+    return c.json({
+      aiReviewMode: updated.aiReviewMode,
+      aiReviewByok: updated.aiReviewByok,
+      aiReviewProvider: updated.aiReviewProvider ?? null,
+      aiReviewModel: updated.aiReviewModel ?? null,
+    });
+  });
+
+  // Maintainer self-serve BYOK provider key. Write-only + maintainer-scoped. GET returns only
+  // {configured, provider, last4, model}; the key is never returned, logged, or surfaced.
+  app.get("/v1/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    return c.json(await getRepositoryAiKeyStatus(c.env, fullName));
+  });
+
+  app.post("/v1/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoKeyWriteAccess(c, fullName);
+    if (gate instanceof Response) return gate;
+    const parsed = repositoryAiKeySchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_ai_key", issues: parsed.error.issues }, 400);
+    const createdBy = gate.identity?.kind === "session" ? gate.identity.actor : null;
+    try {
+      return c.json(await upsertRepositoryAiKey(c.env, { repoFullName: fullName, provider: parsed.data.provider, key: parsed.data.key, model: parsed.data.model ?? null, createdBy }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "missing_encryption_secret") {
+        return c.json({ error: "encryption_unavailable", detail: "Key storage is not configured on the server." }, 503);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/v1/repos/:owner/:repo/ai-key", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoKeyWriteAccess(c, fullName);
+    if (gate instanceof Response) return gate;
+    const actor = gate.identity?.kind === "session" ? gate.identity.actor : null;
+    await deleteRepositoryAiKey(c.env, fullName, actor);
+    return c.json({ configured: false });
   });
 
   app.post("/v1/repos/:owner/:repo/settings-preview", async (c) => {
@@ -1996,7 +2124,26 @@ export function createApp() {
       issueQuality: issueQuality?.report,
       gittensorSnapshot: context.gittensorSnapshot,
     });
-    const response = { ...analysis, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
+    // Pre-submission gate prediction: the SAME advisory + evaluateGateCheck the maintainer PR pipeline
+    // runs, over a synthetic PR from this local branch, using ONLY the repo's PUBLIC .gittensory.yml gate
+    // policy (never the maintainer's private DB settings). Self-scoped (requireContributorAccess above).
+    const predictedGate = buildPredictedGateVerdict({
+      input: {
+        repoFullName: parsed.data.repoFullName,
+        contributorLogin: parsed.data.login,
+        title: parsed.data.title ?? analysis.prPacket.titleSuggestion,
+        body: parsed.data.body,
+        labels: parsed.data.labels,
+        linkedIssues: parsed.data.linkedIssues,
+      },
+      manifest: repoManifest,
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality: issueQuality?.report,
+    });
+    const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
     await recordRouteProductUsage(c, {
       surface: "api",
@@ -2461,6 +2608,8 @@ export function createApp() {
         qualityGateMinScore: parsed.data.qualityGateMinScore,
         aiReviewMode: parsed.data.aiReviewMode,
         aiReviewByok: parsed.data.aiReviewByok,
+        aiReviewProvider: parsed.data.aiReviewProvider,
+        aiReviewModel: parsed.data.aiReviewModel,
         autoLabelEnabled: parsed.data.autoLabelEnabled,
         gittensorLabel: parsed.data.gittensorLabel,
         createMissingLabel: parsed.data.createMissingLabel,
@@ -3774,17 +3923,43 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
   return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
 }
 
+// ─── Authorization model (the miner ⊕ maintainer boundary) ──────────────────────────────────────
+// Identity is per-LOGIN; authority is per-REPO. Two independent axes a single session can hold at once:
+//   • MINER (gittensor contributor): may read ONLY its own contributor/miner data — enforced by
+//     `requireContributorAccess` (HTTP) and `GittensoryMcp.requireContributorAccess` (MCP), which 403/throw
+//     unless `session.actor === requestedLogin`. Being a miner grants ZERO maintainer visibility.
+//   • MAINTAINER OF A SPECIFIC REPO: may read/write maintainer data ONLY for repos it is a verified
+//     maintainer of — enforced by `requireSessionRepoAccess` / `requireRepoMaintainer` (HTTP) and
+//     `GittensoryMcp.canAccessRepo` (MCP). Maintainer-of-repo-A grants ZERO access to repo B.
+// Two maintainer tiers: (a) affiliation (owns/installed the repo, or authored a PR there with a
+// maintainer association) gates maintainer-DATA reads; (b) verified write/admin/maintain permission,
+// resolved live via the installation, additionally gates the SECRET BYOK key writes (`requireRepoKeyWriteAccess`).
+// Operators (ADMIN_GITHUB_LOGINS) and server-to-server tokens bypass per-repo scope by design.
+// `canSessionAccessPath` is the coarse path allowlist that runs in the global middleware BEFORE a route
+// handler; it only decides whether a session may REACH a path — the per-route guards above enforce the
+// actual identity/repo scope. A path added here MUST be scoped by a per-route guard in its handler.
 function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: "session" }>, path: string): boolean {
   if (isAuthorizedGitHubSessionLogin(env, identity.actor)) return true;
   if (path.startsWith("/v1/app/")) return true;
   if (isIssueQualityPath(path)) return true;
+  if (isRepoSettingsPath(path)) return true;
+  if (isRepoActivationPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
+  if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
+}
+
+function isRepoSettingsPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/settings$/.test(path);
+}
+
+function isRepoActivationPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/activation(?:-preview)?$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {
@@ -3809,6 +3984,10 @@ function isIssueQualityPath(path: string): boolean {
 
 function isRepoFocusManifestPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/focus-manifest(?:\/refresh)?$/.test(path);
+}
+
+function isRepoAiConfigPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/ai-(?:review|key)$/.test(path);
 }
 
 async function authenticateRequestIdentity(c: ProtectedRouteContext): Promise<AuthIdentity | null> {
@@ -3884,6 +4063,53 @@ async function requireSessionRepoAccess(
   return c.json({ error: "forbidden_repo" }, 403);
 }
 
+/** Gate a maintainer-scoped repo route: requires a maintainer/owner/operator role and, for session
+ *  callers, access to that specific repo. Returns the resolved identity, or a Response to short-circuit. */
+async function requireRepoMaintainer(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
+  const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+  if (forbidden) return forbidden;
+  const identity = await authenticateRequestIdentity(c);
+  if (identity?.kind === "session") {
+    const repo = await getRepository(c.env, fullName);
+    const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+    if (repoForbidden) return repoForbidden;
+  }
+  return { identity };
+}
+
+// GitHub permissions that imply real write access to a repo (and thus authority to manage its secret
+// BYOK key). "maintain"/"write"/"admin" can push; "triage"/"read"/"none" cannot.
+const REPO_KEY_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
+/**
+ * Stricter gate for the secret-bearing BYOK key WRITES (POST/DELETE /ai-key). On top of the maintainer
+ * gate, a session caller must have real GitHub write access to the repo — resolved via the installation,
+ * not merely inferred from a PR author_association (which includes org MEMBER / read-only COLLABORATOR).
+ * Operators and server-to-server tokens are exempt. Fails closed (403) if write access can't be verified.
+ */
+async function requireRepoKeyWriteAccess(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
+  const gate = await requireRepoMaintainer(c, fullName);
+  if (gate instanceof Response) return gate;
+  if (gate.identity?.kind !== "session") return gate; // server-to-server token: no per-repo push check
+  const summary = await loadControlPanelRoleSummary(c.env, gate.identity.actor);
+  if (summary.roles.includes("operator")) return gate; // operators manage any repo
+  const repo = await getRepository(c.env, fullName);
+  const installationId = repo?.installationId ?? null;
+  let permission: string | null = null;
+  if (installationId !== null) {
+    try {
+      permission = await getRepositoryCollaboratorPermission(c.env, installationId, fullName, gate.identity.actor);
+    } catch {
+      /* v8 ignore next -- defensive: a GitHub permission-check failure fails closed (→ 403 below) */
+      permission = null;
+    }
+  }
+  if (!permission || !REPO_KEY_WRITE_PERMISSIONS.has(permission)) {
+    return c.json({ error: "insufficient_repo_permission" }, 403);
+  }
+  return gate;
+}
+
 async function skippedPrAuditRepoScope(
   c: ProtectedRouteContext,
   identity: AuthIdentity,
@@ -3927,6 +4153,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
   if (path === "/v1/mcp/compatibility") return false;
   if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
+  if (path === "/v1/public/subnet-interface") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   if (path.startsWith("/v1/auth/")) return false;

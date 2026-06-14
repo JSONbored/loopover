@@ -52,6 +52,44 @@ describe("runGittensoryAiReview gating", () => {
     await expect(runGittensoryAiReview(env, baseInput)).resolves.toMatchObject({ status: "quota_exceeded" });
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("clamps a non-numeric AI_MAX_OUTPUT_TOKENS back to the default", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", AI_MAX_OUTPUT_TOKENS: "not-a-number" });
+    const result = await runGittensoryAiReview(env, baseInput);
+    expect(result.status).toBe("ok"); // NaN → clamped to the 256 floor, review still runs
+  });
+
+  it("does NOT count a BYOK advisory against the free neuron budget (it bills the maintainer)", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: reviewJson({ assessment: "BYOK advisory." }) }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const run = vi.fn();
+    // Free budget is exhausted (1 neuron), but a BYOK advisory bills the maintainer's account, so it still runs.
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
+    const result = await runGittensoryAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
+    expect(result.status).toBe("ok");
+    expect(result.status === "ok" && result.advisoryNotes).toContain("BYOK advisory.");
+    expect(result.status === "ok" && result.estimatedNeurons).toBe(0); // advisory-only BYOK consumes no free budget
+    expect(fetchMock).toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("AI Gateway routing for free Workers-AI calls", () => {
+  it("routes through the gateway when AI_GATEWAY_ID is set", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", AI_GATEWAY_ID: "gtsy-gw" });
+    await runGittensoryAiReview(env, baseInput);
+    expect(run).toHaveBeenCalled();
+    expect((run.mock.calls[0] as unknown[] | undefined)?.[2]).toEqual({ gateway: { id: "gtsy-gw" } });
+  });
+
+  it("calls the binding directly (no gateway arg) when AI_GATEWAY_ID is unset", async () => {
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
+    await runGittensoryAiReview(env, baseInput);
+    expect((run.mock.calls[0] as unknown[] | undefined)?.[2]).toBeUndefined();
+  });
 });
 
 describe("runGittensoryAiReview advisory mode", () => {
@@ -134,14 +172,35 @@ describe("BYOK provider dispatch", () => {
     const result = await runGittensoryAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
     expect(result.status === "ok" && result.advisoryNotes).toContain("BYOK review.");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.anthropic.com/v1/messages");
+    // The provider fetch must carry a timeout signal so a hung provider can't stall the queue worker.
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.signal).toBeInstanceOf(AbortSignal);
     expect(run).not.toHaveBeenCalled(); // advisory mode + BYOK → no Workers AI call
   });
 
-  it("falls back to no notes when the provider returns a non-200", async () => {
+  it("falls back to no notes when the provider returns a non-200 and records the failure reason", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
     const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
     const result = await runGittensoryAiReview(env, { ...baseInput, providerKey: { provider: "openai", key: "sk-secret" } });
     expect(result.status === "ok" && result.advisoryNotes).toBeNull();
+    // The audit event names the failure (observability) and NEVER includes key material.
+    const row = await env.DB.prepare("select metadata_json from ai_usage_events where feature = ? order by rowid desc limit 1").bind("ai_review_pr").first<{ metadata_json: string }>();
+    expect(JSON.parse(row?.metadata_json ?? "{}").byokFailure).toBe("http_error");
+    expect(row?.metadata_json ?? "").not.toContain("sk-secret");
+  });
+
+  it("records a timeout failure when the provider fetch aborts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        // Mirror AbortSignal.timeout's rejection (a TimeoutError DOMException-shaped error).
+        throw Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+      }),
+    );
+    const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
+    const result = await runGittensoryAiReview(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-secret" } });
+    expect(result.status === "ok" && result.advisoryNotes).toBeNull();
+    const row = await env.DB.prepare("select metadata_json from ai_usage_events where feature = ? order by rowid desc limit 1").bind("ai_review_pr").first<{ metadata_json: string }>();
+    expect(JSON.parse(row?.metadata_json ?? "{}").byokFailure).toBe("timeout");
   });
 
   it("falls back to no notes when the provider fetch throws, and honors a model override", async () => {

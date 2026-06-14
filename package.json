@@ -27,6 +27,7 @@
     "ui:preview": "npm run ui:build && wrangler dev --config apps/gittensory-ui/dist/server/wrangler.json --ip 127.0.0.1 --port 4173 --local",
     "ui:lint": "npm --workspace @jsonbored/gittensory-ui run lint",
     "ui:typecheck": "npm --workspace @jsonbored/gittensory-ui run typecheck",
+    "ui:test": "npm --workspace @jsonbored/gittensory-ui run test",
     "ui:openapi": "tsx scripts/write-ui-openapi.ts",
     "ui:openapi:check": "tsx scripts/write-ui-openapi.ts --check",
     "ui:version-audit": "node scripts/check-ui-mcp-version-copy.mjs",

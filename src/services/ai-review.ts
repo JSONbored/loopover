@@ -83,7 +83,8 @@ type ModelReview = {
   criticalDefect: { present: boolean; confidence: number; title: string; detail: string };
 };
 
-type AiRunner = { run?: (model: string, options: Record<string, unknown>) => Promise<unknown> };
+type AiGatewayOptions = { gateway?: { id: string } };
+type AiRunner = { run?: (model: string, options: Record<string, unknown>, extra?: AiGatewayOptions) => Promise<unknown> };
 
 function isEnabled(value: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test(value ?? "");
@@ -186,17 +187,26 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
 async function runWorkersOpinion(env: Env, primary: string, fallback: string, system: string, user: string, maxTokens: number): Promise<ModelReview | null> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return null;
+  // Route through Cloudflare AI Gateway when configured (caching, rate-limiting, logging, fallback). The
+  // diff/prompt is the cache key input, scoped per model + content, so distinct PRs never share a cached
+  // review. Unset → direct binding call (unchanged behavior).
+  const gatewayId = env.AI_GATEWAY_ID?.trim();
+  const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
   for (const model of fallback && fallback !== primary ? [primary, fallback] : [primary]) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const result = await ai.run(model, {
-          max_tokens: maxTokens,
-          temperature: 0,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-        });
+        const result = await ai.run(
+          model,
+          {
+            max_tokens: maxTokens,
+            temperature: 0,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+          },
+          extra,
+        );
         const parsed = parseModelReview(coerceAiText(result));
         if (parsed) return parsed;
       } catch {
@@ -212,8 +222,18 @@ const PROVIDER_DEFAULT_MODEL: Record<AiReviewProviderKey["provider"], string> = 
   openai: "gpt-4o",
 };
 
-/** Run the maintainer's BYOK frontier model for the advisory write-up. Never throws; null on any error. */
-async function runProviderReview(providerKey: AiReviewProviderKey, system: string, user: string, maxTokens: number): Promise<ModelReview | null> {
+/** Hard cap on a single BYOK provider request. Without it a slow/half-open Anthropic/OpenAI connection
+ *  would stall the queue worker for as long as the platform allows; a bounded timeout turns the hang into
+ *  the existing fail-safe null path. Mirrors the github/gittensor fetch-timeout convention. */
+const AI_PROVIDER_TIMEOUT_MS = 20_000;
+
+/** Why a BYOK advisory call produced no review — surfaced in the audit event for observability (never a key). */
+type ProviderFailure = "timeout" | "http_error" | "exception";
+type ProviderReviewOutcome = { review: ModelReview | null; failure?: ProviderFailure };
+
+/** Run the maintainer's BYOK frontier model for the advisory write-up. Never throws; the review is null on
+ *  any error and `failure` names the reason (timeout/http_error/exception) for the audit trail. */
+async function runProviderReview(providerKey: AiReviewProviderKey, system: string, user: string, maxTokens: number): Promise<ProviderReviewOutcome> {
   const model = providerKey.model || PROVIDER_DEFAULT_MODEL[providerKey.provider];
   try {
     let response: Response;
@@ -222,6 +242,7 @@ async function runProviderReview(providerKey: AiReviewProviderKey, system: strin
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": providerKey.key, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
+        signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       });
     } else {
       response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -235,12 +256,15 @@ async function runProviderReview(providerKey: AiReviewProviderKey, system: strin
             { role: "user", content: user },
           ],
         }),
+        signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       });
     }
-    if (!response.ok) return null;
-    return parseModelReview(coerceAiText(await response.json()));
-  } catch {
-    return null;
+    if (!response.ok) return { review: null, failure: "http_error" };
+    return { review: parseModelReview(coerceAiText(await response.json())) };
+  } catch (error) {
+    // AbortSignal.timeout rejects with a TimeoutError; everything else is a network/parse exception.
+    const failure: ProviderFailure = (error as { name?: string } | null)?.name === "TimeoutError" ? "timeout" : "exception";
+    return { review: null, failure };
   }
 }
 
@@ -290,9 +314,12 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
 
   const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
   const user = buildUserPrompt(input);
-  // block mode = advisory pass + consensus pass (2 models each, minus 1 when BYOK writes the advisory).
-  const calls = input.mode === "block" ? 3 : input.providerKey ? 1 : 2;
-  const estimatedNeurons = estimateNeurons(REVIEW_SYSTEM_PROMPT.length + user.length, maxTokens, calls);
+  // The daily neuron budget governs FREE Workers-AI spend only. BYOK advisory calls bill the maintainer's
+  // own provider account, so they are not counted here (and a BYOK advisory still runs when the free
+  // budget is exhausted). Free calls = the consensus pair in block mode (always Workers AI), plus the
+  // advisory leg only when it is NOT BYOK.
+  const freeAiCalls = (input.mode === "block" ? 2 : 0) + (input.providerKey ? 0 : 1);
+  const estimatedNeurons = freeAiCalls === 0 ? 0 : estimateNeurons(REVIEW_SYSTEM_PROMPT.length + user.length, maxTokens, freeAiCalls);
   const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
@@ -302,9 +329,15 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   }
 
   // Advisory write-up: BYOK frontier model if configured, else the free Workers-AI primary (with fallback).
-  const advisoryReview = input.providerKey
-    ? await runProviderReview(input.providerKey, REVIEW_SYSTEM_PROMPT, user, maxTokens)
-    : await runWorkersOpinion(env, BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0], REVIEW_SYSTEM_PROMPT, user, maxTokens);
+  let byokFailure: ProviderFailure | undefined;
+  let advisoryReview: ModelReview | null;
+  if (input.providerKey) {
+    const outcome = await runProviderReview(input.providerKey, REVIEW_SYSTEM_PROMPT, user, maxTokens);
+    advisoryReview = outcome.review;
+    byokFailure = outcome.failure;
+  } else {
+    advisoryReview = await runWorkersOpinion(env, BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0], REVIEW_SYSTEM_PROMPT, user, maxTokens);
+  }
 
   let consensusDefect: AiConsensusDefect | null = null;
   let secondReview: ModelReview | null = null;
@@ -325,6 +358,7 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
     mode: input.mode,
     byok: Boolean(input.providerKey),
     consensus: Boolean(consensusDefect),
+    ...(byokFailure ? { byokFailure } : {}),
   });
   return { status: "ok", advisoryNotes, consensusDefect, estimatedNeurons };
 }

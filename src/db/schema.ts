@@ -46,12 +46,17 @@ export const repositorySettings = sqliteTable("repository_settings", {
   checkRunMode: text("check_run_mode").notNull().default("off"),
   checkRunDetailLevel: text("check_run_detail_level").notNull().default("minimal"),
   gateCheckMode: text("gate_check_mode").notNull().default("off"),
+  gatePack: text("gate_pack").notNull().default("gittensor"),
   linkedIssueGateMode: text("linked_issue_gate_mode").notNull().default("block"),
   duplicatePrGateMode: text("duplicate_pr_gate_mode").notNull().default("block"),
   qualityGateMode: text("quality_gate_mode").notNull().default("advisory"),
   qualityGateMinScore: integer("quality_gate_min_score"),
+  slopGateMode: text("slop_gate_mode").notNull().default("off"),
+  slopGateMinScore: integer("slop_gate_min_score"),
   aiReviewMode: text("ai_review_mode").notNull().default("off"),
   aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
+  aiReviewProvider: text("ai_review_provider"),
+  aiReviewModel: text("ai_review_model"),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),
   createMissingLabel: integer("create_missing_label", { mode: "boolean" }).notNull().default(true),
@@ -73,6 +78,10 @@ export const repositoryAiKeys = sqliteTable("repository_ai_keys", {
   provider: text("provider").notNull(),
   ciphertext: text("ciphertext").notNull(),
   iv: text("iv").notNull(),
+  // Per-record PBKDF2 salt (base64) for the v2 crypto envelope; null for legacy v1 rows (constant salt).
+  salt: text("salt"),
+  // Crypto-envelope version (NOT a key-rotation counter): 1 = legacy constant-salt, 2 = per-record salt.
+  // upsert overwrites in place; there is no rotation history. See src/utils/crypto.ts.
   keyVersion: integer("key_version").notNull().default(1),
   model: text("model"),
   last4: text("last4").notNull(),
@@ -799,6 +808,50 @@ export const digestSubscriptions = sqliteTable(
     loginEmail: uniqueIndex("digest_subscriptions_login_email_unique").on(table.login, table.email),
     login: index("digest_subscriptions_login_idx").on(table.login),
     status: index("digest_subscriptions_status_idx").on(table.status),
+  }),
+);
+
+export const notificationSubscriptions = sqliteTable(
+  "notification_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    channel: text("channel").notNull(),
+    status: text("status").notNull().default("active"),
+    destination: text("destination"),
+    source: text("source").notNull().default("app"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    loginChannel: uniqueIndex("notification_subscriptions_login_channel_unique").on(table.login, table.channel),
+    login: index("notification_subscriptions_login_idx").on(table.login),
+  }),
+);
+
+export const notificationDeliveries = sqliteTable(
+  "notification_deliveries",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    channel: text("channel").notNull(),
+    recipientLogin: text("recipient_login").notNull(),
+    eventType: text("event_type").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    deeplink: text("deeplink").notNull(),
+    actorLogin: text("actor_login"),
+    status: text("status").notNull().default("pending"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    deliveredAt: text("delivered_at"),
+    readAt: text("read_at"),
+  },
+  (table) => ({
+    dedupChannel: uniqueIndex("notification_deliveries_dedup_channel_unique").on(table.dedupKey, table.channel),
+    recipientStatus: index("notification_deliveries_recipient_status_idx").on(table.recipientLogin, table.status),
+    recipientChannelCreated: index("notification_deliveries_recipient_channel_created_idx").on(table.recipientLogin, table.channel, table.createdAt),
   }),
 );
 

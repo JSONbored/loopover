@@ -39,6 +39,7 @@
     "WORKERS_AI_SUMMARY_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
     "AI_DAILY_NEURON_BUDGET": "10000",
     "AI_MAX_OUTPUT_TOKENS": "256",
+    "AI_GATEWAY_ID": "",
     "ADMIN_GITHUB_LOGINS": "JSONbored",
   },
   "routes": [

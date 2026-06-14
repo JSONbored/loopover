@@ -82,7 +82,7 @@ import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
-import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
+import { deliverNotification, detectIssueWatchEvents, evaluateNotificationEvent } from "../notifications/service";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import {
@@ -139,7 +139,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
-import type { AdvisoryFinding, ContributorEvidenceRecord, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
+import type { AdvisoryFinding, ContributorEvidenceRecord, DetectedNotificationEvent, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -759,6 +759,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       }
     }
 
+    let issueWatchEvents: DetectedNotificationEvent[] = [];
     if (payload.repository?.full_name && payload.issue && !payload.issue.pull_request) {
       const issue = await upsertIssueFromGitHub(env, payload.repository.full_name, payload.issue);
       const repo = await getRepository(env, payload.repository.full_name);
@@ -770,9 +771,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
         advisory.findings.push(...buildIssueSlopAssessment({ title: issue.title, body: issue.body }).findings);
       }
       await persistAdvisory(env, advisory);
+      // #699 path B: a newly opened grabbable, high-multiplier issue notifies the miners watching this repo
+      // (fanned out through the same #535 pipeline below).
+      if (payload.action === "opened") issueWatchEvents = await detectIssueWatchEvents(env, payload.repository.full_name, issue);
     }
 
-    for (const notificationEvent of detectNotificationEvents(eventName, payload)) {
+    for (const notificationEvent of [...detectNotificationEvents(eventName, payload), ...issueWatchEvents]) {
       await recordAuditEvent(env, {
         eventType: "notification.event_detected",
         actor: notificationEvent.actorLogin,
@@ -936,8 +940,10 @@ export async function runAiReviewForAdvisory(
 /**
  * AI-assisted slop advisory (opt-in `slopAiAdvisory`). Appends at most one ADVISORY-only `ai_slop_advisory`
  * finding to the advisory; NEVER touches slopRisk or the gate (only the deterministic core can block). The
- * caller gates on `settings.slopAiAdvisory` and reuses the already-fetched changed files. Fail-safe: any AI
- * error is swallowed so the gate still finalizes.
+ * caller gates on `settings.slopAiAdvisory` and reuses the already-fetched changed files. Like the AI review
+ * path, it runs ONLY for confirmed contributors so an unconfirmed/untrusted PR author cannot spend either the
+ * shared Workers AI budget or the maintainer-paid BYOK quota. Fail-safe: any AI error is swallowed so the
+ * gate still finalizes.
  */
 export async function runAiSlopForAdvisory(
   env: Env,
@@ -949,13 +955,17 @@ export async function runAiSlopForAdvisory(
     author: string | null;
     files: Awaited<ReturnType<typeof listPullRequestFiles>>;
     deterministicBand: SlopBand;
+    confirmedContributor: boolean;
   },
 ): Promise<void> {
-  if (!args.advisory.headSha) return;
+  // Confirmed-contributor gate (matches runAiReviewForAdvisory): no AI spend — free OR BYOK — on a PR from
+  // an unconfirmed author. The deterministic slop core still ran for everyone; only the AI layer is gated.
+  if (!args.confirmedContributor || !args.advisory.headSha) return;
   try {
     // BYOK (opt-in): reuse the repo's encrypted key + aiReviewByok flag — one BYOK key serves both AI
     // features. A declared provider must match the stored key's provider, else skip BYOK (Workers-AI
-    // fallback). The slop advisory stays advisory-only regardless of which model writes it.
+    // fallback). The contributor is already confirmed (early return above), so BYOK billing is authorized.
+    // The slop advisory stays advisory-only regardless of which model writes it.
     const storedKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
     const providerKey =
       storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
@@ -1157,6 +1167,18 @@ async function maybePublishPrPublicSurface(
       scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
     });
 
+    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
+      official = await getCachedOfficialMinerDetection(env, author, {
+        targetKey: `${repoFullName}#${pr.number}`,
+        deliveryId: webhook.deliveryId,
+      });
+    }
+
+    // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
+    // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
+    // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
+    const confirmedContributor = official?.status === "confirmed";
+
     // Anti-slop (#530/#532): only when opted in (slopGateMode !== "off"). Surface the deterministic slop
     // findings as advisory context, and feed the score to the gate (it only blocks under slop: block + the
     // threshold). Loads files lazily so disabled repos pay nothing.
@@ -1175,21 +1197,9 @@ async function maybePublishPrPublicSurface(
       // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (settings.slopAiAdvisory) {
-        await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band });
+        await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band, confirmedContributor });
       }
     }
-
-    if (gateEnabled && author && !publicSurfaceSkipped && !official) {
-      official = await getCachedOfficialMinerDetection(env, author, {
-        targetKey: `${repoFullName}#${pr.number}`,
-        deliveryId: webhook.deliveryId,
-      });
-    }
-
-    // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
-    // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
-    // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
-    const confirmedContributor = official?.status === "confirmed";
 
     // AI maintainer review (opt-in via aiReviewMode). Mutates `advisory` with a consensus defect (if any)
     // BEFORE the gate evaluates, and returns advisory notes for the panel. Inside the try so any AI

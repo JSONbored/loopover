@@ -592,6 +592,22 @@ describe("api routes", () => {
       dataQuality: expect.any(Object),
     });
 
+    // #543 outcome-learning calibration: maintainer-scoped, read-only.
+    const calibrationUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/outcome-calibration", {}, env);
+    expect(calibrationUnauthenticated.status).toBe(401);
+    const calibration = await app.request("/v1/repos/entrius/allways-ui/outcome-calibration?windowDays=30", { headers: apiHeaders(env) }, env);
+    expect(calibration.status).toBe(200);
+    await expect(calibration.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      windowDays: 30,
+      slop: { totalResolved: expect.any(Number), bands: expect.any(Array), discriminates: null },
+      recommendations: { total: expect.any(Number) },
+      signals: expect.any(Array),
+    });
+    // No windowDays → defaults to the full window (covers the param-absent path).
+    const calibrationNoWindow = await app.request("/v1/repos/entrius/allways-ui/outcome-calibration", { headers: apiHeaders(env) }, env);
+    await expect(calibrationNoWindow.json()).resolves.toMatchObject({ windowDays: null });
+
     const settingsPreviewUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/settings-preview", { method: "POST", body: "{}" }, env);
     expect(settingsPreviewUnauthenticated.status).toBe(401);
 

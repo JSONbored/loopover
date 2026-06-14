@@ -1121,7 +1121,17 @@ export type DigestSubscriptionRecord = {
 // unless a row is `paused`).
 export type NotificationChannel = "badge" | "email";
 export type NotificationDeliveryStatus = "pending" | "delivered" | "read" | "suppressed";
-export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged";
+export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged" | "issue_watch_match";
+
+/** #699 path B: a miner's standing watch on a repo for new grabbable issues. `labels` ([]=any) filters
+ *  which issues notify. The `pullNumber` field of the resulting notification event carries the ISSUE number. */
+export type IssueWatchSubscription = {
+  login: string;
+  repoFullName: string;
+  labels: string[];
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+};
 
 // A notification-worthy event extracted from a webhook payload (src/notifications/events.ts).
 export type DetectedNotificationEvent = {

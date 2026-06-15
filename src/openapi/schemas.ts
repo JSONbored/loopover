@@ -358,6 +358,8 @@ export const ContributorOpportunitySchema = z
     fit: z.enum(["good", "caution", "hold"]),
     score: z.number(),
     lane: z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"]),
+    multiplierTier: z.enum(["maintainer_created", "community"]),
+    availability: z.enum(["ready", "maintainer_wip"]),
     reasons: z.array(z.string()),
     warnings: z.array(z.string()),
   })
@@ -556,10 +558,14 @@ export const RepositorySettingsSchema = z
     checkRunMode: z.enum(["off", "enabled"]),
     checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
     gateCheckMode: z.enum(["off", "enabled"]),
+    gatePack: z.enum(["gittensor", "oss-anti-slop"]),
     linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
     duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMinScore: z.number().nullable().optional(),
+    slopGateMode: z.enum(["off", "advisory", "block"]),
+    slopGateMinScore: z.number().nullable().optional(),
+    slopAiAdvisory: z.boolean(),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string(),
     createMissingLabel: z.boolean(),
@@ -589,10 +595,13 @@ export const RepoSettingsPreviewSchema = z
       checkRunMode: z.enum(["off", "enabled"]),
       checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]),
       gateCheckMode: z.enum(["off", "enabled"]),
+      gatePack: z.enum(["gittensor", "oss-anti-slop"]),
       linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
       duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
       qualityGateMode: z.enum(["off", "advisory", "block"]),
       qualityGateMinScore: z.number().nullable().optional(),
+      slopGateMode: z.enum(["off", "advisory", "block"]),
+      slopGateMinScore: z.number().nullable().optional(),
       autoLabelEnabled: z.boolean(),
       gittensorLabel: z.string(),
       createMissingLabel: z.boolean(),
@@ -1008,6 +1017,7 @@ const RegistryHyperparameterDriftFieldSchema = z.enum([
   "defaultLabelMultiplier",
   "fixedBaseScore",
   "eligibilityMode",
+  "timeDecay",
 ]);
 
 const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);
@@ -1199,6 +1209,7 @@ const ScoreEstimateSchema = z.object({
   credibilityMultiplier: z.number(),
   reviewPenaltyMultiplier: z.number(),
   openPrMultiplier: z.number(),
+  timeDecayMultiplier: z.number(),
   estimatedMergedScore: z.number(),
   pendingSaturationScore: z.number(),
 });

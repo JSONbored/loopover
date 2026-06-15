@@ -30,6 +30,12 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   OPEN_PR_THRESHOLD_TOKEN_SCORE: 300,
   MAX_OPEN_PR_THRESHOLD: 30,
   SRC_TOK_SATURATION_SCALE: 58,
+  // Upstream time-decay (#703): a merged PR's score decays on a sigmoid after a grace period. Modeled here
+  // so they no longer surface as unmodeled drift (#690); APPLICATION is opt-in + default-off (see preview).
+  TIME_DECAY_GRACE_PERIOD_HOURS: 12,
+  TIME_DECAY_SIGMOID_MIDPOINT: 10,
+  TIME_DECAY_SIGMOID_STEEPNESS_SCALAR: 0.4,
+  TIME_DECAY_MIN_MULTIPLIER: 0.05,
 };
 
 export const SCORING_CONSTANTS_URL =
@@ -57,8 +63,15 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
     const parsed = parsePythonNumberConstants(constantsResult.value);
     constants = { ...constants, ...parsed };
     activeModelConstants = parsed;
-    constantsPayload = { parsedConstantCount: Object.keys(parsed).length, sourceBytes: constantsResult.value.length };
+    const unmodeled = findUnmodeledUpstreamConstants(constantsResult.value);
+    constantsPayload = { parsedConstantCount: Object.keys(parsed).length, sourceBytes: constantsResult.value.length, unmodeledUpstreamConstants: unmodeled };
     warnings.push(...activeModelWarnings(parsed));
+    // Make staleness visible: upstream defines scoring constants gittensory does not yet model.
+    if (unmodeled.length > 0) {
+      warnings.push(
+        `Upstream gittensor defines ${unmodeled.length} scoring constant(s) gittensory does not yet model: ${unmodeled.slice(0, 12).join(", ")}${unmodeled.length > 12 ? ", …" : ""}. Scoring may be behind upstream.`,
+      );
+    }
   } else {
     sourceKind = "fallback";
     warnings.push(`Scoring constants fetch failed: ${constantsResult.error}`);
@@ -102,6 +115,29 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
     constants[name] = Number(raw);
   }
   return constants;
+}
+
+/**
+ * Numeric constant names upstream gittensor defines that gittensory's scoring engine does NOT model.
+ * The normal parse is `knownOnly` (it keeps only constants we already encode), which silently hides
+ * upstream ADDITIONS — e.g. a newly-introduced time-decay constant. Surfacing these makes scoring
+ * staleness visible: if upstream adds a scoring dimension, an operator sees it instead of the gate
+ * silently drifting behind. Detection only — it does not change any score.
+ */
+export function findUnmodeledUpstreamConstants(source: string): string[] {
+  const all = parsePythonNumberConstants(source, { knownOnly: false });
+  return Object.keys(all)
+    .filter((name) => !SCORING_CONSTANT_NAMES.has(name))
+    .sort();
+}
+
+/**
+ * Owner-controlled global gate for applying upstream time-decay to score previews (#703). Default OFF: the
+ * roadmap deferral requires the owner to review a before/after ranking diff before enabling. Even when on,
+ * a fresh PR is unaffected (decay 1.0), so it only changes aged-PR projections.
+ */
+export function isTimeDecayEnabled(env: Env): boolean {
+  return /^(1|true|yes|on)$/i.test(env.SCORING_TIME_DECAY_ENABLED ?? "");
 }
 
 export function detectActiveModel(constants: Record<string, number>): ScoringModelSnapshotRecord["activeModel"] {

@@ -13,6 +13,9 @@ import { TrustStrip } from "@/components/site/trust-strip";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
 import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/lib/mcp-package";
 
+/** Canonical GitHub App install URL (app slug `gittensory`) — dead-simple one-click maintainer onboarding. */
+const GITHUB_APP_INSTALL_URL = "https://github.com/apps/gittensory/installations/new";
+
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -75,6 +78,14 @@ function Hero() {
             Plan better work, preflight branches, and keep maintainer review surfaces quiet.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
+            <a
+              href={GITHUB_APP_INSTALL_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
+            >
+              Install the GitHub App →
+            </a>
             <Link
               to="/docs/quickstart"
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"

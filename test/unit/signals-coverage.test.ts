@@ -799,12 +799,16 @@ describe("signal coverage edge cases", () => {
       preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix isolated issue", body: "Fixes #99", linkedIssues: [99] }, directRepo, [], [currentPr]),
       settings: gateSettings,
       review: { present: true, footerText: "Reviewed by the Acme maintainer bot.", note: "Run npm test before pushing.", fields: { relatedWork: false } },
+      aiReview: { notes: "The change is focused.\n\n**Suggestions**\n- Add a test for the </details> edge case." },
     });
     expect(customizedComment).toContain("Reviewed by the Acme maintainer bot."); // custom footer lead
     expect(customizedComment).toContain("register to start earning"); // mandatory attribution/earn link kept
     expect(customizedComment).toContain("Run npm test before pushing."); // intro note
     expect(customizedComment).not.toContain("| Related work |"); // hidden row
     expect(customizedComment).toContain("| Gate result |"); // non-hidden rows still rendered
+    expect(customizedComment).toContain("Gittensory AI review (advisory)"); // AI section rendered
+    expect(customizedComment).toContain("&lt;/details&gt;"); // stray tags escaped, panel structure preserved
+    expect(customizedComment).toContain("- Add a test for the"); // markdown bullets preserved (not flattened)
 
     const advisoryOnlyComment = buildPublicPrIntelligenceComment({
       repo: directRepo,
@@ -1521,9 +1525,12 @@ function repoSettings(repoFullName: string): RepositorySettings {
     checkRunMode: "off",
     checkRunDetailLevel: "minimal",
     gateCheckMode: "off",
+    gatePack: "gittensor",
     linkedIssueGateMode: "advisory",
     duplicatePrGateMode: "advisory",
     qualityGateMode: "advisory",
+    slopGateMode: "off",
+    slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,
     gittensorLabel: "gittensor",
@@ -1533,6 +1540,8 @@ function repoSettings(repoFullName: string): RepositorySettings {
     requireLinkedIssue: false,
     backfillEnabled: true,
     privateTrustEnabled: true,
+    aiReviewMode: "off",
+    aiReviewByok: false,
   };
 }
 

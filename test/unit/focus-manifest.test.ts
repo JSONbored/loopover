@@ -400,7 +400,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
@@ -688,7 +688,44 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70 });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
+  });
+
+  it("parses the gate.slop block, round-trips it, and warns on a non-mapping (#530/#532)", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "block", minScore: 55 } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.slopMode).toBe("block");
+    expect(m.gate.slopMinScore).toBe(55);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ slop: { mode: "block", minScore: 55 } });
+
+    const bad = parseFocusManifest({ gate: { slop: "block" } });
+    expect(bad.gate.slopMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.slop/.test(w))).toBe(true);
+  });
+
+  it("parses gate.slop.aiAdvisory, round-trips it, resolves it, and warns on a non-boolean", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "advisory", aiAdvisory: true } } });
+    expect(m.gate.slopMode).toBe("advisory");
+    expect(m.gate.slopAiAdvisory).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ slop: { mode: "advisory", aiAdvisory: true } });
+
+    // aiAdvisory layers onto the effective settings (off by default in the DB row).
+    const eff = resolveEffectiveSettings({ slopGateMode: "off", slopAiAdvisory: false } as RepositorySettings, m);
+    expect(eff.slopGateMode).toBe("advisory");
+    expect(eff.slopAiAdvisory).toBe(true);
+
+    const bad = parseFocusManifest({ gate: { slop: { aiAdvisory: "yes please" } } });
+    expect(bad.gate.slopAiAdvisory).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.slop\.aiAdvisory/.test(w))).toBe(true);
+  });
+
+  it("parses gate.pack and ignores an unknown pack with a warning (#692)", () => {
+    expect(parseFocusManifest({ gate: { pack: "oss-anti-slop" } }).gate.pack).toBe("oss-anti-slop");
+    expect(parseFocusManifest({ gate: { pack: "gittensor" } }).gate.pack).toBe("gittensor");
+    expect(parseFocusManifest({ gate: { pack: "oss-anti-slop" } }).gate.present).toBe(true);
+    const bad = parseFocusManifest({ gate: { pack: "nonsense" } });
+    expect(bad.gate.pack).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.pack/.test(w))).toBe(true);
   });
 
   it("parses gate.enabled (on/off) and ignores non-boolean values with a warning", () => {
@@ -753,6 +790,29 @@ describe("parseFocusManifest gate config", () => {
     expect(m.gate.duplicates).toBe("block");
     expect(m.gate.readinessMode).toBe("block");
     expect(m.gate.readinessMinScore).toBe(80);
+  });
+
+  it("parses the gate.aiReview block, round-trips it, and warns on a non-mapping/invalid value", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { mode: "block", byok: true } } });
+    expect(m.present).toBe(true);
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.aiReviewMode).toBe("block");
+    expect(m.gate.aiReviewByok).toBe(true);
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate);
+    expect(parseFocusManifest({ gate: { aiReview: ["nope"] } }).warnings.some((w) => /gate\.aiReview" must be a mapping/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { aiReview: { mode: "loud" } } }).warnings.some((w) => /gate\.aiReview\.mode/.test(w))).toBe(true);
+  });
+
+  it("parses gate.aiReview provider + model (config-as-code) and rejects an unknown provider", () => {
+    const m = parseFocusManifest({ gate: { aiReview: { mode: "advisory", byok: true, provider: "anthropic", model: "claude-3-5-sonnet-latest" } } });
+    expect(m.gate.aiReviewProvider).toBe("anthropic");
+    expect(m.gate.aiReviewModel).toBe("claude-3-5-sonnet-latest");
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate); // round-trips
+    expect(parseFocusManifest({ gate: { aiReview: { provider: "grok" } } }).warnings.some((w) => /gate\.aiReview\.provider/.test(w))).toBe(true);
+    // resolveEffectiveSettings carries provider/model through (gate alias).
+    const eff = resolveEffectiveSettings({ aiReviewProvider: null, aiReviewModel: null } as unknown as RepositorySettings, m);
+    expect(eff.aiReviewProvider).toBe("anthropic");
+    expect(eff.aiReviewModel).toBe("claude-3-5-sonnet-latest");
   });
 });
 
@@ -837,6 +897,17 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.gateCheckMode).toBe("enabled"); // gate.enabled
     expect(eff.linkedIssueGateMode).toBe("block"); // gate: wins over settings:
   });
+
+  it("parses aiReview from settings: and lets gate.aiReview win in resolveEffectiveSettings", () => {
+    const parsed = parseFocusManifest({ settings: { aiReviewMode: "advisory", aiReviewByok: true } });
+    expect(parsed.settings.aiReviewMode).toBe("advisory");
+    expect(parsed.settings.aiReviewByok).toBe(true);
+    const db = { aiReviewMode: "off", aiReviewByok: false } as unknown as RepositorySettings;
+    // settings: applies first, then the friendly gate.aiReview alias wins for its fields.
+    const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { aiReviewMode: "advisory" }, gate: { aiReview: { mode: "block", byok: true } } }));
+    expect(eff.aiReviewMode).toBe("block");
+    expect(eff.aiReviewByok).toBe(true);
+  });
 });
 
 describe("parseFocusManifest review config", () => {
@@ -850,6 +921,19 @@ describe("parseFocusManifest review config", () => {
 
   it("drops footer/note content that is not public-safe, with a warning", () => {
     const m = parseFocusManifest({ review: { footer: { text: "Estimate your reward payout here" }, note: "paste your wallet hotkey" } });
+    expect(m.review.footerText).toBeNull();
+    expect(m.review.note).toBeNull();
+    expect(m.warnings.some((w) => /review\.footer\.text.*public-safe/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /review\.note.*public-safe/.test(w))).toBe(true);
+  });
+
+  it("drops review override terms covered by the public comment sanitizer", () => {
+    const m = parseFocusManifest({
+      review: {
+        footer: { text: "Maintainer note: include seed phrase details." },
+        note: "Intro note mentions private rankings.",
+      },
+    });
     expect(m.review.footerText).toBeNull();
     expect(m.review.note).toBeNull();
     expect(m.warnings.some((w) => /review\.footer\.text.*public-safe/.test(w))).toBe(true);

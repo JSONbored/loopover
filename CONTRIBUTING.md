@@ -37,7 +37,10 @@ Do not open PRs for:
 - Auto-closing, auto-merging, rewriting contributor work, or applying labels outside the explicit
   confirmed-miner GitHub App policy.
 - Storing contributor GitHub PATs or adding non-GitHub identity providers. Browser auth is GitHub
-  OAuth; CLI/MCP auth is GitHub Device Flow.
+  OAuth; CLI/MCP auth is GitHub Device Flow. (A maintainer's own optional AI-provider key for BYOK AI
+  review is a different credential class — it is the repo owner's LLM-inference key, not a GitHub
+  identity credential — and is allowed: it is opt-in, encrypted at rest, write-only, and never returned
+  or logged.)
 - Large dependency major upgrades bundled with unrelated product changes.
 - Changelog edits in ordinary feature/fix PRs. Changelogs are updated during release prep.
 - Low-effort reward-farming changes, spam, generated bulk edits, or PRs that do not explain the

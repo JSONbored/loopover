@@ -41,6 +41,69 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+// ─── Reversible secret encryption (AES-256-GCM) ─────────────────────────────────────────────────
+// Used for maintainer BYOK provider keys (Anthropic/OpenAI) that MUST be recoverable in plaintext at
+// AI-call time. The AES key is derived from the worker secret TOKEN_ENCRYPTION_SECRET via PBKDF2; a
+// fresh random 12-byte IV is used per encryption so ciphertexts are unique and the GCM tag authenticates
+// them. The plaintext key is never persisted, never logged, and never returned from the API.
+//
+// Envelope versions (stored as key_version alongside the row):
+//   1 = legacy: a single constant KDF salt for every record (SECRET_KDF_SALT_V1).
+//   2 = current: a fresh random per-record salt, stored beside the IV, so each record's AES key is
+//       independently derived (defense-in-depth; decouples derived keys, eases future KDF rotation).
+// Decryption keys off whether a per-record salt is present, so existing v1 rows (salt = null) keep
+// decrypting with the constant salt.
+const SECRET_KDF_SALT_V1 = new TextEncoder().encode("gittensory-secret-encryption-v1");
+const SECRET_KEY_VERSION_CURRENT = 2;
+
+async function deriveSecretAesKey(keyMaterial: string, salt: Uint8Array): Promise<CryptoKey> {
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(keyMaterial), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 100_000, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+/**
+ * Encrypt a secret with AES-256-GCM. Returns base64 ciphertext (incl. auth tag) + base64 IV + the
+ * per-record salt (base64, null for the legacy v1 envelope) + envelope version. Production always uses
+ * the current envelope; `version` is parameterized only so tests can produce legacy v1 ciphertexts.
+ */
+export async function encryptSecret(
+  plaintext: string,
+  keyMaterial: string,
+  version: number = SECRET_KEY_VERSION_CURRENT,
+): Promise<{ ciphertext: string; iv: string; salt: string | null; version: number }> {
+  if (!keyMaterial) throw new Error("missing_encryption_secret");
+  const saltBytes = version >= 2 ? crypto.getRandomValues(new Uint8Array(16)) : SECRET_KDF_SALT_V1;
+  const key = await deriveSecretAesKey(keyMaterial, saltBytes);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext));
+  return { ciphertext: base64Encode(new Uint8Array(encrypted)), iv: base64Encode(iv), salt: version >= 2 ? base64Encode(saltBytes) : null, version };
+}
+
+/**
+ * Decrypt a secret produced by {@link encryptSecret}. Pass the stored per-record `salt` for v2 rows;
+ * omit it (or pass null) for legacy v1 rows, which fall back to the constant salt. Throws if the
+ * secret/IV/salt/ciphertext do not match.
+ */
+export async function decryptSecret(ciphertext: string, iv: string, keyMaterial: string, salt?: string | null): Promise<string> {
+  if (!keyMaterial) throw new Error("missing_encryption_secret");
+  const saltBytes = salt ? base64ToBytes(salt) : SECRET_KDF_SALT_V1;
+  const key = await deriveSecretAesKey(keyMaterial, saltBytes);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(iv) }, key, base64ToBytes(ciphertext));
+  return new TextDecoder().decode(decrypted);
+}
+
+function base64Encode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 export function base64UrlEncode(input: Uint8Array | string): string {
   const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
   let binary = "";

@@ -19,7 +19,15 @@ export type GateCheckPolicy = {
   duplicatePrGateMode?: GateRuleMode | undefined;
   qualityGateMode?: GateRuleMode | undefined;
   qualityGateMinScore?: number | null | undefined;
+  /** When `block`, a dual-model AI consensus defect (`ai_consensus_defect` finding) becomes a hard
+   *  blocker. Defaults to advisory — AI never blocks unless the maintainer opts in. */
+  aiReviewGateMode?: GateRuleMode | undefined;
   readinessScore?: number | null | undefined;
+  /** When `block`, the deterministic slop score becomes a hard blocker once `slopRisk >= slopGateMinScore`
+   *  (default threshold 60, the `high` band). Defaults to off/advisory — slop never blocks unless opted in. */
+  slopGateMode?: GateRuleMode | undefined;
+  slopGateMinScore?: number | null | undefined;
+  slopRisk?: number | null | undefined;
   /** ONLY confirmed gittensor contributors can be hard-blocked. When explicitly `false`, the gate is
    *  forced to a neutral (non-blocking) conclusion regardless of blockers — gittensory must never block
    *  a non-confirmed contributor. `undefined` = the caller did not gate on contributor status. */
@@ -297,7 +305,8 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
   }
   const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding.code, policy));
   const qualityBlocker = buildQualityGateBlocker(policy);
-  const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : [])];
+  const slopBlocker = buildSlopGateBlocker(policy);
+  const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : []), ...(slopBlocker ? [slopBlocker] : [])];
   // Contributor-gated: ONLY confirmed Gittensor contributors can be hard-blocked. For everyone else the
   // gate is neutral (non-blocking) + the minimal advisory comment — gittensory must never block a
   // non-confirmed contributor, regardless of what blockers fired.
@@ -558,6 +567,10 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // repo explicitly opts in with linkedIssueGateMode: "block". Duplicates still default to blocking.
   if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory") === "block";
   if (code === "duplicate_pr_risk") return gateMode(policy.duplicatePrGateMode ?? "block") === "block";
+  // A dual-model AI consensus defect blocks ONLY when the maintainer opted into aiReview: block. It is the
+  // most conservative AI signal (two independent models, high confidence) but still confirmed-contributor
+  // gated by evaluateGateCheck, and advisory by default.
+  if (code === "ai_consensus_defect") return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
   return false;
 }
 
@@ -572,6 +585,24 @@ function buildQualityGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | nul
     title: "Readiness score is below the configured threshold",
     detail: `The public readiness score is ${score}/100, below the repository threshold of ${minScore}/100.`,
     action: "Address the short explicit PR panel actions, then re-run the gate.",
+  };
+}
+
+// Default block threshold = the `high` band (60), used when a maintainer sets slop: block without a minScore.
+const DEFAULT_SLOP_BLOCK_THRESHOLD = 60;
+
+function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
+  if (gateMode(policy.slopGateMode) !== "block") return null;
+  const risk = normalizeScore(policy.slopRisk);
+  if (risk === null) return null;
+  const minScore = normalizeScore(policy.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
+  if (risk < minScore) return null;
+  return {
+    code: "slop_risk_above_threshold",
+    severity: "warning",
+    title: "Slop risk is above the configured threshold",
+    detail: `The deterministic slop risk is ${risk}/100, at or above the repository threshold of ${minScore}/100.`,
+    action: "Reduce whitespace-only churn, add test evidence, or describe the change, then re-run the gate.",
   };
 }
 

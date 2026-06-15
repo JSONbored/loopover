@@ -17,11 +17,13 @@ import {
   StatusPill,
   type Status,
 } from "@/components/site/control-primitives";
+import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
 import { StatCard } from "@/components/site/primitives";
-import { StateBoundary } from "@/components/site/state-views";
+import { EmptyState, LoadingState, StateBoundary } from "@/components/site/state-views";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
 import { useApiResource } from "@/lib/api/use-api-resource";
+import { useSession } from "@/lib/api/session";
 import {
   PREVIEW_SCENARIOS,
   buildSettingsPreviewRequest,
@@ -41,6 +43,14 @@ const BUCKET_TONE: Record<string, Status> = {
   redirect: "blocked",
 };
 
+// Deterministic slop band → pill tone. Advisory only (it never blocks); the colour just signals severity.
+const SLOP_BAND_TONE: Record<string, Status> = {
+  clean: "ok",
+  low: "info",
+  elevated: "warn",
+  high: "blocked",
+};
+
 type MaintainerDashboard = {
   metrics: Array<{ label: string; value: number; spark: number[] }>;
   health: Array<{
@@ -58,6 +68,7 @@ type MaintainerDashboard = {
     author: string;
     bucket: string;
     reason: string;
+    slop?: { risk: number; band: string } | null;
   }>;
   settingsPreview: { removed: string[]; added: string[] };
 };
@@ -142,7 +153,34 @@ type SettingsPreviewResponse = {
   summary: string;
 };
 
+const MAINTAINER_ROLES = ["maintainer", "owner", "operator"] as const;
+
+/**
+ * Role gate. The maintainer console — including the AI review / BYOK key panel — is shown ONLY to
+ * verified maintainers/owners/operators. This mirrors the server gate (GET /v1/app/maintainer-dashboard
+ * 403s `insufficient_role`, and every BYOK route re-checks per-repo maintainer access), but stops the
+ * dashboard query and the BYOK form from ever mounting for a non-maintainer (defense-in-depth + a clean
+ * message instead of a raw 403). The backend remains the source of truth.
+ */
 export function MaintainerPanel() {
+  const { session, hydrated } = useSession();
+  const isMaintainer = (session?.roles ?? []).some((role) =>
+    MAINTAINER_ROLES.includes(role as (typeof MAINTAINER_ROLES)[number]),
+  );
+
+  if (!hydrated) return <LoadingState title="Checking maintainer access…" />;
+  if (!isMaintainer) {
+    return (
+      <EmptyState
+        title="Maintainer access required"
+        description="This console is available to verified repository maintainers, owners, and operators. Sign in with a GitHub account that maintains an installed repository to manage AI review and BYOK provider keys."
+      />
+    );
+  }
+  return <MaintainerDashboardView />;
+}
+
+function MaintainerDashboardView() {
   const dashboard = useApiResource<MaintainerDashboard>(
     "/v1/app/maintainer-dashboard",
     "Maintainer dashboard",
@@ -257,6 +295,7 @@ export function MaintainerPanel() {
                   <th className="py-2 pr-3 font-normal">Title</th>
                   <th className="py-2 pr-3 font-normal">Author</th>
                   <th className="py-2 pr-3 font-normal">Bucket</th>
+                  <th className="py-2 pr-3 font-normal">Slop</th>
                   <th className="py-2 font-normal">Reason</th>
                 </tr>
               </thead>
@@ -276,6 +315,20 @@ export function MaintainerPanel() {
                         {row.bucket}
                       </StatusPill>
                     </td>
+                    <td className="py-2 pr-3">
+                      {row.slop ? (
+                        <StatusPill status={SLOP_BAND_TONE[row.slop.band] ?? "info"}>
+                          {row.slop.band} {row.slop.risk}
+                        </StatusPill>
+                      ) : (
+                        <span
+                          className="text-token-xs text-muted-foreground"
+                          title="Slop detection is off for this repo, or this PR has not been assessed yet."
+                        >
+                          —
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2 text-token-xs text-muted-foreground">{row.reason}</td>
                   </tr>
                 ))}
@@ -284,6 +337,8 @@ export function MaintainerPanel() {
           </section>
 
           <SurfacePreview reviewability={data.reviewability} />
+
+          <AiReviewSettings reviewability={data.reviewability} />
         </div>
       ) : null}
     </StateBoundary>

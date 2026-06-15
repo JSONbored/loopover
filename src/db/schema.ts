@@ -1,4 +1,9 @@
 import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+// Timestamp columns use a drizzle $defaultFn so an insert that omits the column gets a real ISO-8601
+// timestamp. A static `.default("CURRENT_TIMESTAMP")` would make drizzle inject the literal STRING
+// "CURRENT_TIMESTAMP" (it applies static defaults client-side, never reaching SQLite's CURRENT_TIMESTAMP),
+// which previously corrupted timestamp columns on omit (e.g. webhook_events.received_at).
+import { nowIso } from "../utils/json";
 
 export const installations = sqliteTable("installations", {
   id: integer("id").primaryKey(),
@@ -9,8 +14,8 @@ export const installations = sqliteTable("installations", {
   permissionsJson: text("permissions_json").notNull().default("{}"),
   eventsJson: text("events_json").notNull().default("[]"),
   suspendedAt: text("suspended_at"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const repositories = sqliteTable("repositories", {
@@ -29,8 +34,8 @@ export const repositories = sqliteTable("repositories", {
   maintainerCut: real("maintainer_cut").notNull().default(0),
   labelMultipliersJson: text("label_multipliers_json").notNull().default("{}"),
   lastRegistrySnapshotId: text("last_registry_snapshot_id"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const repositorySettings = sqliteTable("repository_settings", {
@@ -41,10 +46,18 @@ export const repositorySettings = sqliteTable("repository_settings", {
   checkRunMode: text("check_run_mode").notNull().default("off"),
   checkRunDetailLevel: text("check_run_detail_level").notNull().default("minimal"),
   gateCheckMode: text("gate_check_mode").notNull().default("off"),
+  gatePack: text("gate_pack").notNull().default("gittensor"),
   linkedIssueGateMode: text("linked_issue_gate_mode").notNull().default("block"),
   duplicatePrGateMode: text("duplicate_pr_gate_mode").notNull().default("block"),
   qualityGateMode: text("quality_gate_mode").notNull().default("advisory"),
   qualityGateMinScore: integer("quality_gate_min_score"),
+  slopGateMode: text("slop_gate_mode").notNull().default("off"),
+  slopGateMinScore: integer("slop_gate_min_score"),
+  slopAiAdvisory: integer("slop_ai_advisory", { mode: "boolean" }).notNull().default(false),
+  aiReviewMode: text("ai_review_mode").notNull().default("off"),
+  aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
+  aiReviewProvider: text("ai_review_provider"),
+  aiReviewModel: text("ai_review_model"),
   autoLabelEnabled: integer("auto_label_enabled", { mode: "boolean" }).notNull().default(true),
   gittensorLabel: text("gittensor_label").notNull().default("gittensor"),
   createMissingLabel: integer("create_missing_label", { mode: "boolean" }).notNull().default(true),
@@ -54,8 +67,28 @@ export const repositorySettings = sqliteTable("repository_settings", {
   backfillEnabled: integer("backfill_enabled", { mode: "boolean" }).notNull().default(true),
   privateTrustEnabled: integer("private_trust_enabled", { mode: "boolean" }).notNull().default(true),
   commandAuthorizationJson: text("command_authorization_json").notNull().default("{}"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+});
+
+// Maintainer BYOK provider keys (Anthropic/OpenAI), encrypted at rest with AES-256-GCM. Isolated in its
+// own table so the ciphertext is NEVER serialized by the repository-settings GET surface. The plaintext
+// key is never stored; `last4` is a display-only hint derived from the plaintext at write time.
+export const repositoryAiKeys = sqliteTable("repository_ai_keys", {
+  repoFullName: text("repo_full_name").primaryKey(),
+  provider: text("provider").notNull(),
+  ciphertext: text("ciphertext").notNull(),
+  iv: text("iv").notNull(),
+  // Per-record PBKDF2 salt (base64) for the v2 crypto envelope; null for legacy v1 rows (constant salt).
+  salt: text("salt"),
+  // Crypto-envelope version (NOT a key-rotation counter): 1 = legacy constant-salt, 2 = per-record salt.
+  // upsert overwrites in place; there is no rotation history. See src/utils/crypto.ts.
+  keyVersion: integer("key_version").notNull().default(1),
+  model: text("model"),
+  last4: text("last4").notNull(),
+  createdBy: text("created_by"),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const repoSyncState = sqliteTable("repo_sync_state", {
@@ -76,7 +109,7 @@ export const repoSyncState = sqliteTable("repo_sync_state", {
   lastCompletedAt: text("last_completed_at"),
   errorSummary: text("error_summary"),
   warningsJson: text("warnings_json").notNull().default("[]"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const repoSyncSegments = sqliteTable(
@@ -101,7 +134,7 @@ export const repoSyncSegments = sqliteTable(
     lastModified: text("last_modified"),
     warningsJson: text("warnings_json").notNull().default("[]"),
     errorSummary: text("error_summary"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoSegment: uniqueIndex("repo_sync_segments_repo_segment_unique").on(table.repoFullName, table.segment),
@@ -120,7 +153,7 @@ export const githubRateLimitObservations = sqliteTable(
     limitValue: integer("limit_value"),
     remaining: integer("remaining"),
     resetAt: text("reset_at"),
-    observedAt: text("observed_at").notNull().default("CURRENT_TIMESTAMP"),
+    observedAt: text("observed_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoObserved: index("github_rate_limit_observations_repo_observed_idx").on(table.repoFullName, table.observedAt),
@@ -161,7 +194,7 @@ export const pullRequestDetailSyncState = sqliteTable(
     checksSyncedAt: text("checks_synced_at"),
     lastSyncedAt: text("last_synced_at"),
     errorSummary: text("error_summary"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoPull: uniqueIndex("pull_request_detail_sync_repo_pull_unique").on(table.repoFullName, table.pullNumber),
@@ -180,7 +213,7 @@ export const repoLabels = sqliteTable(
     isConfigured: integer("is_configured", { mode: "boolean" }).notNull().default(false),
     observedCount: integer("observed_count").notNull().default(0),
     payloadJson: text("payload_json").notNull().default("{}"),
-    lastSeenAt: text("last_seen_at").notNull().default("CURRENT_TIMESTAMP"),
+    lastSeenAt: text("last_seen_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoLabel: uniqueIndex("repo_labels_repo_name_unique").on(table.repoFullName, table.name),
@@ -232,8 +265,11 @@ export const pullRequests = sqliteTable(
     linkedIssuesJson: text("linked_issues_json").notNull().default("[]"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    // Latest deterministic slop assessment (gittensory-computed; written separately from the GitHub sync).
+    slopRisk: integer("slop_risk"),
+    slopBand: text("slop_band"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoNumber: uniqueIndex("pull_requests_repo_number_unique").on(table.repoFullName, table.number),
@@ -253,7 +289,7 @@ export const pullRequestFiles = sqliteTable(
     changes: integer("changes").notNull().default(0),
     previousFilename: text("previous_filename"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoPullPath: uniqueIndex("pull_request_files_repo_pull_path_unique").on(table.repoFullName, table.pullNumber, table.path),
@@ -269,7 +305,7 @@ export const pullRequestReviews = sqliteTable("pull_request_reviews", {
   authorAssociation: text("author_association"),
   submittedAt: text("submitted_at"),
   payloadJson: text("payload_json").notNull().default("{}"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const checkSummaries = sqliteTable(
@@ -286,7 +322,7 @@ export const checkSummaries = sqliteTable(
     completedAt: text("completed_at"),
     detailsUrl: text("details_url"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoShaName: uniqueIndex("check_summaries_repo_sha_name_unique").on(table.repoFullName, table.headSha, table.name),
@@ -307,7 +343,7 @@ export const recentMergedPullRequests = sqliteTable(
     linkedIssuesJson: text("linked_issues_json").notNull().default("[]"),
     changedFilesJson: text("changed_files_json").notNull().default("[]"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoNumber: uniqueIndex("recent_merged_pull_requests_repo_number_unique").on(table.repoFullName, table.number),
@@ -329,8 +365,8 @@ export const issues = sqliteTable(
     linkedPrsJson: text("linked_prs_json").notNull().default("[]"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoNumber: uniqueIndex("issues_repo_number_unique").on(table.repoFullName, table.number),
@@ -347,8 +383,8 @@ export const bounties = sqliteTable(
     amountText: text("amount_text"),
     sourceUrl: text("source_url"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    discoveredAt: text("discovered_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    discoveredAt: text("discovered_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoIssue: uniqueIndex("bounties_repo_issue_unique").on(table.repoFullName, table.issueNumber),
@@ -362,9 +398,9 @@ export const contributors = sqliteTable("contributors", {
   publicRepos: integer("public_repos"),
   followers: integer("followers"),
   source: text("source").notNull().default("github"),
-  firstSeenAt: text("first_seen_at").notNull().default("CURRENT_TIMESTAMP"),
-  lastSeenAt: text("last_seen_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  firstSeenAt: text("first_seen_at").notNull().$defaultFn(() => nowIso()),
+  lastSeenAt: text("last_seen_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const contributorRepoStats = sqliteTable(
@@ -381,7 +417,7 @@ export const contributorRepoStats = sqliteTable(
     unlinkedPullRequests: integer("unlinked_pull_requests").notNull().default(0),
     dominantLabelsJson: text("dominant_labels_json").notNull().default("[]"),
     lastActivityAt: text("last_activity_at"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     loginRepo: uniqueIndex("contributor_repo_stats_login_repo_unique").on(table.login, table.repoFullName),
@@ -400,7 +436,7 @@ export const collisionEdges = sqliteTable("collision_edges", {
   risk: text("risk").notNull(),
   reason: text("reason").notNull(),
   sharedTermsJson: text("shared_terms_json").notNull().default("[]"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const signalSnapshots = sqliteTable("signal_snapshots", {
@@ -409,7 +445,7 @@ export const signalSnapshots = sqliteTable("signal_snapshots", {
   targetKey: text("target_key").notNull(),
   repoFullName: text("repo_full_name"),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const agentRuns = sqliteTable(
@@ -424,8 +460,8 @@ export const agentRuns = sqliteTable(
     dataQualityStatus: text("data_quality_status").notNull().default("unknown"),
     errorSummary: text("error_summary"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     actorUpdated: index("agent_runs_actor_updated_idx").on(table.actorLogin, table.updatedAt),
@@ -455,7 +491,7 @@ export const agentActions = sqliteTable(
     approvalRequired: integer("approval_required", { mode: "boolean" }).notNull().default(true),
     safetyClass: text("safety_class").notNull(),
     payloadJson: text("payload_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     runAction: index("agent_actions_run_action_idx").on(table.runId, table.actionType),
@@ -473,7 +509,7 @@ export const agentContextSnapshots = sqliteTable(
     scoringModelId: text("scoring_model_id"),
     freshnessWarningsJson: text("freshness_warnings_json").notNull().default("[]"),
     payloadJson: text("payload_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     runCreated: index("agent_context_snapshots_run_created_idx").on(table.runId, table.createdAt),
@@ -503,10 +539,10 @@ export const agentRecommendationOutcomes = sqliteTable(
     confidence: text("confidence").notNull(),
     reason: text("reason").notNull(),
     sourceUpdatedAt: text("source_updated_at"),
-    detectedAt: text("detected_at").notNull().default("CURRENT_TIMESTAMP"),
+    detectedAt: text("detected_at").notNull().$defaultFn(() => nowIso()),
     metadataJson: text("metadata_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     action: uniqueIndex("agent_recommendation_outcomes_action_unique").on(table.actionId),
@@ -547,8 +583,8 @@ export const advisories = sqliteTable("advisories", {
   findingsJson: text("findings_json").notNull().default("[]"),
   checkRunId: integer("check_run_id"),
   checkRunUrl: text("check_run_url"),
-  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const webhookEvents = sqliteTable("webhook_events", {
@@ -560,7 +596,7 @@ export const webhookEvents = sqliteTable("webhook_events", {
   payloadHash: text("payload_hash").notNull(),
   status: text("status").notNull(),
   errorSummary: text("error_summary"),
-  receivedAt: text("received_at").notNull().default("CURRENT_TIMESTAMP"),
+  receivedAt: text("received_at").notNull().$defaultFn(() => nowIso()),
   processedAt: text("processed_at"),
 });
 
@@ -572,7 +608,7 @@ export const syncRuns = sqliteTable("sync_runs", {
   sourceUrl: text("source_url"),
   warningsJson: text("warnings_json").notNull().default("[]"),
   errorSummary: text("error_summary"),
-  startedAt: text("started_at").notNull().default("CURRENT_TIMESTAMP"),
+  startedAt: text("started_at").notNull().$defaultFn(() => nowIso()),
   completedAt: text("completed_at"),
 });
 
@@ -598,27 +634,27 @@ export const scorePreviews = sqliteTable("score_previews", {
   contributorLogin: text("contributor_login"),
   inputJson: text("input_json").notNull().default("{}"),
   resultJson: text("result_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const contributorEvidence = sqliteTable("contributor_evidence", {
   login: text("login").primaryKey(),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const contributorScoringProfiles = sqliteTable("contributor_scoring_profiles", {
   login: text("login").primaryKey(),
   scoringModelSnapshotId: text("scoring_model_snapshot_id").notNull(),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const officialMinerDetections = sqliteTable("official_miner_detections", {
   login: text("login").primaryKey(), status: text("status").notNull(),
   snapshotJson: text("snapshot_json").notNull().default("{}"), error: text("error"),
   fetchedAt: text("fetched_at").notNull(), expiresAt: text("expires_at").notNull(),
-  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const issueQualityReports = sqliteTable(
@@ -628,7 +664,7 @@ export const issueQualityReports = sqliteTable(
     repoFullName: text("repo_full_name").notNull(),
     issueNumber: integer("issue_number").notNull(),
     payloadJson: text("payload_json").notNull().default("{}"),
-    generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+    generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     repoIssue: uniqueIndex("issue_quality_reports_repo_issue_unique").on(table.repoFullName, table.issueNumber),
@@ -638,13 +674,13 @@ export const issueQualityReports = sqliteTable(
 export const burdenForecasts = sqliteTable("burden_forecasts", {
   repoFullName: text("repo_full_name").primaryKey(),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const repoQueueTrendSnapshots = sqliteTable("repo_queue_trend_snapshots", {
   repoFullName: text("repo_full_name").primaryKey(),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const registryDriftEvents = sqliteTable("registry_drift_events", {
@@ -655,7 +691,7 @@ export const registryDriftEvents = sqliteTable("registry_drift_events", {
   previousSnapshotId: text("previous_snapshot_id"),
   currentSnapshotId: text("current_snapshot_id"),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const upstreamSourceSnapshots = sqliteTable(
@@ -736,7 +772,7 @@ export const bountyLifecycleEvents = sqliteTable("bounty_lifecycle_events", {
   issueNumber: integer("issue_number").notNull(),
   status: text("status").notNull(),
   payloadJson: text("payload_json").notNull().default("{}"),
-  generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
+  generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
 });
 
 export const authSessions = sqliteTable(
@@ -749,7 +785,7 @@ export const authSessions = sqliteTable(
     scopesJson: text("scopes_json").notNull().default("[]"),
     expiresAt: text("expires_at").notNull(),
     revokedAt: text("revoked_at"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     lastSeenAt: text("last_seen_at"),
     metadataJson: text("metadata_json").notNull().default("{}"),
   },
@@ -769,13 +805,75 @@ export const digestSubscriptions = sqliteTable(
     email: text("email").notNull(),
     status: text("status").notNull().default("active"),
     source: text("source").notNull().default("app"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     loginEmail: uniqueIndex("digest_subscriptions_login_email_unique").on(table.login, table.email),
     login: index("digest_subscriptions_login_idx").on(table.login),
     status: index("digest_subscriptions_status_idx").on(table.status),
+  }),
+);
+
+export const notificationSubscriptions = sqliteTable(
+  "notification_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    channel: text("channel").notNull(),
+    status: text("status").notNull().default("active"),
+    destination: text("destination"),
+    source: text("source").notNull().default("app"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    loginChannel: uniqueIndex("notification_subscriptions_login_channel_unique").on(table.login, table.channel),
+    login: index("notification_subscriptions_login_idx").on(table.login),
+  }),
+);
+
+export const notificationDeliveries = sqliteTable(
+  "notification_deliveries",
+  {
+    id: text("id").primaryKey(),
+    dedupKey: text("dedup_key").notNull(),
+    channel: text("channel").notNull(),
+    recipientLogin: text("recipient_login").notNull(),
+    eventType: text("event_type").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    deeplink: text("deeplink").notNull(),
+    actorLogin: text("actor_login"),
+    status: text("status").notNull().default("pending"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    deliveredAt: text("delivered_at"),
+    readAt: text("read_at"),
+  },
+  (table) => ({
+    dedupChannel: uniqueIndex("notification_deliveries_dedup_channel_unique").on(table.dedupKey, table.channel),
+    recipientStatus: index("notification_deliveries_recipient_status_idx").on(table.recipientLogin, table.status),
+    recipientChannelCreated: index("notification_deliveries_recipient_channel_created_idx").on(table.recipientLogin, table.channel, table.createdAt),
+  }),
+);
+
+// #699 path B: a miner's standing watch on a repo for NEW grabbable, high-multiplier issues. `labelsJson`
+// is an optional label filter ([] = any). UNIQUE(login, repoFullName) makes subscribe idempotent.
+export const issueWatchSubscriptions = sqliteTable(
+  "issue_watch_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    labelsJson: text("labels_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    loginRepo: uniqueIndex("issue_watch_subscriptions_login_repo_unique").on(table.login, table.repoFullName),
+    repo: index("issue_watch_subscriptions_repo_idx").on(table.repoFullName),
   }),
 );
 
@@ -790,8 +888,8 @@ export const githubAgentCommandAnswers = sqliteTable(
     responseCommentId: integer("response_comment_id"),
     responseUrl: text("response_url"),
     actorKind: text("actor_kind").notNull(),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
     metadataJson: text("metadata_json").notNull().default("{}"),
   },
   (table) => ({
@@ -814,8 +912,8 @@ export const githubAgentCommandFeedback = sqliteTable(
     vote: text("vote").notNull(),
     source: text("source").notNull(),
     actorKind: text("actor_kind").notNull(),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
     metadataJson: text("metadata_json").notNull().default("{}"),
   },
   (table) => ({
@@ -836,7 +934,7 @@ export const auditEvents = sqliteTable(
     outcome: text("outcome").notNull(),
     detail: text("detail"),
     metadataJson: text("metadata_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     typeCreated: index("audit_events_type_created_idx").on(table.eventType, table.createdAt),
@@ -862,7 +960,7 @@ export const productUsageEvents = sqliteTable(
     clientName: text("client_name"),
     clientVersion: text("client_version"),
     metadataJson: text("metadata_json").notNull().default("{}"),
-    occurredAt: text("occurred_at").notNull().default("CURRENT_TIMESTAMP"),
+    occurredAt: text("occurred_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     surfaceOccurred: index("product_usage_events_surface_occurred_idx").on(table.surface, table.occurredAt),
@@ -898,8 +996,8 @@ export const productUsageDailyRollups = sqliteTable(
     activationByRoleJson: text("activation_by_role_json").notNull().default("[]"),
     activationBySurfaceJson: text("activation_by_surface_json").notNull().default("[]"),
     retentionJson: text("retention_json").notNull().default("[]"),
-    generatedAt: text("generated_at").notNull().default("CURRENT_TIMESTAMP"),
-    updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+    generatedAt: text("generated_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     statusUpdated: index("product_usage_daily_rollups_status_idx").on(table.status, table.updatedAt),
@@ -918,10 +1016,13 @@ export const aiUsageEvents = sqliteTable(
     estimatedNeurons: integer("estimated_neurons").notNull().default(0),
     detail: text("detail"),
     metadataJson: text("metadata_json").notNull().default("{}"),
-    createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   },
   (table) => ({
     featureCreated: index("ai_usage_events_feature_created_idx").on(table.feature, table.createdAt),
     actorCreated: index("ai_usage_events_actor_created_idx").on(table.actor, table.createdAt),
+    // Covers the daily-budget query (sumAiEstimatedNeuronsSince): WHERE status='ok' AND created_at >= ?.
+    // Without it that aggregate full-scans ai_usage_events, which runs on every AI review/summary.
+    statusCreated: index("ai_usage_events_status_created_idx").on(table.status, table.createdAt),
   }),
 );

@@ -5,7 +5,7 @@ import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/proto
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from "../auth/security";
-import { loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
+import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -22,18 +22,26 @@ import {
   listContributorPullRequests,
   listIssueSignalSample,
   listIssues,
+  deleteIssueWatchSubscription,
+  listIssueWatchSubscriptionsForLogin,
+  listNotificationDeliveriesForRecipient,
+  upsertIssueWatchSubscription,
   listOpenPullRequests,
   listPullRequests,
   listRecentMergedPullRequests,
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
+  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
+  MAX_NOTIFICATION_MARK_READ_IDS,
+  markNotificationDeliveriesRead,
   recordProductUsageEvent,
 } from "../db/repositories";
+import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
-import { getOrCreateScoringModelSnapshot } from "../scoring/model";
+import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../scoring/preview";
 import {
   explainBlockersWithAgent,
@@ -70,6 +78,7 @@ import {
   buildLocalDiffPreflightResult,
   buildPreflightResult,
   buildPreStartCheck,
+  buildPrTextLint,
   buildQueueHealth,
   buildRegistryChangeReport,
   buildRoleContext,
@@ -77,6 +86,8 @@ import {
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { buildPredictedGateVerdict } from "../rules/predicted-gate";
+import { buildIssueSlopAssessment, buildSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -133,6 +144,12 @@ const checkBeforeStartShape = {
   issueNumber: z.number().int().positive().optional(),
   title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
   plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
+};
+
+const lintPrTextShape = {
+  commitMessages: z.array(z.string().max(PREFLIGHT_LIMITS.bodyChars)).max(50).optional(),
+  prBody: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  linkedIssue: z.number().int().positive().optional(),
 };
 
 const preflightShape = {
@@ -274,6 +291,7 @@ const scorePreviewShape = {
   testTokenScore: z.number().min(0).optional(),
   nonCodeTokenScore: z.number().min(0).optional(),
   existingContributorTokenScore: z.number().min(0).optional(),
+  prAgeHours: z.number().min(0).optional(),
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
@@ -351,6 +369,105 @@ const openPrMonitorOutputSchema = {
   pullRequests: z.unknown().optional(),
 };
 
+const notificationsOutputSchema = {
+  login: z.string().optional(),
+  unreadCount: z.number().optional(),
+  notifications: z.unknown().optional(),
+};
+
+const prOutcomeShape = {
+  login: z.string().min(1),
+  limit: z.number().int().positive().max(100).optional(),
+};
+
+const prOutcomeOutputSchema = {
+  login: z.string().optional(),
+  count: z.number().optional(),
+  outcomes: z.unknown().optional(),
+};
+
+const predictGateShape = {
+  login: z.string().min(1),
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string().optional(),
+  labels: z.array(z.string()).optional(),
+  linkedIssues: z.array(z.number().int().positive()).optional(),
+};
+
+// Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
+// (paths + line counts, never source), so there is nothing to scope. Mirrors the other local-* tools.
+const checkSlopRiskShape = {
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000),
+  description: z.string().max(20000).optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+
+const checkSlopRiskOutputSchema = {
+  slopRisk: z.number().optional(),
+  band: z.enum(["clean", "low", "elevated", "high"]).optional(),
+  findings: z.unknown().optional(),
+  rubric: z.string().optional(),
+};
+
+// Issue-side slop triage (#533): pure local-metadata, like checkSlopRisk — the agent supplies the issue
+// title + body, nothing to scope. Advisory-only; issues never block.
+const checkIssueSlopShape = {
+  title: z.string().max(500).optional(),
+  body: z.string().max(40000).optional(),
+};
+
+const checkIssueSlopOutputSchema = checkSlopRiskOutputSchema;
+
+const predictGateOutputSchema = {
+  predicted: z.boolean().optional(),
+  basis: z.string().optional(),
+  pack: z.enum(["gittensor", "oss-anti-slop"]).optional(),
+  conclusion: z.string().optional(),
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  readinessScore: z.number().nullable().optional(),
+  blockers: z.unknown().optional(),
+  warnings: z.unknown().optional(),
+  funnel: z.unknown().optional(),
+  note: z.string().optional(),
+};
+
+const markNotificationsReadOutputSchema = {
+  login: z.string().optional(),
+  marked: z.number().optional(),
+};
+
+const listNotificationsShape = {
+  login: z.string().min(1),
+};
+
+const markNotificationsReadShape = {
+  login: z.string().min(1),
+  ids: z
+    .array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH))
+    .max(MAX_NOTIFICATION_MARK_READ_IDS)
+    .optional(),
+};
+
+// #699 path B: a miner's self-scoped issue-watch subscriptions. `action` defaults to `list`; `watch`/`unwatch`
+// require repoFullName. `labels` ([]/omitted = any) filters which new issues notify.
+const watchIssuesShape = {
+  login: z.string().min(1),
+  action: z.enum(["watch", "unwatch", "list"]).default("list"),
+  repoFullName: z.string().min(3).max(200).optional(),
+  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+};
+
+const watchIssuesOutputSchema = {
+  watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
+  changed: z.string().optional(),
+};
+
 const explainRepoDecisionOutputSchema = {
   status: z.string().optional(),
   login: z.string().optional(),
@@ -413,6 +530,129 @@ const checkBeforeStartOutputSchema = {
   reasons: z.unknown().optional(),
   blockers: z.unknown().optional(),
   report: z.unknown().optional(),
+};
+
+const lintPrTextOutputSchema = {
+  verdict: z.string().optional(),
+  score: z.number().optional(),
+  components: z.unknown().optional(),
+  fixes: z.unknown().optional(),
+  summary: z.string().optional(),
+  generatedAt: z.string().optional(),
+};
+// #550: output schemas for the remaining tools (preflight/score/local-branch/agent), so MCP clients can
+// machine-validate their results. Same lenient style as the schemas above — documented top-level keys,
+// all optional, complex values as z.unknown(). No behavior change; these mirror the existing payloads.
+const preflightResultOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  status: z.string().optional(),
+  lane: z.unknown().optional(),
+  reviewBurden: z.unknown().optional(),
+  linkedIssues: z.unknown().optional(),
+  findings: z.array(z.unknown()).optional(),
+  collisions: z.unknown().optional(),
+};
+const bountyAdvisoryOutputSchema = {
+  id: z.string().optional(),
+  repoFullName: z.string().optional(),
+  issueNumber: z.number().optional(),
+  status: z.string().optional(),
+  lifecycle: z.unknown().optional(),
+  isActiveOpportunity: z.boolean().optional(),
+  fundingStatus: z.unknown().optional(),
+  consensusRisk: z.unknown().optional(),
+  source: z.unknown().optional(),
+  linkedPrs: z.unknown().optional(),
+  findings: z.array(z.unknown()).optional(),
+};
+const preflightLocalDiffOutputSchema = {
+  ...preflightResultOutputSchema,
+  localDiff: z.unknown().optional(),
+};
+const scorePreviewRecordOutputSchema = {
+  id: z.string().optional(),
+  scoringModelSnapshotId: z.string().optional(),
+  repoFullName: z.string().optional(),
+  targetType: z.string().optional(),
+  targetKey: z.string().optional(),
+  contributorLogin: z.string().optional(),
+  input: z.unknown().optional(),
+  result: z.unknown().optional(),
+  generatedAt: z.string().optional(),
+};
+const explainReviewRiskOutputSchema = {
+  preflight: z.unknown().optional(),
+  roleContext: z.unknown().optional(),
+  recommendation: z.string().optional(),
+};
+const variantsOutputSchema = {
+  variants: z.array(z.unknown()).optional(),
+};
+const preflightCurrentBranchOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  preflight: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const previewCurrentBranchScoreOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  scorePreview: z.unknown().optional(),
+  scenarioScorePreview: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const rankLocalNextActionsOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  nextActions: z.array(z.unknown()).optional(),
+  recommendedRerunCondition: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const explainLocalBlockersOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  scoreBlockers: z.unknown().optional(),
+  scenarioScorePreview: z.unknown().optional(),
+  branchQualityBlockers: z.unknown().optional(),
+  accountStateBlockers: z.unknown().optional(),
+  recommendedRerunCondition: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const prepareLocalPrPacketOutputSchema = {
+  login: z.string().optional(),
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  prPacket: z.unknown().optional(),
+  dataQuality: z.unknown().optional(),
+};
+const draftPrBodyOutputSchema = {
+  repoFullName: z.string().optional(),
+  title: z.string().optional(),
+  sections: z.unknown().optional(),
+  markdown: z.string().optional(),
+  caveats: z.array(z.unknown()).optional(),
+  excludedPrivateFields: z.array(z.unknown()).optional(),
+  sourceUploadDisabled: z.boolean().optional(),
+};
+const agentRunBundleOutputSchema = {
+  run: z.unknown().optional(),
+  actions: z.array(z.unknown()).optional(),
+  contextSnapshots: z.array(z.unknown()).optional(),
+  summary: z.unknown().optional(),
+};
+const agentPlanNextWorkOutputSchema = {
+  ...agentRunBundleOutputSchema,
+  planningElicitation: z.unknown().optional(),
+  planningChoices: z.unknown().optional(),
+};
+const agentExplainNextActionOutputSchema = {
+  ...agentRunBundleOutputSchema,
+  topAction: z.unknown().optional(),
 };
 
 export async function handleMcpRequest(c: AppContext): Promise<Response> {
@@ -548,6 +788,83 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_predict_gate",
+      {
+        description:
+          "Predict whether a planned PR would pass the repo's Gittensory gate, from its PUBLIC .gittensory.yml only — an agent-native pre-submission self-check that works on ANY repo (no Gittensor account). Under the oss-anti-slop pack the verdict applies to any author; self-scoped to the authenticated login.",
+        inputSchema: predictGateShape,
+        outputSchema: predictGateOutputSchema,
+      },
+      async (input) => this.toolResult(await this.predictGate(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_slop_risk",
+      {
+        description:
+          "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+        inputSchema: checkSlopRiskShape,
+        outputSchema: checkSlopRiskOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkSlopRisk(input)),
+    );
+
+    server.registerTool(
+      "gittensory_check_issue_slop",
+      {
+        description:
+          "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only: issues never block.",
+        inputSchema: checkIssueSlopShape,
+        outputSchema: checkIssueSlopOutputSchema,
+      },
+      async (input) => this.toolResult(await this.checkIssueSlop(input)),
+    );
+
+    server.registerTool(
+      "gittensory_pr_outcome",
+      {
+        description:
+          "Return a contributor's own post-merge outcome records — for each merged PR, a public-safe attribution of what it did for their standing on the repo. Self-scoped: only the authenticated login's outcomes.",
+        inputSchema: prOutcomeShape,
+        outputSchema: prOutcomeOutputSchema,
+      },
+      async (input) => this.toolResult(await this.prOutcomes(input.login, input.limit)),
+    );
+
+    server.registerTool(
+      "gittensory_list_notifications",
+      {
+        description:
+          "Return a contributor's own Gittensory notifications (e.g. changes requested on their PRs) and unread badge count. Self-scoped: only the authenticated login's notifications.",
+        inputSchema: listNotificationsShape,
+        outputSchema: notificationsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.listNotifications(input.login)),
+    );
+
+    server.registerTool(
+      "gittensory_mark_notifications_read",
+      {
+        description:
+          "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all.",
+        inputSchema: markNotificationsReadShape,
+        outputSchema: markNotificationsReadOutputSchema,
+      },
+      async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
+    );
+
+    server.registerTool(
+      "gittensory_watch_issues",
+      {
+        description:
+          "Watch repos for NEW grabbable, high-multiplier issues (maintainer-created, not WIP). action=watch subscribes a repo (optional label filter), unwatch removes it, list (default) returns your watches. When a matching issue opens you're notified via gittensory_list_notifications. Self-scoped to the authenticated login.",
+        inputSchema: watchIssuesShape,
+        outputSchema: watchIssuesOutputSchema,
+      },
+      async (input) => this.toolResult(await this.watchIssues(input)),
+    );
+
+    server.registerTool(
       "gittensory_explain_repo_decision",
       {
         description: "Return the contributor/repo decision from the canonical decision pack.",
@@ -562,6 +879,7 @@ export class GittensoryMcp {
       {
         description: "Preflight a planned PR for lane correctness, duplicate risk, linked issues, and review burden.",
         inputSchema: preflightShape,
+        outputSchema: preflightResultOutputSchema,
       },
       async (input) => this.toolResult(await this.preflightPr(input)),
     );
@@ -571,6 +889,7 @@ export class GittensoryMcp {
       {
         description: "Return lifecycle, funding, and consensus-risk context for a cached Gittensor bounty.",
         inputSchema: bountyShape,
+        outputSchema: bountyAdvisoryOutputSchema,
       },
       async (input) => this.toolResult(await this.getBountyAdvisory(input.id)),
     );
@@ -628,10 +947,22 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_lint_pr_text",
+      {
+        description:
+          "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric, before submitting. Returns a deterministic quality verdict (strong/adequate/weak) and specific public-safe fixes. Metadata only; no source upload, no GitHub writes.",
+        inputSchema: lintPrTextShape,
+        outputSchema: lintPrTextOutputSchema,
+      },
+      async (input) => this.toolResult(this.lintPrText(input)),
+    );
+
+    server.registerTool(
       "gittensory_preflight_local_diff",
       {
         description: "Preflight local git-diff metadata without uploading code content.",
         inputSchema: localDiffPreflightShape,
+        outputSchema: preflightLocalDiffOutputSchema,
       },
       async (input) => this.toolResult(await this.preflightLocalDiff(input)),
     );
@@ -641,6 +972,7 @@ export class GittensoryMcp {
       {
         description: "Return a private scoring preview from local diff metrics or supplied metadata. Source contents are not required.",
         inputSchema: scorePreviewShape,
+        outputSchema: scorePreviewRecordOutputSchema,
       },
       async (input) => this.toolResult(await this.previewScore(input)),
     );
@@ -650,6 +982,7 @@ export class GittensoryMcp {
       {
         description: "Explain review risk for a planned PR using preflight, lane, duplicate, and role context.",
         inputSchema: preflightShape,
+        outputSchema: explainReviewRiskOutputSchema,
       },
       async (input) => this.toolResult(await this.explainReviewRisk(input)),
     );
@@ -659,6 +992,7 @@ export class GittensoryMcp {
       {
         description: "Compare private scoring previews for multiple PR variants.",
         inputSchema: variantsShape,
+        outputSchema: variantsOutputSchema,
       },
       async (input) => this.toolResult(await this.comparePrVariants(input.variants)),
     );
@@ -697,6 +1031,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata supplied by a local MCP wrapper and return PR readiness.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: preflightCurrentBranchOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "preflight")),
     );
@@ -706,6 +1041,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and return private scoreability context.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: previewCurrentBranchScoreOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scorePreview")),
     );
@@ -715,6 +1051,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and rank local next actions by private reward/risk signals.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: rankLocalNextActionsOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "nextActions")),
     );
@@ -724,6 +1061,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and explain private scoreability and review blockers.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: explainLocalBlockersOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
     );
@@ -733,6 +1071,7 @@ export class GittensoryMcp {
       {
         description: "Analyze current-branch metadata and return a public-safe PR packet for coding agents.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: prepareLocalPrPacketOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "prPacket")),
     );
@@ -742,6 +1081,7 @@ export class GittensoryMcp {
       {
         description: "Draft a public-safe, copy/paste PR body from local branch metadata (changed files, tests run, linked issue, duplicate/WIP caution, branch freshness, next steps). Private scoreability/reward/trust context is excluded; source contents are not uploaded.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: draftPrBodyOutputSchema,
       },
       async (input) => this.toolResult(await this.draftPrBody(input)),
     );
@@ -751,6 +1091,7 @@ export class GittensoryMcp {
       {
         description: "Compare private local-branch analysis variants without source uploads.",
         inputSchema: localBranchVariantsShape,
+        outputSchema: variantsOutputSchema,
       },
       async (input) => this.toolResult(await this.compareLocalVariants(input.variants)),
     );
@@ -760,6 +1101,7 @@ export class GittensoryMcp {
       {
         description: "Run the deterministic Gittensory base-agent planner and rank the next Gittensor OSS contribution actions.",
         inputSchema: agentPlanShape,
+        outputSchema: agentPlanNextWorkOutputSchema,
       },
       async (input, extra) => this.toolResult(await this.agentPlanNextWork(input, extra, server)),
     );
@@ -769,6 +1111,7 @@ export class GittensoryMcp {
       {
         description: "Create a queued copilot-only Gittensory agent run. The agent plans and explains; it does not edit code or open PRs.",
         inputSchema: agentRunShape,
+        outputSchema: agentRunBundleOutputSchema,
       },
       async (input) => this.toolResult(await this.agentStartRun(input)),
     );
@@ -778,6 +1121,7 @@ export class GittensoryMcp {
       {
         description: "Fetch a persisted Gittensory agent run with ranked actions and context snapshots.",
         inputSchema: agentRunIdShape,
+        outputSchema: agentRunBundleOutputSchema,
       },
       async (input) => this.toolResult(await this.agentGetRun(input.runId)),
     );
@@ -787,6 +1131,7 @@ export class GittensoryMcp {
       {
         description: "Explain the top deterministic next action and its scoreability/risk/maintainer impact.",
         inputSchema: agentPlanShape,
+        outputSchema: agentExplainNextActionOutputSchema,
       },
       async (input) => this.toolResult(await this.agentExplainNextAction(input)),
     );
@@ -796,6 +1141,7 @@ export class GittensoryMcp {
       {
         description: "Prepare a public-safe PR packet from local branch metadata. Source contents are not uploaded.",
         inputSchema: localBranchAnalysisShape,
+        outputSchema: agentRunBundleOutputSchema,
       },
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
     );
@@ -893,6 +1239,15 @@ export class GittensoryMcp {
   private async requireRepoAccess(repoFullName: string): Promise<void> {
     if (await this.canAccessRepo(repoFullName)) return;
     throw new Error("Forbidden: session cannot access this repository.");
+  }
+
+  // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC
+  // repo (the miner use case) or a PRIVATE repo they can access — never an arbitrary/private repo they cannot,
+  // so private-repo issues never fan out to them. Non-session (private-token) identities are trusted.
+  private async requireWatchableRepo(login: string, repoFullName: string): Promise<void> {
+    if (this.identity.kind !== "session") return;
+    if (await canWatchRepo(this.env, login, repoFullName)) return;
+    throw new Error("Forbidden: session cannot watch this repository.");
   }
 
   private loadSessionAccessScope(): Promise<ControlPanelAccessScope> {
@@ -1042,13 +1397,17 @@ export class GittensoryMcp {
     };
   }
 
+  private lintPrText(input: { commitMessages?: string[] | undefined; prBody?: string | undefined; linkedIssue?: number | undefined }): ToolPayload {
+    const report = buildPrTextLint(input);
+    return {
+      summary: `Gittensory PR-text lint verdict: ${report.verdict}.`,
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
   private async canAccessRepo(fullName: string): Promise<boolean> {
     if (this.identity.kind !== "session") return true;
-    const [scope, repo] = await Promise.all([this.loadSessionAccessScope(), getRepository(this.env, fullName)]);
-    if (scope.operator) return true;
-    const requestedRepo = fullName.toLowerCase();
-    if (scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo)) return true;
-    return Boolean(repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase()));
+    return canLoginAccessRepo(this.env, this.identity.actor, fullName);
   }
 
   private async getRepoOutcomePatterns(input: { owner: string; repo: string }): Promise<ToolPayload> {
@@ -1119,6 +1478,114 @@ export class GittensoryMcp {
     return {
       summary: monitor.summary,
       data: monitor as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async checkSlopRisk(input: z.infer<z.ZodObject<typeof checkSlopRiskShape>>): Promise<ToolPayload> {
+    const assessment = buildSlopAssessment(input);
+    return {
+      summary: `Slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
+      data: { ...assessment, rubric: SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async checkIssueSlop(input: z.infer<z.ZodObject<typeof checkIssueSlopShape>>): Promise<ToolPayload> {
+    const assessment = buildIssueSlopAssessment(input);
+    return {
+      summary: `Issue slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
+      data: { ...assessment, rubric: ISSUE_SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    const repoFullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(repoFullName);
+    const [repo, issues, pullRequests, bounties, issueQuality, manifest] = await Promise.all([
+      getRepository(this.env, repoFullName),
+      listIssues(this.env, repoFullName),
+      listPullRequests(this.env, repoFullName),
+      listBountiesByRepo(this.env, repoFullName),
+      loadOrComputeIssueQualityResponse(this.env, repoFullName),
+      loadRepoFocusManifest(this.env, repoFullName),
+    ]);
+    const verdict = buildPredictedGateVerdict({
+      input: {
+        repoFullName,
+        contributorLogin: input.login,
+        title: input.title,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+        ...(input.linkedIssues === undefined ? {} : { linkedIssues: input.linkedIssues }),
+      },
+      manifest,
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality: issueQuality?.report,
+    });
+    return {
+      summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
+      data: verdict as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async prOutcomes(login: string, limit?: number): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const deliveries = await listNotificationDeliveriesForRecipient(this.env, login, { eventType: "pull_request_merged", limit: limit ?? 50 });
+    const outcomes = deliveries.map((delivery) => ({
+      repoFullName: delivery.repoFullName,
+      pullNumber: delivery.pullNumber,
+      outcome: "merged" as const,
+      attribution: delivery.body,
+      deeplink: delivery.deeplink,
+      recordedAt: delivery.createdAt,
+    }));
+    return {
+      summary: `Gittensory post-merge outcomes for ${login}: ${outcomes.length} merged PR(s).`,
+      data: { login: login.toLowerCase(), count: outcomes.length, outcomes } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async listNotifications(login: string): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const deliveries = await listNotificationDeliveriesForRecipient(this.env, login, { channel: "badge", limit: 50 });
+    const feed = buildNotificationFeed(login, deliveries);
+    return {
+      summary: `Gittensory notifications for ${login}: ${feed.unreadCount} unread.`,
+      data: feed as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #699 path B: manage a miner's issue-watch subscriptions. Self-scoped; watch/unwatch need repoFullName.
+  private async watchIssues(input: z.infer<z.ZodObject<typeof watchIssuesShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    let changed: string | undefined;
+    if (input.action === "watch" || input.action === "unwatch") {
+      if (!input.repoFullName) return { summary: `${input.action} requires repoFullName.`, data: {} };
+      await this.requireWatchableRepo(input.login, input.repoFullName);
+      if (input.action === "watch") {
+        await upsertIssueWatchSubscription(this.env, { login: input.login, repoFullName: input.repoFullName, labels: input.labels });
+        changed = `watching ${input.repoFullName}${input.labels && input.labels.length > 0 ? ` (labels: ${input.labels.join(", ")})` : ""}`;
+      } else {
+        const removed = await deleteIssueWatchSubscription(this.env, input.login, input.repoFullName);
+        changed = removed ? `unwatched ${input.repoFullName}` : `was not watching ${input.repoFullName}`;
+      }
+    }
+    const watching = (await listIssueWatchSubscriptionsForLogin(this.env, input.login)).map((sub) => ({ repoFullName: sub.repoFullName, labels: sub.labels }));
+    return {
+      summary: `Watching ${watching.length} repo(s) for new grabbable issues${changed ? ` (${changed})` : ""}.`,
+      data: { watching, ...(changed ? { changed } : {}) } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async markNotificationsRead(login: string, ids?: string[]): Promise<ToolPayload> {
+    this.requireContributorAccess(login);
+    const marked = await markNotificationDeliveriesRead(this.env, login, ids);
+    return {
+      summary: `Marked ${marked} Gittensory notification(s) read for ${login}.`,
+      data: { login: login.toLowerCase(), marked },
     };
   }
 
@@ -1213,10 +1680,12 @@ export class GittensoryMcp {
       getOrCreateScoringModelSnapshot(this.env),
       input.contributorLogin ? getContributorEvidence(this.env, input.contributorLogin) : Promise.resolve(null),
     ]);
-    const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const result = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     return {
       summary: `Private Gittensory scoring preview for ${input.repoFullName}.`,
-      data: makeScorePreviewRecord(input, snapshot, result) as unknown as Record<string, unknown>,
+      data: makeScorePreviewRecord(scoreInput, snapshot, result) as unknown as Record<string, unknown>,
     };
   }
 

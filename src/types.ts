@@ -100,6 +100,11 @@ export type JobMessage =
       days?: number;
     }
   | {
+      type: "prune-retention";
+      requestedBy: "schedule" | "api" | "test";
+      dryRun?: boolean;
+    }
+  | {
       type: "generate-weekly-value-report";
       requestedBy: "schedule" | "api" | "test";
       variant?: WeeklyValueReportVariant;
@@ -109,6 +114,16 @@ export type JobMessage =
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
+    }
+  | {
+      type: "notify-evaluate";
+      requestedBy: "webhook" | "test";
+      event: DetectedNotificationEvent;
+    }
+  | {
+      type: "notify-deliver";
+      requestedBy: "notify-evaluate" | "test";
+      deliveryId: string;
     };
 
 export type GitHubWebhookPayload = {
@@ -234,6 +249,18 @@ export type GitHubIssueCommentPayload = {
   updated_at?: string | null;
 };
 
+/**
+ * Per-repo time-decay overrides (#703), parsed from the registry's nested `scoring.time_decay`. Mirrors
+ * upstream's RepoTimeDecayConfig: every field optional; a missing/invalid field resolves to the global
+ * default constant (see resolveTimeDecay). The repo maintainer sets these in master_repositories.json.
+ */
+export type RepoTimeDecayOverrides = {
+  gracePeriodHours?: number | null | undefined;
+  sigmoidMidpointDays?: number | null | undefined;
+  sigmoidSteepness?: number | null | undefined;
+  minMultiplier?: number | null | undefined;
+};
+
 export type RegistryRepoConfig = {
   repo: string;
   emissionShare: number;
@@ -244,6 +271,8 @@ export type RegistryRepoConfig = {
   defaultLabelMultiplier?: number | null;
   fixedBaseScore?: number | null;
   eligibilityMode?: string | null;
+  /** Per-repo time-decay curve overrides (#703); null/absent = use the global defaults for every field. */
+  timeDecay?: RepoTimeDecayOverrides | null;
   raw: Record<string, JsonValue>;
 };
 
@@ -323,6 +352,10 @@ export type PullRequestRecord = {
   closedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
+  /** Latest deterministic slop assessment (0-100) and band, persisted by the public-surface processor when
+   *  the repo opted into slop. `null`/absent = not assessed (slop off, or PR not yet processed). */
+  slopRisk?: number | null | undefined;
+  slopBand?: string | null | undefined;
 };
 
 export type IssueRecord = {
@@ -355,6 +388,12 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: only confirmed
+ *  Gittensor contributors are hard-blocked (registry/emissions-aware). `oss-anti-slop` = a general, repo-
+ *  agnostic pack: the same deterministic rules (slop/duplicate/linked-issue/readiness/AI-consensus) block
+ *  ANY author, with no emissions/registry/confirmed-contributor coupling — so the gate runs on any repo. */
+export type GatePolicyPack = "gittensor" | "oss-anti-slop";
+
 export type RepositorySettings = {
   repoFullName: string;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
@@ -363,10 +402,40 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
+  /** Policy pack the gate evaluates under (#692). Default `gittensor` (confirmed-contributor-gated,
+   *  registry-aware). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
+  gatePack: GatePolicyPack;
   linkedIssueGateMode: GateRuleMode;
   duplicatePrGateMode: GateRuleMode;
   qualityGateMode: GateRuleMode;
   qualityGateMinScore?: number | null | undefined;
+  /** Deterministic anti-slop signal (#530/#532). `off` = no slop score; `advisory` = surface the slop
+   *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
+   *  only, confirmed-contributor-gated like every blocker). Default `off` — opt-in via .gittensory.yml. */
+  slopGateMode: GateRuleMode;
+  /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
+  slopGateMinScore?: number | null | undefined;
+  /** AI-assisted slop advisory (the `slopAiAdvisory` capability). When true AND `slopGateMode != off`, a
+   *  free Workers-AI pass adds an ADVISORY-only `ai_slop_advisory` finding for semantic slop the
+   *  deterministic detector cannot quantify. It NEVER feeds slopRisk or the gate (only the deterministic
+   *  core blocks). Default false — opt-in via `.gittensory.yml gate.slop.aiAdvisory`. */
+  slopAiAdvisory: boolean;
+  /** AI maintainer review. `off` = no AI; `advisory` = post AI review notes only; `block` = ALSO let a
+   *  dual-model high-confidence consensus defect become a gate blocker (confirmed-contributors only,
+   *  like every other blocker). Default `off` — AI is opt-in. */
+  aiReviewMode: GateRuleMode;
+  /** Bring-your-own-key: when true and a provider key is configured for the repo, the advisory AI review
+   *  is generated by the maintainer's frontier model (Anthropic/OpenAI) instead of free Workers AI. The
+   *  consensus blocker always uses the free Workers-AI model pair regardless, so BYOK never changes who
+   *  can be blocked. Default false. */
+  aiReviewByok: boolean;
+  /** Config-as-code BYOK provider for the advisory write-up. `null` = use the configured key's own
+   *  provider. When set, it must match the stored key's provider or BYOK is skipped (Workers-AI fallback).
+   *  The secret key itself is never here — only via the encrypted key store. */
+  aiReviewProvider?: "anthropic" | "openai" | null | undefined;
+  /** Config-as-code model override for the BYOK advisory write-up (e.g. "claude-3-5-sonnet-latest").
+   *  `null` = use the key record's model, else a conservative per-provider default. */
+  aiReviewModel?: string | null | undefined;
   autoLabelEnabled: boolean;
   gittensorLabel: string;
   createMissingLabel: boolean;
@@ -877,7 +946,8 @@ export type RegistryHyperparameterDriftField =
   | "trustedLabelPipeline"
   | "defaultLabelMultiplier"
   | "fixedBaseScore"
-  | "eligibilityMode";
+  | "eligibilityMode"
+  | "timeDecay";
 export type RegistryDriftSurface = "allocation" | "lane_fit" | "scoreability_assumptions" | "maintainer_economics" | "issue_discovery_behavior" | "label_policy";
 export type RegistryHyperparameterDriftEvent = {
   repoFullName: string;
@@ -1044,6 +1114,64 @@ export type DigestSubscriptionRecord = {
   source: string;
   createdAt: string;
   updatedAt: string;
+};
+
+// Notifications (#535). `badge` is the pull-based extension/harness channel shipped first; `email`
+// (#570) is a later opt-in channel. Subscriptions store per-channel opt-out (badge is on by default
+// unless a row is `paused`).
+export type NotificationChannel = "badge" | "email";
+export type NotificationDeliveryStatus = "pending" | "delivered" | "read" | "suppressed";
+export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged" | "issue_watch_match";
+
+/** #699 path B: a miner's standing watch on a repo for new grabbable issues. `labels` ([]=any) filters
+ *  which issues notify. The `pullNumber` field of the resulting notification event carries the ISSUE number. */
+export type IssueWatchSubscription = {
+  login: string;
+  repoFullName: string;
+  labels: string[];
+  createdAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+};
+
+// A notification-worthy event extracted from a webhook payload (src/notifications/events.ts).
+export type DetectedNotificationEvent = {
+  eventType: NotificationEventType;
+  recipientLogin: string;
+  repoFullName: string;
+  pullNumber: number;
+  dedupKey: string;
+  deeplink: string;
+  actorLogin: string;
+  detectedAt: string;
+};
+
+export type NotificationSubscriptionRecord = {
+  id: string;
+  login: string;
+  channel: NotificationChannel;
+  status: "active" | "paused";
+  destination: string | null;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotificationDeliveryRecord = {
+  id: string;
+  dedupKey: string;
+  channel: NotificationChannel;
+  recipientLogin: string;
+  eventType: string;
+  repoFullName: string;
+  pullNumber: number | null;
+  title: string;
+  body: string;
+  deeplink: string;
+  actorLogin: string | null;
+  status: NotificationDeliveryStatus;
+  createdAt: string;
+  deliveredAt: string | null;
+  readAt: string | null;
 };
 
 export type CommandFeedbackVote = "useful" | "not_useful";

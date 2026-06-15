@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { persistSignalSnapshot, upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -20,6 +20,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_issue_quality",
   "gittensory_validate_linked_issue",
   "gittensory_check_before_start",
+  "gittensory_lint_pr_text",
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
   "gittensory_local_status",
@@ -48,6 +49,14 @@ describe("MCP output schema discovery", () => {
       expect(tool?.outputSchema, `expected tool "${name}" to expose an outputSchema`).toBeDefined();
       expect(tool?.outputSchema?.type).toBe("object");
     }
+  });
+
+  it("exposes an outputSchema on EVERY registered tool (#550)", async () => {
+    const { client } = await connectTestClient();
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    const missing = tools.filter((tool) => tool.outputSchema === undefined || tool.outputSchema.type !== "object").map((tool) => tool.name);
+    expect(missing, `tools missing a machine-validatable outputSchema: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("output schemas declare documented top-level properties", async () => {
@@ -175,6 +184,26 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
+  it("gittensory_lint_pr_text returns a deterministic verdict and fixes", async () => {
+    const { client } = await connectTestClient();
+    const weak = await client.callTool({ name: "gittensory_lint_pr_text", arguments: { commitMessages: ["wip"], prBody: "" } });
+    expect(weak.isError).toBeFalsy();
+    const weakData = weak.structuredContent as Record<string, unknown>;
+    expect(weakData.verdict).toBe("weak");
+    expect(Array.isArray(weakData.fixes)).toBe(true);
+    expect(JSON.stringify(weakData)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+
+    const strong = await client.callTool({
+      name: "gittensory_lint_pr_text",
+      arguments: {
+        commitMessages: ["feat(api): add cursor pagination to the labels endpoint for large repositories"],
+        prBody: "Adds cursor-based pagination to the labels endpoint so labels beyond the first cached page are returned. Tested with vitest.",
+        linkedIssue: 160,
+      },
+    });
+    expect((strong.structuredContent as Record<string, unknown>).verdict).toBe("strong");
+  });
+
   it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "computed", full_name: "owner/computed", private: false, owner: { login: "owner" }, default_branch: "main" });
@@ -277,3 +306,56 @@ function repoOutcomePatternsPayload(repoFullName: string, generatedAt: string) {
     summary: "cached fixture",
   };
 }
+
+// ── #550: the previously-unschematized tools are now call-tested so a future schema/type mismatch
+//    (which surfaces as an "Output validation error" → isError) can't slip through CI. ─────────────
+describe("MCP output schemas validate on real tool calls (#550)", () => {
+  it("every newly-schematized tool returns schema-valid structured content", async () => {
+    const env = createTestEnv();
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "octo/demo": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
+        { kind: "raw-github", url: "fixture://reg" },
+        "2026-06-14T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await upsertBounty(env, { id: "octo/demo#1", repoFullName: "octo/demo", issueNumber: 1, status: "active", payload: {} });
+    const { client } = await connectTestClient(env);
+
+    const local = { login: "oktofeesh1", repoFullName: "octo/demo" };
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["gittensory_preflight_pr", { repoFullName: "octo/demo", title: "Add pagination" }],
+      ["gittensory_preflight_local_diff", { repoFullName: "octo/demo", title: "Add pagination" }],
+      ["gittensory_explain_review_risk", { repoFullName: "octo/demo", title: "Add pagination" }],
+      ["gittensory_preview_local_pr_score", { repoFullName: "octo/demo" }],
+      ["gittensory_compare_pr_variants", { variants: [{ repoFullName: "octo/demo" }] }],
+      ["gittensory_get_bounty_advisory", { id: "octo/demo#1" }],
+      ["gittensory_preflight_current_branch", local],
+      ["gittensory_preview_current_branch_score", local],
+      ["gittensory_rank_local_next_actions", local],
+      ["gittensory_explain_local_blockers", local],
+      ["gittensory_prepare_pr_packet", local],
+      ["gittensory_draft_pr_body", local],
+      ["gittensory_compare_local_variants", { variants: [local] }],
+      ["gittensory_agent_plan_next_work", { login: "oktofeesh1" }],
+      ["gittensory_agent_explain_next_action", { login: "oktofeesh1" }],
+      ["gittensory_agent_prepare_pr_packet", local],
+    ];
+    for (const [name, args] of calls) {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError, `${name} errored: ${JSON.stringify(result.content)}`).toBeFalsy();
+      expect(result.structuredContent, `${name} missing structuredContent`).toBeDefined();
+    }
+
+    // Stateful agent run lifecycle: start_run mints a run, get_run reads it back.
+    const started = await client.callTool({ name: "gittensory_agent_start_run", arguments: { objective: "Ship a PR", actorLogin: "oktofeesh1" } });
+    expect(started.isError, `agent_start_run errored: ${JSON.stringify(started.content)}`).toBeFalsy();
+    const runId = (started.structuredContent as { run?: { id?: string } }).run?.id;
+    expect(runId).toBeDefined();
+    const fetched = await client.callTool({ name: "gittensory_agent_get_run", arguments: { runId } });
+    expect(fetched.isError, `agent_get_run errored: ${JSON.stringify(fetched.content)}`).toBeFalsy();
+    expect(fetched.structuredContent).toBeDefined();
+  });
+});

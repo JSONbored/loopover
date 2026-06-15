@@ -25,6 +25,7 @@ import {
   upsertInstallation,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
+  upsertIssueWatchSubscription,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
 } from "../../src/db/repositories";
@@ -966,6 +967,150 @@ describe("queue processors", () => {
     expect(calls.gateChecks).toBe(2);
     expect(gatePatchBody.conclusion).toBe("failure");
     expect(gatePatchBody.output?.title).toBe("Gittensory Gate: No linked issue detected");
+  });
+
+  it("hard-blocks a confirmed contributor on a dual-model AI consensus defect when aiReview: block is opted in", async () => {
+    const defectJson = JSON.stringify({
+      assessment: "Introduces a likely crash.",
+      suggestions: ["Guard the null case."],
+      risks: ["Unhandled null on empty input."],
+      criticalDefect: { present: true, confidence: 0.96, title: "Unhandled null dereference", detail: "The new branch dereferences a possibly-null value." },
+    });
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: { run: async () => ({ response: defectJson }) } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      aiReviewMode: "block",
+      // Also exercise the opt-in slop advisory in the same surface pass: it persists a per-PR assessment
+      // and runs the (advisory-only) AI slop pass, but never blocks — the gate still fails on the AI
+      // consensus defect alone.
+      slopGateMode: "advisory",
+      slopAiAdvisory: true,
+    });
+    let gatePatchBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([
+          { uid: 7, githubUsername: "confirmed-dev", githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 },
+        ]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") {
+        return Response.json({ repositories: [{ repositoryFullName: "JSONbored/gittensory", totalPrs: "4", totalMergedPrs: "3", totalOpenPrs: "1", totalClosedPrs: "0", totalOpenIssues: "0", totalClosedIssues: "0", isEligible: true, credibility: "1.000000" }] });
+      }
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/aidefect123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs/950") && method === "PATCH") {
+        gatePatchBody = JSON.parse(String(init?.body ?? "{}")) as typeof gatePatchBody;
+        return Response.json({ id: 950 });
+      }
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 950 }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-ai-consensus-block",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 71, title: "Add helper", state: "open", user: { login: "confirmed-dev" }, head: { sha: "aidefect123" }, labels: [], body: "Adds a helper." },
+      },
+    });
+
+    expect(gatePatchBody.conclusion).toBe("failure");
+    expect(gatePatchBody.output?.title).toContain("AI reviewers agree on a likely critical defect");
+    // The AI usage event was recorded for the review (never with key material).
+    const usage = await env.DB.prepare("select feature, status from ai_usage_events where feature = ?").bind("ai_review_pr").first<{ feature: string; status: string }>();
+    expect(usage).toMatchObject({ feature: "ai_review_pr", status: "ok" });
+  });
+
+  it("finalizes the Gate to neutral instead of leaving it in_progress when gate completion fails", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    const patchBodies: Array<{ status?: string; conclusion?: string; output?: { title?: string } }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/finalize123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 970 }, { status: 201 }); // pending
+      if (url.includes("/check-runs/970") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
+        patchBodies.push(body);
+        // First PATCH = the gate completion; fail it transiently so the catch must finalize the check.
+        if (patchBodies.length === 1) return new Response(JSON.stringify({ message: "server error" }), { status: 500 });
+        return Response.json({ id: 970 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-finalize-on-error",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 80, title: "Some change", state: "open", user: { login: "contributor" }, head: { sha: "finalize123" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    // The completion PATCH failed (500), so the catch finalized the SAME check run (id 970) to a neutral,
+    // non-blocking terminal state — never left hanging in_progress.
+    expect(patchBodies.length).toBe(2);
+    const finalize = patchBodies[1];
+    expect(finalize?.status).toBe("completed");
+    expect(finalize?.conclusion).toBe("neutral");
+    expect(finalize?.output?.title).toBe("Gittensory Gate — could not finish evaluating");
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.gate_finalized_on_error", "JSONbored/gittensory#80")
+      .first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("error");
   });
 
   it("disables the gate from .gittensory.yml (gate.enabled: false) even when repo settings enable it", async () => {
@@ -3601,7 +3746,14 @@ describe("queue processors", () => {
   });
 
   it("detects a changes-requested review notification for the PR author", async () => {
-    const env = createTestEnv();
+    const enqueued: Array<{ type: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: { type: string }) {
+          enqueued.push(message);
+        },
+      } as unknown as Queue,
+    });
 
     await processJob(env, {
       type: "github-webhook",
@@ -3647,6 +3799,65 @@ describe("queue processors", () => {
       dedupKey: "changes_requested:JSONbored/gittensory#42:maintainer:2026-05-28T12:00:00.000Z",
     });
     expect(JSON.stringify(detected.results[0])).not.toMatch(/trust score|wallet|hotkey|reward estimate|reviewability/i);
+
+    const evaluateJob = enqueued.find((message): message is { type: "notify-evaluate"; event: { recipientLogin: string } } => message.type === "notify-evaluate");
+    expect(evaluateJob).toBeDefined();
+    expect(evaluateJob!.event.recipientLogin).toBe("contributor");
+  });
+
+  it("notifies issue-watchers when a new grabbable maintainer-created issue opens (#699 path B)", async () => {
+    const enqueued: Array<{ type: string; event?: { eventType: string; recipientLogin: string; pullNumber: number } }> = [];
+    const env = createTestEnv({ JOBS: { async send(message: { type: string }) { enqueued.push(message); } } as unknown as Queue });
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+    await upsertIssueWatchSubscription(env, { login: "watcher", repoFullName: "JSONbored/gittensory" });
+    await upsertIssueWatchSubscription(env, { login: "maintainer", repoFullName: "JSONbored/gittensory" }); // the author — should be skipped
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "issue-watch-open",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Add caching to the registry sync", state: "open", user: { login: "maintainer" }, author_association: "OWNER", body: "We should cache the registry fetch." },
+      },
+    });
+
+    const watchEvents = enqueued.filter((m): m is { type: "notify-evaluate"; event: { eventType: string; recipientLogin: string; pullNumber: number } } => m.type === "notify-evaluate" && m.event?.eventType === "issue_watch_match");
+    expect(watchEvents.map((m) => m.event.recipientLogin)).toEqual(["watcher"]); // maintainer (author) skipped
+    expect(watchEvents[0]!.event.pullNumber).toBe(91);
+
+    const detected = await env.DB.prepare("select metadata_json from audit_events where event_type = 'notification.event_detected' and target_key = ?").bind("watcher").first<{ metadata_json: string }>();
+    expect(JSON.parse(detected!.metadata_json)).toMatchObject({ eventType: "issue_watch_match", recipientLogin: "watcher", repoFullName: "JSONbored/gittensory" });
+  });
+
+  it("appends issue-side slop findings to the issue advisory only when slop is opted in (#533)", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "other", full_name: "JSONbored/other", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", slopGateMode: "advisory" });
+    // JSONbored/other keeps the default slopGateMode "off".
+
+    const emptyBodyIssue = (repoFull: string, name: string, number: number) => ({
+      type: "github-webhook" as const,
+      deliveryId: `issue-slop-${number}`,
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name, full_name: repoFull, private: false, owner: { login: "JSONbored" } },
+        issue: { number, title: "Something is broken", state: "open", user: { login: "reporter" }, body: "   " },
+      },
+    });
+    await processJob(env, emptyBodyIssue("JSONbored/gittensory", "gittensory", 501));
+    await processJob(env, emptyBodyIssue("JSONbored/other", "other", 502));
+
+    const slopOn = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/gittensory").first<{ findings_json: string }>();
+    const slopOff = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/other").first<{ findings_json: string }>();
+    expect(slopOn?.findings_json).toContain("empty_issue_body"); // opted in → triage finding present
+    expect(slopOff?.findings_json ?? "").not.toContain("empty_issue_body"); // default off → no slop finding
   });
 });
 

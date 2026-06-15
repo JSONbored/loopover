@@ -181,9 +181,47 @@ export type ContributorOpportunity = {
   fit: "good" | "caution" | "hold";
   score: number;
   lane: ParticipationLane;
+  /** Reward-multiplier tier of the issue. Maintainer-CREATED issues typically carry the biggest Gittensor
+   *  multiplier, so they rank highest when grabbable — surfacing them is the core of issue-watch (#699). */
+  multiplierTier: "maintainer_created" | "community";
+  /** Whether the issue is a real outside-contributor target. `maintainer_wip` = maintainer-authored AND
+   *  labelled in-progress/internal → downgraded, not steered to outsiders (the #186 reconciliation). */
+  availability: "ready" | "maintainer_wip";
   reasons: string[];
   warnings: string[];
 };
+
+// Labels that signal a maintainer's OWN in-progress / internal work — NOT an open outside-contributor
+// target. Combined with a maintainer author association, these downgrade an issue (#186) even though
+// maintainer-CREATED open issues are otherwise the highest-multiplier targets (#699).
+const MAINTAINER_WIP_LABELS = new Set([
+  "wip",
+  "work in progress",
+  "work-in-progress",
+  "in progress",
+  "in-progress",
+  "blocked",
+  "on hold",
+  "on-hold",
+  "draft",
+  "do not work",
+  "do-not-work",
+  "internal",
+]);
+
+/** True iff a maintainer-authored issue is labelled as the maintainer's own in-progress/internal work. */
+function isMaintainerWipIssue(issue: IssueRecord): boolean {
+  return isMaintainerAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
+}
+
+/**
+ * True iff an issue is the highest-multiplier, immediately-grabbable target (#699): open, maintainer-created
+ * (the biggest reward multiplier), and NOT flagged as the maintainer's own WIP/internal work. This is the
+ * exact condition the issue-watch monitor (#699 path B) notifies subscribers about.
+ */
+export function isGrabbableHighMultiplierIssue(issue: IssueRecord): boolean {
+  return issue.state === "open" && isMaintainerAssociation(issue.authorAssociation) && !isMaintainerWipIssue(issue);
+}
 
 export type ContributorFit = {
   login: string;
@@ -1302,6 +1340,14 @@ export function buildContributorOpportunities(
             : quality?.status === "hold"
               ? -15
               : 0;
+      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerWip = isMaintainerWipIssue(issue);
+      const multiplierTier: ContributorOpportunity["multiplierTier"] = maintainerAuthored ? "maintainer_created" : "community";
+      const availability: ContributorOpportunity["availability"] = maintainerWip ? "maintainer_wip" : "ready";
+      // Maintainer-CREATED grabbable issues carry the biggest Gittensor multiplier → rank them up (#699).
+      // A maintainer's own WIP/internal issue is heavily downgraded so outsiders aren't steered to it (#186).
+      const multiplierBoost = maintainerAuthored && !maintainerWip ? 12 : 0;
+      const maintainerWipPenalty = maintainerWip ? 45 : 0;
       const score = clamp(
         50 +
           (touchedRepos.has(repo.fullName) ? 20 : 0) +
@@ -1311,11 +1357,13 @@ export function buildContributorOpportunities(
           queuePenalty -
           bountyPenalty -
           (lane.lane === "inactive" || lane.lane === "unknown" ? 35 : 0) +
-          qualityAdjustment,
+          qualityAdjustment +
+          multiplierBoost -
+          maintainerWipPenalty,
         0,
         100,
       );
-      const baseFit = score >= 70 ? "good" : score >= 40 ? "caution" : "hold";
+      const baseFit = maintainerWip ? "hold" : score >= 70 ? "good" : score >= 40 ? "caution" : "hold";
       const downgradeToCaution = (bountyPenalty > 0 || quality?.status === "needs_proof") && baseFit === "good";
       repoOpportunities.push({
         repoFullName: repo.fullName,
@@ -1324,14 +1372,19 @@ export function buildContributorOpportunities(
         fit: downgradeToCaution ? "caution" : baseFit,
         score,
         lane: lane.lane,
+        multiplierTier,
+        availability,
         reasons: [
           lane.summary,
+          ...(maintainerAuthored && !maintainerWip ? ["Maintainer-created issue — typically the highest contribution multiplier on Gittensor."] : []),
           ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
           ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
           ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),
         ],
         warnings: [
+          ...(maintainerAuthored && !maintainerWip ? ["Maintainer-authored; confirm it is open for outside contribution before starting."] : []),
+          ...(maintainerWip ? ["Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation."] : []),
           ...(repoPullRequests.length >= 8 ? ["This repo has a busy open PR queue."] : []),
           ...(lane.lane === "issue_discovery" ? ["This repo is not a direct-PR-first lane."] : []),
           ...(lane.lane === "unknown" || lane.lane === "inactive" ? ["Gittensory cannot recommend this as a strong contribution target right now."] : []),
@@ -2749,6 +2802,10 @@ export function buildIssueQualityReport(
       const bountyContext = bounty ? buildBountyOpportunityContext(bounty, issue, linkedPrs, linkedMergedPrs) : undefined;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
       const linkage = buildIssueLinkageRecord(issue, lifecycleEntry, linkedPrs, linkedMergedPrs);
+      // #186: maintainer-authored issues must not silently read as "ready" for outside contributors —
+      // always warn to confirm intent, and downgrade ones labelled as the maintainer's own in-progress work.
+      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerWip = isMaintainerWipIssue(issue);
       const reasons = [
         ...(bodyLength >= 200 ? ["Issue has enough body detail to evaluate."] : []),
         ...(issue.labels.length > 0 ? [`Labels: ${issue.labels.join(", ")}.`] : []),
@@ -2769,6 +2826,8 @@ export function buildIssueQualityReport(
         ...(bountyLifecycle === "historical" ? ["Historical bounty context is attached; this is not an active opportunity without upstream confirmation."] : []),
         ...(bountyLifecycle === "stale" ? ["Bounty context for this issue looks stale; confirm it is still active before acting."] : []),
         ...(bountyLifecycle === "ambiguous" ? ["Bounty state for this issue is ambiguous; verify it before acting."] : []),
+        ...(maintainerAuthored && !maintainerWip ? ["Maintainer-authored; confirm it is open for outside contribution before starting."] : []),
+        ...(maintainerWip ? ["Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation."] : []),
       ];
       const score = clamp(100 - warnings.length * 18 + reasons.length * 5 - (age > 180 ? 15 : 0), 0, 100);
       const bountyBlocks = bountyLifecycle === "completed" || bountyLifecycle === "cancelled" || bountyLifecycle === "historical";
@@ -2776,7 +2835,7 @@ export function buildIssueQualityReport(
       const status: IssueQualityReport["issues"][number]["status"] =
         linkedWorkCount > 0 || issueCollisions.some((cluster) => cluster.risk === "high") || bountyBlocks || ["duplicate", "invalid", "solved", "valid_solved"].includes(lifecycle)
           ? "do_not_use"
-          : warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || bountyCaution || lifecycle === "stale"
+          : maintainerWip || warnings.some((warning) => /thin|stale|direct-PR/i.test(warning)) || bountyCaution || lifecycle === "stale"
             ? "needs_proof"
             : score < 45
               ? "hold"
@@ -3446,7 +3505,7 @@ export function buildCollisionEdges(report: CollisionReport): CollisionEdgeRecor
 // All comparable RegistryRepoConfig fields, rendered to a stable string for diffing.
 // Mirrors REGISTRY_DRIFT_COMPARABLE_FIELDS in upstream/ruleset.ts so the live change
 // report and the drift comparator cannot diverge as config fields are added — every
-// scoring-relevant field (fixed_base_score, default_label_multiplier, eligibility_mode)
+// scoring-relevant field (fixed_base_score, default_label_multiplier, eligibility_mode, time_decay)
 // is covered, not just the emission/lane subset.
 const REGISTRY_CHANGE_FIELDS: Array<{ label: string; render: (config: RegistryRepoConfig) => string }> = [
   { label: "emission_share", render: (config) => String(config.emissionShare) },
@@ -3458,6 +3517,7 @@ const REGISTRY_CHANGE_FIELDS: Array<{ label: string; render: (config: RegistryRe
   /* v8 ignore next -- Boolean defaulting protects older registry snapshots without trusted_label_pipeline. */
   { label: "trusted_label_pipeline", render: (config) => String(config.trustedLabelPipeline ?? false) },
   { label: "label_multipliers", render: (config) => JSON.stringify(config.labelMultipliers) },
+  { label: "time_decay", render: (config) => JSON.stringify(config.timeDecay ?? null) },
 ];
 
 function registryConfigChanges(previous: RegistryRepoConfig, current: RegistryRepoConfig): string[] {
@@ -3466,7 +3526,7 @@ function registryConfigChanges(previous: RegistryRepoConfig, current: RegistryRe
     const after = field.render(current);
     if (before === after) return [];
     // labelMultipliers is an object diff; report the fact of change, not the JSON blob.
-    return [field.label === "label_multipliers" ? "label_multipliers changed" : `${field.label} ${before} -> ${after}`];
+    return [field.label === "label_multipliers" || field.label === "time_decay" ? `${field.label} changed` : `${field.label} ${before} -> ${after}`];
   });
 }
 
@@ -3859,6 +3919,8 @@ export function buildPublicPrIntelligenceComment(args: {
   settings: RepositorySettings;
   gate?: PublicPrPanelGateEvaluation | undefined;
   review?: FocusManifestReviewConfig | undefined;
+  /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
+  aiReview?: { notes: string } | undefined;
 }): string {
   const publicFindings = args.preflight.findings
     .filter((finding) => finding.severity !== "critical")
@@ -4016,6 +4078,24 @@ export function buildPublicPrIntelligenceComment(args: {
     ...(nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."]),
     "",
     "</details>",
+    // Optional AI maintainer review (advisory; public-safe text built upstream). The deterministic
+    // signals above remain authoritative — this is a second opinion, not an endorsement.
+    ...(args.aiReview
+      ? [
+          "",
+          "<details>",
+          "<summary>Gittensory AI review (advisory)</summary>",
+          "",
+          "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
+          "",
+          // Notes are already public-safe (built via toPublicSafe upstream). Escape angle brackets so a
+          // stray tag (e.g. </details> or an HTML comment marker) cannot break the panel structure, while
+          // preserving the markdown bullet/line layout that sanitizePanelText would otherwise flatten.
+          args.aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
+          "",
+          "</details>",
+        ]
+      : []),
     "",
     `- [ ] ${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
     "",
@@ -4223,7 +4303,156 @@ function queuePressureOpenPullRequestScore(openPullRequests: number): number {
   return 3;
 }
 
-function hasClearNoIssueRationale(pr: PullRequestRecord): boolean {
+export type PrTextLintInput = {
+  commitMessages?: string[] | undefined;
+  prBody?: string | undefined;
+  linkedIssue?: number | undefined;
+};
+
+export type PrTextLintComponent = {
+  key: "traceability" | "commit_message" | "pr_body";
+  label: string;
+  status: "ok" | "weak";
+  evidence: string;
+  fix?: string | undefined;
+};
+
+export type PrTextLintReport = {
+  generatedAt: string;
+  verdict: "strong" | "adequate" | "weak";
+  /**
+   * 0-100 PR-text quality score from the deterministic rubric (sum of per-component weights; weak
+   * components score 25% of their weight). Advisory sub-signal only — `verdict` is authoritative.
+   * Because traceability is a hard gate for the verdict but only one weighted component of the score,
+   * the two can rank-disagree (e.g. a strong commit + body with no linked issue scores ~78 yet the
+   * verdict is "weak"). Rank by `verdict`, not `score`. Not a Gittensor reward/trust score.
+   */
+  score: number;
+  components: PrTextLintComponent[];
+  fixes: string[];
+  summary: string;
+};
+
+const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
+// Conventional Commit subject: one of CONTRIBUTING's allowed types, optional `(scope)`, optional `!`,
+// then `: ` and a non-empty summary (e.g. `feat(api): add cursor pagination`). Single source of truth
+// with CONTRIBUTING.md "Commit And PR Titles".
+const CONVENTIONAL_COMMIT_PATTERN = /^(?:feat|fix|test|docs|refactor|build|ci|chore|revert)(?:\([^()\r\n]+\))?!?:\s+\S/i;
+const PR_TEXT_LINT_WEIGHTS = { traceability: 30, commit_message: 35, pr_body: 35 } as const;
+
+function stripPrBodyScaffolding(body: string): string {
+  return body
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/^#{1,6}\s.*$/gm, " ")
+    .replace(/^\s*[-*]\s*\[[ xX]\]/gm, " ")
+    .replace(/[#>*_`[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Deterministic commit-message + PR-body rubric linter. Catches generic/empty AI-slop text before
+ * submit and returns a quality verdict plus specific, public-safe fixes. Reuses the gittensor
+ * traceability/no-issue-rationale rubric ({@link hasClearNoIssueRationale}, {@link tokenize},
+ * {@link STOPWORDS}) shared with the public readiness score. All output is routed through
+ * {@link sanitizePublicComment}; no private scoring is exposed.
+ */
+export function buildPrTextLint(input: PrTextLintInput): PrTextLintReport {
+  const commitMessages = (input.commitMessages ?? []).map((message) => message.trim()).filter((message) => message.length > 0);
+  const prBody = (input.prBody ?? "").trim();
+  const linkedIssue = typeof input.linkedIssue === "number" && input.linkedIssue > 0 ? input.linkedIssue : undefined;
+
+  const hasRationale = hasClearNoIssueRationale({ title: "", body: prBody });
+  const traceabilityOk = linkedIssue !== undefined || hasRationale;
+  const traceability: PrTextLintComponent = traceabilityOk
+    ? {
+        key: "traceability",
+        label: "Traceability",
+        status: "ok",
+        evidence: linkedIssue !== undefined ? `Linked issue #${linkedIssue}.` : "PR body includes a no-issue rationale.",
+      }
+    : {
+        key: "traceability",
+        label: "Traceability",
+        status: "weak",
+        evidence: "No linked issue and no no-issue rationale in the PR body.",
+        fix: 'Link the issue this PR resolves (e.g. "Fixes #123"), or explain in the body why no issue applies.',
+      };
+
+  const primaryCommit = commitMessages[0] ?? "";
+  const commitTokens = tokenize(commitMessages.join(" "));
+  const commitGeneric = primaryCommit.length > 0 && GENERIC_COMMIT_PATTERN.test(primaryCommit);
+  // The `^`-anchored pattern matches against the subject line at the start of the message.
+  const commitConventional = CONVENTIONAL_COMMIT_PATTERN.test(primaryCommit);
+  const commitOk = commitConventional && primaryCommit.length >= 15 && commitTokens.length >= 2 && !commitGeneric;
+  const commitMessage: PrTextLintComponent = commitOk
+    ? { key: "commit_message", label: "Commit message", status: "ok", evidence: "Commit message is specific and follows Conventional Commit format." }
+    : {
+        key: "commit_message",
+        label: "Commit message",
+        status: "weak",
+        evidence:
+          commitMessages.length === 0
+            ? "No commit message was provided."
+            : commitGeneric
+              ? "Commit message is generic (e.g. update/fix/wip)."
+              : !commitConventional
+                ? "Commit message does not follow Conventional Commit format (type(scope): summary)."
+                : "Commit message is too short or lacks specific detail.",
+        fix: "Use a Conventional Commit subject (type(scope): summary, e.g. feat(api): add cursor pagination) that names what changed and why; avoid generic words like update, fix, or wip on their own.",
+      };
+
+  const strippedBody = stripPrBodyScaffolding(prBody);
+  const bodyTokens = tokenize(strippedBody);
+  const bodyLooksTemplated = prBody.length > 0 && /\[[ xX]\]|<!--/.test(prBody);
+  // tokenize() only counts ASCII word tokens, so a fully non-Latin (CJK/Cyrillic/…) body yields 0
+  // tokens and would be mislabelled "thin". Fall back to a Unicode-aware letter density check so
+  // substantive non-Latin prose is recognised before we flag a body as low-effort.
+  const bodyNonWhitespace = strippedBody.replace(/\s+/g, "");
+  const bodyLetterCount = (bodyNonWhitespace.match(/\p{L}/gu) ?? []).length;
+  const bodyLetterDense = bodyNonWhitespace.length >= 24 && bodyLetterCount / bodyNonWhitespace.length >= 0.6;
+  const bodyOk = strippedBody.length >= 40 && (bodyTokens.length >= 5 || bodyLetterDense);
+  const prBodyComponent: PrTextLintComponent = bodyOk
+    ? {
+        key: "pr_body",
+        label: "PR body",
+        status: "ok",
+        evidence: hasValidationNote(prBody) ? "PR body describes the change and includes validation notes." : "PR body describes the change with specific detail.",
+      }
+    : {
+        key: "pr_body",
+        label: "PR body",
+        status: "weak",
+        evidence: prBody.length === 0 ? "PR body is empty." : bodyLooksTemplated ? "PR body looks like an unfilled template." : "PR body is thin and lacks specific detail about the change.",
+        fix: "Describe what changed, why, and how it was validated; fill in or remove unused template sections.",
+      };
+
+  const components = [traceability, commitMessage, prBodyComponent];
+  const score = components.reduce((sum, component) => sum + (component.status === "ok" ? PR_TEXT_LINT_WEIGHTS[component.key] : Math.round(PR_TEXT_LINT_WEIGHTS[component.key] * 0.25)), 0);
+  const weakCount = components.filter((component) => component.status === "weak").length;
+  const verdict: PrTextLintReport["verdict"] = weakCount === 0 ? "strong" : traceabilityOk && weakCount === 1 ? "adequate" : "weak";
+  const summary =
+    verdict === "strong"
+      ? "PR text is traceable, specific, and ready to submit."
+      : verdict === "adequate"
+        ? "PR text is acceptable but has one area to tighten before submitting."
+        : "PR text reads as low-effort; address the flagged items before submitting.";
+
+  return {
+    generatedAt: nowIso(),
+    verdict,
+    score,
+    components: components.map((component) => ({
+      ...component,
+      evidence: sanitizePublicComment(component.evidence),
+      ...(component.fix === undefined ? {} : { fix: sanitizePublicComment(component.fix) }),
+    })),
+    fixes: components.flatMap((component) => (component.fix === undefined ? [] : [sanitizePublicComment(component.fix)])),
+    summary: sanitizePublicComment(summary),
+  };
+}
+
+function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
   return /\b(no issue\s*(?:because|:)|no linked issue\s*(?:because|:)|no ticket\s*(?:because|:)|maintenance|docs? only|typo|chore|cleanup)\b/i.test([pr.title, pr.body ?? ""].join(" "));
 }
 

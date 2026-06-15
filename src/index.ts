@@ -53,6 +53,10 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
     jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });
   }
+  // Prune expired log/snapshot rows once a day (03:00 UTC) per the conservative RETENTION_POLICY.
+  if (isHourly && hour === 3) {
+    jobs.push({ type: "prune-retention", requestedBy: "schedule" });
+  }
   if (isFullSyncWindow) {
     jobs.push({ type: "generate-signal-snapshots", requestedBy: "schedule" });
     jobs.push({ type: "build-burden-forecasts", requestedBy: "schedule" });

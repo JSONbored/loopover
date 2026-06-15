@@ -239,3 +239,59 @@ jobs:
               description: "Preview ready",
             });
             core.notice(`Preview deployment recorded for PR #${prNumber}: ${url}`);
+
+      - name: Record FAILED deployment for Reviewbot
+        # Runs when an earlier step in this job failed (artifact validation rejected the bundle, the
+        # wrangler upload errored, etc.) — i.e. a deploy was attempted but never produced a preview.
+        # Record a `failure` deployment_status so Reviewbot flips the "after" cell from an eternal
+        # spinner to a terminal "preview deploy failed" card, instead of waiting forever for a success
+        # event that will never come. Gated on CF creds so a credential-less skip records nothing.
+        if: failure() && steps.cfg.outputs.ready == 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const sha = context.payload.workflow_run.head_sha; // GitHub-set; never fork-supplied
+            const slug = `${context.repo.owner}/${context.repo.repo}`;
+            // Same fork-safe PR resolution as the success step above.
+            let prNumber = context.payload.workflow_run.pull_requests?.[0]?.number;
+            if (!prNumber) {
+              const assoc = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: sha,
+              });
+              prNumber = assoc.data.find((p) => p.state === "open" && p.base.repo.full_name === slug)?.number;
+            }
+            if (!prNumber) {
+              const openPrs = await github.paginate(github.rest.pulls.list, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: "open",
+                per_page: 100,
+              });
+              prNumber = openPrs.find((p) => p.head.sha === sha)?.number;
+            }
+            if (!prNumber) {
+              core.warning(`Preview deploy failed but could not resolve a PR for ${sha} — no failure status recorded.`);
+              return;
+            }
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              environment: `preview/pr-${prNumber}`,
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: true,
+              description: "Gittensory UI preview (failed)",
+              payload: JSON.stringify({ pr: prNumber, head_sha: sha }),
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: "failure",
+              environment: `preview/pr-${prNumber}`,
+              description: "Preview deploy failed",
+            });
+            core.notice(`Recorded FAILED preview deployment for PR #${prNumber}.`);

@@ -2,6 +2,7 @@ import type { SignalFinding } from "./engine";
 import { isCodeFile, isTestFile } from "./local-branch";
 import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFocusManifestPublicSafe } from "./focus-manifest";
+import { classifyChangedFile } from "./path-matchers";
 
 export type SlopBand = "clean" | "low" | "elevated" | "high";
 
@@ -27,10 +28,12 @@ export type SlopAssessment = {
 
 // Deterministic, high-precision signals only — this score is the ONLY thing allowed to gate (block), so it
 // must be false-positive-averse. Heuristic/AI "this reads low-effort" judgments stay ADVISORY elsewhere and
-// never feed this score. Weights sum to 75 so the `high` band (>=60) is reachable from two strong signals.
+// never feed this score. Each "strong" signal is weighted 30 so the `high` band (>=60) is reachable from any
+// two of them; `clamp(.,0,100)` keeps the stacked score bounded.
 export const SLOP_WEIGHTS = {
   trivialWhitespaceChurn: 30,
   missingTestEvidence: 30,
+  nonSubstantivePadding: 30,
   emptyDescription: 15,
 } as const;
 
@@ -45,24 +48,31 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "Current deterministic signals:",
   "- trivial / whitespace-only churn",
   "- missing test evidence",
+  "- non-substantive padding (generated / vendored / minified output as source)",
   "- empty pull request description on a code change",
 ].join("\n");
 
 const MIN_CHURN_LINES = 40;
 const MAX_SOURCE_LINE_SHARE = 0.15;
+// A padded diff is one whose churn is dominated by non-substantive output. Set at half the diff so a PR
+// with any meaningful share of real, hand-authored files cannot trip it.
+const PADDING_DOMINANCE_SHARE = 0.5;
 
 export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment {
   const findings: SignalFinding[] = [];
   const trivialChurnFinding = buildTrivialWhitespaceChurnFinding(input);
   const missingTestEvidenceFinding = buildMissingTestEvidenceFinding(input);
+  const nonSubstantivePaddingFinding = buildNonSubstantivePaddingFinding(input);
   const emptyDescriptionFinding = buildEmptyDescriptionFinding(input);
   if (trivialChurnFinding) findings.push(trivialChurnFinding);
   if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
+  if (nonSubstantivePaddingFinding) findings.push(nonSubstantivePaddingFinding);
   if (emptyDescriptionFinding) findings.push(emptyDescriptionFinding);
 
   const slopRisk = clamp(
     (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0) +
       (missingTestEvidenceFinding ? SLOP_WEIGHTS.missingTestEvidence : 0) +
+      (nonSubstantivePaddingFinding ? SLOP_WEIGHTS.nonSubstantivePadding : 0) +
       (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0),
     0,
     100,
@@ -72,6 +82,55 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
     slopRisk,
     band: slopBandFor(slopRisk),
     findings,
+  };
+}
+
+// Fires when a high-churn diff is dominated by generated/vendored/minified output (files that carry code
+// extensions and so slip past the source-share check in `trivialWhitespaceChurn`) while genuine source and
+// test effort is negligible — i.e. the diff is padded to look substantive. Lockfiles, dependency manifests,
+// and docs are legitimate change categories and never count toward the padding share, so dependency bumps
+// and docs PRs cannot trip this.
+export function buildNonSubstantivePaddingFinding(input: SlopAssessmentInput): SignalFinding | null {
+  const totals = summarizePaddingLines(input.changedFiles ?? []);
+  if (totals.changedLineCount < MIN_CHURN_LINES) return null;
+  if (totals.paddingLineCount === 0) return null;
+  if (totals.paddingLineCount / totals.changedLineCount < PADDING_DOMINANCE_SHARE) return null;
+  if (totals.substantiveLineCount / totals.changedLineCount > MAX_SOURCE_LINE_SHARE) return null;
+  return buildPaddingFinding(totals.changedLineCount, totals.paddingLineCount);
+}
+
+function summarizePaddingLines(changedFiles: SlopChangedFile[]): {
+  changedLineCount: number;
+  paddingLineCount: number;
+  substantiveLineCount: number;
+} {
+  let changedLineCount = 0;
+  let paddingLineCount = 0;
+  let substantiveLineCount = 0;
+  for (const file of changedFiles) {
+    const lines = nonNegative(file.additions) + nonNegative(file.deletions);
+    if (lines === 0) continue;
+    changedLineCount += lines;
+    const category = classifyChangedFile(file.path);
+    if (category === "minified" || category === "generated" || category === "vendored") {
+      paddingLineCount += lines;
+    } else if (category === "source" || category === "test") {
+      substantiveLineCount += lines;
+    }
+  }
+  return { changedLineCount, paddingLineCount, substantiveLineCount };
+}
+
+function buildPaddingFinding(changedLineCount: number, paddingLineCount: number): SignalFinding {
+  // Only integer counts are interpolated, so the text is public-safe by construction.
+  const detail = `${paddingLineCount} of ${changedLineCount} changed line(s) are in generated, vendored, or minified files with little substantive source.`;
+  return {
+    code: "non_substantive_padding",
+    title: "Diff is mostly generated, vendored, or minified output",
+    severity: "warning",
+    detail,
+    action: "Exclude generated, vendored, and minified output and keep the diff focused on substantive changes.",
+    publicText: detail,
   };
 }
 

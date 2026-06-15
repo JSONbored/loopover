@@ -57,6 +57,11 @@ function Scoreability() {
         </li>
       </ul>
 
+      <p>
+        All six scenarios are recomputed on every push, so the numbers reflect the branch's latest
+        state rather than a one-time snapshot.
+      </p>
+
       <h2>Language rules</h2>
       <p>
         Use <code>scoreability</code>, <code>estimated score</code>,{" "}

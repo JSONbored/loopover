@@ -131,6 +131,7 @@ import {
   preflightBranchWithAgent,
   startAgentRun,
 } from "../services/agent-orchestrator";
+import { explainScoreBreakdown } from "../services/score-breakdown";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   buildAndPersistContributorDecisionPack,
@@ -1495,6 +1496,22 @@ export function createApp() {
     const record = makeScorePreviewRecord(input, snapshot, result);
     await persistScorePreview(c.env, record);
     return c.json(record);
+  });
+
+  app.post("/v1/scoring/explain-breakdown", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = scorePreviewSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_scoring_preview_request", issues: parsed.error.issues }, 400);
+    if (!parsed.data.contributorLogin) return c.json({ error: "contributor_login_required" }, 400);
+    const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
+    if (unauthorized) return unauthorized;
+    const [repo, snapshot, evidence] = await Promise.all([
+      getRepository(c.env, parsed.data.repoFullName),
+      getOrCreateScoringModelSnapshot(c.env),
+      getContributorEvidence(c.env, parsed.data.contributorLogin),
+    ]);
+    const preview = buildScorePreview({ input: parsed.data, repo, snapshot, contributorEvidence: evidence });
+    return c.json(explainScoreBreakdown(preview));
   });
 
   app.get("/v1/sync/status", async (c) => {

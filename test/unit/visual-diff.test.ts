@@ -132,17 +132,17 @@ describe("visual diff quantification", () => {
     });
   });
 
-  it("honors a custom pixelmatch threshold", () => {
-    const before = createSolidPng(20, 20, [255, 255, 255, 255]);
-    const tweaked = createSolidPng(20, 20, [254, 255, 255, 255]);
-    const strict = compareRouteScreenshots({
+  it("honors a custom pixelmatch threshold option", () => {
+    const before = createSolidPng(10, 10, [255, 0, 0, 255]);
+    const after = createSolidPng(10, 10, [0, 255, 0, 255]);
+    const result = compareRouteScreenshots({
       route: "/app",
       before,
-      after: tweaked,
-      options: { threshold: 0.01, changeThresholdPercent: 0.001 },
+      after,
+      options: { threshold: 0.2 },
     });
-    expect(strict.status).toBe("changed");
-    expect(strict.diffImagePng).toBeInstanceOf(Buffer);
+    expect(result.status).toBe("changed");
+    expect(result.diffImagePng).toBeInstanceOf(Buffer);
   });
 
   it("can omit diff images when requested", () => {

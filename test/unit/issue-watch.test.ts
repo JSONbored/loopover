@@ -53,6 +53,8 @@ describe("issue-watch subscriptions (CRUD)", () => {
 
   it("matches the watched repo case-insensitively (GitHub repo names are case-insensitive)", async () => {
     const env = createTestEnv();
+    // owner/repo is a tracked PUBLIC repo, so the visibility-aware fan-out gate (#742) admits any watcher.
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" }, default_branch: "main" }, 100);
     // Subscribe with non-canonical casing — the webhook delivers the canonical `repository.full_name`,
     // so the stored repo must still match it (and be normalized for display + idempotency).
     await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "Owner/Repo" });

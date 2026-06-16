@@ -1,0 +1,37 @@
+name: Dependency audit
+
+# Full-tree `npm audit` for ambient advisories (vulnerabilities in deps no PR
+# touched). This is intentionally NOT a per-PR gate: PRs are gated on the
+# vulnerabilities they introduce via the dependency-review job in ci.yml, and
+# Renovate (vulnerabilityAlerts) + GitHub Dependabot alerts open the fix PRs.
+# This run keeps the whole tree under active audit on a cadence and on demand.
+
+on:
+  schedule:
+    - cron: "0 16 * * 1" # Mondays 16:00 UTC (~9am America/Phoenix), aligns with Renovate
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Full dependency audit
+        run: npm audit --audit-level=moderate

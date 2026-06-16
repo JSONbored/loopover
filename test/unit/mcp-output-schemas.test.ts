@@ -232,6 +232,17 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.highestLeverageLever).toBeTruthy();
   });
 
+  it("gittensory_explain_score_breakdown requires contributorLogin", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_explain_score_breakdown",
+      arguments: { repoFullName: "octo/demo", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80 },
+    });
+    expect(result.isError).toBe(true);
+  });
+
   it("gittensory_lint_pr_text returns a deterministic verdict and fixes", async () => {
     const { client } = await connectTestClient();
     const weak = await client.callTool({ name: "gittensory_lint_pr_text", arguments: { commitMessages: ["wip"], prBody: "" } });

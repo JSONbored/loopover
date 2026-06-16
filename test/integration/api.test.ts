@@ -1531,6 +1531,42 @@ describe("api routes", () => {
     );
     expect(noContributorScorePreview.status).toBe(200);
 
+    const scoreBreakdown = await app.request(
+      "/v1/scoring/explain-breakdown",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          repoFullName: "entrius/allways-ui",
+          contributorLogin: "oktofeesh1",
+          sourceTokenScore: 42,
+          totalTokenScore: 60,
+          sourceLines: 40,
+          openPrCount: 1,
+          linkedIssueMode: "standard",
+        }),
+      },
+      env,
+    );
+    expect(scoreBreakdown.status).toBe(200);
+    await expect(scoreBreakdown.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      components: expect.arrayContaining([expect.objectContaining({ component: expect.any(String), lever: expect.any(String) })]),
+      highestLeverageLever: expect.objectContaining({ component: expect.any(String), lever: expect.any(String) }),
+    });
+
+    const missingContributorBreakdown = await app.request(
+      "/v1/scoring/explain-breakdown",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ repoFullName: "entrius/allways-ui", sourceTokenScore: 42 }),
+      },
+      env,
+    );
+    expect(missingContributorBreakdown.status).toBe(400);
+    await expect(missingContributorBreakdown.json()).resolves.toMatchObject({ error: "contributor_login_required" });
+
     for (const [signalType, payload] of [
       ["queue-health", { repoFullName: "entrius/allways-ui", signals: { openPullRequests: 2 } }],
       ["config-quality", { repoFullName: "entrius/allways-ui", notObservedConfiguredLabels: ["refactor"] }],

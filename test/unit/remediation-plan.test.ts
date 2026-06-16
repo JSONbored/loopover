@@ -160,4 +160,31 @@ describe("buildRemediationPlan", () => {
       }),
     ]);
   });
+
+  it("skips blockers whose finding action and text are fully redacted", () => {
+    const plan = buildRemediationPlan({
+      login: "miner",
+      repoFullName: "octo/demo",
+      accountStateBlockers: [],
+      branchQualityBlockers: ["wallet hotkey payout"],
+      scoreBlockers: [],
+      recommendedRerunCondition: "Rerun after any branch, base, or PR state changes before opening/submitting.",
+      localFindings: [
+        {
+          code: "forbidden_action",
+          severity: "warning",
+          title: "wallet hotkey payout",
+          detail: "forbidden detail",
+          action: "wallet hotkey payout",
+        },
+      ],
+    });
+
+    expect(plan.items).toEqual([
+      expect.objectContaining({
+        source: "branch_quality",
+        step: "Resolve branch-quality findings before submission.",
+      }),
+    ]);
+  });
 });

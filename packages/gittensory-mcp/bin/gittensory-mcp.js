@@ -139,6 +139,27 @@ const checkBeforeStartShape = {
   plannedPaths: z.array(z.string()).optional(),
 };
 
+const lintPrTextShape = {
+  commitMessages: z.array(z.string()).max(50).optional(),
+  prBody: z.string().optional(),
+  linkedIssue: z.number().int().positive().optional(),
+};
+
+const checkSlopRiskShape = {
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000)
+    .optional(),
+  description: z.string().max(20000).optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+
+const checkIssueSlopShape = {
+  title: z.string().max(500).optional(),
+  body: z.string().max(40000).optional(),
+};
+
 const preflightShape = {
   repoFullName: z.string().min(3),
   contributorLogin: z.string().min(1).optional(),
@@ -312,6 +333,36 @@ server.registerTool(
     };
     return toolResult("Gittensory pre-start check.", await apiPost(`${prefix}/check-before-start`, body));
   },
+);
+
+server.registerTool(
+  "gittensory_lint_pr_text",
+  {
+    description:
+      "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric before submitting. Returns a deterministic verdict (strong/adequate/weak) plus specific public-safe fixes. No source upload.",
+    inputSchema: lintPrTextShape,
+  },
+  async (input) => toolResult("Gittensory PR-text lint.", await apiPost("/v1/lint/pr-text", input)),
+);
+
+server.registerTool(
+  "gittensory_check_slop_risk",
+  {
+    description:
+      "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+    inputSchema: checkSlopRiskShape,
+  },
+  async (input) => toolResult("Gittensory slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
+);
+
+server.registerTool(
+  "gittensory_check_issue_slop",
+  {
+    description:
+      "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
+    inputSchema: checkIssueSlopShape,
+  },
+  async (input) => toolResult("Gittensory issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
 );
 
 server.registerTool(

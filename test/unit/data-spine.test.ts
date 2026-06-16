@@ -33,6 +33,7 @@ import {
   upsertInstallationHealth,
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
+  updatePullRequestSlopAssessment,
   upsertPullRequestFile,
   upsertPullRequestReview,
   upsertRecentMergedPullRequest,
@@ -236,12 +237,30 @@ describe("data spine repositories", () => {
       checkRunDetailLevel: "minimal",
       publicSurface: "comment_and_label",
       gatePack: "gittensor",
+      slopGateMode: "off",
     });
     // gatePack (#692) round-trips and defaults to gittensor.
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "oss-anti-slop" });
     expect((await getRepositorySettings(env, "owner/repo")).gatePack).toBe("oss-anti-slop");
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "gittensor", linkedIssueGateMode: "block" });
+    expect(await getRepositorySettings(env, "owner/repo")).toMatchObject({ gatePack: "gittensor", linkedIssueGateMode: "block" });
     await upsertRepositorySettings(env, { repoFullName: "owner/defaultpack" });
     expect((await getRepositorySettings(env, "owner/defaultpack")).gatePack).toBe("gittensor");
+    // slop gate (#530/#532) round-trips and defaults to off.
+    await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "block", slopGateMinScore: 55, slopAiAdvisory: true });
+    const slopSettings = await getRepositorySettings(env, "owner/sloprepo");
+    expect(slopSettings.slopGateMode).toBe("block");
+    expect(slopSettings.slopGateMinScore).toBe(55);
+    expect(slopSettings.slopAiAdvisory).toBe(true); // AI advisory opt-in round-trips
+    expect((await getRepositorySettings(env, "owner/defaultpack")).slopGateMode).toBe("off");
+    expect((await getRepositorySettings(env, "owner/defaultpack")).slopAiAdvisory).toBe(false); // defaults off
+    // Persist-on-UPDATE: re-upserting an existing row must persist slop_* (these were previously missing
+    // from the onConflictDoUpdate SET clause, so updates silently dropped them).
+    await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "advisory", slopGateMinScore: 40, slopAiAdvisory: false });
+    const updated = await getRepositorySettings(env, "owner/sloprepo");
+    expect(updated.slopGateMode).toBe("advisory");
+    expect(updated.slopGateMinScore).toBe(40);
+    expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();
     expect(await getIssue(env, "owner/repo", 404)).toBeNull();
@@ -330,5 +349,25 @@ describe("data spine repositories", () => {
     expect(await listIssueSignalSample(env, "owner/repo", 1)).toHaveLength(1);
     expect(await listContributorPullRequests(env, "jsonbored")).toMatchObject([{ repoFullName: "owner/repo", number: 1 }]);
     expect(await listContributorIssues(env, "JSONBORED")).toEqual(expect.arrayContaining([expect.objectContaining({ repoFullName: "owner/repo", number: 10 }), expect.objectContaining({ repoFullName: "owner/repo", number: 11 })]));
+  });
+
+  it("persists a per-PR slop assessment, round-trips it via the cached record, and keeps latest-wins (PR2)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/sloppr", { number: 5, title: "Churn", state: "open", user: { login: "alice" }, labels: [], body: "x" });
+    // Unassessed by default (slop off, or PR not yet processed).
+    expect((await getPullRequest(env, "owner/sloppr", 5))?.slopRisk ?? null).toBeNull();
+    expect((await getPullRequest(env, "owner/sloppr", 5))?.slopBand ?? null).toBeNull();
+
+    await updatePullRequestSlopAssessment(env, "owner/sloppr", 5, { slopRisk: 72, slopBand: "high" });
+    const assessed = await getPullRequest(env, "owner/sloppr", 5);
+    expect(assessed?.slopRisk).toBe(72);
+    expect(assessed?.slopBand).toBe("high");
+
+    // Latest assessment wins on the next run.
+    await updatePullRequestSlopAssessment(env, "owner/sloppr", 5, { slopRisk: 10, slopBand: "low" });
+    expect((await getPullRequest(env, "owner/sloppr", 5))?.slopBand).toBe("low");
+
+    // No-op (no throw) when the PR row does not exist yet.
+    await expect(updatePullRequestSlopAssessment(env, "owner/sloppr", 999, { slopRisk: 5, slopBand: "low" })).resolves.toBeUndefined();
   });
 });

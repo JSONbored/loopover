@@ -51,6 +51,9 @@ export const repositorySettings = sqliteTable("repository_settings", {
   duplicatePrGateMode: text("duplicate_pr_gate_mode").notNull().default("block"),
   qualityGateMode: text("quality_gate_mode").notNull().default("advisory"),
   qualityGateMinScore: integer("quality_gate_min_score"),
+  slopGateMode: text("slop_gate_mode").notNull().default("off"),
+  slopGateMinScore: integer("slop_gate_min_score"),
+  slopAiAdvisory: integer("slop_ai_advisory", { mode: "boolean" }).notNull().default(false),
   aiReviewMode: text("ai_review_mode").notNull().default("off"),
   aiReviewByok: integer("ai_review_byok", { mode: "boolean" }).notNull().default(false),
   aiReviewProvider: text("ai_review_provider"),
@@ -262,6 +265,9 @@ export const pullRequests = sqliteTable(
     linkedIssuesJson: text("linked_issues_json").notNull().default("[]"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
+    // Latest deterministic slop assessment (gittensory-computed; written separately from the GitHub sync).
+    slopRisk: integer("slop_risk"),
+    slopBand: text("slop_band"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
@@ -850,6 +856,24 @@ export const notificationDeliveries = sqliteTable(
     dedupChannel: uniqueIndex("notification_deliveries_dedup_channel_unique").on(table.dedupKey, table.channel),
     recipientStatus: index("notification_deliveries_recipient_status_idx").on(table.recipientLogin, table.status),
     recipientChannelCreated: index("notification_deliveries_recipient_channel_created_idx").on(table.recipientLogin, table.channel, table.createdAt),
+  }),
+);
+
+// #699 path B: a miner's standing watch on a repo for NEW grabbable, high-multiplier issues. `labelsJson`
+// is an optional label filter ([] = any). UNIQUE(login, repoFullName) makes subscribe idempotent.
+export const issueWatchSubscriptions = sqliteTable(
+  "issue_watch_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    login: text("login").notNull(),
+    repoFullName: text("repo_full_name").notNull(),
+    labelsJson: text("labels_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    loginRepo: uniqueIndex("issue_watch_subscriptions_login_repo_unique").on(table.login, table.repoFullName),
+    repo: index("issue_watch_subscriptions_repo_idx").on(table.repoFullName),
   }),
 );
 

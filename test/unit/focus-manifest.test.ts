@@ -400,7 +400,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
@@ -688,7 +688,35 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null });
+  });
+
+  it("parses the gate.slop block, round-trips it, and warns on a non-mapping (#530/#532)", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "block", minScore: 55 } } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.slopMode).toBe("block");
+    expect(m.gate.slopMinScore).toBe(55);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ slop: { mode: "block", minScore: 55 } });
+
+    const bad = parseFocusManifest({ gate: { slop: "block" } });
+    expect(bad.gate.slopMode).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.slop/.test(w))).toBe(true);
+  });
+
+  it("parses gate.slop.aiAdvisory, round-trips it, resolves it, and warns on a non-boolean", () => {
+    const m = parseFocusManifest({ gate: { slop: { mode: "advisory", aiAdvisory: true } } });
+    expect(m.gate.slopMode).toBe("advisory");
+    expect(m.gate.slopAiAdvisory).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ slop: { mode: "advisory", aiAdvisory: true } });
+
+    // aiAdvisory layers onto the effective settings (off by default in the DB row).
+    const eff = resolveEffectiveSettings({ slopGateMode: "off", slopAiAdvisory: false } as RepositorySettings, m);
+    expect(eff.slopGateMode).toBe("advisory");
+    expect(eff.slopAiAdvisory).toBe(true);
+
+    const bad = parseFocusManifest({ gate: { slop: { aiAdvisory: "yes please" } } });
+    expect(bad.gate.slopAiAdvisory).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.slop\.aiAdvisory/.test(w))).toBe(true);
   });
 
   it("parses gate.pack and ignores an unknown pack with a warning (#692)", () => {
@@ -893,6 +921,19 @@ describe("parseFocusManifest review config", () => {
 
   it("drops footer/note content that is not public-safe, with a warning", () => {
     const m = parseFocusManifest({ review: { footer: { text: "Estimate your reward payout here" }, note: "paste your wallet hotkey" } });
+    expect(m.review.footerText).toBeNull();
+    expect(m.review.note).toBeNull();
+    expect(m.warnings.some((w) => /review\.footer\.text.*public-safe/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /review\.note.*public-safe/.test(w))).toBe(true);
+  });
+
+  it("drops review override terms covered by the public comment sanitizer", () => {
+    const m = parseFocusManifest({
+      review: {
+        footer: { text: "Maintainer note: include seed phrase details." },
+        note: "Intro note mentions private rankings.",
+      },
+    });
     expect(m.review.footerText).toBeNull();
     expect(m.review.note).toBeNull();
     expect(m.warnings.some((w) => /review\.footer\.text.*public-safe/.test(w))).toBe(true);

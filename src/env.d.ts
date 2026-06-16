@@ -10,6 +10,8 @@ declare global {
     AI_PUBLIC_COMMENTS_ENABLED?: string;
     WORKERS_AI_SUMMARY_MODEL?: string;
     AI_DAILY_NEURON_BUDGET?: string;
+    /** Per-repository/day cap for maintainer-paid BYOK AI review provider calls. */
+    AI_BYOK_DAILY_REPO_LIMIT?: string;
     AI_MAX_OUTPUT_TOKENS?: string;
     /** Optional Cloudflare AI Gateway id. When set, free Workers-AI review calls route through the gateway
      *  for caching, rate-limiting, request logging, and fallback. Unset = direct binding calls (unchanged). */
@@ -26,6 +28,8 @@ declare global {
     GITTENSOR_UPSTREAM_REF?: string;
     GITTENSOR_REGISTRY_URL: string;
     GITHUB_PUBLIC_TOKEN?: string;
+    /** #703: owner-gated global to apply upstream sigmoid time-decay in score previews. Default off. */
+    SCORING_TIME_DECAY_ENABLED?: string;
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;

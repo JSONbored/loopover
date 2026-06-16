@@ -32,6 +32,35 @@ describe("registry normalization", () => {
       labelMultipliers: { feature: 1.5 },
       maintainerCut: 0.25,
     });
+    // No scoring block → no per-repo time-decay overrides (uses global defaults downstream).
+    expect(snapshot.repositories[0]!.timeDecay ?? null).toBeNull();
+  });
+
+  it("parses per-repo time-decay overrides from the registry scoring.time_decay block (#703)", () => {
+    const snapshot = normalizeRegistryPayload(
+      {
+        // JSONbored/gittensory's real master_repositories.json shape: a partial override (no steepness).
+        "JSONbored/gittensory": {
+          emission_share: 0.01,
+          scoring: { pr_lookback_days: 45, time_decay: { grace_period_hours: 24, sigmoid_midpoint_days: 10, min_multiplier: 0.05 } },
+        },
+        // A scoring block without time_decay → no overrides.
+        "other/repo": { emission_share: 0.02, scoring: { pr_lookback_days: 30 } },
+        // A time_decay object with no usable numeric fields → still no overrides (every field null).
+        "empty/decay": { emission_share: 0.01, scoring: { time_decay: { note: "tbd" } } },
+      },
+      { kind: "raw-github", url: "https://example.test/master_repositories.json" },
+      "2026-05-22T00:00:00.000Z",
+    );
+    const byName = Object.fromEntries(snapshot.repositories.map((r) => [r.repo, r]));
+    expect(byName["JSONbored/gittensory"]!.timeDecay).toEqual({
+      gracePeriodHours: 24,
+      sigmoidMidpointDays: 10,
+      sigmoidSteepness: null, // absent → falls back to the global default at resolve time
+      minMultiplier: 0.05,
+    });
+    expect(byName["other/repo"]!.timeDecay ?? null).toBeNull();
+    expect(byName["empty/decay"]!.timeDecay ?? null).toBeNull();
   });
 
   it("normalizes repository-list and array payload shapes defensively", () => {

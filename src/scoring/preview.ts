@@ -1,4 +1,4 @@
-import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, ScoringModelSnapshotRecord, ScorePreviewRecord } from "../types";
+import type { ContributorEvidenceRecord, JsonValue, RepositoryRecord, RepoTimeDecayOverrides, ScoringModelSnapshotRecord, ScorePreviewRecord } from "../types";
 import { nowIso } from "../utils/json";
 
 export type ScorePreviewInput = {
@@ -36,6 +36,12 @@ export type ScorePreviewInput = {
   pendingScenarioObserved?: boolean | undefined;
   observedScenarioNotes?: string[] | undefined;
   branchEligibility?: BranchEligibilityInput | undefined;
+  /** Hours since the PR merged, for upstream time-decay (#703). Absent / below the grace period = a fresh
+   *  PR (multiplier 1.0). Only consulted when `applyTimeDecay` is on. */
+  prAgeHours?: number | undefined;
+  /** Opt-in upstream time-decay (#703), default OFF and env-gated (SCORING_TIME_DECAY_ENABLED) at the call
+   *  site. Even when on, a fresh PR is unaffected, so it never changes a normal new-PR preview. */
+  applyTimeDecay?: boolean | undefined;
 };
 
 export type BranchEligibilityInput = {
@@ -151,6 +157,8 @@ export type ScorePreviewResult = {
     credibilityMultiplier: number;
     reviewPenaltyMultiplier: number;
     openPrMultiplier: number;
+    /** Upstream sigmoid time-decay multiplier (#703). 1 = no decay (fresh PR, or feature off). */
+    timeDecayMultiplier: number;
     estimatedMergedScore: number;
     pendingSaturationScore: number;
   };
@@ -317,7 +325,14 @@ function computeScoreCore(
       Math.floor(nonNegative(input.existingContributorTokenScore) / constant(constants, "OPEN_PR_THRESHOLD_TOKEN_SCORE", 300)),
   );
   const openPrMultiplier = openPrCount <= openPrThreshold ? 1 : 0;
-  const estimatedMergedScore = roundScore(baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier);
+  // Upstream time-decay (#703): mirrors upstream's `scored.time_decay_multiplier` applied to a PR's score.
+  // Opt-in + env-gated (default off). A fresh PR (prAgeHours below the grace period) yields 1.0, so a normal
+  // new-PR preview is unchanged even when enabled — only an aged-PR projection decays.
+  // Per-repo curve (#703): the repo's registry `scoring.time_decay` overrides overlay the snapshot defaults.
+  const timeDecayMultiplier = input.applyTimeDecay ? calculateTimeDecay(nonNegative(input.prAgeHours), constants, config?.timeDecay) : 1;
+  const estimatedMergedScore = roundScore(
+    baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier * timeDecayMultiplier,
+  );
   const pendingSaturationScore = roundScore(saturationBaseScore);
   return {
     laneMath: {
@@ -337,6 +352,7 @@ function computeScoreCore(
       credibilityMultiplier: roundScore(credibilityMultiplier),
       reviewPenaltyMultiplier: roundScore(reviewPenaltyMultiplier),
       openPrMultiplier,
+      timeDecayMultiplier: roundScore(timeDecayMultiplier),
       estimatedMergedScore,
       pendingSaturationScore,
     },
@@ -885,6 +901,43 @@ function inferCredibility(evidence?: ContributorEvidenceRecord | null): number {
 function constant(constants: Record<string, number>, key: string, fallback: number): number {
   const value = constants[key];
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Resolve a repo's time-decay curve: each parameter is the repo's per-repo override (from the registry's
+ * `scoring.time_decay`) when present, else the global default constant from the live scoring snapshot.
+ * Mirrors upstream's `resolve_time_decay` (RepoTimeDecayConfig overlaid on the module constants).
+ */
+export function resolveTimeDecay(
+  constants: Record<string, number>,
+  overrides?: RepoTimeDecayOverrides | null,
+): { gracePeriodHours: number; sigmoidMidpointDays: number; sigmoidSteepness: number; minMultiplier: number } {
+  return {
+    gracePeriodHours: pickOverride(overrides?.gracePeriodHours, constant(constants, "TIME_DECAY_GRACE_PERIOD_HOURS", 12)),
+    sigmoidMidpointDays: pickOverride(overrides?.sigmoidMidpointDays, constant(constants, "TIME_DECAY_SIGMOID_MIDPOINT", 10)),
+    sigmoidSteepness: pickOverride(overrides?.sigmoidSteepness, constant(constants, "TIME_DECAY_SIGMOID_STEEPNESS_SCALAR", 0.4)),
+    minMultiplier: pickOverride(overrides?.minMultiplier, constant(constants, "TIME_DECAY_MIN_MULTIPLIER", 0.05)),
+  };
+}
+
+function pickOverride(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * Upstream gittensor's sigmoid time-decay multiplier (#703), ported verbatim from the validator's
+ * `calculate_time_decay` (gittensor/validator/utils/datetime_utils.py): for the first grace-period hours the
+ * multiplier is exactly 1.0 (hard cutoff); after that it follows a logistic on days-since-merge centred at
+ * the sigmoid midpoint (50% at that point), floored at the minimum multiplier. The curve params are
+ * resolved PER-REPO (overrides ?? snapshot defaults), so each maintainer's registry hyperparameters apply.
+ * Pure + deterministic.
+ */
+export function calculateTimeDecay(prAgeHours: number, constants: Record<string, number>, overrides?: RepoTimeDecayOverrides | null): number {
+  const { gracePeriodHours, sigmoidMidpointDays, sigmoidSteepness, minMultiplier } = resolveTimeDecay(constants, overrides);
+  if (!Number.isFinite(prAgeHours) || prAgeHours < gracePeriodHours) return 1;
+  const days = prAgeHours / 24;
+  const sigmoid = 1 / (1 + Math.exp(sigmoidSteepness * (days - sigmoidMidpointDays)));
+  return Math.max(sigmoid, minMultiplier);
 }
 
 function saturationScore(sourceTokenScore: number, totalTokenScore: number, constants: Record<string, number>): number {

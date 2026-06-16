@@ -30,6 +30,12 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   OPEN_PR_THRESHOLD_TOKEN_SCORE: 300,
   MAX_OPEN_PR_THRESHOLD: 30,
   SRC_TOK_SATURATION_SCALE: 58,
+  // Upstream time-decay (#703): a merged PR's score decays on a sigmoid after a grace period. Modeled here
+  // so they no longer surface as unmodeled drift (#690); APPLICATION is opt-in + default-off (see preview).
+  TIME_DECAY_GRACE_PERIOD_HOURS: 12,
+  TIME_DECAY_SIGMOID_MIDPOINT: 10,
+  TIME_DECAY_SIGMOID_STEEPNESS_SCALAR: 0.4,
+  TIME_DECAY_MIN_MULTIPLIER: 0.05,
 };
 
 export const SCORING_CONSTANTS_URL =
@@ -123,6 +129,15 @@ export function findUnmodeledUpstreamConstants(source: string): string[] {
   return Object.keys(all)
     .filter((name) => !SCORING_CONSTANT_NAMES.has(name))
     .sort();
+}
+
+/**
+ * Owner-controlled global gate for applying upstream time-decay to score previews (#703). Default OFF: the
+ * roadmap deferral requires the owner to review a before/after ranking diff before enabling. Even when on,
+ * a fresh PR is unaffected (decay 1.0), so it only changes aged-PR projections.
+ */
+export function isTimeDecayEnabled(env: Env): boolean {
+  return /^(1|true|yes|on)$/i.test(env.SCORING_TIME_DECAY_ENABLED ?? "");
 }
 
 export function detectActiveModel(constants: Record<string, number>): ScoringModelSnapshotRecord["activeModel"] {

@@ -44,6 +44,8 @@ const TRACKED_SOURCES = [
 
 type TrackedSource = (typeof TRACKED_SOURCES)[number];
 
+type RulesetTimeDecay = { gracePeriodHours: number | null; sigmoidMidpointDays: number | null; sigmoidSteepness: number | null; minMultiplier: number | null };
+
 type RulesetPayload = {
   upstream: { repo: string; ref: string; commitSha?: string | null | undefined };
   registry: {
@@ -59,6 +61,7 @@ type RulesetPayload = {
       defaultLabelMultiplier: number | null;
       fixedBaseScore: number | null;
       eligibilityMode: string | null;
+      timeDecay: RulesetTimeDecay | null;
     }>;
   };
   scoring: {
@@ -563,6 +566,17 @@ function compactRegistryRepo(repo: RegistryRepoConfig): RulesetPayload["registry
     defaultLabelMultiplier: repo.defaultLabelMultiplier ?? null,
     fixedBaseScore: repo.fixedBaseScore ?? null,
     eligibilityMode: repo.eligibilityMode ?? null,
+    timeDecay: compactTimeDecay(repo.timeDecay),
+  };
+}
+
+function compactTimeDecay(timeDecay: RegistryRepoConfig["timeDecay"] | null | undefined): RulesetTimeDecay | null {
+  if (!timeDecay) return null;
+  return {
+    gracePeriodHours: timeDecay.gracePeriodHours ?? null,
+    sigmoidMidpointDays: timeDecay.sigmoidMidpointDays ?? null,
+    sigmoidSteepness: timeDecay.sigmoidSteepness ?? null,
+    minMultiplier: timeDecay.minMultiplier ?? null,
   };
 }
 
@@ -626,6 +640,7 @@ const REGISTRY_DRIFT_FIELD_ORDER: RegistryHyperparameterDriftField[] = [
   "trustedLabelPipeline",
   "defaultLabelMultiplier",
   "labelMultipliers",
+  "timeDecay",
 ];
 type RegistryComparableHyperparameterField = Exclude<RegistryHyperparameterDriftField, "repo">;
 const REGISTRY_DRIFT_COMPARABLE_FIELDS: RegistryComparableHyperparameterField[] = [
@@ -637,6 +652,7 @@ const REGISTRY_DRIFT_COMPARABLE_FIELDS: RegistryComparableHyperparameterField[] 
   "trustedLabelPipeline",
   "defaultLabelMultiplier",
   "labelMultipliers",
+  "timeDecay",
 ];
 
 const REGISTRY_DRIFT_FIELD_METADATA: Record<RegistryHyperparameterDriftField, { severity: UpstreamDriftSeverity; affectedSurfaces: RegistryDriftSurface[] }> = {
@@ -649,6 +665,7 @@ const REGISTRY_DRIFT_FIELD_METADATA: Record<RegistryHyperparameterDriftField, { 
   trustedLabelPipeline: { severity: "medium", affectedSurfaces: ["label_policy", "scoreability_assumptions"] },
   defaultLabelMultiplier: { severity: "medium", affectedSurfaces: ["label_policy", "scoreability_assumptions"] },
   labelMultipliers: { severity: "medium", affectedSurfaces: ["label_policy", "scoreability_assumptions"] },
+  timeDecay: { severity: "high", affectedSurfaces: ["scoreability_assumptions"] },
 };
 
 function buildRegistryHyperparameterDrift(previous: RulesetRegistryRepo[], current: RulesetRegistryRepo[]): RegistryHyperparameterDriftPayload {
@@ -798,6 +815,18 @@ function emptyRegistryHyperparameterDriftPayload(): RegistryHyperparameterDriftP
   };
 }
 
+function compactTimeDecayPayload(value: JsonValue | undefined): RulesetTimeDecay | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const timeDecay = value as Record<string, JsonValue>;
+  const compacted = {
+    gracePeriodHours: numberPayload(timeDecay.gracePeriodHours),
+    sigmoidMidpointDays: numberPayload(timeDecay.sigmoidMidpointDays),
+    sigmoidSteepness: numberPayload(timeDecay.sigmoidSteepness),
+    minMultiplier: numberPayload(timeDecay.minMultiplier),
+  };
+  return Object.values(compacted).some((item) => item !== null) ? compacted : null;
+}
+
 function normalizeRulesetRegistryRepos(value: JsonValue[]): RulesetRegistryRepo[] {
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
@@ -814,6 +843,7 @@ function normalizeRulesetRegistryRepos(value: JsonValue[]): RulesetRegistryRepo[
             defaultLabelMultiplier: numberPayload(repo.defaultLabelMultiplier),
             fixedBaseScore: numberPayload(repo.fixedBaseScore),
             eligibilityMode: stringPayload(repo.eligibilityMode),
+            timeDecay: compactTimeDecayPayload(repo.timeDecay),
           },
         ]
       : [];
@@ -838,11 +868,14 @@ function registryHyperparameterValue(repo: RulesetRegistryRepo, field: RegistryC
       return repo.fixedBaseScore;
     case "eligibilityMode":
       return repo.eligibilityMode;
+    case "timeDecay":
+      return repo.timeDecay ?? null;
   }
 }
 
 function registryHyperparameterChangeSummary(field: RegistryHyperparameterDriftField, previous: JsonValue, current: JsonValue): string {
   if (field === "labelMultipliers") return "labelMultipliers changed";
+  if (field === "timeDecay") return "timeDecay changed";
   return `${field} ${formatRegistryHyperparameterValue(previous)} -> ${formatRegistryHyperparameterValue(current)}`;
 }
 
@@ -857,6 +890,7 @@ function registryHyperparameterFieldLabel(field: RegistryHyperparameterDriftFiel
     defaultLabelMultiplier: "default label multiplier",
     fixedBaseScore: "fixed base score",
     eligibilityMode: "eligibility mode",
+    timeDecay: "time-decay curve",
   }[field];
 }
 

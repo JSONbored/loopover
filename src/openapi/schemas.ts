@@ -563,6 +563,9 @@ export const RepositorySettingsSchema = z
     duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMinScore: z.number().nullable().optional(),
+    slopGateMode: z.enum(["off", "advisory", "block"]),
+    slopGateMinScore: z.number().nullable().optional(),
+    slopAiAdvisory: z.boolean(),
     autoLabelEnabled: z.boolean(),
     gittensorLabel: z.string(),
     createMissingLabel: z.boolean(),
@@ -597,6 +600,8 @@ export const RepoSettingsPreviewSchema = z
       duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
       qualityGateMode: z.enum(["off", "advisory", "block"]),
       qualityGateMinScore: z.number().nullable().optional(),
+      slopGateMode: z.enum(["off", "advisory", "block"]),
+      slopGateMinScore: z.number().nullable().optional(),
       autoLabelEnabled: z.boolean(),
       gittensorLabel: z.string(),
       createMissingLabel: z.boolean(),
@@ -1012,6 +1017,7 @@ const RegistryHyperparameterDriftFieldSchema = z.enum([
   "defaultLabelMultiplier",
   "fixedBaseScore",
   "eligibilityMode",
+  "timeDecay",
 ]);
 
 const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);
@@ -1203,6 +1209,7 @@ const ScoreEstimateSchema = z.object({
   credibilityMultiplier: z.number(),
   reviewPenaltyMultiplier: z.number(),
   openPrMultiplier: z.number(),
+  timeDecayMultiplier: z.number(),
   estimatedMergedScore: z.number(),
   pendingSaturationScore: z.number(),
 });

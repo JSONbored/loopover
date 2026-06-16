@@ -27,6 +27,7 @@ import {
   issues,
   githubRateLimitObservations,
   notificationDeliveries,
+  issueWatchSubscriptions,
   notificationSubscriptions,
   officialMinerDetections,
   pullRequestFiles,
@@ -100,6 +101,7 @@ import type {
   NotificationChannel,
   NotificationDeliveryRecord,
   NotificationDeliveryStatus,
+  IssueWatchSubscription,
   NotificationSubscriptionRecord,
   ProductUsageActivationFunnel,
   ProductUsageDailyRollupRecord,
@@ -398,6 +400,9 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       duplicatePrGateMode: "block",
       qualityGateMode: "advisory",
       qualityGateMinScore: null,
+      slopGateMode: "off",
+      slopGateMinScore: null,
+      slopAiAdvisory: false,
       aiReviewMode: "off",
       aiReviewByok: false,
       aiReviewProvider: null,
@@ -426,6 +431,9 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
     qualityGateMode: parseGateRuleMode(row.qualityGateMode),
     qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
+    slopGateMode: parseGateRuleMode(row.slopGateMode),
+    slopGateMinScore: normalizeQualityGateMinScore(row.slopGateMinScore),
+    slopAiAdvisory: row.slopAiAdvisory,
     aiReviewMode: parseGateRuleMode(row.aiReviewMode),
     aiReviewByok: row.aiReviewByok,
     aiReviewProvider: normalizeAiReviewProvider(row.aiReviewProvider),
@@ -458,6 +466,9 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
     qualityGateMode: settings.qualityGateMode ?? "advisory",
     qualityGateMinScore: normalizeQualityGateMinScore(settings.qualityGateMinScore),
+    slopGateMode: settings.slopGateMode ?? "off",
+    slopGateMinScore: normalizeQualityGateMinScore(settings.slopGateMinScore),
+    slopAiAdvisory: settings.slopAiAdvisory ?? false,
     aiReviewMode: settings.aiReviewMode ?? "off",
     aiReviewByok: settings.aiReviewByok ?? false,
     aiReviewProvider: normalizeAiReviewProvider(settings.aiReviewProvider),
@@ -488,6 +499,9 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       duplicatePrGateMode: resolved.duplicatePrGateMode,
       qualityGateMode: resolved.qualityGateMode,
       qualityGateMinScore: resolved.qualityGateMinScore,
+      slopGateMode: resolved.slopGateMode,
+      slopGateMinScore: resolved.slopGateMinScore,
+      slopAiAdvisory: resolved.slopAiAdvisory,
       aiReviewMode: resolved.aiReviewMode,
       aiReviewByok: resolved.aiReviewByok,
       aiReviewProvider: resolved.aiReviewProvider,
@@ -512,10 +526,16 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         checkRunMode: resolved.checkRunMode,
         checkRunDetailLevel: resolved.checkRunDetailLevel,
         gateCheckMode: resolved.gateCheckMode,
+        gatePack: resolved.gatePack,
         linkedIssueGateMode: resolved.linkedIssueGateMode,
         duplicatePrGateMode: resolved.duplicatePrGateMode,
         qualityGateMode: resolved.qualityGateMode,
         qualityGateMinScore: resolved.qualityGateMinScore,
+        // slop_* were previously absent from the UPDATE branch (only INSERT), so slop settings did not
+        // persist on update of an existing row. Restored here alongside the new slopAiAdvisory field.
+        slopGateMode: resolved.slopGateMode,
+        slopGateMinScore: resolved.slopGateMinScore,
+        slopAiAdvisory: resolved.slopAiAdvisory,
         aiReviewMode: resolved.aiReviewMode,
         aiReviewByok: resolved.aiReviewByok,
         aiReviewProvider: resolved.aiReviewProvider,
@@ -1285,6 +1305,54 @@ export async function listNotificationSubscriptionsForLogin(env: Env, login: str
   return rows.map(toNotificationSubscriptionRecord);
 }
 
+// ─── Issue-watch subscriptions (#699 path B) ─────────────────────────────────────────────────────────
+
+function toIssueWatchSubscription(row: typeof issueWatchSubscriptions.$inferSelect): IssueWatchSubscription {
+  return { login: row.login, repoFullName: row.repoFullName, labels: parseJson<string[]>(row.labelsJson, []), createdAt: row.createdAt, updatedAt: row.updatedAt };
+}
+
+/** Subscribe a miner to a repo's new grabbable issues; idempotent on (login, repo) — re-subscribing just
+ *  updates the label filter. `labels` ([]=any) are lowercased for case-insensitive matching at delivery. */
+export async function upsertIssueWatchSubscription(env: Env, input: { login: string; repoFullName: string; labels?: string[] | undefined }): Promise<IssueWatchSubscription> {
+  const db = getDb(env.DB);
+  const login = input.login.toLowerCase();
+  const labels = [...new Set((input.labels ?? []).map((label) => label.toLowerCase().trim()).filter(Boolean))];
+  await db
+    .insert(issueWatchSubscriptions)
+    .values({ id: crypto.randomUUID(), login, repoFullName: input.repoFullName, labelsJson: jsonString(labels), updatedAt: nowIso() })
+    .onConflictDoUpdate({ target: [issueWatchSubscriptions.login, issueWatchSubscriptions.repoFullName], set: { labelsJson: jsonString(labels), updatedAt: nowIso() } });
+  const [row] = await db
+    .select()
+    .from(issueWatchSubscriptions)
+    .where(and(eq(issueWatchSubscriptions.login, login), eq(issueWatchSubscriptions.repoFullName, input.repoFullName)));
+  return row ? toIssueWatchSubscription(row) : { login, repoFullName: input.repoFullName, labels };
+}
+
+export async function listIssueWatchSubscriptionsForLogin(env: Env, login: string): Promise<IssueWatchSubscription[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.login, login.toLowerCase())).limit(200);
+  return rows.map(toIssueWatchSubscription);
+}
+
+/** Returns whether a watch existed and was removed (so the caller can report it accurately). */
+export async function deleteIssueWatchSubscription(env: Env, login: string, repoFullName: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const existing = await db
+    .select({ id: issueWatchSubscriptions.id })
+    .from(issueWatchSubscriptions)
+    .where(and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  if (existing.length === 0) return false;
+  await db.delete(issueWatchSubscriptions).where(and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  return true;
+}
+
+/** All miners watching a repo — the candidate recipients when a new grabbable issue opens there. */
+export async function listIssueWatchersForRepo(env: Env, repoFullName: string): Promise<IssueWatchSubscription[]> {
+  const db = getDb(env.DB);
+  const rows = await db.select().from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.repoFullName, repoFullName)).limit(5000);
+  return rows.map(toIssueWatchSubscription);
+}
+
 // Idempotency guard: UNIQUE(dedup_key, channel) means a duplicate webhook / queue retry inserts nothing
 // and returns the existing row. Returns whether THIS call created the row (so only the first enqueues delivery).
 export async function insertNotificationDeliveryIfAbsent(
@@ -1393,19 +1461,33 @@ export async function listNotificationDeliveriesForRecipient(
   return rows.map(toNotificationDeliveryRecord);
 }
 
+export const MAX_NOTIFICATION_MARK_READ_IDS = 100;
+export const MAX_NOTIFICATION_DELIVERY_ID_LENGTH = 128;
+
 // Marks a recipient's delivered notifications read (the badge-clear action). Scoped to recipientLogin so a
-// caller can never clear another user's notifications. Returns the number of rows transitioned.
+// caller can never clear another user's notifications. Passing an empty ids array is a no-op.
+// Returns the number of rows transitioned.
 export async function markNotificationDeliveriesRead(
   env: Env,
   recipientLogin: string,
   ids?: string[],
 ): Promise<number> {
+  if (ids) {
+    if (ids.length === 0) return 0;
+    if (ids.length > MAX_NOTIFICATION_MARK_READ_IDS) {
+      throw new RangeError(`ids must contain at most ${MAX_NOTIFICATION_MARK_READ_IDS} entries`);
+    }
+    if (ids.some((id) => id.length > MAX_NOTIFICATION_DELIVERY_ID_LENGTH)) {
+      throw new RangeError(`ids entries must be at most ${MAX_NOTIFICATION_DELIVERY_ID_LENGTH} characters`);
+    }
+  }
+
   const db = getDb(env.DB);
   const conditions: SQL[] = [
     eq(notificationDeliveries.recipientLogin, recipientLogin.toLowerCase()),
     eq(notificationDeliveries.status, "delivered"),
   ];
-  if (ids && ids.length > 0) conditions.push(inArray(notificationDeliveries.id, ids));
+  if (ids) conditions.push(inArray(notificationDeliveries.id, ids));
   const updated = await db
     .update(notificationDeliveries)
     .set({ status: "read", readAt: nowIso() })
@@ -2134,6 +2216,28 @@ export async function sumAiEstimatedNeuronsSince(env: Env, sinceIso: string): Pr
     .from(aiUsageEvents)
     .where(and(gte(aiUsageEvents.createdAt, sinceIso), eq(aiUsageEvents.status, "ok")));
   /* v8 ignore next -- SQL aggregate sum always returns one row; fallback protects D1 driver anomalies. */
+  return Number(row?.total ?? 0);
+}
+
+/**
+ * Count a repo's maintainer-billed (BYOK) AI calls since `sinceIso`, across ALL AI features (review +
+ * slop + any future BYOK path). One shared per-repo/day budget governs every BYOK feature, so a repo
+ * cannot multiply its frontier-model spend by enabling more capabilities.
+ */
+export async function countByokAiEventsForRepoSince(env: Env, repoFullName: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(aiUsageEvents)
+    .where(
+      and(
+        gte(aiUsageEvents.createdAt, sinceIso),
+        eq(aiUsageEvents.status, "ok"),
+        sql`${aiUsageEvents.model} like 'byok:%'`,
+        sql`json_extract(${aiUsageEvents.metadataJson}, '$.repoFullName') = ${repoFullName}`,
+      ),
+    );
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
   return Number(row?.total ?? 0);
 }
 
@@ -3488,7 +3592,27 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     closedAt: payload.closed_at,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
+    slopRisk: row.slopRisk,
+    slopBand: row.slopBand,
   };
+}
+
+/**
+ * Persist the latest deterministic slop assessment onto an existing cached PR row. Kept separate from the
+ * GitHub-sync upsert (whose SET clause never touches these columns) so a later sync cannot clobber the
+ * score. A no-op when the PR row does not exist yet — the sync upsert creates it first.
+ */
+export async function updatePullRequestSlopAssessment(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  assessment: { slopRisk: number; slopBand: string },
+): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ slopRisk: assessment.slopRisk, slopBand: assessment.slopBand, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pullNumber)));
 }
 
 function toIssueRecord(repoFullName: string, issue: GitHubIssuePayload): IssueRecord {

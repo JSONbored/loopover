@@ -124,6 +124,44 @@ GET /v1/installations/:id/repair`}
         <code>qualityGateMinScore</code> threshold is configured.
       </p>
 
+      <h2>
+        Configure as code (<code>.gittensory.yml</code>)
+      </h2>
+      <p>
+        Every setting can be committed to <code>.gittensory.yml</code> at the repo root instead of,
+        or layered over, the dashboard. Precedence is <code>.gittensory.yml</code> &gt; repository
+        settings &gt; safe defaults; an unset field falls back to the next layer. It only chooses{" "}
+        <em>what</em> Gittensory does — only confirmed Gittensor contributors are ever hard-blocked,
+        regardless of config.
+      </p>
+      <CodeBlock
+        lang="yaml"
+        code={`# Repository settings as code — any dashboard toggle:
+settings:
+  gateCheckMode: enabled        # the Gate on/off
+  checkRunMode: enabled         # the advisory Context check on/off
+  commentMode: detected_contributors_only
+  publicSurface: comment_only
+
+# Friendly gate alias (wins over settings: for gate fields):
+gate:
+  enabled: true                 # Gate on/off
+  linkedIssue: advisory         # block | advisory | off
+  duplicates: block
+  readiness: { mode: advisory, minScore: 60 }
+
+# Public review-panel content:
+review:
+  footer: { text: "Reviewed by our bot." }   # custom lead — the Gittensor register link is always appended
+  note: "Run npm test before requesting review."
+  fields: { relatedWork: false }              # show/hide individual panel rows`}
+      />
+      <p>
+        Maintainer-supplied footer and note text is dropped if it contains forbidden public language
+        (reward, score, wallet, hotkey, payout, etc.); the Gittensor attribution and register link
+        always remain on the footer.
+      </p>
+
       <h2>Dogfood mode</h2>
       <p>
         For repos like <code>JSONbored/gittensory</code> and <code>awesome-claude</code>, enable PR

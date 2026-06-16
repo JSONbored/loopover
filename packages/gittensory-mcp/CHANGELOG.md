@@ -1,5 +1,41 @@
 # Changelog
 
+## mcp-v0.6.0 - 2026-06-14
+
+### Features
+- Add missing test evidence slop signal (#616)
+- Gittensory_validate_linked_issue linked-issue multiplier validator (#622)
+- Gittensory_check_before_start pre-start duplicate/solvability check (#621)
+- Authoritative .gittensory.yml gate config (config-as-code) (#647)
+- Dual-AI maintainer review + BYOK (Phase C) (#652)
+- Config-as-code provider/model + maintainer self-serve BYOK routes (#664)
+- Event→subscription→delivery service + MCP badge feed (closes #536, advances #535) (#707)
+- Policy-pack-pluggable gate — gittensor + oss-anti-slop packs (#692) (#710)
+- Agent-native pre-submission self-check as a general product (#693) (#712)
+- Surface the earn-on-Gittensor path for oss-anti-slop adopters (#694) (#713)
+- Miner-facing post-merge reward & outcome attribution (#702) (#714)
+- Wire + modernize the deterministic slop score into the gate, context & MCP (#530/#531/#532) (#716)
+- AI-assisted advisory slop layer (advisory-only, never blocks) (#724)
+- Issue-side slop triage (#533) (#729)
+- Model upstream time-decay, applied behind a default-off flag (#703) (#731)
+- Gittensory_lint_pr_text commit/PR-body rubric linter (#634)
+- Per-repo time-decay hyperparameters + go live (#703) (#733)
+- Active issue-watch monitor — gittensory_watch_issues (#699 path B) (#735)
+- Slop-risk + issue-slop self-check tools in the npm package
+
+### Fixes
+- Bound local branch scenario inputs (#614)
+- Harden manifest public-safe filter (#659)
+- Enforce repo scope for gate prediction (#717)
+- Bound mark-read ids (#718)
+- Visibility-aware access gate for subscriptions + fan-out (#742)
+
+### Refactors
+- Shared public-safe redaction module (#542) (#743)
+
+### Chores
+- Add outputSchema to every tool that lacks it (#637)
+
 ## mcp-v0.5.0 - 2026-06-12
 
 ### Features

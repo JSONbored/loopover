@@ -121,7 +121,7 @@ import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { generateSignalSnapshots } from "../queue/processors";
 import { getLatestRegistrySnapshot, listLatestRegistrySnapshots, refreshRegistry } from "../registry/sync";
-import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
+import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../scoring/preview";
 import {
   explainBlockersWithAgent,
@@ -181,6 +181,7 @@ import {
   buildLaneAdvice,
   buildLinkedIssueValidation,
   buildLocalDiffPreflightResult,
+  buildPrTextLint,
   buildMaintainerCutReadiness,
   buildMaintainerLaneReport,
   buildPullRequestMaintainerPacket,
@@ -197,8 +198,11 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { buildSlopAssessment, buildIssueSlopAssessment, SLOP_RUBRIC_MARKDOWN, ISSUE_SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
+import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
+import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -352,6 +356,28 @@ const checkBeforeStartSchema = z.object({
   plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
 });
 
+const lintPrTextSchema = z.object({
+  commitMessages: z.array(z.string().max(PREFLIGHT_LIMITS.bodyChars)).max(50).optional(),
+  prBody: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
+  linkedIssue: z.number().int().positive().optional(),
+});
+
+// Pure local-metadata slop self-checks (no repo data, no secrets) — mirror the gittensory_check_slop_risk /
+// gittensory_check_issue_slop MCP tools so the npm package can offer the same agent-native self-check.
+const slopRiskSchema = z.object({
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000)
+    .optional(),
+  description: z.string().max(20000).optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+});
+const issueSlopSchema = z.object({
+  title: z.string().max(500).optional(),
+  body: z.string().max(40000).optional(),
+});
+
 const skippedPrAuditQuerySchema = z
   .object({
     limit: z.coerce.number().int().optional(),
@@ -462,6 +488,7 @@ const scorePreviewSchema = z.object({
   testTokenScore: z.number().min(0).optional(),
   nonCodeTokenScore: z.number().min(0).optional(),
   existingContributorTokenScore: z.number().min(0).optional(),
+  prAgeHours: z.number().min(0).optional(),
   openPrCount: z.number().int().min(0).optional(),
   credibility: z.number().min(0).max(1).optional(),
   changesRequestedCount: z.number().int().min(0).optional(),
@@ -513,6 +540,7 @@ const repositorySettingsSchema = z.object({
   checkRunMode: z.enum(["off", "enabled"]).default("off"),
   checkRunDetailLevel: z.enum(["minimal", "standard", "deep"]).default("standard"),
   gateCheckMode: z.enum(["off", "enabled"]).default("off"),
+  gatePack: z.enum(["gittensor", "oss-anti-slop"]).default("gittensor"),
   linkedIssueGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
   duplicatePrGateMode: z.enum(["off", "advisory", "block"]).default("block"),
   qualityGateMode: z.enum(["off", "advisory", "block"]).default("advisory"),
@@ -632,7 +660,7 @@ export function createApp() {
       c.header("Access-Control-Allow-Origin", allowedOrigin);
       c.header("Access-Control-Allow-Credentials", "true");
       c.header("Access-Control-Allow-Headers", "authorization, content-type, mcp-session-id, mcp-protocol-version");
-      c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
       c.header("Access-Control-Expose-Headers", "x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, retry-after");
       c.header("Access-Control-Max-Age", "600");
       c.header("Vary", "Origin", { append: true });
@@ -991,6 +1019,26 @@ export function createApp() {
     const openPullRequests = (
       await Promise.all(repositories.slice(0, 12).map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull })))))
     ).flat();
+    // Quality dashboard (#557): shape cached repo data into queue-health bands, duplicate trends, and
+    // top contributors by quality band — scoped to this maintainer's repos. Reads CACHED issue/PR data
+    // (no GitHub fetch), but does derive the collision/queue signals per load; the build is capped to
+    // QUALITY_DASHBOARD_REPO_CAP repos and `truncated` discloses when there are more. The `stale` flag
+    // reflects how fresh the underlying repo sync is.
+    const QUALITY_DASHBOARD_REPO_CAP = 12;
+    const qualityRepos = repositories.slice(0, QUALITY_DASHBOARD_REPO_CAP);
+    const [qualityRepoInputs, allSyncStates] = await Promise.all([
+      Promise.all(
+        qualityRepos.map(async (repo) => {
+          const [issues, pullRequests] = await Promise.all([listIssues(c.env, repo.fullName), listPullRequests(c.env, repo.fullName)]);
+          return { repo, issues, pullRequests };
+        }),
+      ),
+      listRepoSyncStates(c.env),
+    ]);
+    const qualityRepoNames = new Set(qualityRepos.map((repo) => repo.fullName.toLowerCase()));
+    const scopedSyncCompletions = allSyncStates.filter((state) => qualityRepoNames.has(state.repoFullName.toLowerCase())).map((state) => state.lastCompletedAt);
+    const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(nowIso()) });
+    const qualityDashboard = buildMaintainerQualityDashboard({ repos: qualityRepoInputs, generatedAt: nowIso(), stale: qualityStale, repoTotal: repositories.length });
     return c.json({
       generatedAt: nowIso(),
       installations,
@@ -1007,8 +1055,12 @@ export function createApp() {
         author: pull.authorLogin ?? "unknown",
         bucket: pull.state === "open" ? "review-now" : "watch",
         reason: pull.linkedIssues.length > 0 ? `linked issue #${pull.linkedIssues[0]}` : "cached open PR without linked issue",
+        // Latest deterministic slop assessment for this PR (null unless the repo opted into slop). Lets the
+        // maintainer panel render a per-PR slop band; never a private/scoreability signal.
+        slop: typeof pull.slopRisk === "number" && pull.slopBand ? { risk: pull.slopRisk, band: pull.slopBand } : null,
       })),
       settingsPreview: buildMaintainerSettingsPreview(),
+      qualityDashboard,
     });
   });
 
@@ -1398,8 +1450,10 @@ export function createApp() {
       getOrCreateScoringModelSnapshot(c.env),
       parsed.data.contributorLogin ? getContributorEvidence(c.env, parsed.data.contributorLogin) : Promise.resolve(null),
     ]);
-    const result = buildScorePreview({ input: parsed.data, repo, snapshot, contributorEvidence: evidence });
-    const record = makeScorePreviewRecord(parsed.data, snapshot, result);
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    const record = makeScorePreviewRecord(input, snapshot, result);
     await persistScorePreview(c.env, record);
     return c.json(record);
   });
@@ -1814,11 +1868,25 @@ export function createApp() {
     return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso() }));
   });
 
+  // #543 outcome-learning loop: is the slop score predictive, and are recommendations panning out? Read-only
+  // measurement over resolved PRs (slop band -> merge/close) + the recommendation-outcome ledger. Optional
+  // ?windowDays bounds the recommendation window.
+  app.get("/v1/repos/:owner/:repo/outcome-calibration", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    // A positive number opts into a bounded recommendation window; anything else (absent/0/NaN) → full
+    // history. The repository layer clamps + floors the value, so one comparison covers every input.
+    const windowDaysRaw = Number(c.req.query("windowDays"));
+    const windowDays = windowDaysRaw > 0 ? windowDaysRaw : undefined;
+    return c.json(await buildRepoOutcomeCalibration(c.env, fullName, windowDays));
+  });
+
   // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
   // mode. Merges onto current settings so unrelated fields are preserved.
   app.post("/v1/repos/:owner/:repo/activation", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const current = await getRepositorySettings(c.env, fullName);
     const updated = await upsertRepositorySettings(c.env, { ...current, ...recommendedAdvisoryActivationSettings() });
@@ -1869,7 +1937,7 @@ export function createApp() {
 
   app.post("/v1/repos/:owner/:repo/ai-key", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoKeyWriteAccess(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const parsed = repositoryAiKeySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_ai_key", issues: parsed.error.issues }, 400);
@@ -1886,7 +1954,7 @@ export function createApp() {
 
   app.delete("/v1/repos/:owner/:repo/ai-key", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoKeyWriteAccess(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const actor = gate.identity?.kind === "session" ? gate.identity.actor : null;
     await deleteRepositoryAiKey(c.env, fullName, actor);
@@ -2055,6 +2123,28 @@ export function createApp() {
     });
   });
 
+  app.post("/v1/lint/pr-text", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = lintPrTextSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_lint_pr_text_request", issues: parsed.error.issues }, 400);
+    return c.json(buildPrTextLint(parsed.data));
+  });
+
+  // Agent-native slop self-checks (#530/#533): pure local-metadata, mirroring the MCP tools of the same name.
+  app.post("/v1/lint/slop-risk", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = slopRiskSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
+    return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  app.post("/v1/lint/issue-slop", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = issueSlopSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_issue_slop_request", issues: parsed.error.issues }, 400);
+    return c.json({ ...buildIssueSlopAssessment(parsed.data), rubric: ISSUE_SLOP_RUBRIC_MARKDOWN });
+  });
+
   app.post("/v1/preflight/pr", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = preflightSchema.safeParse(body);
@@ -2142,12 +2232,7 @@ export function createApp() {
       pullRequests,
       bounties,
       issueQuality: issueQuality?.report,
-      // Parity with the maintainer gate: only CONFIRMED Gittensor contributors are ever hard-blocked, so
-      // the prediction must be told the caller's own confirmed status — otherwise it over-reports `failure`
-      // for non-confirmed contributors whose synthetic PR trips a blocker. `gittensorSnapshot` is non-null
-      // only when the official Gittensor API confirms this login (fetchGittensorContributorSnapshot), which
-      // matches the pipeline's `official?.status === "confirmed"`. Ignored under the oss-anti-slop pack.
-      confirmedContributor: context.gittensorSnapshot !== null,
+      confirmedContributor: Boolean(context.gittensorSnapshot),
     });
     const response = { ...analysis, predictedGate, dataQuality: await loadRepoDataQuality(c.env, parsed.data.repoFullName) };
     await persistSignal(c.env, "local-branch-analysis", `${parsed.data.login}:${parsed.data.repoFullName}:${parsed.data.branchName ?? parsed.data.headRef ?? "local"}`, parsed.data.repoFullName, response as unknown as Record<string, JsonValue>, analysis.generatedAt);
@@ -2608,6 +2693,7 @@ export function createApp() {
         checkRunMode: parsed.data.checkRunMode,
         checkRunDetailLevel: parsed.data.checkRunDetailLevel,
         gateCheckMode: parsed.data.gateCheckMode,
+        gatePack: parsed.data.gatePack,
         linkedIssueGateMode: parsed.data.linkedIssueGateMode,
         duplicatePrGateMode: parsed.data.duplicatePrGateMode,
         qualityGateMode: parsed.data.qualityGateMode,
@@ -3918,6 +4004,9 @@ function contributorEvidenceFromProfile(profile: {
 
 const EXTENSION_PULL_CONTEXT_PATH = "/v1/extension/pull-context";
 const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";
+const LINT_PR_TEXT_PATH = "/v1/lint/pr-text";
+const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
+const LINT_ISSUE_SLOP_PATH = "/v1/lint/issue-slop";
 
 type ProtectedRouteContext = {
   env: Env;
@@ -3939,7 +4028,8 @@ function isExtensionScopedSession(identity: AuthIdentity): boolean {
 //     `GittensoryMcp.canAccessRepo` (MCP). Maintainer-of-repo-A grants ZERO access to repo B.
 // Two maintainer tiers: (a) affiliation (owns/installed the repo, or authored a PR there with a
 // maintainer association) gates maintainer-DATA reads; (b) verified write/admin/maintain permission,
-// resolved live via the installation, additionally gates the SECRET BYOK key writes (`requireRepoKeyWriteAccess`).
+// resolved live via the installation, additionally gates repo-visible settings writes and SECRET BYOK key
+// writes (`requireRepoWriteAccess`).
 // Operators (ADMIN_GITHUB_LOGINS) and server-to-server tokens bypass per-repo scope by design.
 // `canSessionAccessPath` is the coarse path allowlist that runs in the global middleware BEFORE a route
 // handler; it only decides whether a session may REACH a path — the per-route guards above enforce the
@@ -3950,12 +4040,14 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isIssueQualityPath(path)) return true;
   if (isRepoSettingsPath(path)) return true;
   if (isRepoActivationPath(path)) return true;
+  if (isRepoOutcomeCalibrationPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
+  if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   return false;
 }
@@ -3966,6 +4058,10 @@ function isRepoSettingsPath(path: string): boolean {
 
 function isRepoActivationPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/activation(?:-preview)?$/.test(path);
+}
+
+function isRepoOutcomeCalibrationPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/outcome-calibration$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {
@@ -4083,17 +4179,17 @@ async function requireRepoMaintainer(c: ProtectedRouteContext, fullName: string)
   return { identity };
 }
 
-// GitHub permissions that imply real write access to a repo (and thus authority to manage its secret
-// BYOK key). "maintain"/"write"/"admin" can push; "triage"/"read"/"none" cannot.
-const REPO_KEY_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+// GitHub permissions that imply real write access to a repo (and thus authority to change repo-visible
+// behavior or manage its secret BYOK key). "maintain"/"write"/"admin" can push; "triage"/"read"/"none" cannot.
+const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
 /**
- * Stricter gate for the secret-bearing BYOK key WRITES (POST/DELETE /ai-key). On top of the maintainer
- * gate, a session caller must have real GitHub write access to the repo — resolved via the installation,
- * not merely inferred from a PR author_association (which includes org MEMBER / read-only COLLABORATOR).
- * Operators and server-to-server tokens are exempt. Fails closed (403) if write access can't be verified.
+ * Stricter gate for repo-visible settings/secret WRITES. On top of the maintainer gate, a session caller
+ * must have real GitHub write access to the repo — resolved via the installation, not merely inferred
+ * from a PR author_association (which includes org MEMBER / read-only COLLABORATOR). Operators and
+ * server-to-server tokens are exempt. Fails closed (403) if write access can't be verified.
  */
-async function requireRepoKeyWriteAccess(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
+async function requireRepoWriteAccess(c: ProtectedRouteContext, fullName: string): Promise<Response | { identity: AuthIdentity | null }> {
   const gate = await requireRepoMaintainer(c, fullName);
   if (gate instanceof Response) return gate;
   if (gate.identity?.kind !== "session") return gate; // server-to-server token: no per-repo push check
@@ -4110,7 +4206,7 @@ async function requireRepoKeyWriteAccess(c: ProtectedRouteContext, fullName: str
       permission = null;
     }
   }
-  if (!permission || !REPO_KEY_WRITE_PERMISSIONS.has(permission)) {
+  if (!permission || !REPO_WRITE_PERMISSIONS.has(permission)) {
     return c.json({ error: "insufficient_repo_permission" }, 403);
   }
   return gate;

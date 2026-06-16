@@ -1,4 +1,3 @@
-import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
@@ -12,7 +11,7 @@ const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
 
 async function seed(env: Env) {
   const db = getDb(env.DB);
-  // webhook_events window = 30d; two old + one recent.
+  // webhook_events are durable replay/idempotency records and must not be pruned.
   await db.insert(webhookEvents).values([
     { deliveryId: "wh-old-1", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(40) },
     { deliveryId: "wh-old-2", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(35) },
@@ -32,9 +31,8 @@ describe("pruneExpiredRecords", () => {
     const env = createTestEnv();
     await seed(env);
     const results = await pruneExpiredRecords(env, { dryRun: true, nowMs: NOW });
-    const wh = results.find((r) => r.table === "webhook_events");
     const ai = results.find((r) => r.table === "ai_usage_events");
-    expect(wh?.deleted).toBe(2);
+    expect(results.find((r) => r.table === "webhook_events")).toBeUndefined();
     expect(ai?.deleted).toBe(1);
     expect(await countWebhook(env)).toBe(3); // nothing actually deleted
   });
@@ -43,23 +41,24 @@ describe("pruneExpiredRecords", () => {
     const env = createTestEnv();
     await seed(env);
     const results = await pruneExpiredRecords(env, { nowMs: NOW });
-    expect(results.find((r) => r.table === "webhook_events")?.deleted).toBe(2);
+    expect(results.find((r) => r.table === "webhook_events")).toBeUndefined();
     expect(results.find((r) => r.table === "ai_usage_events")?.deleted).toBe(1);
-    expect(await countWebhook(env)).toBe(1);
-    const remaining = await env.DB.prepare("SELECT delivery_id FROM webhook_events").first<{ delivery_id: string }>();
-    expect(remaining?.delivery_id).toBe("wh-recent");
+    expect(await countWebhook(env)).toBe(3);
+    const aiCount = await env.DB.prepare("SELECT count(*) AS n FROM ai_usage_events").first<{ n: number }>();
+    expect(aiCount?.n).toBe(1);
   });
 
   it("deletes across multiple batches and stops at the per-table cap", async () => {
     const env = createTestEnv();
     const db = getDb(env.DB);
-    await db.insert(webhookEvents).values(
-      Array.from({ length: 5 }, (_, i) => ({ deliveryId: `wh-${i}`, eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(40) })),
+    await db.insert(aiUsageEvents).values(
+      Array.from({ length: 5 }, (_, i) => ({ id: `ai-${i}`, feature: "f", model: "m", status: "ok", estimatedNeurons: 1, createdAt: daysAgo(100) })),
     );
     // batchSize 2 forces multiple iterations; maxPerTable 4 forces the cap break before all 5 are gone.
-    const results = await pruneExpiredRecords(env, { nowMs: NOW, batchSize: 2, maxPerTable: 4, policy: [{ table: "webhook_events", column: "received_at", days: 30 }] });
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, batchSize: 2, maxPerTable: 4, policy: [{ table: "ai_usage_events", column: "created_at", days: 90 }] });
     expect(results[0]?.deleted).toBe(4); // 2 + 2, then cap reached
-    expect(await countWebhook(env)).toBe(1); // one old row left for the next run
+    const remaining = await env.DB.prepare("SELECT count(*) AS n FROM ai_usage_events").first<{ n: number }>();
+    expect(remaining?.n).toBe(1); // one old row left for the next run
   });
 
   it("rejects an unsafe table/column identifier (defensive guard)", async () => {
@@ -69,7 +68,7 @@ describe("pruneExpiredRecords", () => {
 
   it("the policy only targets append-only/log/snapshot tables (no current-state tables)", () => {
     const tables = RETENTION_POLICY.map((r) => r.table);
-    for (const protectedTable of ["repositories", "repository_settings", "pull_requests", "issues", "repository_ai_keys", "contributors"]) {
+    for (const protectedTable of ["webhook_events", "repositories", "repository_settings", "pull_requests", "issues", "repository_ai_keys", "contributors"]) {
       expect(tables).not.toContain(protectedTable);
     }
   });
@@ -90,7 +89,7 @@ describe("runRetentionPrune + processJob", () => {
     const env = createTestEnv();
     await seed(env);
     await processJob(env, { type: "prune-retention", requestedBy: "schedule" });
-    expect(await countWebhook(env)).toBe(1);
+    expect(await countWebhook(env)).toBe(3);
     const audit = await env.DB.prepare("SELECT outcome FROM audit_events WHERE event_type = ?").bind("retention.prune").first<{ outcome: string }>();
     expect(audit?.outcome).toBe("success");
   });
@@ -104,9 +103,8 @@ describe("retention preview route", () => {
     const res = await app.request("/v1/internal/retention/preview", { headers: { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}` } }, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { totalEligible: number; eligible: Array<{ table: string; deleted: number }> };
-    expect(body.totalEligible).toBeGreaterThanOrEqual(3);
-    // The 2 rows aged 35/40d are eligible regardless of when the suite runs (route uses real `now`).
-    expect(body.eligible.find((r) => r.table === "webhook_events")?.deleted).toBeGreaterThanOrEqual(2);
+    expect(body.totalEligible).toBeGreaterThanOrEqual(1);
+    expect(body.eligible.find((r) => r.table === "webhook_events")).toBeUndefined();
     expect(await countWebhook(env)).toBe(3); // preview is read-only
   });
 });

@@ -303,6 +303,12 @@ describe("v2 signal builders", () => {
     expect(modeReport.changedRepos[0]?.changes).toEqual(
       expect.arrayContaining(["eligibility_mode branch_required -> any_branch", "default_label_multiplier 1 -> 1.2"]),
     );
+
+    const beforeDecay = snapshot("old3", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, timeDecay: { gracePeriodHours: 12 } }]);
+    const afterDecay = snapshot("new3", [{ repo: "JSONbored/gittensory", emissionShare: 0.02, issueDiscoveryShare: 0, labelMultipliers: {}, timeDecay: { gracePeriodHours: 24 } }]);
+    const decayReport = buildRegistryChangeReport([afterDecay, beforeDecay]);
+    expect(decayReport.changedRepos).toHaveLength(1);
+    expect(decayReport.changedRepos[0]?.changes).toContain("time_decay changed");
   });
 
   it("builds repo-level maintainer packets with fallback actions", () => {
@@ -1617,6 +1623,8 @@ describe("v2 signal builders", () => {
         linkedIssueGateMode: "advisory",
         duplicatePrGateMode: "advisory",
         qualityGateMode: "advisory",
+        slopGateMode: "off",
+        slopAiAdvisory: false,
         qualityGateMinScore: null,
         autoLabelEnabled: true,
         gittensorLabel: "gittensor",
@@ -1646,6 +1654,7 @@ function snapshot(
     fixedBaseScore?: number | null;
     defaultLabelMultiplier?: number | null;
     eligibilityMode?: string | null;
+    timeDecay?: RegistrySnapshot["repositories"][number]["timeDecay"];
   }>,
 ): RegistrySnapshot {
   return {
@@ -1658,6 +1667,7 @@ function snapshot(
     warnings: [],
     repositories: repositories.map((repo) => ({
       ...repo,
+      timeDecay: repo.timeDecay ?? null,
       trustedLabelPipeline: false,
       maintainerCut: 0,
       raw: {},

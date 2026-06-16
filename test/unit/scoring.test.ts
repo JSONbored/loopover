@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
-import { detectActiveModel, findUnmodeledUpstreamConstants, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
-import { buildScorePreview, makeScorePreviewRecord } from "../../src/scoring/preview";
+import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
+import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -119,27 +119,29 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
   });
 
   it("flags upstream scoring constants gittensory does not model (staleness visibility)", () => {
-    // SRC_TOK_SATURATION_SCALE is modeled; the TIME_DECAY_* constants are NOT — so they surface as unmodeled.
+    // SRC_TOK_SATURATION_SCALE and the TIME_DECAY_* constants are now modeled (#703); a hypothetical new
+    // upstream dimension is NOT — so only that surfaces as unmodeled drift.
     const unmodeled = findUnmodeledUpstreamConstants(
-      "SRC_TOK_SATURATION_SCALE = 58.0\nTIME_DECAY_GRACE_PERIOD_HOURS = 12\nTIME_DECAY_SIGMOID_MIDPOINT = 10\n",
+      "SRC_TOK_SATURATION_SCALE = 58.0\nTIME_DECAY_GRACE_PERIOD_HOURS = 12\nNOVELTY_BONUS_SCALAR = 3\n",
     );
-    expect(unmodeled).toEqual(["TIME_DECAY_GRACE_PERIOD_HOURS", "TIME_DECAY_SIGMOID_MIDPOINT"]);
+    expect(unmodeled).toEqual(["NOVELTY_BONUS_SCALAR"]);
     expect(unmodeled).not.toContain("SRC_TOK_SATURATION_SCALE");
+    expect(unmodeled).not.toContain("TIME_DECAY_GRACE_PERIOD_HOURS"); // modeled as of #703
   });
 
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
     const env = createTestEnv();
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nTIME_DECAY_GRACE_PERIOD_HOURS = 12\n");
+      if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nNOVELTY_BONUS_SCALAR = 3\n");
       if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
       return new Response("not found", { status: 404 });
     });
 
     const refreshed = await refreshScoringModelSnapshot(env);
 
-    expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*TIME_DECAY_GRACE_PERIOD_HOURS/);
-    expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["TIME_DECAY_GRACE_PERIOD_HOURS"] });
+    expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*NOVELTY_BONUS_SCALAR/);
+    expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] });
   });
 
   it("uses saturation math as the active private preview model", () => {
@@ -720,5 +722,111 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const thrownFallback = await refreshScoringModelSnapshot(createTestEnv());
     expect(thrownFallback.sourceKind).toBe("fallback");
     expect(thrownFallback.activeModel).toBe("unknown");
+  });
+
+  describe("upstream time-decay (#703)", () => {
+    it("calculateTimeDecay matches the upstream sigmoid (grace, 50%-at-midpoint, floor, monotonic)", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // Within the 12h grace period → no decay.
+      expect(calculateTimeDecay(0, c)).toBe(1);
+      expect(calculateTimeDecay(11.9, c)).toBe(1);
+      // Non-finite age is treated as fresh (defensive).
+      expect(calculateTimeDecay(Number.NaN, c)).toBe(1);
+      // Decay begins right after the grace boundary.
+      expect(calculateTimeDecay(12, c)).toBeLessThan(1);
+      // 50% at the 10-day midpoint (240h).
+      expect(calculateTimeDecay(240, c)).toBeCloseTo(0.5, 5);
+      // Floored at the 5% minimum for very old PRs (100 days).
+      expect(calculateTimeDecay(2400, c)).toBeCloseTo(0.05, 5);
+      // Strictly monotonic decreasing past the grace period.
+      expect(calculateTimeDecay(120, c)).toBeGreaterThan(calculateTimeDecay(240, c));
+      expect(calculateTimeDecay(240, c)).toBeGreaterThan(calculateTimeDecay(480, c));
+    });
+
+    it("the constants are modeled (no longer flagged as upstream drift)", () => {
+      expect(DEFAULT_SCORING_CONSTANTS.TIME_DECAY_SIGMOID_MIDPOINT).toBe(10);
+      expect(findUnmodeledUpstreamConstants("TIME_DECAY_GRACE_PERIOD_HOURS = 12\nTIME_DECAY_MIN_MULTIPLIER = 0.05\n")).toEqual([]);
+    });
+
+    it("isTimeDecayEnabled is OFF by default and only on for an explicit truthy flag", () => {
+      expect(isTimeDecayEnabled({} as Env)).toBe(false);
+      expect(isTimeDecayEnabled({ SCORING_TIME_DECAY_ENABLED: "false" } as unknown as Env)).toBe(false);
+      expect(isTimeDecayEnabled({ SCORING_TIME_DECAY_ENABLED: "true" } as unknown as Env)).toBe(true);
+      expect(isTimeDecayEnabled({ SCORING_TIME_DECAY_ENABLED: "1" } as unknown as Env)).toBe(true);
+    });
+
+    it("does not change the preview unless applied AND the PR is past the grace period", () => {
+      const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 58, totalTokenScore: 600, sourceLines: 60, openPrCount: 0, credibility: 1 };
+      const base = buildScorePreview({ repo, snapshot, input }).scoreEstimate;
+      expect(base.timeDecayMultiplier).toBe(1);
+
+      // Flag on but a fresh PR (no/zero age) → still 1.0, score unchanged.
+      const fresh = buildScorePreview({ repo, snapshot, input: { ...input, applyTimeDecay: true, prAgeHours: 0 } }).scoreEstimate;
+      expect(fresh.timeDecayMultiplier).toBe(1);
+      expect(fresh.estimatedMergedScore).toBe(base.estimatedMergedScore);
+
+      // Age present but flag OFF → no decay applied.
+      const agedOff = buildScorePreview({ repo, snapshot, input: { ...input, prAgeHours: 240 } }).scoreEstimate;
+      expect(agedOff.timeDecayMultiplier).toBe(1);
+      expect(agedOff.estimatedMergedScore).toBe(base.estimatedMergedScore);
+    });
+
+    it("applies the decay multiplier to the estimate when on for an aged PR", () => {
+      const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 58, totalTokenScore: 600, sourceLines: 60, openPrCount: 0, credibility: 1 };
+      const base = buildScorePreview({ repo, snapshot, input }).scoreEstimate;
+      const aged = buildScorePreview({ repo, snapshot, input: { ...input, applyTimeDecay: true, prAgeHours: 240 } }).scoreEstimate;
+      expect(aged.timeDecayMultiplier).toBeCloseTo(0.5, 2);
+      // 10-day-old PR scores ~half a fresh one (the before/after the owner reviews before enabling).
+      expect(aged.estimatedMergedScore).toBeCloseTo(base.estimatedMergedScore * 0.5, 1);
+    });
+
+    it("before/after: the decay trajectory for owner review (default-off; this is what enabling would do)", () => {
+      const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 58, totalTokenScore: 600, sourceLines: 60, openPrCount: 0, credibility: 1 };
+      const before = buildScorePreview({ repo, snapshot, input }).scoreEstimate.estimatedMergedScore;
+      const trajectory = [0, 120, 240, 720].map((hours) => ({
+        ageDays: hours / 24,
+        after: buildScorePreview({ repo, snapshot, input: { ...input, applyTimeDecay: true, prAgeHours: hours } }).scoreEstimate.estimatedMergedScore,
+      }));
+      // Fresh = unchanged; 5d > 10d > 30d; 30d floored well below fresh. Monotonic non-increasing.
+      expect(trajectory[0]!.after).toBe(before);
+      expect(trajectory[1]!.after).toBeGreaterThan(trajectory[2]!.after);
+      expect(trajectory[2]!.after).toBeGreaterThan(trajectory[3]!.after);
+      expect(trajectory[3]!.after).toBeLessThan(before);
+    });
+
+    it("resolveTimeDecay overlays per-repo overrides on snapshot defaults, per-field (mirrors upstream)", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // No overrides → all snapshot defaults.
+      expect(resolveTimeDecay(c, null)).toEqual({ gracePeriodHours: 12, sigmoidMidpointDays: 10, sigmoidSteepness: 0.4, minMultiplier: 0.05 });
+      // Partial override (JSONbored/gittensory's real config: grace 24, midpoint 10, min 0.05, no steepness)
+      // → overridden fields apply, the absent steepness falls back to the default.
+      expect(resolveTimeDecay(c, { gracePeriodHours: 24, sigmoidMidpointDays: 10, minMultiplier: 0.05 })).toEqual({
+        gracePeriodHours: 24,
+        sigmoidMidpointDays: 10,
+        sigmoidSteepness: 0.4,
+        minMultiplier: 0.05,
+      });
+      // A non-finite/absent field falls back, not NaN.
+      expect(resolveTimeDecay(c, { sigmoidSteepness: Number.NaN }).sigmoidSteepness).toBe(0.4);
+    });
+
+    it("calculateTimeDecay honours a repo's per-repo curve (grace + midpoint overrides)", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // Default 12h grace would decay at 18h; this repo's 24h grace keeps an 18h-old PR fresh.
+      expect(calculateTimeDecay(18, c)).toBeLessThan(1);
+      expect(calculateTimeDecay(18, c, { gracePeriodHours: 24 })).toBe(1);
+      // A shorter midpoint decays faster: 50% point moves from 10d to 5d (120h).
+      expect(calculateTimeDecay(120, c, { sigmoidMidpointDays: 5 })).toBeCloseTo(0.5, 5);
+    });
+
+    it("applies each live repo's resolved curve in the preview (per-repo, not global)", () => {
+      const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 58, totalTokenScore: 600, sourceLines: 60, openPrCount: 0, credibility: 1, applyTimeDecay: true, prAgeHours: 18 };
+      // Repo with a 24h grace override (like JSONbored/gittensory) → an 18h-old PR is still fresh.
+      const repo24: RepositoryRecord = { ...repo, registryConfig: { ...repo.registryConfig!, timeDecay: { gracePeriodHours: 24 } } };
+      expect(buildScorePreview({ repo: repo24, snapshot, input }).scoreEstimate.timeDecayMultiplier).toBe(1);
+      // Same PR on a repo using the default 12h grace → past grace, so it decays.
+      const repoDefault: RepositoryRecord = { ...repo, registryConfig: { ...repo.registryConfig!, timeDecay: null } };
+      expect(buildScorePreview({ repo: repoDefault, snapshot, input }).scoreEstimate.timeDecayMultiplier).toBeLessThan(1);
+    });
   });
 });

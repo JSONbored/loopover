@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // Control the session role + stub the data hook so the dashboard branch never hits the network.
-const useSession = vi.fn();
+const { useSession } = vi.hoisted(() => ({ useSession: vi.fn() }));
 vi.mock("@/lib/api/session", () => ({ useSession: () => useSession() }));
 vi.mock("@/lib/api/use-api-resource", () => ({
   useApiResource: () => ({ status: "loading", data: null, reload: () => {}, error: null }),

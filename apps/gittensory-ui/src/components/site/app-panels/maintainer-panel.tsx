@@ -43,6 +43,14 @@ const BUCKET_TONE: Record<string, Status> = {
   redirect: "blocked",
 };
 
+// Deterministic slop band → pill tone. Advisory only (it never blocks); the colour just signals severity.
+const SLOP_BAND_TONE: Record<string, Status> = {
+  clean: "ok",
+  low: "info",
+  elevated: "warn",
+  high: "blocked",
+};
+
 type MaintainerDashboard = {
   metrics: Array<{ label: string; value: number; spark: number[] }>;
   health: Array<{
@@ -60,6 +68,7 @@ type MaintainerDashboard = {
     author: string;
     bucket: string;
     reason: string;
+    slop?: { risk: number; band: string } | null;
   }>;
   settingsPreview: { removed: string[]; added: string[] };
 };
@@ -286,6 +295,7 @@ function MaintainerDashboardView() {
                   <th className="py-2 pr-3 font-normal">Title</th>
                   <th className="py-2 pr-3 font-normal">Author</th>
                   <th className="py-2 pr-3 font-normal">Bucket</th>
+                  <th className="py-2 pr-3 font-normal">Slop</th>
                   <th className="py-2 font-normal">Reason</th>
                 </tr>
               </thead>
@@ -304,6 +314,20 @@ function MaintainerDashboardView() {
                       <StatusPill status={BUCKET_TONE[row.bucket] ?? "info"}>
                         {row.bucket}
                       </StatusPill>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {row.slop ? (
+                        <StatusPill status={SLOP_BAND_TONE[row.slop.band] ?? "info"}>
+                          {row.slop.band} {row.slop.risk}
+                        </StatusPill>
+                      ) : (
+                        <span
+                          className="text-token-xs text-muted-foreground"
+                          title="Slop detection is off for this repo, or this PR has not been assessed yet."
+                        >
+                          —
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 text-token-xs text-muted-foreground">{row.reason}</td>
                   </tr>

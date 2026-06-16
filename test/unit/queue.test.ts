@@ -25,6 +25,7 @@ import {
   upsertInstallation,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
+  upsertIssueWatchSubscription,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
 } from "../../src/db/repositories";
@@ -1000,6 +1001,11 @@ describe("queue processors", () => {
       gateCheckMode: "enabled",
       linkedIssueGateMode: "off",
       aiReviewMode: "block",
+      // Also exercise the opt-in slop advisory in the same surface pass: it persists a per-PR assessment
+      // and runs the (advisory-only) AI slop pass, but never blocks — the gate still fails on the AI
+      // consensus defect alone.
+      slopGateMode: "advisory",
+      slopAiAdvisory: true,
     });
     let gatePatchBody: { conclusion?: string; output?: { title?: string; text?: string } } = {};
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3797,6 +3803,61 @@ describe("queue processors", () => {
     const evaluateJob = enqueued.find((message): message is { type: "notify-evaluate"; event: { recipientLogin: string } } => message.type === "notify-evaluate");
     expect(evaluateJob).toBeDefined();
     expect(evaluateJob!.event.recipientLogin).toBe("contributor");
+  });
+
+  it("notifies issue-watchers when a new grabbable maintainer-created issue opens (#699 path B)", async () => {
+    const enqueued: Array<{ type: string; event?: { eventType: string; recipientLogin: string; pullNumber: number } }> = [];
+    const env = createTestEnv({ JOBS: { async send(message: { type: string }) { enqueued.push(message); } } as unknown as Queue });
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+    await upsertIssueWatchSubscription(env, { login: "watcher", repoFullName: "JSONbored/gittensory" });
+    await upsertIssueWatchSubscription(env, { login: "maintainer", repoFullName: "JSONbored/gittensory" }); // the author — should be skipped
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "issue-watch-open",
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Add caching to the registry sync", state: "open", user: { login: "maintainer" }, author_association: "OWNER", body: "We should cache the registry fetch." },
+      },
+    });
+
+    const watchEvents = enqueued.filter((m): m is { type: "notify-evaluate"; event: { eventType: string; recipientLogin: string; pullNumber: number } } => m.type === "notify-evaluate" && m.event?.eventType === "issue_watch_match");
+    expect(watchEvents.map((m) => m.event.recipientLogin)).toEqual(["watcher"]); // maintainer (author) skipped
+    expect(watchEvents[0]!.event.pullNumber).toBe(91);
+
+    const detected = await env.DB.prepare("select metadata_json from audit_events where event_type = 'notification.event_detected' and target_key = ?").bind("watcher").first<{ metadata_json: string }>();
+    expect(JSON.parse(detected!.metadata_json)).toMatchObject({ eventType: "issue_watch_match", recipientLogin: "watcher", repoFullName: "JSONbored/gittensory" });
+  });
+
+  it("appends issue-side slop findings to the issue advisory only when slop is opted in (#533)", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 })); // no .gittensory.yml → empty manifest
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "other", full_name: "JSONbored/other", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", slopGateMode: "advisory" });
+    // JSONbored/other keeps the default slopGateMode "off".
+
+    const emptyBodyIssue = (repoFull: string, name: string, number: number) => ({
+      type: "github-webhook" as const,
+      deliveryId: `issue-slop-${number}`,
+      eventName: "issues",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name, full_name: repoFull, private: false, owner: { login: "JSONbored" } },
+        issue: { number, title: "Something is broken", state: "open", user: { login: "reporter" }, body: "   " },
+      },
+    });
+    await processJob(env, emptyBodyIssue("JSONbored/gittensory", "gittensory", 501));
+    await processJob(env, emptyBodyIssue("JSONbored/other", "other", 502));
+
+    const slopOn = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/gittensory").first<{ findings_json: string }>();
+    const slopOff = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/other").first<{ findings_json: string }>();
+    expect(slopOn?.findings_json).toContain("empty_issue_body"); // opted in → triage finding present
+    expect(slopOff?.findings_json ?? "").not.toContain("empty_issue_body"); // default off → no slop finding
   });
 });
 

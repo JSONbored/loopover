@@ -187,6 +187,8 @@ export type RepoSettingsPreview = {
     duplicatePrGateMode: RepositorySettings["duplicatePrGateMode"];
     qualityGateMode: RepositorySettings["qualityGateMode"];
     qualityGateMinScore?: number | null | undefined;
+    slopGateMode: RepositorySettings["slopGateMode"];
+    slopGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
     createMissingLabel: boolean;
@@ -299,6 +301,8 @@ export function buildRepoSettingsPreview(args: {
       duplicatePrGateMode: settings.duplicatePrGateMode,
       qualityGateMode: settings.qualityGateMode,
       qualityGateMinScore: settings.qualityGateMinScore ?? null,
+      slopGateMode: settings.slopGateMode,
+      slopGateMinScore: settings.slopGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
       createMissingLabel: settings.createMissingLabel,

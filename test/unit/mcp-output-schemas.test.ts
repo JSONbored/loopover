@@ -24,6 +24,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_registry_changes",
   "gittensory_get_upstream_drift",
   "gittensory_local_status",
+  "gittensory_explain_score_breakdown",
 ];
 
 async function connectTestClient(env: Env = createTestEnv()) {
@@ -182,6 +183,29 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(["go", "raise", "avoid"]).toContain(data.recommendation);
     expect(data.found).toBe(false);
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("gittensory_explain_score_breakdown returns validated structured content", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_explain_score_breakdown",
+      arguments: {
+        repoFullName: "octo/demo",
+        contributorLogin: "octo",
+        sourceTokenScore: 40,
+        totalTokenScore: 60,
+        sourceLines: 80,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(Array.isArray(data.components)).toBe(true);
+    expect(data.highestLeverageLever).toBeTruthy();
   });
 
   it("gittensory_lint_pr_text returns a deterministic verdict and fixes", async () => {

@@ -49,11 +49,18 @@ jobs:
       - name: Coverage gate guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Coverage gate::Tests or the 97% coverage gate failed."
-          echo "The repo enforces 97% global coverage for lines, statements, functions, and branches."
-          echo "Review the per-file coverage table printed above to find undercovered files and branch arms."
-          echo "Run 'npm run test:coverage' locally and add tests for the missing branches, fallback paths, and sanitizer rules."
-          echo "See CONTRIBUTING.md (Testing & coverage): aim for 98%+ branch coverage locally so small CI variance does not fail near the threshold."
+          echo "::error title=Coverage gate::Tests failed, or coverage fell below the 90% global backstop."
+          echo "The 97% requirement is enforced by Codecov on *changed lines* (the codecov/patch check), not here."
+          echo "This vitest step only fails on a catastrophic global drop below 90%."
+          echo "Review the per-file coverage table printed above, run 'npm run test:coverage' locally, and add tests for the missing branches, fallback paths, and sanitizer rules."
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
 
       - name: Worker runtime tests
         run: npm run test:workers

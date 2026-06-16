@@ -93,10 +93,16 @@ npm run ui:build
 npm audit --audit-level=moderate
 ```
 
-`npm run test:ci` runs the normal combined gate. Coverage must stay at or above **97%** for
-statements, branches, functions, and lines. Run `npm run test:coverage` locally when you change
-behavior, and aim for **98%+ branch coverage** locally so small CI variance does not fail near the
-threshold.
+`npm run test:ci` runs the normal combined gate. The coverage requirement is **patch coverage**:
+every line your PR adds or changes must be **97%+ covered** (statements, branches, functions, lines).
+This is enforced by Codecov's `codecov/patch` status check, which looks only at your diff — so it
+depends solely on your own changes and is unaffected by what else merges. Run `npm run test:coverage`
+locally when you change behavior and make sure your new branches, fallback paths, and sanitizer rules
+are tested.
+
+The repo total is tracked by Codecov as a trend (informational, non-blocking). The local vitest run
+keeps a loose **90%** global backstop that only trips on a catastrophic drop (e.g. a deleted test
+file); it is intentionally well below actual coverage so routine PRs never fail on it.
 
 Maintainer/release smoke checks:
 

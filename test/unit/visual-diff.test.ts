@@ -119,6 +119,32 @@ describe("visual diff quantification", () => {
     expect(result).toMatchObject({ status: "changed", changedPixelPercent: 100, diffImagePng: null });
   });
 
+  it("treats height-only dimension mismatches as changed", () => {
+    const before = createSolidPng(20, 20, [255, 255, 255, 255]);
+    const after = createSolidPng(20, 30, [255, 255, 255, 255]);
+    const result = compareRouteScreenshots({ route: "/app", before, after });
+    expect(result).toMatchObject({
+      status: "changed",
+      changedPixelPercent: 100,
+      width: 20,
+      height: 30,
+      diffImagePng: null,
+    });
+  });
+
+  it("honors a custom pixelmatch threshold", () => {
+    const before = createSolidPng(20, 20, [255, 255, 255, 255]);
+    const tweaked = createSolidPng(20, 20, [254, 255, 255, 255]);
+    const strict = compareRouteScreenshots({
+      route: "/app",
+      before,
+      after: tweaked,
+      options: { threshold: 0.01, changeThresholdPercent: 0.001 },
+    });
+    expect(strict.status).toBe("changed");
+    expect(strict.diffImagePng).toBeInstanceOf(Buffer);
+  });
+
   it("can omit diff images when requested", () => {
     const before = createSolidPng(10, 10, [255, 0, 0, 255]);
     const after = createSolidPng(10, 10, [0, 255, 0, 255]);
@@ -163,5 +189,17 @@ describe("visual diff quantification", () => {
       options: { changeThresholdPercent: 100, includeDiffImage: false },
     });
     expect(summary.routes[0]).toMatchObject({ status: "unchanged", diffImagePng: null });
+  });
+
+  it("summarizes removed-only capture sets without measurable pixel deltas", () => {
+    const beforeOnly = createSolidPng(12, 12, [4, 5, 6, 255]);
+    const summary = compareVisualCaptureSets({
+      before: { "/gone": beforeOnly },
+      after: {},
+    });
+    expect(summary.removedCount).toBe(1);
+    expect(summary.changedCount).toBe(0);
+    expect(summary.overallChangedPixelPercent).toBe(0);
+    expect(summary.summary).toMatch(/0 route\(s\) unchanged; 0 new, 1 removed/i);
   });
 });

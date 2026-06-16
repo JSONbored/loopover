@@ -411,6 +411,54 @@ server.registerTool(
 );
 
 server.registerTool(
+  "gittensory_explain_score_breakdown",
+  {
+    description: "Explain a private score preview multiplier-by-multiplier with plain-English levers and the highest-impact improvement.",
+    inputSchema: localScoreShape,
+  },
+  async (input) => {
+    const workspaceInput = await withClientWorkspaceRoots(input);
+    const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
+    if (!contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
+    const workspace = resolveWorkspaceCwd(workspaceInput);
+    const diff = collectLocalDiff(workspace.cwd, workspaceInput.baseRef, workspaceInput.workspaceRoots);
+    const branchPayload = buildBranchAnalysisPayload({
+      ...workspaceInput,
+      login: contributorLogin,
+      cwd: workspace.cwd,
+      repoFullName: workspaceInput.repoFullName,
+      baseRef: workspaceInput.baseRef,
+    });
+    const upstreamPreview = branchPayload.localScorerStatus;
+    const estimatedSourceLines = workspaceInput.sourceLines ?? Math.max(1, diff.changedLineCount - diff.testFiles.length);
+    const body = {
+      repoFullName: workspaceInput.repoFullName,
+      targetType: "local_diff",
+      targetKey: workspaceInput.targetKey ?? localDiffTargetKey(branchPayload, workspaceInput.baseRef),
+      contributorLogin,
+      labels: workspaceInput.labels,
+      linkedIssueMode: workspaceInput.linkedIssueMode,
+      sourceTokenScore: workspaceInput.sourceTokenScore ?? estimatedSourceLines,
+      sourceLines: estimatedSourceLines,
+      totalTokenScore: workspaceInput.totalTokenScore ?? diff.changedLineCount,
+      testTokenScore: diff.testFiles.length,
+      openPrCount: workspaceInput.openPrCount,
+      credibility: workspaceInput.credibility,
+      changesRequestedCount: workspaceInput.changesRequestedCount,
+      pendingMergedPrCount: workspaceInput.pendingMergedPrCount,
+      pendingClosedPrCount: workspaceInput.pendingClosedPrCount,
+      approvedPrCount: workspaceInput.approvedPrCount,
+      expectedOpenPrCountAfterMerge: workspaceInput.expectedOpenPrCountAfterMerge,
+      projectedCredibility: workspaceInput.projectedCredibility,
+      scenarioNotes: workspaceInput.scenarioNotes,
+      branchEligibility: workspaceInput.branchEligibility,
+      metadataOnly: !upstreamPreview.ok,
+    };
+    return toolResult("Gittensory private score breakdown.", await apiPost("/v1/scoring/explain-breakdown", body));
+  },
+);
+
+server.registerTool(
   "gittensory_get_decision_pack",
   {
     description: "Return the canonical private contributor decision pack for a GitHub login.",

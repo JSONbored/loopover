@@ -3505,7 +3505,7 @@ export function buildCollisionEdges(report: CollisionReport): CollisionEdgeRecor
 // All comparable RegistryRepoConfig fields, rendered to a stable string for diffing.
 // Mirrors REGISTRY_DRIFT_COMPARABLE_FIELDS in upstream/ruleset.ts so the live change
 // report and the drift comparator cannot diverge as config fields are added — every
-// scoring-relevant field (fixed_base_score, default_label_multiplier, eligibility_mode)
+// scoring-relevant field (fixed_base_score, default_label_multiplier, eligibility_mode, time_decay)
 // is covered, not just the emission/lane subset.
 const REGISTRY_CHANGE_FIELDS: Array<{ label: string; render: (config: RegistryRepoConfig) => string }> = [
   { label: "emission_share", render: (config) => String(config.emissionShare) },
@@ -3517,6 +3517,7 @@ const REGISTRY_CHANGE_FIELDS: Array<{ label: string; render: (config: RegistryRe
   /* v8 ignore next -- Boolean defaulting protects older registry snapshots without trusted_label_pipeline. */
   { label: "trusted_label_pipeline", render: (config) => String(config.trustedLabelPipeline ?? false) },
   { label: "label_multipliers", render: (config) => JSON.stringify(config.labelMultipliers) },
+  { label: "time_decay", render: (config) => JSON.stringify(config.timeDecay ?? null) },
 ];
 
 function registryConfigChanges(previous: RegistryRepoConfig, current: RegistryRepoConfig): string[] {
@@ -3525,7 +3526,7 @@ function registryConfigChanges(previous: RegistryRepoConfig, current: RegistryRe
     const after = field.render(current);
     if (before === after) return [];
     // labelMultipliers is an object diff; report the fact of change, not the JSON blob.
-    return [field.label === "label_multipliers" ? "label_multipliers changed" : `${field.label} ${before} -> ${after}`];
+    return [field.label === "label_multipliers" || field.label === "time_decay" ? `${field.label} changed` : `${field.label} ${before} -> ${after}`];
   });
 }
 

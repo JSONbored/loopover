@@ -11,7 +11,7 @@ import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadat
 const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
 const packageName = "@jsonbored/gittensory-mcp";
-const packageVersion = "0.5.0";
+const packageVersion = "0.6.0";
 const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
 const upgradeCommand = `npm install -g ${packageName}@latest`;
 const npxFallbackCommand = `npx ${packageName}@latest <command>`;
@@ -143,6 +143,21 @@ const lintPrTextShape = {
   commitMessages: z.array(z.string()).max(50).optional(),
   prBody: z.string().optional(),
   linkedIssue: z.number().int().positive().optional(),
+};
+
+const checkSlopRiskShape = {
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000)
+    .optional(),
+  description: z.string().max(20000).optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+
+const checkIssueSlopShape = {
+  title: z.string().max(500).optional(),
+  body: z.string().max(40000).optional(),
 };
 
 const preflightShape = {
@@ -331,6 +346,26 @@ server.registerTool(
 );
 
 server.registerTool(
+  "gittensory_check_slop_risk",
+  {
+    description:
+      "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+    inputSchema: checkSlopRiskShape,
+  },
+  async (input) => toolResult("Gittensory slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
+);
+
+server.registerTool(
+  "gittensory_check_issue_slop",
+  {
+    description:
+      "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
+    inputSchema: checkIssueSlopShape,
+  },
+  async (input) => toolResult("Gittensory issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
+);
+
+server.registerTool(
   "gittensory_preflight_local_diff",
   {
     description: "Inspect local git diff metadata and run Gittensory preflight without uploading source contents.",
@@ -373,6 +408,54 @@ server.registerTool(
     inputSchema: localScoreShape,
   },
   async (input) => toolResult("Gittensory private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
+);
+
+server.registerTool(
+  "gittensory_explain_score_breakdown",
+  {
+    description: "Explain a private score preview multiplier-by-multiplier with plain-English levers and the highest-impact improvement.",
+    inputSchema: localScoreShape,
+  },
+  async (input) => {
+    const workspaceInput = await withClientWorkspaceRoots(input);
+    const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
+    if (!contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
+    const workspace = resolveWorkspaceCwd(workspaceInput);
+    const diff = collectLocalDiff(workspace.cwd, workspaceInput.baseRef, workspaceInput.workspaceRoots);
+    const branchPayload = buildBranchAnalysisPayload({
+      ...workspaceInput,
+      login: contributorLogin,
+      cwd: workspace.cwd,
+      repoFullName: workspaceInput.repoFullName,
+      baseRef: workspaceInput.baseRef,
+    });
+    const upstreamPreview = branchPayload.localScorerStatus;
+    const estimatedSourceLines = workspaceInput.sourceLines ?? Math.max(1, diff.changedLineCount - diff.testFiles.length);
+    const body = {
+      repoFullName: workspaceInput.repoFullName,
+      targetType: "local_diff",
+      targetKey: workspaceInput.targetKey ?? localDiffTargetKey(branchPayload, workspaceInput.baseRef),
+      contributorLogin,
+      labels: workspaceInput.labels,
+      linkedIssueMode: workspaceInput.linkedIssueMode,
+      sourceTokenScore: workspaceInput.sourceTokenScore ?? estimatedSourceLines,
+      sourceLines: estimatedSourceLines,
+      totalTokenScore: workspaceInput.totalTokenScore ?? diff.changedLineCount,
+      testTokenScore: diff.testFiles.length,
+      openPrCount: workspaceInput.openPrCount,
+      credibility: workspaceInput.credibility,
+      changesRequestedCount: workspaceInput.changesRequestedCount,
+      pendingMergedPrCount: workspaceInput.pendingMergedPrCount,
+      pendingClosedPrCount: workspaceInput.pendingClosedPrCount,
+      approvedPrCount: workspaceInput.approvedPrCount,
+      expectedOpenPrCountAfterMerge: workspaceInput.expectedOpenPrCountAfterMerge,
+      projectedCredibility: workspaceInput.projectedCredibility,
+      scenarioNotes: workspaceInput.scenarioNotes,
+      branchEligibility: workspaceInput.branchEligibility,
+      metadataOnly: !upstreamPreview.ok,
+    };
+    return toolResult("Gittensory private score breakdown.", await apiPost("/v1/scoring/explain-breakdown", body));
+  },
 );
 
 server.registerTool(

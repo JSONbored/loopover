@@ -10494,7 +10494,8 @@
                 "trustedLabelPipeline",
                 "defaultLabelMultiplier",
                 "fixedBaseScore",
-                "eligibilityMode"
+                "eligibilityMode",
+                "timeDecay"
               ]
             }
           },

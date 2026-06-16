@@ -1017,6 +1017,7 @@ const RegistryHyperparameterDriftFieldSchema = z.enum([
   "defaultLabelMultiplier",
   "fixedBaseScore",
   "eligibilityMode",
+  "timeDecay",
 ]);
 
 const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);

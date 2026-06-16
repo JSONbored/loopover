@@ -946,7 +946,8 @@ export type RegistryHyperparameterDriftField =
   | "trustedLabelPipeline"
   | "defaultLabelMultiplier"
   | "fixedBaseScore"
-  | "eligibilityMode";
+  | "eligibilityMode"
+  | "timeDecay";
 export type RegistryDriftSurface = "allocation" | "lane_fit" | "scoreability_assumptions" | "maintainer_economics" | "issue_discovery_behavior" | "label_policy";
 export type RegistryHyperparameterDriftEvent = {
   repoFullName: string;

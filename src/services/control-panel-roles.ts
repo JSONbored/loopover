@@ -1,5 +1,5 @@
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
-import { getFreshOfficialMinerDetection, listAllPullRequests, listInstallations, listRepositories } from "../db/repositories";
+import { getFreshOfficialMinerDetection, getRepository, listAllPullRequests, listInstallations, listRepositories } from "../db/repositories";
 import type { ControlPanelRoleCard, ControlPanelRoleName, ControlPanelRoleSummary, InstallationRecord, PullRequestRecord, RepositoryRecord } from "../types";
 import { nowIso } from "../utils/json";
 
@@ -31,6 +31,25 @@ export async function loadControlPanelAccessScope(env: Env, login: string): Prom
     installations,
     pullRequests,
   });
+}
+
+export async function canLoginAccessRepo(env: Env, login: string, fullName: string): Promise<boolean> {
+  const [scope, repo] = await Promise.all([loadControlPanelAccessScope(env, login), getRepository(env, fullName)]);
+  if (scope.operator) return true;
+  const requestedRepo = fullName.toLowerCase();
+  if (scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo)) return true;
+  return Boolean(repo && scope.accountLogins.some((accountLogin) => accountLogin.toLowerCase() === repo.owner.toLowerCase()));
+}
+
+// Whether `login` may watch `fullName`'s issues. Issue-watch (#699 path B) is a MINER feature: miners watch
+// PUBLIC gittensor-tracked repos they don't own or maintain, so a tracked public repo is watchable by any
+// contributor. A PRIVATE repo is gated to maintainer/owner/operator scope so its issues never fan out to a
+// non-collaborator. An untracked repo (unknown visibility) is treated as not watchable (fail-closed).
+export async function canWatchRepo(env: Env, login: string, fullName: string): Promise<boolean> {
+  const repo = await getRepository(env, fullName);
+  if (!repo) return false;
+  if (!repo.isPrivate) return true;
+  return canLoginAccessRepo(env, login, fullName);
 }
 
 export async function loadControlPanelRoleSummary(env: Env, login: string): Promise<ControlPanelRoleSummary> {

@@ -52,15 +52,15 @@ describe("remediation-plan route", () => {
 
   it("returns forbidden_contributor when a session login does not match the payload login", async () => {
     const app = createApp();
-    const env = createTestEnv();
-    await seedRepo(env, "miner", "demo", 301);
-    const { token } = await createSessionForGitHubUser(env, { login: "other-user", id: 302 });
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "attacker" });
+    await seedRepo(env, "owner", "private-repo", 301);
+    const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
     const response = await app.request(
       PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
-        body: JSON.stringify(branchPayload("miner", "miner/demo")),
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(branchPayload("victim", "owner/private-repo")),
       },
       env,
     );

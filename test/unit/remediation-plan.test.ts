@@ -188,7 +188,7 @@ describe("buildRemediationPlan", () => {
     ]);
   });
 
-  it("returns an empty plan when every blocker is fully redacted", () => {
+  it("falls back to public-safe copy when every blocker string is fully redacted", () => {
     const plan = buildRemediationPlan({
       login: "miner",
       repoFullName: "octo/demo",
@@ -198,8 +198,11 @@ describe("buildRemediationPlan", () => {
       recommendedRerunCondition: "wallet hotkey payout reward farming",
     });
 
-    expect(plan.items).toEqual([]);
-    expect(plan.summary).toMatch(/No blockers detected/i);
+    expect(plan.items).toEqual([
+      expect.objectContaining({ source: "account_state", step: "Clear account or queue maturity blockers before opening more work." }),
+      expect.objectContaining({ source: "branch_quality", step: "Resolve branch-quality findings before submission." }),
+      expect.objectContaining({ source: "score", step: "Resolve scoreability blockers before relying on this preview." }),
+    ]);
     expect(plan.recommendedRerunCondition).toMatch(/branch, base, or PR state changes/i);
   });
 

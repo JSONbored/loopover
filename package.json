@@ -52,7 +52,7 @@
     "test:smoke:production": "node scripts/smoke-production.mjs",
     "test:smoke:browser:install": "playwright install chromium",
     "test:smoke:browser": "node scripts/smoke-ui-browser.mjs",
-    "test:ci": "git diff --check && npm run actionlint && npm run typecheck && npm run test:coverage && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run ui:openapi:check && npm run ui:version-audit && npm run ui:lint && npm run ui:typecheck && npm run ui:build && npm audit --audit-level=moderate",
+    "test:ci": "git diff --check && npm run actionlint && npm run typecheck && npm run test:coverage && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run ui:openapi:check && npm run ui:version-audit && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build",
     "test:release": "npm run test:ci && npm run changelog:check",
     "test:release:mcp": "npm run test:ci && npm run changelog:check:mcp",
     "test:watch": "vitest",

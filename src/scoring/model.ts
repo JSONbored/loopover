@@ -8,10 +8,14 @@ import { errorMessage, nowIso } from "../utils/json";
 
 export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   OSS_EMISSION_SHARE: 0.9,
-  ISSUE_TREASURY_EMISSION_SHARE: 0.1,
+  // Upstream name is ISSUES_TREASURY_EMISSION_SHARE (plural). The prior singular spelling never matched
+  // upstream, freezing this at the local default and showing up as a false "unmodeled" drift warning (#806).
+  ISSUES_TREASURY_EMISSION_SHARE: 0.1,
   PR_LOOKBACK_DAYS: 30,
   MERGED_PR_BASE_SCORE: 25,
-  MAX_CONTRIBUTION_BONUS: 25,
+  // Upstream MAX_CONTRIBUTION_BONUS is 5. This local value is only the fetch-failure fallback; keeping it at
+  // 25 silently 5x-inflated the contribution bonus whenever the upstream fetch failed (#807).
+  MAX_CONTRIBUTION_BONUS: 5,
   CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500,
   TEST_FILE_CONTRIBUTION_WEIGHT: 0.05,
   MIN_VALID_MERGED_PRS: 3,

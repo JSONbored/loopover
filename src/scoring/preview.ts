@@ -954,11 +954,11 @@ function saturationContributionBonus(totalTokenScore: number, constants: Record<
 
 // Shared contribution-bonus ramp used by both scoring models so the saturation
 // and density bonuses cannot drift: clamp(totalTokenScore / FULL_BONUS, 0, 1)
-// scaled by MAX_CONTRIBUTION_BONUS (default 25).
+// scaled by MAX_CONTRIBUTION_BONUS (upstream default 5; see model.ts #807).
 function contributionBonusRamp(totalTokenScore: number, constants: Record<string, number>): number {
   return (
     clamp(totalTokenScore / constant(constants, "CONTRIBUTION_SCORE_FOR_FULL_BONUS", 1500), 0, 1) *
-    constant(constants, "MAX_CONTRIBUTION_BONUS", 25)
+    constant(constants, "MAX_CONTRIBUTION_BONUS", 5)
   );
 }
 

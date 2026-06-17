@@ -84,6 +84,20 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(detectActiveModel(parsed)).toBe("pending_saturation_model");
   });
 
+  it("uses upstream's exact constant names and fallback values (#806, #807)", () => {
+    // #807: the fetch-failure fallback for MAX_CONTRIBUTION_BONUS must equal upstream's value (5), never the
+    // old 25 that silently 5x-inflated the contribution bonus whenever the upstream fetch failed.
+    expect(DEFAULT_SCORING_CONSTANTS.MAX_CONTRIBUTION_BONUS).toBe(5);
+    // #806: the treasury share must use upstream's plural spelling (ISSUES_…) so it actually syncs instead of
+    // freezing at the local default and showing up as a false "unmodeled" drift warning.
+    expect(DEFAULT_SCORING_CONSTANTS).toHaveProperty("ISSUES_TREASURY_EMISSION_SHARE");
+    expect(DEFAULT_SCORING_CONSTANTS).not.toHaveProperty("ISSUE_TREASURY_EMISSION_SHARE");
+    // When upstream sends the plural name it is recognized, not reported as unmodeled drift.
+    expect(
+      findUnmodeledUpstreamConstants("ISSUES_TREASURY_EMISSION_SHARE = 0.1\nMAX_CONTRIBUTION_BONUS = 5\n"),
+    ).not.toContain("ISSUES_TREASURY_EMISSION_SHARE");
+  });
+
   it("detects the active model from fetched constants before default fallback constants", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -98,7 +112,9 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const refreshed = await refreshScoringModelSnapshot(env);
 
     expect(refreshed.activeModel).toBe("current_density_model");
-    expect(refreshed.constants.MAX_CONTRIBUTION_BONUS).toBe(25);
+    // Upstream did not send MAX_CONTRIBUTION_BONUS, so it falls back to the local default — which must match
+    // upstream's value of 5, not the old inflated 25 (#807).
+    expect(refreshed.constants.MAX_CONTRIBUTION_BONUS).toBe(5);
     expect(refreshed.constants.SRC_TOK_SATURATION_SCALE).toBe(58);
     expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
   });

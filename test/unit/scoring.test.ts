@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
+import { getLatestScoringModelSnapshot, listUpstreamDriftReports } from "../../src/db/repositories";
 import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
 import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
+import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -158,6 +159,12 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
 
     expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*NOVELTY_BONUS_SCALAR/);
     expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] });
+    const fingerprint = await unmodeledScoringConstantsFingerprint();
+    expect((await listUpstreamDriftReports(env, 10)).find((report) => report.fingerprint === fingerprint)).toMatchObject({
+      status: "open",
+      affectedAreas: ["scoring_model"],
+      payload: expect.objectContaining({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] }),
+    });
   });
 
   it("uses saturation math as the active private preview model", () => {

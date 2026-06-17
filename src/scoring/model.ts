@@ -3,6 +3,7 @@ import {
   persistScoringModelSnapshot,
 } from "../db/repositories";
 import { getLatestRegistrySnapshot } from "../registry/sync";
+import { syncUnmodeledScoringConstantDrift } from "../upstream/unmodeled-scoring-drift";
 import type { JsonValue, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -101,6 +102,12 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
     },
   };
   await persistScoringModelSnapshot(env, snapshot);
+  if (constantsResult.ok) {
+    await syncUnmodeledScoringConstantDrift(env, {
+      unmodeledConstants: findUnmodeledUpstreamConstants(constantsResult.value),
+      source: { repo: "entrius/gittensor", ref: "test", commitSha: null },
+    });
+  }
   return snapshot;
 }
 
@@ -128,11 +135,14 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
  * staleness visible: if upstream adds a scoring dimension, an operator sees it instead of the gate
  * silently drifting behind. Detection only — it does not change any score.
  */
-export function findUnmodeledUpstreamConstants(source: string): string[] {
-  const all = parsePythonNumberConstants(source, { knownOnly: false });
-  return Object.keys(all)
+export function findUnmodeledConstantKeys(allConstants: Record<string, number>): string[] {
+  return Object.keys(allConstants)
     .filter((name) => !SCORING_CONSTANT_NAMES.has(name))
     .sort();
+}
+
+export function findUnmodeledUpstreamConstants(source: string): string[] {
+  return findUnmodeledConstantKeys(parsePythonNumberConstants(source, { knownOnly: false }));
 }
 
 /**

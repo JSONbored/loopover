@@ -1542,14 +1542,16 @@ async function maybeProcessGateOverrideCommand(env: Env, deliveryId: string, pay
     return true;
   }
 
-  const actorAssociation = await resolveRealRepoPermissionAssociation(env, installationId, repoFullName, actor);
-  const pullRequestAuthor = pr.authorLogin ?? issue.user?.login ?? null;
-  const authorization = isAuthorizedCommandActor({
+  const { authorization } = await authorizePrActionActor({
+    env,
+    deliveryId,
+    installationId,
+    repoFullName,
+    issue,
+    actor,
     commandName: "gate-override" as GittensoryMentionCommandName,
-    commenterLogin: actor,
-    commenterAssociation: actorAssociation,
-    pullRequestAuthorLogin: pullRequestAuthor,
-    commandAuthorizationPolicy: settings.commandAuthorization,
+    settings,
+    pr,
   });
   if (!authorization.authorized) {
     await recordAuditEvent(env, {
@@ -1570,11 +1572,7 @@ async function maybeProcessGateOverrideCommand(env: Env, deliveryId: string, pay
     return true;
   }
 
-  const [repo, otherOpenPullRequests] = await Promise.all([getRepository(env, repoFullName), listOtherOpenPullRequests(env, repoFullName, pr.number)]);
-  const advisory = buildPullRequestAdvisory(repo, pr, {
-    otherOpenPullRequests,
-    requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
-  });
+  const { advisory } = await buildAuthorizedPrActionAdvisory(env, repoFullName, pr, settings);
   const safeReason = sanitizePublicComment((command.reason ?? "").trim() || "No reason provided.");
   await createOrUpdateOverriddenGateCheckRun(env, installationId, repoFullName, advisory, { actor, reason: safeReason });
   await recordAuditEvent(env, {
@@ -1663,23 +1661,17 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     return true;
   }
 
-  const actorAssociation = await resolveRealRepoPermissionAssociation(env, installationId, repoFullName, actor);
-  const pullRequestAuthor = pr.authorLogin ?? issue.user?.login ?? null;
-  const needsMinerDetection = commandAuthorizationNeedsMinerDetection({
-    policy: settings.commandAuthorization,
+  const { authorization } = await authorizePrActionActor({
+    env,
+    deliveryId,
+    installationId,
+    repoFullName,
+    issue,
+    actor,
     commandName: "review-now",
-    commenterLogin: actor,
-    commenterAssociation: actorAssociation,
-    pullRequestAuthorLogin: pullRequestAuthor,
-  });
-  const official = pullRequestAuthor && needsMinerDetection ? await getCachedOfficialMinerDetection(env, pullRequestAuthor, { targetKey: `${repoFullName}#${issue.number}`, deliveryId }) : undefined;
-  const authorization = isAuthorizedCommandActor({
-    commandName: "review-now",
-    commenterLogin: actor,
-    commenterAssociation: actorAssociation,
-    pullRequestAuthorLogin: pullRequestAuthor,
-    officialAuthorDetection: official,
-    commandAuthorizationPolicy: settings.commandAuthorization,
+    settings,
+    pr,
+    needsMinerDetection: true,
   });
   if (!authorization.authorized) {
     await recordPrPanelRetriggerSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, authorization.reason);
@@ -1693,14 +1685,7 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     return true;
   }
 
-  const [repo, otherOpenPullRequests] = await Promise.all([
-    getRepository(env, repoFullName),
-    listOtherOpenPullRequests(env, repoFullName, pr.number),
-  ]);
-  const advisory = buildPullRequestAdvisory(repo, pr, {
-    otherOpenPullRequests,
-    requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
-  });
+  const { repo, advisory } = await buildAuthorizedPrActionAdvisory(env, repoFullName, pr, settings);
   await persistAdvisory(env, advisory);
   await recordAuditEvent(env, {
     eventType: "github_app.pr_panel_retriggered",
@@ -1729,6 +1714,65 @@ async function resolveRealRepoPermissionAssociation(env: Env, installationId: nu
   if (permission === "admin" || permission === "maintain") return "MEMBER";
   if (permission === "write") return "COLLABORATOR";
   return null;
+}
+
+// #824 the SINGLE real-permission authorization gate for @gittensory action commands (gate-override, the
+// PR-panel retrigger, and the agent-layer write actions to come in #778/#769). It resolves the actor's REAL
+// repo permission via resolveRealRepoPermissionAssociation — never the spoofable author_association (the #788
+// hazard) — then runs isAuthorizedCommandActor. Every action command authorizes through here, so no future
+// command can accidentally fall back to a weaker check. Returns the decision; the caller owns the
+// command-specific deny/allow handling.
+async function authorizePrActionActor(args: {
+  env: Env;
+  deliveryId: string;
+  installationId: number;
+  repoFullName: string;
+  issue: NonNullable<GitHubWebhookPayload["issue"]>;
+  actor: string | null;
+  commandName: GittensoryMentionCommandName;
+  settings: RepositorySettings;
+  pr: PullRequestRecord;
+  needsMinerDetection?: boolean;
+}): Promise<{ authorization: ReturnType<typeof isAuthorizedCommandActor>; actorAssociation: string | null; pullRequestAuthor: string | null }> {
+  const actorAssociation = await resolveRealRepoPermissionAssociation(args.env, args.installationId, args.repoFullName, args.actor);
+  const pullRequestAuthor = args.pr.authorLogin ?? args.issue.user?.login ?? null;
+  const official =
+    args.needsMinerDetection &&
+    pullRequestAuthor &&
+    commandAuthorizationNeedsMinerDetection({
+      policy: args.settings.commandAuthorization,
+      commandName: args.commandName,
+      commenterLogin: args.actor,
+      commenterAssociation: actorAssociation,
+      pullRequestAuthorLogin: pullRequestAuthor,
+    })
+      ? await getCachedOfficialMinerDetection(args.env, pullRequestAuthor, { targetKey: `${args.repoFullName}#${args.issue.number}`, deliveryId: args.deliveryId })
+      : undefined;
+  const authorization = isAuthorizedCommandActor({
+    commandName: args.commandName,
+    commenterLogin: args.actor,
+    commenterAssociation: actorAssociation,
+    pullRequestAuthorLogin: pullRequestAuthor,
+    officialAuthorDetection: official,
+    commandAuthorizationPolicy: args.settings.commandAuthorization,
+  });
+  return { authorization, actorAssociation, pullRequestAuthor };
+}
+
+// #824 the common "load the PR's repo context + build its advisory" step every authorized action command runs
+// before its mutation. Identical across gate-override and the PR-panel retrigger.
+async function buildAuthorizedPrActionAdvisory(
+  env: Env,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  settings: RepositorySettings,
+): Promise<{ repo: Awaited<ReturnType<typeof getRepository>>; advisory: ReturnType<typeof buildPullRequestAdvisory> }> {
+  const [repo, otherOpenPullRequests] = await Promise.all([getRepository(env, repoFullName), listOtherOpenPullRequests(env, repoFullName, pr.number)]);
+  const advisory = buildPullRequestAdvisory(repo, pr, {
+    otherOpenPullRequests,
+    requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+  });
+  return { repo, advisory };
 }
 
 function isCheckedPrPanelRetrigger(body: string | null | undefined): boolean {

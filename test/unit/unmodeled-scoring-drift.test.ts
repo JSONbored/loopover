@@ -57,4 +57,49 @@ describe("unmodeled scoring constant drift", () => {
       payload: expect.objectContaining({ unmodeledUpstreamConstants: ["ALPHA", "BETA"] }),
     });
   });
+
+  it("uses upstream env defaults when source metadata is omitted", async () => {
+    const env = createTestEnv({
+      GITTENSOR_UPSTREAM_REPO: "entrius/gittensor",
+      GITTENSOR_UPSTREAM_REF: "staging",
+    });
+    const report = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA"] });
+    expect(report?.payload.source).toEqual({
+      repo: "entrius/gittensor",
+      ref: "staging",
+      commitSha: null,
+    });
+  });
+
+  it("falls back to baked-in upstream repo/ref when env overrides are empty", async () => {
+    const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "", GITTENSOR_UPSTREAM_REF: "" });
+    const report = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA"] });
+    expect(report?.payload.source).toEqual({
+      repo: "entrius/gittensor",
+      ref: "test",
+      commitSha: null,
+    });
+  });
+
+  it("returns null when resolving with no prior drift report", async () => {
+    const env = createTestEnv();
+    expect(await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: [] })).toBeNull();
+  });
+
+  it("returns an already-resolved report without rewriting it", async () => {
+    const env = createTestEnv();
+    const fingerprint = await unmodeledScoringConstantsFingerprint();
+    await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: ["ALPHA"] });
+    await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: [] });
+    const again = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: [] });
+    expect(again).toMatchObject({ fingerprint, status: "resolved" });
+  });
+
+  it("truncates long unmodeled-constant lists in the summary", async () => {
+    const env = createTestEnv();
+    const names = Array.from({ length: 13 }, (_, index) => `CONST_${index}`);
+    const report = await syncUnmodeledScoringConstantDrift(env, { unmodeledConstants: names });
+    expect(report?.summary).toMatch(/, …$/);
+    expect(report?.severity).toBe("high");
+  });
 });

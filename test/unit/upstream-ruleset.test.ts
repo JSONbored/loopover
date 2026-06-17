@@ -85,6 +85,18 @@ describe("upstream ruleset drift tracking", () => {
     });
   });
 
+  it("skips unmodeled-constant drift sync when the constants source fetch failed", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", upstreamFetch(fixtures("58", 0.01)));
+    await refreshUpstreamSourceSnapshots(env);
+
+    vi.stubGlobal("fetch", upstreamFailedFetch());
+    const result = await refreshUpstreamDrift(env);
+
+    expect(result.sources.find((source) => source.sourceKey === "constants")?.status).toBe("error");
+    expect((await listUpstreamDriftReports(env, 10)).some((report) => report.payload.kind === "unmodeled_scoring_constants")).toBe(false);
+  });
+
   it("detects high-severity scoring and registry drift between semantic rulesets", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   agentActionModeExecutes,
+  agentRequiresPrWrite,
   buildAgentActionAudit,
   isGlobalAgentPause,
   resolveAgentActionMode,
+  resolveAgentPermissionReadiness,
 } from "../../src/settings/agent-execution";
 
 describe("resolveAgentActionMode (#776 safety gate)", () => {
@@ -67,5 +69,31 @@ describe("buildAgentActionAudit", () => {
     expect(audit.targetKey).toBe("owner/repo");
     expect(audit.actor).toBeNull();
     expect(audit.detail).toBeNull();
+  });
+});
+
+describe("agent write-permission readiness (#775)", () => {
+  it("agentRequiresPrWrite is true only for an acting level on a PR-write action class", () => {
+    expect(agentRequiresPrWrite({ merge: "auto" })).toBe(true);
+    expect(agentRequiresPrWrite({ request_changes: "auto_with_approval" })).toBe(true);
+    expect(agentRequiresPrWrite({ close: "auto" })).toBe(true);
+    // non-acting levels never demand write
+    expect(agentRequiresPrWrite({ merge: "propose", review: "suggest" })).toBe(false);
+    expect(agentRequiresPrWrite({ merge: "observe" })).toBe(false);
+    expect(agentRequiresPrWrite({})).toBe(false);
+    expect(agentRequiresPrWrite(null)).toBe(false);
+    // label acts via the Issues API (issues: write, already held), so it does NOT demand pull_requests: write
+    expect(agentRequiresPrWrite({ label: "auto" })).toBe(false);
+  });
+
+  it("resolveAgentPermissionReadiness gates on the granted pull_requests scope", () => {
+    // no acting PR-write level → permission is irrelevant
+    expect(resolveAgentPermissionReadiness({ autonomy: { label: "auto" }, installationPermissions: { pull_requests: "read" } })).toBe("not_required");
+    // acting level + write granted → ready
+    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: { pull_requests: "write", issues: "write" } })).toBe("ready");
+    // acting level but only read (or missing) → re-consent required
+    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: { pull_requests: "read" } })).toBe("reconsent_required");
+    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: {} })).toBe("reconsent_required");
+    expect(resolveAgentPermissionReadiness({ autonomy: { merge: "auto" }, installationPermissions: null })).toBe("reconsent_required");
   });
 });

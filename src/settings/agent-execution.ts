@@ -1,4 +1,9 @@
-import type { AgentActionClass, AuditEventRecord, AutonomyLevel } from "../types";
+import type { AgentActionClass, AuditEventRecord, AutonomyLevel, AutonomyPolicy } from "../types";
+import { isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
+
+// The action classes that mutate a PR's review / merge / close state — these need GitHub `pull_requests: write`.
+// (`label` mutates via the Issues API, which the App already holds `issues: write` for.)
+const PR_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["review", "request_changes", "approve", "merge", "close"];
 
 // Whether the agent actually executes an action, only logs what it WOULD do, or is halted entirely (#776).
 export type AgentActionMode = "paused" | "dry_run" | "live";
@@ -56,4 +61,25 @@ export function buildAgentActionAudit(input: {
       mode: input.mode,
     },
   };
+}
+
+/**
+ * True when the repo's autonomy config has any ACTING level (auto / auto_with_approval) for a PR-write action
+ * class — i.e. the agent would need GitHub `pull_requests: write` to carry it out (#775). Pure.
+ */
+export function agentRequiresPrWrite(autonomy: AutonomyPolicy | null | undefined): boolean {
+  return PR_WRITE_ACTION_CLASSES.some((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
+}
+
+export type AgentPermissionReadiness = "not_required" | "ready" | "reconsent_required";
+
+/**
+ * Whether the installation grants the write scope the configured auto-maintain actions need (#775). The action
+ * layer (#778) consults this before executing a PR-write action: `not_required` = no acting PR-write level is
+ * configured; `ready` = the App holds `pull_requests: write`; `reconsent_required` = the maintainer must
+ * re-authorize the App with the upgraded permission. Pure.
+ */
+export function resolveAgentPermissionReadiness(input: { autonomy: AutonomyPolicy | null | undefined; installationPermissions: Record<string, string> | null | undefined }): AgentPermissionReadiness {
+  if (!agentRequiresPrWrite(input.autonomy)) return "not_required";
+  return input.installationPermissions?.pull_requests === "write" ? "ready" : "reconsent_required";
 }

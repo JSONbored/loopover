@@ -8025,6 +8025,71 @@
               "advisory",
               "block"
             ]
+          },
+          "autonomy": {
+            "type": "object",
+            "properties": {
+              "review": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "request_changes": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "approve": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "merge": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "close": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              }
+            }
           }
         },
         "required": [

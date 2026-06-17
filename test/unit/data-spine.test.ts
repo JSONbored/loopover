@@ -238,6 +238,7 @@ describe("data spine repositories", () => {
       publicSurface: "comment_and_label",
       gatePack: "gittensor",
       slopGateMode: "off",
+      autonomy: {}, // #773 deny-by-default: no autonomy configured for a missing repo
     });
     // gatePack (#692) round-trips and defaults to gittensor.
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", gatePack: "oss-anti-slop" });
@@ -260,6 +261,12 @@ describe("data spine repositories", () => {
     const updated = await getRepositorySettings(env, "owner/sloprepo");
     expect(updated.slopGateMode).toBe("advisory");
     expect(updated.slopGateMinScore).toBe(40);
+    // #773 agent autonomy round-trips (insert + update), drops invalid entries, and defaults to {}.
+    await upsertRepositorySettings(env, { repoFullName: "owner/autonomyrepo", autonomy: { merge: "auto_with_approval", label: "auto", deploy: "auto" } as never });
+    expect((await getRepositorySettings(env, "owner/autonomyrepo")).autonomy).toEqual({ merge: "auto_with_approval", label: "auto" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/autonomyrepo", autonomy: { merge: "observe" } });
+    expect((await getRepositorySettings(env, "owner/autonomyrepo")).autonomy).toEqual({ merge: "observe" }); // update persists
+    expect((await getRepositorySettings(env, "owner/defaultpack")).autonomy).toEqual({}); // deny-by-default
     expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();

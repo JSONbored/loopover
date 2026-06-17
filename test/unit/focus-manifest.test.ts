@@ -909,6 +909,16 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(settingsOverrideToJson(parseFocusManifest({}).settings)).toBeNull();
   });
 
+  it("parses + resolves agent autonomy from the settings: block, dropping invalid entries (#773)", () => {
+    const manifest = parseFocusManifest({ settings: { autonomy: { merge: "auto", close: "auto_with_approval", deploy: "auto", label: "nope" } } });
+    expect(manifest.settings.autonomy).toEqual({ merge: "auto", close: "auto_with_approval" }); // unknown class + invalid level dropped
+    const eff = resolveEffectiveSettings({ autonomy: { review: "observe" } } as unknown as RepositorySettings, manifest);
+    expect(eff.autonomy).toEqual({ merge: "auto", close: "auto_with_approval" }); // yml overlays DB
+    // A malformed/empty autonomy block never blanks the DB-configured policy.
+    const noOverride = resolveEffectiveSettings({ autonomy: { merge: "auto" } } as unknown as RepositorySettings, parseFocusManifest({ settings: { autonomy: { bogus: "x" } } }));
+    expect(noOverride.autonomy).toEqual({ merge: "auto" });
+  });
+
   it("resolveEffectiveSettings overlays settings: over DB and lets gate: win for gate fields", () => {
     const db = { commentMode: "off", gateCheckMode: "off", linkedIssueGateMode: "off", duplicatePrGateMode: "off", autoLabelEnabled: true } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(

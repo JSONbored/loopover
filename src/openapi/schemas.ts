@@ -581,6 +581,9 @@ export const RepositorySettingsSchema = z
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
       commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
     }),
+    autonomy: z
+      .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
+      .optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })

@@ -61,6 +61,7 @@ import type {
   AgentActionRecord,
   AgentActionStatus,
   AgentActionType,
+  AutonomyPolicy,
   AgentCommandAnswerRecord,
   AgentCommandFeedbackRecord,
   AgentContextSnapshotRecord,
@@ -150,6 +151,7 @@ import type {
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { normalizeAutonomyPolicy } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
@@ -422,6 +424,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       privateTrustEnabled: true,
       badgeEnabled: false,
       commandAuthorization: normalizeCommandAuthorizationPolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).policy,
+      autonomy: {},
     };
   }
   return {
@@ -457,6 +460,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     privateTrustEnabled: row.privateTrustEnabled,
     badgeEnabled: row.badgeEnabled,
     commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
+    autonomy: parseAutonomyPolicy(row.autonomyJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -496,6 +500,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     privateTrustEnabled: settings.privateTrustEnabled ?? true,
     badgeEnabled: settings.badgeEnabled ?? false,
     commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
+    autonomy: normalizeAutonomyPolicy(settings.autonomy),
   };
   const db = getDb(env.DB);
   await db
@@ -533,6 +538,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       privateTrustEnabled: resolved.privateTrustEnabled,
       badgeEnabled: resolved.badgeEnabled,
       commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+      autonomyJson: jsonString(resolved.autonomy),
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -571,6 +577,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         privateTrustEnabled: resolved.privateTrustEnabled,
         badgeEnabled: resolved.badgeEnabled,
         commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+        autonomyJson: jsonString(resolved.autonomy),
         updatedAt: nowIso(),
       },
     });
@@ -4959,6 +4966,10 @@ function parsePublicSurface(value: string): RepositorySettings["publicSurface"] 
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
   return normalizeCommandAuthorizationPolicy(parseJson<unknown>(value, null)).policy;
+}
+
+function parseAutonomyPolicy(value: string): AutonomyPolicy {
+  return normalizeAutonomyPolicy(parseJson<unknown>(value, null));
 }
 
 function parseSyncStatus(value: string): RepoSyncStateRecord["status"] {

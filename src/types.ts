@@ -458,6 +458,10 @@ export type RepositorySettings = {
    *  (default false); optional so existing settings fixtures/callers need not be touched. */
   badgeEnabled?: boolean | undefined;
   commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
+  /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
+   *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
+   *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */
+  autonomy?: AutonomyPolicy | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };
@@ -468,6 +472,17 @@ export type RepositoryCommandAuthorizationPolicy = {
   default: CommandAuthorizationRole[];
   commands: Record<string, CommandAuthorizationRole[]>;
 };
+
+/** Agent-layer graduated autonomy (#773), least → most autonomous. `observe` is the deny-by-default floor:
+ *  gittensory watches but never acts. `suggest`/`propose` surface guidance/concrete proposals without
+ *  executing; `auto_with_approval` executes behind a human approval gate (#779); `auto` executes directly. */
+export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_approval" | "auto";
+
+/** The write-action classes the maintainer auto-maintain layer (#778) can take on a PR. */
+export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label";
+
+/** Per-action-class autonomy. An unset class resolves to `observe` (deny-by-default). */
+export type AutonomyPolicy = Partial<Record<AgentActionClass, AutonomyLevel>>;
 
 export type RepoSyncStateRecord = {
   repoFullName: string;

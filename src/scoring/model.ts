@@ -11,18 +11,24 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   // Upstream name is ISSUES_TREASURY_EMISSION_SHARE (plural). The prior singular spelling never matched
   // upstream, freezing this at the local default and showing up as a false "unmodeled" drift warning (#806).
   ISSUES_TREASURY_EMISSION_SHARE: 0.1,
+  // Lookback window used upstream for PR history; stored so it syncs and does not surface as unmodeled drift.
   PR_LOOKBACK_DAYS: 30,
   MERGED_PR_BASE_SCORE: 25,
   // Upstream MAX_CONTRIBUTION_BONUS is 5. This local value is only the fetch-failure fallback; keeping it at
   // 25 silently 5x-inflated the contribution bonus whenever the upstream fetch failed (#807).
   MAX_CONTRIBUTION_BONUS: 5,
   CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500,
+  // Applied in preview.ts when computing totalTokenScore from components (#808).
   TEST_FILE_CONTRIBUTION_WEIGHT: 0.05,
+  // Upstream-enforced eligibility floors for PR and issue-discovery history (#808).
+  // These gate whether a validator counts a contributor's submissions, not the per-PR/issue score itself.
+  // Stored here so they sync from upstream and no longer appear as unmodeled drift warnings.
   MIN_VALID_MERGED_PRS: 3,
   MIN_CREDIBILITY: 0.8,
   MIN_VALID_SOLVED_ISSUES: 3,
   MIN_ISSUE_CREDIBILITY: 0.8,
   MIN_TOKEN_SCORE_FOR_VALID_ISSUE: 5,
+  // Open-issue spam gate constants — wired into the issue-discovery scoring lane in preview.ts (#808).
   OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2,
   OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300,
   MAX_OPEN_ISSUE_THRESHOLD: 30,

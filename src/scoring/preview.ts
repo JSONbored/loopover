@@ -16,6 +16,8 @@ export type ScorePreviewInput = {
   nonCodeTokenScore?: number | undefined;
   existingContributorTokenScore?: number | undefined;
   openPrCount?: number | undefined;
+  /** Contributor's current open-issue count for the repo, used for the open-issue spam gate (#808). */
+  openIssueCount?: number | undefined;
   credibility?: number | undefined;
   changesRequestedCount?: number | undefined;
   fixedBaseScore?: number | undefined;
@@ -101,6 +103,7 @@ export type ScoreGateBlocker = {
     | "inactive_allocation"
     | "base_token_gate"
     | "open_pr_threshold"
+    | "open_issue_threshold"
     | "credibility_floor"
     | "review_penalty"
     | "metadata_only"
@@ -115,7 +118,7 @@ export type ScoreGateBlocker = {
 };
 
 export type ScoreGateDelta = {
-  gate: "open_pr_threshold" | "credibility_floor" | "linked_issue_multiplier";
+  gate: "open_pr_threshold" | "open_issue_threshold" | "credibility_floor" | "linked_issue_multiplier";
   current: string;
   projected: string;
   explanation: string;
@@ -157,6 +160,7 @@ export type ScorePreviewResult = {
     credibilityMultiplier: number;
     reviewPenaltyMultiplier: number;
     openPrMultiplier: number;
+    openIssueMultiplier: number;
     /** Upstream sigmoid time-decay multiplier (#703). 1 = no decay (fresh PR, or feature off). */
     timeDecayMultiplier: number;
     estimatedMergedScore: number;
@@ -170,6 +174,8 @@ export type ScorePreviewResult = {
     collateralFraction: number;
     credibilityFloor: number;
     credibilityObserved: number;
+    openIssueThreshold: number;
+    openIssueCount: number;
   };
   branchEligibility: BranchEligibilityResult;
   effectiveEstimatedScore: number;
@@ -204,6 +210,7 @@ export function buildScorePreview(args: {
   const actions = [
     ...(!current.gates.baseTokenGatePassed ? ["Increase meaningful source change size or scope clarity before relying on this preview."] : []),
     ...(current.scoreEstimate.openPrMultiplier === 0 ? ["Land or close existing open PRs before opening more concurrent work."] : []),
+    ...(current.scoreEstimate.openIssueMultiplier === 0 ? ["Close excess open issues to stay within the open-issue spam threshold."] : []),
     ...(current.scoreEstimate.credibilityMultiplier < 1 ? ["Build or wait for contributor credibility evidence before relying on this preview."] : []),
     ...(current.scoreEstimate.reviewPenaltyMultiplier < 1 ? ["Reduce review churn with tighter tests and clearer evidence."] : []),
     ...(current.scoreEstimate.labelMultiplier <= 1 && Object.keys(args.repo?.registryConfig?.labelMultipliers ?? {}).length > 0
@@ -288,7 +295,10 @@ function computeScoreCore(
   const directPrSlice = repoSlice * (1 - issueDiscoveryShare);
   const issueDiscoverySlice = repoSlice * issueDiscoveryShare;
   const sourceTokenScore = nonNegative(input.sourceTokenScore);
-  const totalTokenScore = nonNegative(input.totalTokenScore ?? sourceTokenScore + nonNegative(input.testTokenScore) + nonNegative(input.nonCodeTokenScore));
+  // TEST_FILE_CONTRIBUTION_WEIGHT (#808): upstream weights test-file tokens at 0.05× relative to source tokens.
+  // Applied only when totalTokenScore is not explicitly provided — an explicit caller total is honoured as-is.
+  const testFileWeight = constant(constants, "TEST_FILE_CONTRIBUTION_WEIGHT", 0.05);
+  const totalTokenScore = nonNegative(input.totalTokenScore ?? sourceTokenScore + testFileWeight * nonNegative(input.testTokenScore) + nonNegative(input.nonCodeTokenScore));
   const sourceLines = Math.max(1, nonNegative(input.sourceLines ?? sourceTokenScore));
   const fixedBaseScore = input.fixedBaseScore ?? config?.fixedBaseScore ?? undefined;
   const rawDensity = sourceTokenScore / sourceLines;
@@ -325,13 +335,22 @@ function computeScoreCore(
       Math.floor(nonNegative(input.existingContributorTokenScore) / constant(constants, "OPEN_PR_THRESHOLD_TOKEN_SCORE", 300)),
   );
   const openPrMultiplier = openPrCount <= openPrThreshold ? 1 : 0;
+  // Open-issue spam gate (#808): mirrors the open-PR gate for the issue-discovery channel.
+  // A contributor earns extra open-issue slots from their existing merged-history token score.
+  const openIssueCount = nonNegative(input.openIssueCount);
+  const openIssueThreshold = Math.min(
+    constant(constants, "MAX_OPEN_ISSUE_THRESHOLD", 30),
+    constant(constants, "OPEN_ISSUE_SPAM_BASE_THRESHOLD", 2) +
+      Math.floor(nonNegative(input.existingContributorTokenScore) / constant(constants, "OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT", 300)),
+  );
+  const openIssueMultiplier = openIssueCount <= openIssueThreshold ? 1 : 0;
   // Upstream time-decay (#703): mirrors upstream's `scored.time_decay_multiplier` applied to a PR's score.
   // Opt-in + env-gated (default off). A fresh PR (prAgeHours below the grace period) yields 1.0, so a normal
   // new-PR preview is unchanged even when enabled — only an aged-PR projection decays.
   // Per-repo curve (#703): the repo's registry `scoring.time_decay` overrides overlay the snapshot defaults.
   const timeDecayMultiplier = input.applyTimeDecay ? calculateTimeDecay(nonNegative(input.prAgeHours), constants, config?.timeDecay) : 1;
   const estimatedMergedScore = roundScore(
-    baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier * timeDecayMultiplier,
+    baseScore * labelMultiplier * issueMultiplier * credibilityMultiplier * reviewPenaltyMultiplier * openPrMultiplier * openIssueMultiplier * timeDecayMultiplier,
   );
   const pendingSaturationScore = roundScore(saturationBaseScore);
   return {
@@ -352,6 +371,7 @@ function computeScoreCore(
       credibilityMultiplier: roundScore(credibilityMultiplier),
       reviewPenaltyMultiplier: roundScore(reviewPenaltyMultiplier),
       openPrMultiplier,
+      openIssueMultiplier,
       timeDecayMultiplier: roundScore(timeDecayMultiplier),
       estimatedMergedScore,
       pendingSaturationScore,
@@ -364,6 +384,8 @@ function computeScoreCore(
       collateralFraction: constant(constants, "OPEN_PR_COLLATERAL_PERCENT", 0.2),
       credibilityFloor,
       credibilityObserved,
+      openIssueThreshold,
+      openIssueCount,
     },
   };
 }
@@ -571,6 +593,15 @@ function blockedByFor(input: ScorePreviewInput, repo: RepositoryRecord | null, c
           },
         ]
       : []),
+    ...(core.scoreEstimate.openIssueMultiplier === 0
+      ? [
+          {
+            code: "open_issue_threshold" as const,
+            severity: "blocker" as const,
+            detail: `Open issue count ${core.gates.openIssueCount} exceeds spam threshold ${core.gates.openIssueThreshold}.`,
+          },
+        ]
+      : []),
     ...(core.gates.credibilityObserved < core.gates.credibilityFloor
       ? [
           {
@@ -640,6 +671,16 @@ function buildGateDeltas(current: ScoreCore, scenarios: ScoreScenarioPreview[]):
             current: `${current.gates.openPrCount}/${current.gates.openPrThreshold} open PRs, multiplier ${current.scoreEstimate.openPrMultiplier}`,
             projected: `${best.gates.openPrCount}/${best.gates.openPrThreshold} open PRs, multiplier ${best.scoreEstimate.openPrMultiplier}`,
             explanation: `Open PR pressure changes estimated score ${current.scoreEstimate.estimatedMergedScore} -> ${best.scoreEstimate.estimatedMergedScore}.`,
+          },
+        ]
+      : []),
+    ...(current.scoreEstimate.openIssueMultiplier !== best.scoreEstimate.openIssueMultiplier || current.gates.openIssueCount !== best.gates.openIssueCount
+      ? [
+          {
+            gate: "open_issue_threshold" as const,
+            current: `${current.gates.openIssueCount}/${current.gates.openIssueThreshold} open issues, multiplier ${current.scoreEstimate.openIssueMultiplier}`,
+            projected: `${best.gates.openIssueCount}/${best.gates.openIssueThreshold} open issues, multiplier ${best.scoreEstimate.openIssueMultiplier}`,
+            explanation: `Open issue spam pressure changes estimated score ${current.scoreEstimate.estimatedMergedScore} -> ${best.scoreEstimate.estimatedMergedScore}.`,
           },
         ]
       : []),

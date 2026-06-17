@@ -195,6 +195,7 @@ export type RepoSettingsPreview = {
     createMissingLabel: boolean;
     includeMaintainerAuthors: boolean;
     requireLinkedIssue: boolean;
+    badgeEnabled: boolean;
     commandAuthorization: {
       defaultAllowed: CommandAuthorizationRole[];
       commandOverrides: Array<{ command: string; allowedRoles: CommandAuthorizationRole[] }>;
@@ -310,6 +311,7 @@ export function buildRepoSettingsPreview(args: {
       createMissingLabel: settings.createMissingLabel,
       includeMaintainerAuthors: settings.includeMaintainerAuthors,
       requireLinkedIssue: settings.requireLinkedIssue,
+      badgeEnabled: settings.badgeEnabled ?? false,
       commandAuthorization: summarizeCommandAuthorizationPolicy(settings.commandAuthorization),
     },
     commandAuthorizationPreview,

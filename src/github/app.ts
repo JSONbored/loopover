@@ -201,6 +201,32 @@ export async function createOrUpdateErroredGateCheckRun(
   });
 }
 
+/**
+ * Finalize the current Gate check to a NEUTRAL (non-blocking) terminal state because a maintainer ran
+ * `@gittensory gate-override`. This applies to THIS commit only: the override is not persisted anywhere,
+ * so the next push re-evaluates the Gate from scratch (no permanent bypass). Called WITHOUT a checkRunId
+ * so createOrUpdateNamedCheckRun resolves the current Gate run by advisory.headSha.
+ */
+export async function createOrUpdateOverriddenGateCheckRun(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  advisory: Advisory,
+  options: { actor: string; reason: string; checkRunId?: number | undefined },
+): Promise<CheckRunOutcome | null> {
+  return createOrUpdateNamedCheckRun(env, installationId, repoFullName, advisory, {
+    name: GITTENSORY_GATE_CHECK_NAME,
+    status: "completed",
+    conclusion: "neutral",
+    output: {
+      title: `Gittensory Gate — overridden by @${options.actor}`,
+      summary: "A maintainer set the Gate to neutral for THIS commit only. This does NOT permanently bypass the Gate; a new push re-evaluates it.",
+      text: `Overridden by @${options.actor}: ${options.reason}`,
+    },
+    checkRunId: options.checkRunId,
+  });
+}
+
 async function createOrUpdateNamedCheckRun(
   env: Env,
   installationId: number,

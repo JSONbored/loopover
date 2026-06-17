@@ -12,6 +12,7 @@ export const DEFAULT_COMMAND_AUTHORIZATION_POLICY: RepositoryCommandAuthorizatio
     "intake-health": ["maintainer", "collaborator"],
     "outcome-patterns": ["maintainer", "collaborator"],
     "noise-report": ["maintainer", "collaborator"],
+    "gate-override": ["maintainer", "collaborator"],
   },
 };
 

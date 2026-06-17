@@ -3919,6 +3919,174 @@ describe("queue processors", () => {
     expect(slopOn?.findings_json).toContain("empty_issue_body"); // opted in → triage finding present
     expect(slopOff?.findings_json ?? "").not.toContain("empty_issue_body"); // default off → no slop finding
   });
+
+  it("overrides the Gate to neutral for THIS commit only when a real write/admin maintainer runs gate-override", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 90,
+      title: "Override me",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "override-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { token: 0, permission: 0, checkGets: 0, checkPatches: 0, commentGets: 0, commentPatches: 0 };
+    const patchBodies: Array<{ status?: string; conclusion?: string; output?: { title?: string; text?: string } }> = [];
+    let confirmationBody = "";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) {
+        calls.token += 1;
+        return Response.json({ token: "installation-token" });
+      }
+      // Authorization MUST come from the real collaborator-permission API, never the comment author_association.
+      if (url.includes("/collaborators/maintainer/permission")) {
+        calls.permission += 1;
+        return Response.json({ permission: "admin" });
+      }
+      if (url.includes("/commits/override-sha/check-runs") && method === "GET") {
+        calls.checkGets += 1;
+        return Response.json({ total_count: 1, check_runs: [{ id: 555, name: "Gittensory Gate" }] });
+      }
+      if (url.includes("/check-runs/555") && method === "PATCH") {
+        calls.checkPatches += 1;
+        patchBodies.push(JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string; text?: string } });
+        return Response.json({ id: 555 });
+      }
+      if (url.includes("/issues/90/comments") && method === "GET") {
+        calls.commentGets += 1;
+        return Response.json([]);
+      }
+      if (url.includes("/issues/90/comments") && method === "POST") {
+        calls.commentPatches += 1;
+        confirmationBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 9100 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-allow",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Override me", state: "open", user: { login: "contributor" }, pull_request: {} },
+        // author_association lies (says OWNER); the handler must IGNORE it and use real permission instead.
+        comment: { id: 800, body: "@gittensory gate-override known flaky duplicate check, shipping", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // The existing Gate run (id 555) was PATCHed to a neutral, non-blocking terminal state — not a new check.
+    expect(calls.checkPatches).toBe(1);
+    const finalize = patchBodies[0];
+    expect(finalize?.status).toBe("completed");
+    expect(finalize?.conclusion).toBe("neutral");
+    expect(finalize?.output?.title).toBe("Gittensory Gate — overridden by @maintainer");
+    expect(finalize?.output?.text).toContain("Overridden by @maintainer: known flaky duplicate check, shipping");
+    expect(confirmationBody).toContain("Gittensory Gate overridden by @maintainer");
+    const audit = await env.DB.prepare("select event_type, actor, target_key, outcome, detail from audit_events where event_type = ?")
+      .bind("github_app.gate_overridden")
+      .first<{ event_type: string; actor: string; target_key: string; outcome: string; detail: string }>();
+    expect(audit).toMatchObject({ event_type: "github_app.gate_overridden", actor: "maintainer", target_key: "JSONbored/gittensory#90", outcome: "completed" });
+    const usageEvents = await listProductUsageEvents(env, { limit: 10 });
+    expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ surface: "github_app", eventName: "gate_overridden", outcome: "completed" })]));
+    // No override state is persisted: the gate stays "enabled" and the override does NOT persist an advisory,
+    // so a follow-up synchronize re-evaluates the Gate from scratch (no permanent bypass).
+    const settingsAfter = await env.DB.prepare("select gate_check_mode from repository_settings where repo_full_name = ?").bind("JSONbored/gittensory").first<{ gate_check_mode: string }>();
+    expect(settingsAfter?.gate_check_mode).toBe("enabled");
+    const overrideAdvisory = await env.DB.prepare("select id from advisories where target_key = ?").bind("JSONbored/gittensory#90").first<{ id: string }>();
+    expect(overrideAdvisory ?? null).toBeNull();
+  });
+
+  it("denies gate-override from an org member without real repository write/admin (ignores author_association)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 91,
+      title: "Cannot override",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "override-denied" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const calls = { token: 0, permission: 0, checkGets: 0, checkPatches: 0, comments: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) {
+        calls.token += 1;
+        return Response.json({ token: "installation-token" });
+      }
+      // Real permission is only "read" — even though the comment claims MEMBER, the Gate must NOT be touched.
+      if (url.includes("/collaborators/org-member/permission")) {
+        calls.permission += 1;
+        return Response.json({ permission: "read" });
+      }
+      if (url.includes("/check-runs")) {
+        calls.checkGets += 1;
+        return new Response("not found", { status: 404 });
+      }
+      if (url.includes("/comments")) {
+        calls.comments += 1;
+        return Response.json([]);
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-deny",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 91, title: "Cannot override", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 801, body: "@gittensory gate-override trust me", author_association: "MEMBER", user: { login: "org-member", type: "User" } },
+        sender: { login: "org-member", type: "User" },
+      },
+    });
+
+    // Authorization denied via real permission: no Gate check call and no comment were made.
+    expect(calls.permission).toBe(1);
+    expect(calls.checkGets).toBe(0);
+    expect(calls.checkPatches).toBe(0);
+    expect(calls.comments).toBe(0);
+    const denied = await env.DB.prepare("select event_type, actor, target_key, outcome, detail from audit_events where event_type = ?")
+      .bind("github_app.gate_override_denied")
+      .first<{ event_type: string; actor: string; target_key: string; outcome: string; detail: string }>();
+    expect(denied).toMatchObject({ event_type: "github_app.gate_override_denied", actor: "org-member", target_key: "JSONbored/gittensory#91", outcome: "denied", detail: "not_maintainer_or_pr_author" });
+    const overridden = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ id: string }>();
+    expect(overridden ?? null).toBeNull();
+  });
 });
 
 function completeSegment(repoFullName: string, segment: "labels" | "open_issues" | "open_pull_requests") {

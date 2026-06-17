@@ -33,6 +33,18 @@ describe("repo command authorization policy", () => {
     });
   });
 
+  it("gate-override is maintainer/collaborator only and ignores spoofable author_association", () => {
+    // The gateOverridePolicy ships maintainer+collaborator only (no pr_author / confirmed_miner).
+    expect(commandAuthorizationAllowedRoles(undefined, "gate-override")).toEqual(["maintainer", "collaborator"]);
+    // Real admin/maintain → MEMBER and real write → COLLABORATOR are the only associations that pass.
+    expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterAssociation: "MEMBER" })).toMatchObject({ authorized: true, reason: "maintainer_invocation", actorKind: "maintainer" });
+    expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterAssociation: "COLLABORATOR" })).toMatchObject({ authorized: true, reason: "collaborator_invocation", actorKind: "maintainer" });
+    // An org member WITHOUT real repo write resolves (in the handler) to a null association → denied here,
+    // even if the PR author tries it themselves.
+    expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterAssociation: null })).toMatchObject({ authorized: false });
+    expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterLogin: "author", pullRequestAuthorLogin: "author", commenterAssociation: null })).toMatchObject({ authorized: false });
+  });
+
   it("honors command overrides and avoids miner lookup when plain PR author is allowed", () => {
     const policy = normalizeCommandAuthorizationPolicy({ default: ["maintainer"], commands: { "next-action": ["pr_author"] } }).policy;
     expect(

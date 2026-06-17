@@ -3203,7 +3203,6 @@ export async function recordGateBlockOutcome(
   env: Env,
   input: { repoFullName: string; pullNumber: number; headSha?: string | null | undefined; blockerCodes: string[] },
 ): Promise<void> {
-  const now = nowIso();
   const repoFullName = boundedString(input.repoFullName, 200);
   const values = {
     id: `gate:${repoFullName}#${input.pullNumber}`,
@@ -3212,8 +3211,7 @@ export async function recordGateBlockOutcome(
     headSha: input.headSha ?? null,
     blockerCodesJson: jsonString(input.blockerCodes),
     overridden: false,
-    blockedAt: now,
-    updatedAt: now,
+    // blockedAt + updatedAt default to nowIso() via the schema `$defaultFn` on a fresh insert.
   };
   await getDb(env.DB)
     .insert(gateOutcomes)
@@ -3222,7 +3220,7 @@ export async function recordGateBlockOutcome(
       target: [gateOutcomes.repoFullName, gateOutcomes.pullNumber],
       // Refresh the codes/head/timestamp on a re-block; `overridden` is deliberately omitted so a true value
       // is preserved.
-      set: { headSha: values.headSha, blockerCodesJson: values.blockerCodesJson, updatedAt: values.updatedAt },
+      set: { headSha: values.headSha, blockerCodesJson: values.blockerCodesJson, updatedAt: nowIso() },
     });
 }
 

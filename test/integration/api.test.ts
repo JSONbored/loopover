@@ -664,6 +664,22 @@ describe("api routes", () => {
     const calibrationNoWindow = await app.request("/v1/repos/entrius/allways-ui/outcome-calibration", { headers: apiHeaders(env) }, env);
     await expect(calibrationNoWindow.json()).resolves.toMatchObject({ windowDays: null });
 
+    // #554 gate false-positive telemetry: maintainer-scoped, read-only.
+    const gatePrecisionUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/gate-precision", {}, env);
+    expect(gatePrecisionUnauthenticated.status).toBe(401);
+    const gatePrecision = await app.request("/v1/repos/entrius/allways-ui/gate-precision?windowDays=30", { headers: apiHeaders(env) }, env);
+    expect(gatePrecision.status).toBe(200);
+    await expect(gatePrecision.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      windowDays: 30,
+      perGateType: expect.any(Array),
+      overall: { blocked: expect.any(Number), blockedThenMerged: expect.any(Number) },
+      signals: expect.any(Array),
+    });
+    // No windowDays → full window (covers the param-absent path).
+    const gatePrecisionNoWindow = await app.request("/v1/repos/entrius/allways-ui/gate-precision", { headers: apiHeaders(env) }, env);
+    await expect(gatePrecisionNoWindow.json()).resolves.toMatchObject({ windowDays: null });
+
     const settingsPreviewUnauthenticated = await app.request("/v1/repos/entrius/allways-ui/settings-preview", { method: "POST", body: "{}" }, env);
     expect(settingsPreviewUnauthenticated.status).toBe(401);
 

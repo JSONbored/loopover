@@ -85,6 +85,15 @@ describe("buildGatePrecisionReport", () => {
     const report = buildGatePrecisionReport([block(1, ["x"])], [pr(1, "merged")]);
     expect(JSON.stringify(report)).not.toMatch(/login|actor|reward|payout|trust|wallet|hotkey|credibility/i);
   });
+
+  it("scopes to options.repoFullName — ignores blocks and PRs from other repos", () => {
+    const own = { repoFullName: "owner/repo", pullNumber: 1, blockerCodes: ["x"], overridden: false };
+    const other = { repoFullName: "other/repo", pullNumber: 2, blockerCodes: ["x"], overridden: false };
+    const otherPr: PullRequestRecord = { repoFullName: "other/repo", number: 2, title: "PR 2", state: "closed", mergedAt: "2026-06-01T00:00:00.000Z", labels: [], linkedIssues: [] };
+    const report = buildGatePrecisionReport([own, other], [pr(1, "merged"), otherPr], { repoFullName: "owner/repo" });
+    // Only owner/repo's single block counts; other/repo's block + merged PR are filtered out.
+    expect(report.overall).toMatchObject({ blocked: 1, blockedThenMerged: 1 });
+  });
 });
 
 describe("buildGatePrecisionSignals", () => {

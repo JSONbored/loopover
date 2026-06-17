@@ -856,6 +856,19 @@ export type AgentRecommendationOutcomeRepoSummary = {
   signal: "positive" | "negative" | "mixed" | "neutral";
 };
 
+// #554 gate false-positive telemetry. One latest gate-block row per (repo, PR). Privacy: repo + PR number +
+// blocker codes + timestamps ONLY — deliberately no actor login, no trust/reward fields.
+export type GateOutcomeRecord = {
+  id?: string | undefined;
+  repoFullName: string;
+  pullNumber: number;
+  headSha?: string | null | undefined;
+  blockerCodes: string[];
+  overridden: boolean;
+  blockedAt?: string | null | undefined;
+  updatedAt?: string | null | undefined;
+};
+
 export type AgentRecommendationOutcomeSummary = {
   login: string;
   generatedAt: string;

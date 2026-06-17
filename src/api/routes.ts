@@ -214,6 +214,7 @@ import { buildSlopAssessment, buildIssueSlopAssessment, SLOP_RUBRIC_MARKDOWN, IS
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
+import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
@@ -1956,6 +1957,19 @@ export function createApp() {
     const windowDaysRaw = Number(c.req.query("windowDays"));
     const windowDays = windowDaysRaw > 0 ? windowDaysRaw : undefined;
     return c.json(await buildRepoOutcomeCalibration(c.env, fullName, windowDays));
+  });
+
+  // #554 gate false-positive telemetry: is the gate PRECISE? Read-only measurement of blocked-then-merged
+  // (and overridden) per gate type — the evidence a maintainer needs before promoting a gate to block. NEVER
+  // adjusts a gate. Maintainer-authenticated, repo-scoped; no public route. Optional ?windowDays bounds the
+  // block ledger window.
+  app.get("/v1/repos/:owner/:repo/gate-precision", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const windowDaysRaw = Number(c.req.query("windowDays"));
+    const windowDays = windowDaysRaw > 0 ? windowDaysRaw : undefined;
+    return c.json(await loadGatePrecisionReport(c.env, fullName, windowDays !== undefined ? { windowDays } : {}));
   });
 
   // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
@@ -4271,6 +4285,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoSettingsPath(path)) return true;
   if (isRepoActivationPath(path)) return true;
   if (isRepoOutcomeCalibrationPath(path)) return true;
+  if (isRepoGatePrecisionPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
@@ -4296,6 +4311,10 @@ function isRepoActivationPath(path: string): boolean {
 
 function isRepoOutcomeCalibrationPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/outcome-calibration$/.test(path);
+}
+
+function isRepoGatePrecisionPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/gate-precision$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {

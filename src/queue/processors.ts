@@ -38,6 +38,8 @@ import {
   persistAdvisory,
   recordAgentCommandFeedback,
   recordAuditEvent,
+  recordGateBlockOutcome,
+  markGateOutcomeOverridden,
   recordProductUsageEvent,
   persistSignalSnapshot,
   recordWebhookEvent,
@@ -1291,6 +1293,20 @@ async function maybePublishPrPublicSurface(
 
     const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;
+    // #554 gate false-positive telemetry: when the gate BLOCKS, record the block (one latest row per PR) so a
+    // maintainer can later compute a per-gate-type false-positive rate (blocked-then-merged / blocked).
+    // MEASUREMENT only — never adjusts the gate. Best-effort: a write failure must NOT abort finalization
+    // (mirrors the slop-assessment persist above). Privacy: codes + PR number only, no actor/trust fields.
+    if (gateEvaluation?.conclusion === "failure") {
+      const blockerCodes = gateEvaluation.blockers.map((blocker) => blocker.code);
+      await recordGateBlockOutcome(env, { repoFullName, pullNumber: pr.number, headSha: pr.headSha, blockerCodes }).catch(() => undefined);
+      await recordGithubProductUsage(env, "gate_blocked", {
+        repoFullName,
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "completed",
+        metadata: { blockerCodes },
+      });
+    }
     if (gateEnabled) {
       const gateCheckResult = await createOrUpdateGateCheckRun(
         env,
@@ -1591,6 +1607,10 @@ async function maybeProcessGateOverrideCommand(env: Env, deliveryId: string, pay
     outcome: "completed",
     metadata: { actorKind: authorization.actorKind, headSha: advisory.headSha ?? null },
   });
+  // #554 gate false-positive telemetry: flag the gate-block row as maintainer-overridden — the strongest
+  // false-positive signal (a human explicitly judged the block wrong). Best-effort + no-op if no block was
+  // recorded; never affects the override outcome above.
+  await markGateOutcomeOverridden(env, repoFullName, pr.number).catch(() => undefined);
   return true;
 }
 

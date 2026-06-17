@@ -19,6 +19,7 @@ import {
   contributorScoringProfiles,
   contributors,
   digestSubscriptions,
+  gateOutcomes,
   githubAgentCommandAnswers,
   githubAgentCommandFeedback,
   installationHealth,
@@ -69,6 +70,7 @@ import type {
   AgentRecommendationOutcomeState,
   AgentRecommendationOutcomeSummary,
   AgentRecommendationOutcomeTargetType,
+  GateOutcomeRecord,
   AgentMode,
   AgentRunRecord,
   AgentRunStatus,
@@ -3194,6 +3196,66 @@ export async function listAgentRecommendationOutcomes(
   return rows.map(toAgentRecommendationOutcomeRecord);
 }
 
+// #554 gate false-positive telemetry. Upsert the latest gate-block row for a (repo, PR): one row per PR so a
+// re-evaluation overwrites the prior block. Preserves `overridden` once set true (a later block must not
+// clear a maintainer's override). Privacy: never stores actor or trust/reward fields.
+export async function recordGateBlockOutcome(
+  env: Env,
+  input: { repoFullName: string; pullNumber: number; headSha?: string | null | undefined; blockerCodes: string[] },
+): Promise<void> {
+  const now = nowIso();
+  const repoFullName = boundedString(input.repoFullName, 200);
+  const values = {
+    id: `gate:${repoFullName}#${input.pullNumber}`,
+    repoFullName,
+    pullNumber: input.pullNumber,
+    headSha: input.headSha ?? null,
+    blockerCodesJson: jsonString(input.blockerCodes),
+    overridden: false,
+    blockedAt: now,
+    updatedAt: now,
+  };
+  await getDb(env.DB)
+    .insert(gateOutcomes)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [gateOutcomes.repoFullName, gateOutcomes.pullNumber],
+      // Refresh the codes/head/timestamp on a re-block; `overridden` is deliberately omitted so a true value
+      // is preserved.
+      set: { headSha: values.headSha, blockerCodesJson: values.blockerCodesJson, updatedAt: values.updatedAt },
+    });
+}
+
+// Flag a gate-block row as maintainer-overridden (#538). No-op when no row exists (an override without a
+// recorded block — e.g. a pre-#554 PR — has nothing to flag).
+export async function markGateOutcomeOverridden(env: Env, repoFullName: string, pullNumber: number): Promise<void> {
+  await getDb(env.DB)
+    .update(gateOutcomes)
+    .set({ overridden: true, updatedAt: nowIso() })
+    .where(and(eq(gateOutcomes.repoFullName, boundedString(repoFullName, 200)), eq(gateOutcomes.pullNumber, pullNumber)));
+}
+
+export async function listGateOutcomes(
+  env: Env,
+  options: { repoFullName?: string; windowDays?: number; now?: string; limit?: number } = {},
+): Promise<GateOutcomeRecord[]> {
+  const limit = clampInteger(options.limit ?? 500, 1, 5000);
+  const conditions = [];
+  if (options.repoFullName) conditions.push(eq(gateOutcomes.repoFullName, options.repoFullName));
+  if (options.windowDays !== undefined) {
+    const windowDays = clampInteger(options.windowDays, 1, 365);
+    const now = options.now ?? nowIso();
+    conditions.push(gte(gateOutcomes.updatedAt, new Date(Date.parse(now) - windowDays * 24 * 60 * 60 * 1000).toISOString()));
+  }
+  const rows = await getDb(env.DB)
+    .select()
+    .from(gateOutcomes)
+    .where(conditions.length === 0 ? undefined : and(...conditions))
+    .orderBy(desc(gateOutcomes.updatedAt), gateOutcomes.id)
+    .limit(limit);
+  return rows.map(toGateOutcomeRecord);
+}
+
 export async function getAgentRecommendationOutcomeSummary(
   env: Env,
   actorLogin: string,
@@ -3952,6 +4014,19 @@ function toAgentRecommendationOutcomeRecord(row: typeof agentRecommendationOutco
     detectedAt: row.detectedAt,
     metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
     createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toGateOutcomeRecord(row: typeof gateOutcomes.$inferSelect): GateOutcomeRecord {
+  return {
+    id: row.id,
+    repoFullName: row.repoFullName,
+    pullNumber: row.pullNumber,
+    headSha: row.headSha,
+    blockerCodes: parseJson<string[]>(row.blockerCodesJson, []),
+    overridden: row.overridden,
+    blockedAt: row.blockedAt,
     updatedAt: row.updatedAt,
   };
 }

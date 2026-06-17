@@ -557,6 +557,30 @@ export const agentRecommendationOutcomes = sqliteTable(
   }),
 );
 
+// #554 gate false-positive telemetry: one latest gate-block row per (repo, PR). MEASUREMENT only — it lets a
+// maintainer compute a per-gate-type false-positive rate (blocked-then-merged / blocked) before promoting a
+// gate from advisory to block. Privacy: repo full name + PR number + blocker codes + timestamps ONLY — no
+// actor logins, no trust/reward internals. Mirrors agentRecommendationOutcomes (dedicated ledger + upsert).
+export const gateOutcomes = sqliteTable(
+  "gate_outcomes",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    headSha: text("head_sha"),
+    // JSON array of the blocker `code`s that fired (e.g. ["missing_linked_issue","slop_risk"]).
+    blockerCodesJson: text("blocker_codes_json").notNull().default("[]"),
+    // Set true when a maintainer overrides the block via #538 — the strongest false-positive signal.
+    overridden: integer("overridden", { mode: "boolean" }).notNull().default(false),
+    blockedAt: text("blocked_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    pr: uniqueIndex("gate_outcomes_pr_unique").on(table.repoFullName, table.pullNumber),
+    repoUpdated: index("gate_outcomes_repo_updated_idx").on(table.repoFullName, table.updatedAt),
+  }),
+);
+
 export const installationHealth = sqliteTable("installation_health", {
   installationId: integer("installation_id").primaryKey(),
   accountLogin: text("account_login").notNull(),

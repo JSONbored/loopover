@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "hono";
 import { handleGitHubWebhook } from "../../src/github/webhook";
-import { getWebhookEvent } from "../../src/db/repositories";
+import { getWebhookEvent, recordWebhookEvent } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("github webhook body reader edge cases", () => {
@@ -73,6 +73,46 @@ describe("github webhook enqueue failure (#786)", () => {
     // Flagged "error" so the dedup guard lets GitHub redeliver instead of suppressing it.
     const event = await getWebhookEvent(env, "enqueue-fail-1");
     expect(event?.status).toBe("error");
+  });
+});
+
+describe("github webhook dedup (#789)", () => {
+  it("suppresses redelivery of an already-processed event instead of re-running side effects", async () => {
+    const env = createTestEnv();
+    let sendCount = 0;
+    env.JOBS = {
+      send: async () => {
+        sendCount += 1;
+      },
+    } as unknown as typeof env.JOBS;
+    // Seed a fully-processed event: on success the queue overwrites payloadHash with the "processed"
+    // sentinel, so a redelivery carries the real hash and a hash-only dedup would miss it.
+    await recordWebhookEvent(env, { deliveryId: "redelivery-1", eventName: "pull_request", payloadHash: "processed", status: "processed" });
+    const rawBody = JSON.stringify({ action: "opened", repository: { full_name: "JSONbored/gittensory" } });
+    const signature = await signWebhook(rawBody, env.GITHUB_WEBHOOK_SECRET);
+    const request = new Request("https://example.com/webhook", { method: "POST", body: rawBody });
+    const headers: Record<string, string> = {
+      "x-github-delivery": "redelivery-1",
+      "x-github-event": "pull_request",
+      "x-hub-signature-256": signature,
+    };
+    const context = {
+      req: {
+        raw: request,
+        header(name: string) {
+          return headers[name.toLowerCase()] ?? null;
+        },
+      },
+      env,
+      json(payload: unknown, status?: number) {
+        return Response.json(payload, status === undefined ? undefined : { status });
+      },
+    } as unknown as Context<{ Bindings: Env }>;
+
+    const response = await handleGitHubWebhook(context);
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({ status: "duplicate" });
+    expect(sendCount).toBe(0); // not re-enqueued
   });
 });
 

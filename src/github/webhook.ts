@@ -37,7 +37,11 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
 
   const payloadHash = await sha256Hex(rawBody);
   const existingEvent = await getWebhookEvent(c.env, deliveryId);
-  if (existingEvent && existingEvent.payloadHash === payloadHash && existingEvent.status !== "error") {
+  // Suppress redelivery of an already-processed event (on success its payloadHash is overwritten to a
+  // "processed" sentinel, so a hash match alone misses it and the event re-runs its side effects) or one
+  // still in flight with the same payload. "error" rows are never suppressed so a failed enqueue/processing
+  // can still be retried (#789).
+  if (existingEvent && existingEvent.status !== "error" && (existingEvent.status === "processed" || existingEvent.payloadHash === payloadHash)) {
     return c.json({ ok: true, deliveryId, eventName, status: "duplicate" }, 202);
   }
 

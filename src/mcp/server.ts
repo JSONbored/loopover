@@ -87,6 +87,7 @@ import {
 } from "../signals/engine";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { computeLocalScorerTokens } from "../signals/local-scorer";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
@@ -181,6 +182,51 @@ const branchEligibilityShape = {
   stale: z.boolean().optional(),
 };
 
+// Changed-file metadata + local validation results — shared by the local-branch analysis and the #782 local
+// scorer. METADATA ONLY (paths + line counts), never source content, so the no-upload boundary holds.
+const changedFileSchema = z
+  .object({
+    path: z.string().min(1),
+    previousPath: z.string().min(1).optional(),
+    additions: z.number().int().min(0).optional(),
+    deletions: z.number().int().min(0).optional(),
+    status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
+    binary: z.boolean().optional(),
+  })
+  .strict();
+
+const validationEntrySchema = z
+  .object({
+    command: z.string().min(1),
+    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
+    summary: z.string().optional(),
+    durationMs: z.number().int().min(0).optional(),
+    exitCode: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+// #782 run_local_scorer input — changed-file metadata + the local validation results.
+const runLocalScorerShape = {
+  changedFiles: z.array(changedFileSchema).min(1).max(500),
+  validation: z.array(validationEntrySchema).max(50).optional(),
+};
+
+const runLocalScorerOutputSchema = {
+  tokenScores: z
+    .object({
+      mode: z.string(),
+      activeModel: z.string().optional(),
+      sourceTokenScore: z.number().optional(),
+      totalTokenScore: z.number().optional(),
+      sourceLines: z.number().optional(),
+      testTokenScore: z.number().optional(),
+      nonCodeTokenScore: z.number().optional(),
+      warnings: z.array(z.string()).optional(),
+    })
+    .optional(),
+  usage: z.string().optional(),
+};
+
 const localBranchAnalysisShape = {
   login: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
   repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
@@ -192,35 +238,8 @@ const localBranchAnalysisShape = {
   mergeBaseSha: z.string().min(1).optional(),
   remoteTrackingSha: z.string().min(1).optional(),
   commitMessages: z.array(z.string()).max(30).optional(),
-  changedFiles: z
-    .array(
-      z
-        .object({
-          path: z.string().min(1),
-          previousPath: z.string().min(1).optional(),
-          additions: z.number().int().min(0).optional(),
-          deletions: z.number().int().min(0).optional(),
-          status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
-          binary: z.boolean().optional(),
-        })
-        .strict(),
-    )
-    .max(500)
-    .optional(),
-  validation: z
-    .array(
-      z
-        .object({
-          command: z.string().min(1),
-          status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-          summary: z.string().optional(),
-          durationMs: z.number().int().min(0).optional(),
-          exitCode: z.number().int().min(0).optional(),
-        })
-        .strict(),
-    )
-    .max(50)
-    .optional(),
+  changedFiles: z.array(changedFileSchema).max(500).optional(),
+  validation: z.array(validationEntrySchema).max(50).optional(),
   linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
   labels: z.array(z.string()).optional(),
   title: z.string().min(1).optional(),
@@ -997,6 +1016,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_run_local_scorer",
+      {
+        description:
+          "Run Gittensory's deterministic local token scorer over changed-file metadata + local validation results (no source content). Returns token scores to pass back as the `localScorer` field of the score-preview / analyze tools (external_command mode), so the miner never runs the gittensor-root scorer by hand.",
+        inputSchema: runLocalScorerShape,
+        outputSchema: runLocalScorerOutputSchema,
+      },
+      async (input) => this.toolResult(this.runLocalScorer(input)),
+    );
+
+    server.registerTool(
       "gittensory_explain_score_breakdown",
       {
         description:
@@ -1735,6 +1765,19 @@ export class GittensoryMcp {
     return {
       summary: `Private Gittensory scoring preview for ${input.repoFullName}.`,
       data: makeScorePreviewRecord(scoreInput, snapshot, result) as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #782 — pure deterministic token scorer over caller-supplied changed-file metadata. No repo/contributor
+  // access required: it reveals nothing beyond a computation on the caller's own diff stats.
+  private runLocalScorer(input: z.infer<z.ZodObject<typeof runLocalScorerShape>>): ToolPayload {
+    const tokenScores = computeLocalScorerTokens({ changedFiles: input.changedFiles, validation: input.validation });
+    return {
+      summary: `Local token scores — ${tokenScores.sourceTokenScore} source / ${tokenScores.testTokenScore} test / ${tokenScores.nonCodeTokenScore} non-code (total ${tokenScores.totalTokenScore}).`,
+      data: {
+        tokenScores: tokenScores as unknown as Record<string, unknown>,
+        usage: "Pass `tokenScores` as the `localScorer` field of gittensory_preview_local_pr_score or the analyze tools to score this branch in external_command mode (off metadata-only).",
+      },
     };
   }
 

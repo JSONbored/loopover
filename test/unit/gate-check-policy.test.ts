@@ -76,6 +76,19 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
     expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(eff, null, true)).conclusion).toBe("success");
   });
 
+  it("end-to-end: manifest gate.mergeReadiness:block drives the composite even when the DB sub-gate is advisory (#822)", () => {
+    const eff = resolveEffectiveSettings(settings({ linkedIssueGateMode: "advisory", mergeReadinessGateMode: "off" }), parseFocusManifest({ gate: { mergeReadiness: "block" } }));
+    expect(eff.mergeReadinessGateMode).toBe("block");
+    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(eff, null, true)).conclusion).toBe("failure");
+  });
+
+  it("end-to-end: manifest gate.firstTimeContributorGrace:true softens a newcomer's block to advisory (#822/#552)", () => {
+    const eff = resolveEffectiveSettings(settings({ linkedIssueGateMode: "block", firstTimeContributorGrace: false }), parseFocusManifest({ gate: { firstTimeContributorGrace: true } }));
+    expect(eff.firstTimeContributorGrace).toBe(true);
+    const newcomerPolicy = gateCheckPolicy(eff, null, true, null, { mergedPrCount: 0, closedUnmergedPrCount: 0 });
+    expect(evaluateGateCheck(missingIssueAdvisory(), newcomerPolicy).conclusion).toBe("neutral");
+  });
+
   it("still only blocks confirmed contributors regardless of the config", () => {
     const eff = resolveEffectiveSettings(settings({ linkedIssueGateMode: "advisory" }), parseFocusManifest({ gate: { linkedIssue: "block" } }));
     const nonConfirmed = evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(eff, null, false));

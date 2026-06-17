@@ -29,6 +29,8 @@ export type FocusManifestGateConfig = {
   aiReviewByok: boolean | null;
   aiReviewProvider: "anthropic" | "openai" | null;
   aiReviewModel: string | null;
+  mergeReadiness: GateRuleMode | null;
+  firstTimeContributorGrace: boolean | null;
 };
 
 /**
@@ -157,6 +159,8 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewByok: null,
   aiReviewProvider: null,
   aiReviewModel: null,
+  mergeReadiness: null,
+  firstTimeContributorGrace: null,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -297,6 +301,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
+    mergeReadiness: normalizeOptionalGateMode(record.mergeReadiness, "gate.mergeReadiness", warnings),
+    firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
   gate.present =
     gate.enabled !== null ||
@@ -311,7 +317,9 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewMode !== null ||
     gate.aiReviewByok !== null ||
     gate.aiReviewProvider !== null ||
-    gate.aiReviewModel !== null;
+    gate.aiReviewModel !== null ||
+    gate.mergeReadiness !== null ||
+    gate.firstTimeContributorGrace !== null;
   return gate;
 }
 
@@ -347,6 +355,8 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
     out.aiReview = aiReview;
   }
+  if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
+  if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   return out;
 }
 
@@ -492,6 +502,8 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
+  if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
+  if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   return effective;
 }
 

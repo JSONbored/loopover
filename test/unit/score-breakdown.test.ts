@@ -209,4 +209,45 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.highestLeverageLever.reason).toMatch(/reducer|optimization lever/i);
     expect(breakdown.highestLeverageLever.component).toMatch(/credibilityMultiplier|issueMultiplier|reviewPenaltyMultiplier/);
   });
+
+  it("marks eligible linked issues with a multiplier boost as full strength", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 80,
+        totalTokenScore: 120,
+        sourceLines: 60,
+        openPrCount: 0,
+        existingContributorTokenScore: 1200,
+        credibility: 1,
+        linkedIssueMode: "maintainer",
+        linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [99] },
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "issueMultiplier")).toMatchObject({ band: "full" });
+  });
+
+  it("blocks near-zero multipliers that are not quite zero", () => {
+    const preview = buildScorePreview({
+      repo,
+      snapshot,
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 80,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 20,
+        existingContributorTokenScore: 50,
+        credibility: 0.005,
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "credibilityMultiplier")).toMatchObject({ band: "blocked" });
+    expect(breakdown.components.find((entry) => entry.component === "openPrMultiplier")).toMatchObject({ band: "blocked" });
+  });
 });

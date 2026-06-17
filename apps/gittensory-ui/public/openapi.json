@@ -8017,6 +8017,14 @@
           },
           "firstTimeContributorGrace": {
             "type": "boolean"
+          },
+          "manifestPolicyGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
           }
         },
         "required": [
@@ -8033,6 +8041,7 @@
           "qualityGateMode",
           "slopGateMode",
           "mergeReadinessGateMode",
+          "manifestPolicyGateMode",
           "firstTimeContributorGrace",
           "slopAiAdvisory",
           "autoLabelEnabled",
@@ -8624,6 +8633,14 @@
               },
               "firstTimeContributorGrace": {
                 "type": "boolean"
+              },
+              "manifestPolicyGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
               }
             },
             "required": [
@@ -8640,6 +8657,7 @@
               "qualityGateMode",
               "slopGateMode",
               "mergeReadinessGateMode",
+              "manifestPolicyGateMode",
               "firstTimeContributorGrace",
               "autoLabelEnabled",
               "gittensorLabel",

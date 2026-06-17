@@ -400,7 +400,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, firstTimeContributorGrace: null },
+      gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {} },
       warnings: [],
@@ -688,7 +688,7 @@ describe("parseFocusManifest gate config", () => {
   it("parses a full gate section including the readiness block", () => {
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "block", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, firstTimeContributorGrace: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "block", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, manifestPolicy: null, firstTimeContributorGrace: null });
   });
 
   it("parses gate.mergeReadiness + gate.firstTimeContributorGrace, round-trips them, and warns on bad values (#822)", () => {
@@ -701,6 +701,17 @@ describe("parseFocusManifest gate config", () => {
     expect(bad.gate.mergeReadiness).toBeNull();
     expect(bad.gate.firstTimeContributorGrace).toBeNull();
     expect(bad.gate.present).toBe(false);
+  });
+
+  it("parses gate.manifestPolicy, round-trips it through gateConfigToJson, and warns + nulls on a bad value (#555)", () => {
+    const m = parseFocusManifest({ gate: { manifestPolicy: "block" } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.manifestPolicy).toBe("block");
+    expect(gateConfigToJson(m.gate)).toMatchObject({ manifestPolicy: "block" });
+    const bad = parseFocusManifest({ gate: { manifestPolicy: "sometimes" } });
+    expect(bad.gate.manifestPolicy).toBeNull();
+    expect(bad.gate.present).toBe(false);
+    expect(bad.warnings.some((w) => w.includes("gate.manifestPolicy"))).toBe(true);
   });
 
   it("parses the gate.slop block, round-trips it, and warns on a non-mapping (#530/#532)", () => {

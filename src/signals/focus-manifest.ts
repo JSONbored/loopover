@@ -30,6 +30,7 @@ export type FocusManifestGateConfig = {
   aiReviewProvider: "anthropic" | "openai" | null;
   aiReviewModel: string | null;
   mergeReadiness: GateRuleMode | null;
+  manifestPolicy: GateRuleMode | null;
   firstTimeContributorGrace: boolean | null;
 };
 
@@ -160,6 +161,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewProvider: null,
   aiReviewModel: null,
   mergeReadiness: null,
+  manifestPolicy: null,
   firstTimeContributorGrace: null,
 };
 
@@ -302,6 +304,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
     mergeReadiness: normalizeOptionalGateMode(record.mergeReadiness, "gate.mergeReadiness", warnings),
+    manifestPolicy: normalizeOptionalGateMode(record.manifestPolicy, "gate.manifestPolicy", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
   gate.present =
@@ -319,6 +322,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewProvider !== null ||
     gate.aiReviewModel !== null ||
     gate.mergeReadiness !== null ||
+    gate.manifestPolicy !== null ||
     gate.firstTimeContributorGrace !== null;
   return gate;
 }
@@ -356,6 +360,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     out.aiReview = aiReview;
   }
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
+  if (gate.manifestPolicy !== null) out.manifestPolicy = gate.manifestPolicy;
   if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   return out;
 }
@@ -503,6 +508,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
+  if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   return effective;
 }

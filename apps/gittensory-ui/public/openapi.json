@@ -8006,6 +8006,14 @@
           },
           "slopAiAdvisory": {
             "type": "boolean"
+          },
+          "mergeReadinessGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
           }
         },
         "required": [
@@ -8021,6 +8029,7 @@
           "duplicatePrGateMode",
           "qualityGateMode",
           "slopGateMode",
+          "mergeReadinessGateMode",
           "slopAiAdvisory",
           "autoLabelEnabled",
           "gittensorLabel",
@@ -8600,6 +8609,14 @@
               "slopGateMinScore": {
                 "type": "number",
                 "nullable": true
+              },
+              "mergeReadinessGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
               }
             },
             "required": [
@@ -8615,6 +8632,7 @@
               "duplicatePrGateMode",
               "qualityGateMode",
               "slopGateMode",
+              "mergeReadinessGateMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",

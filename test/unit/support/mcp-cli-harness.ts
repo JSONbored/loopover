@@ -1,0 +1,363 @@
+import { execFile, execFileSync } from "node:child_process";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect } from "vitest";
+
+export const bin = join(process.cwd(), "packages/gittensory-mcp/bin/gittensory-mcp.js");
+let server: Server | null = null;
+
+export async function closeFixtureServer() {
+  if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
+  server = null;
+}
+
+export function run(args: string[], env: Record<string, string> = {}) {
+  return execFileSync("node", [bin, ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITTENSORY_API_TIMEOUT_MS: "1000",
+      GITTENSORY_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
+      ...env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+export function runAsync(args: string[], env: Record<string, string> = {}) {
+  return new Promise<string>((resolve, reject) => {
+    execFile(
+      "node",
+      [bin, ...args],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITTENSORY_API_TIMEOUT_MS: "1000",
+          GITTENSORY_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
+          ...env,
+        },
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(`${error.message}\n${stderr}`));
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+export function git(cwd: string, ...args: string[]) {
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+export function createPacketRepo() {
+  const cwd = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+  git(cwd, "init");
+  git(cwd, "config", "user.email", "test@example.com");
+  git(cwd, "config", "user.name", "Gittensory Test");
+  git(cwd, "config", "commit.gpgsign", "false");
+  git(cwd, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
+  writeFileSync(join(cwd, "README.md"), "fixture\n");
+  git(cwd, "add", "README.md");
+  git(cwd, "commit", "-m", "initial commit");
+  return cwd;
+}
+
+export async function capturePacketValidation(tempDir: string, validationArgs: string[]) {
+  const requests: unknown[] = [];
+  const url = await startFixtureServer({ onPacketRequest: (body) => requests.push(body) });
+  await runAsync(
+    ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD", ...validationArgs, "--json"],
+    {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_CONFIG_DIR: tempDir,
+    },
+  );
+  return (requests[0] as { validation: Array<{ command: string; status: string; exitCode?: number; summary?: string }> }).validation;
+}
+
+export function decisionPackCacheFile(configDir: string) {
+  const cacheDir = join(configDir, "cache", "decision-packs");
+  const files = readdirSync(cacheDir).filter((name) => name.endsWith(".json"));
+  expect(files).toHaveLength(1);
+  const file = files[0];
+  if (!file) throw new Error("expected one decision-pack cache file");
+  return join(cacheDir, file);
+}
+
+export function readDecisionPackCacheText(configDir: string) {
+  return readFileSync(decisionPackCacheFile(configDir), "utf8");
+}
+
+export async function startFixtureServer(
+  options: {
+    latestVersion?: string;
+    latestRecommendedMcpVersion?: string;
+    minMcpVersion?: string;
+    compatibilityStatus?: number;
+    npmStatus?: number;
+    decisionPackStatus?: number;
+    decisionPackErrorBody?: string;
+    decisionPackErrorContentType?: string;
+    repoDecisionStatus?: number;
+    repoDecisionErrorBody?: string;
+    repoDecisionErrorContentType?: string;
+    packetMarkdown?: string;
+    onPacketRequest?: (body: unknown) => void;
+    onApiRequest?: (request: IncomingMessage) => void;
+  } = {},
+) {
+  server = createServer(async (request, response) => {
+    options.onApiRequest?.(request);
+    response.setHeader("content-type", "application/json");
+    if (request.url && request.url.includes("gittensory-mcp/latest")) {
+      if (options.npmStatus && options.npmStatus >= 400) {
+        response.statusCode = options.npmStatus;
+        response.end(JSON.stringify({ error: "registry_error" }));
+        return;
+      }
+      response.end(JSON.stringify({ version: options.latestVersion ?? "0.4.0" }));
+      return;
+    }
+    if (request.url === "/v1/mcp/compatibility") {
+      if (options.compatibilityStatus && options.compatibilityStatus >= 400) {
+        response.statusCode = options.compatibilityStatus;
+        response.end(JSON.stringify({ error: "compatibility_unavailable" }));
+        return;
+      }
+      const minimumSupportedVersion = options.minMcpVersion ?? "0.4.0";
+      const latestRecommendedVersion = options.latestRecommendedMcpVersion ?? options.latestVersion ?? "0.4.0";
+      response.end(
+        JSON.stringify({
+          status: "ok",
+          service: "gittensory-api",
+          apiVersion: "0.1.0",
+          mcp: {
+            packageName: "@jsonbored/gittensory-mcp",
+            minimumSupportedVersion,
+            latestRecommendedVersion,
+            latestPackageVersion: latestRecommendedVersion,
+            supportedVersionRange: `>=${minimumSupportedVersion}`,
+            upgradeCommand: "npm install -g @jsonbored/gittensory-mcp@latest",
+            npxFallbackCommand: "npx @jsonbored/gittensory-mcp@latest <command>",
+          },
+          compatibilityWarnings: [],
+          breakingChanges: [],
+          generatedAt: "2026-05-30T00:00:00.000Z",
+        }),
+      );
+      return;
+    }
+    if (request.url === "/health") {
+      response.end(JSON.stringify({ status: "ok", service: "gittensory-api", ...(options.minMcpVersion ? { minMcpVersion: options.minMcpVersion } : {}) }));
+      return;
+    }
+    if (request.url === "/v1/auth/github/session" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { githubToken?: string };
+      const sessions: Record<string, { token: string; login: string }> = {
+        "github-jsonbored": { token: "session-jsonbored", login: "JSONbored" },
+        "github-okto": { token: "session-okto", login: "oktofeesh1" },
+      };
+      const session = body.githubToken ? sessions[body.githubToken] : null;
+      if (!session) {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "github_session_create_failed" }));
+        return;
+      }
+      response.end(JSON.stringify({ status: "authenticated", token: session.token, login: session.login, expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-token") {
+      response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-jsonbored") {
+      response.end(JSON.stringify({ status: "authenticated", login: "JSONbored", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/session" && request.headers.authorization === "Bearer session-okto") {
+      response.end(JSON.stringify({ status: "authenticated", login: "oktofeesh1", expiresAt: "2026-06-02T00:00:00.000Z", scopes: ["read:user"] }));
+      return;
+    }
+    if (request.url === "/v1/auth/logout" && request.method === "POST") {
+      response.end(JSON.stringify({ status: "logged_out" }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/decision-pack" && request.method === "GET") {
+      if (options.decisionPackStatus && options.decisionPackStatus >= 400) {
+        response.statusCode = options.decisionPackStatus;
+        if (options.decisionPackErrorContentType) response.setHeader("content-type", options.decisionPackErrorContentType);
+        response.end(options.decisionPackErrorBody ?? JSON.stringify({ error: "decision_pack_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify(decisionPackFixture()));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/repos/JSONbored/gittensory/decision" && request.method === "GET") {
+      if (options.repoDecisionStatus && options.repoDecisionStatus >= 400) {
+        response.statusCode = options.repoDecisionStatus;
+        if (options.repoDecisionErrorContentType) response.setHeader("content-type", options.repoDecisionErrorContentType);
+        response.end(options.repoDecisionErrorBody ?? JSON.stringify({ error: "repo_decision_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify({ status: "ready", login: "JSONbored", repoFullName: "JSONbored/gittensory", decision: decisionPackFixture().repoDecisions[0] }));
+      return;
+    }
+    if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {
+      await readJsonRequest(request);
+      response.end(JSON.stringify(agentFixture()));
+      return;
+    }
+    if (request.url === "/v1/agent/runs/run-1" && request.method === "GET") {
+      response.end(JSON.stringify(agentFixture()));
+      return;
+    }
+    if (request.url === "/v1/agent/prepare-pr-packet" && request.method === "POST") {
+      options.onPacketRequest?.(await readJsonRequest(request));
+      response.end(JSON.stringify(agentPacketFixture(options.packetMarkdown)));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+  await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("fixture server did not bind a TCP port");
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function readJsonRequest(request: IncomingMessage) {
+  return new Promise<unknown>((resolve) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+export function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Linked Context\n- Closes #39\n\n## Validation\n- passed: npm test (packet tests passed)\n") {
+  return {
+    ...agentFixture(),
+    actions: [
+      {
+        id: "action-packet",
+        runId: "run-1",
+        actionType: "prepare_pr_packet",
+        status: "ready",
+        recommendation: "Use this public-safe packet.",
+        why: ["Fixture"],
+        blockedBy: [],
+        publicSafeSummary: "Packet ready.",
+        approvalRequired: false,
+        safetyClass: "public_safe",
+        payload: {
+          prPacket: {
+            markdown,
+          },
+        },
+      },
+    ],
+  };
+}
+
+export function decisionPackFixture() {
+  return {
+    status: "ready",
+    source: "snapshot",
+    login: "JSONbored",
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    stale: false,
+    freshness: "fresh",
+    rebuildEnqueued: false,
+    scoringModelSnapshotId: "scoring-1",
+    profile: {
+      login: "JSONbored",
+      github: { topLanguages: ["TypeScript"] },
+      source: { cache: "fixture" },
+      officialStats: { totalMergedPrs: 12, hotkey: "hotkey-value", wallet: "wallet-value" },
+      registeredRepoActivity: {},
+      trustSignals: {},
+    },
+    outcomeHistory: {},
+    roleContexts: [],
+    opportunities: [],
+    repoDecisions: [
+      {
+        repoFullName: "JSONbored/gittensory",
+        recommendation: "pursue",
+        nextActions: ["Pick one narrow change."],
+        changedFiles: [{ path: "src/cache.ts", content: "must stay local" }],
+        localPath: "/tmp/source/private.ts",
+      },
+    ],
+    topActions: [{ actionKind: "open_new_direct_pr", repoFullName: "JSONbored/gittensory", priorityScore: 50 }],
+    cleanupFirst: [],
+    pursueRepos: [{ repoFullName: "JSONbored/gittensory", recommendation: "pursue" }],
+    avoidRepos: [],
+    maintainerLaneRepos: [],
+    scoreBlockers: [],
+    dataQuality: { signalFidelity: { status: "complete" } },
+    summary: "fixture decision pack",
+    nextActions: ["Pick one narrow change."],
+    sourceContents: "must stay local",
+  };
+}
+
+export function agentFixture() {
+  return {
+    run: {
+      id: "run-1",
+      objective: "plan",
+      actorLogin: "JSONbored",
+      surface: "mcp",
+      mode: "copilot",
+      status: "completed",
+      dataQualityStatus: "complete",
+      payload: {},
+    },
+    actions: [
+      {
+        id: "action-1",
+        runId: "run-1",
+        actionType: "choose_next_work",
+        status: "recommended",
+        recommendation: "Pick narrow work and run branch preflight.",
+        why: ["Fixture"],
+        blockedBy: [],
+        rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+        publicSafeSummary: "Fixture public summary.",
+        explanationCard: {
+          summary: "Pursue now: this action is the current ranked next step.",
+          whyNow: "Current deterministic planning signals rank this action ahead of other available next steps.",
+          scoreabilityBlocker: "No hard scoreability blocker is visible in current signals.",
+          risk: "No major action-specific risk is visible in the current card.",
+          maintainerFriction: "Narrow, validated work is easier for maintainers to review.",
+          expectedImpact: "Advance toward one narrow, validated contribution path.",
+          blockerGroups: [],
+          rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          publicSafe: {
+            summary: "Fixture public summary.",
+            whyNow: "Fixture public summary.",
+            rerunWhen: "Rerun before opening a PR or when repo queue signals change.",
+          },
+        },
+        approvalRequired: true,
+        safetyClass: "private",
+        payload: {},
+      },
+    ],
+    contextSnapshots: [],
+    summary: "fixture",
+  };
+}

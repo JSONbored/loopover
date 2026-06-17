@@ -81,7 +81,7 @@ import {
 import { ensurePullRequestLabel } from "../github/labels";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
-import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck } from "../rules/advisory";
+import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
 import { deliverNotification, detectIssueWatchEvents, evaluateNotificationEvent } from "../notifications/service";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
@@ -138,7 +138,7 @@ import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "..
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { resolveEffectiveSettings } from "../signals/focus-manifest";
+import { buildFocusManifestGuidance, resolveEffectiveSettings } from "../signals/focus-manifest";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
 import type { AdvisoryFinding, ContributorEvidenceRecord, DetectedNotificationEvent, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
@@ -883,6 +883,7 @@ export function gateCheckPolicy(
     readinessScore: readinessScore ?? null,
     slopGateMode: settings.slopGateMode,
     mergeReadinessGateMode: settings.mergeReadinessGateMode,
+    manifestPolicyGateMode: settings.manifestPolicyGateMode,
     firstTimeContributorGrace: settings.firstTimeContributorGrace,
     authorMergedPrCount: authorHistory?.mergedPrCount,
     authorClosedUnmergedPrCount: authorHistory?.closedUnmergedPrCount,
@@ -1227,8 +1228,14 @@ async function maybePublishPrPublicSurface(
     // findings as advisory context, and feed the score to the gate (it only blocks under slop: block + the
     // threshold). Loads files lazily so disabled repos pay nothing.
     let slopRisk: number | null = null;
+    // Slop (#530) and focus-manifest-policy (#555) gates both need the PR's changed files. Load ONCE and
+    // share so two opted-in gates don't double-fetch; the load is lazy so a repo with both off pays nothing.
+    let gateFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null = null;
+    if (settings.slopGateMode !== "off" || settings.manifestPolicyGateMode !== "off") {
+      gateFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+    }
     if (settings.slopGateMode !== "off") {
-      const slopFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      const slopFiles = gateFiles ?? [];
       const slop = buildSlopAssessment({
         changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
         description: pr.body,
@@ -1242,6 +1249,33 @@ async function maybePublishPrPublicSurface(
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (settings.slopAiAdvisory) {
         await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band, confirmedContributor });
+      }
+    }
+    // Focus-manifest policy (#555, opt-in via manifestPolicyGateMode). Reload the CACHED manifest (the
+    // settings resolver discards the raw manifest, but loadRepoFocusManifest is cached so this is cheap),
+    // recompute the guidance over the PR's changed files, and push ONLY the three enforceable policy
+    // findings into the advisory so isConfiguredGateBlocker can block under manifestPolicy: block.
+    if (settings.manifestPolicyGateMode !== "off") {
+      const manifestFiles = gateFiles ?? [];
+      const manifest = await loadRepoFocusManifest(env, repoFullName);
+      const guidance = buildFocusManifestGuidance({
+        manifest,
+        changedPaths: manifestFiles.map((file) => file.path),
+        labels: pr.labels,
+        linkedIssueCount: pr.linkedIssues.length,
+        testFileCount: manifestFiles.filter((file) => isTestPath(file.path)).length,
+        passedValidationCount: 0,
+      });
+      const policyCodes = new Set(["manifest_blocked_path", "manifest_linked_issue_required", "manifest_missing_tests"]);
+      for (const finding of guidance.findings) {
+        if (!policyCodes.has(finding.code)) continue;
+        advisory.findings.push({
+          code: finding.code,
+          severity: finding.severity,
+          title: finding.title,
+          detail: finding.detail,
+          ...(finding.action !== undefined ? { action: finding.action } : {}),
+        });
       }
     }
 

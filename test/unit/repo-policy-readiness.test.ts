@@ -26,6 +26,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     qualityGateMode: "advisory",
     slopGateMode: "off",
     mergeReadinessGateMode: "off",
+    manifestPolicyGateMode: "off",
     firstTimeContributorGrace: false,
     slopAiAdvisory: false,
     qualityGateMinScore: null,

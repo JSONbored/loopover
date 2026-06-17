@@ -415,6 +415,10 @@ export type RepositorySettings = {
   slopGateMode: GateRuleMode;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;
+  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy (blocked paths,
+   *  required-linked-issue, test expectations) becomes an enforceable `Gittensory Gate` blocker. An
+   *  INDEPENDENT dimension, deliberately not folded into the merge-readiness composite. Default `off` — opt-in. */
+  manifestPolicyGateMode: GateRuleMode;
   /** First-time-contributor grace (#552). When true, a would-be BLOCK is softened to a neutral/advisory gate
    *  for a genuine newcomer (0 merged PRs in this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs).
    *  Repeat offenders and authors with merge history are gated normally. Default false — opt-in. */

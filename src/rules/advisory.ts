@@ -32,6 +32,11 @@ export type GateCheckPolicy = {
    *  linked-issue, duplicate, quality/readiness, slop — to its mode, so a maintainer flips ONE switch instead
    *  of four and `Gittensory Gate` stays the single required check. `off` = sub-gates use their own modes. */
   mergeReadinessGateMode?: GateRuleMode | undefined;
+  /** Focus-manifest policy gate (#555). When `block`, the focus manifest's declared policy findings —
+   *  `manifest_blocked_path`, `manifest_linked_issue_required`, `manifest_missing_tests` — become hard
+   *  blockers. An INDEPENDENT dimension, deliberately NOT folded into the merge-readiness composite so #555
+   *  stays focused. `off`/`advisory` = the findings stay advisory (never block). Default off. */
+  manifestPolicyGateMode?: GateRuleMode | undefined;
   /** First-time-contributor grace (#552). When true AND the author is a genuine newcomer (0 merged PRs in
    *  this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs), a would-be BLOCK is softened to a
    *  neutral/advisory gate. `undefined`/false = the grace rule does not apply and blockers gate normally. */
@@ -177,7 +182,7 @@ function isCodePath(path: string): boolean {
   return /\.(ts|tsx|js|jsx|py|go|rs|java|rb|php|cs|cpp|c|h|swift|kt|m|sql|yaml|yml|json|toml|md)$/i.test(path);
 }
 
-function isTestPath(path: string): boolean {
+export function isTestPath(path: string): boolean {
   return (
     /(^|\/)(test|tests|spec|__tests__)\//i.test(path) ||
     /\.(test|spec)\.(ts|tsx|js|jsx|py|go|rs)$/i.test(path) ||
@@ -604,6 +609,11 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // most conservative AI signal (two independent models, high confidence) but still confirmed-contributor
   // gated by evaluateGateCheck, and advisory by default.
   if (code === "ai_consensus_defect") return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
+  // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer
+  // opts into manifestPolicy: block. Default off/advisory keeps them advisory-only.
+  if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {
+    return gateMode(policy.manifestPolicyGateMode ?? "off") === "block";
+  }
   return false;
 }
 

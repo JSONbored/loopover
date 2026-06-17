@@ -61,6 +61,7 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     qualityGateMode: "advisory",
     slopGateMode: "off",
     mergeReadinessGateMode: "off",
+    manifestPolicyGateMode: "off",
     firstTimeContributorGrace: false,
     slopAiAdvisory: false,
     qualityGateMinScore: null,

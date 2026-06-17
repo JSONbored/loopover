@@ -20,7 +20,8 @@ export async function maybeEnqueueVisualReview(env: Env, deliveryId: string, pay
   const repoFullName = payload.repository?.full_name;
   const pr = payload.pull_request;
   if (!repoFullName || !pr) return false;
-  if (!VISUAL_REVIEW_PR_ACTIONS.has(payload.action ?? "")) return false;
+  const action = payload.action ?? "";
+  if (!VISUAL_REVIEW_PR_ACTIONS.has(action)) return false;
   if (pr.draft === true || pr.isDraft === true) return false;
   const headSha = pr.head?.sha;
   if (!headSha) return false;
@@ -53,7 +54,7 @@ export async function maybeEnqueueVisualReview(env: Env, deliveryId: string, pay
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "queued",
       detail: `visual review queued for ${repoFullName}#${pr.number} @ ${headSha.slice(0, 7)}`,
-      metadata: { deliveryId, repoFullName, pullNumber: pr.number, headSha, action: payload.action },
+      metadata: { deliveryId, repoFullName, pullNumber: pr.number, headSha, action },
     });
     return true;
   } catch (error) {

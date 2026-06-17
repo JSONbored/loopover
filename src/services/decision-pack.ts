@@ -423,7 +423,7 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
   // The heavy full-table reads are login-independent; reuse caller-provided context (batch job) or load once here (single-login run).
   const { repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot } = shared ?? (await loadDecisionPackSharedInputs(env));
   const [github, contributorPullRequests, contributorIssues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-    fetchPublicContributorProfile(login),
+    fetchPublicContributorProfile(login, env),
     listContributorPullRequests(env, login),
     listContributorIssues(env, login),
     listContributorRepoStats(env, login),

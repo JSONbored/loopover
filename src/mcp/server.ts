@@ -1485,7 +1485,7 @@ export class GittensoryMcp {
   private async getContributorProfile(login: string): Promise<ToolPayload> {
     this.requireContributorAccess(login);
     const [github, pullRequests, issues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(login),
+      fetchPublicContributorProfile(login, this.env),
       listContributorPullRequests(this.env, login),
       listContributorIssues(this.env, login),
       listContributorRepoStats(this.env, login),
@@ -2026,7 +2026,7 @@ export class GittensoryMcp {
 
   private async loadContributorFastContext(login: string) {
     const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(login),
+      fetchPublicContributorProfile(login, this.env),
       listContributorPullRequests(this.env, login),
       listContributorIssues(this.env, login),
       listRepositories(this.env),

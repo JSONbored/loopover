@@ -59,12 +59,15 @@ const repoStatsCache = new Map<string, RepoStatsCacheEntry>();
 // indefinitely (mirrors GITHUB_FETCH_TIMEOUT_MS in src/github/app.ts) (#790).
 const GITHUB_PUBLIC_FETCH_TIMEOUT_MS = 12_000;
 
-export async function fetchPublicContributorProfile(login: string): Promise<PublicContributorProfile> {
+export async function fetchPublicContributorProfile(login: string, env?: Pick<Env, "GITHUB_PUBLIC_TOKEN">): Promise<PublicContributorProfile> {
   const safeLogin = encodeURIComponent(login);
   const headers = {
     accept: "application/vnd.github+json",
     "user-agent": "gittensory/0.1",
     "x-github-api-version": "2022-11-28",
+    // Authenticated requests lift the 60/hr unauthenticated ceiling to 5000/hr so the 500-login evidence
+    // loop doesn't exhaust it and silently degrade (mirrors fetchPublicRepoStats) (#790).
+    ...(env?.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
   };
   try {
     const signal = AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS);

@@ -2148,7 +2148,7 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
     const [github, pullRequests, issues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(login),
+      fetchPublicContributorProfile(login, c.env),
       listContributorPullRequests(c.env, login),
       listContributorIssues(c.env, login),
       listContributorRepoStats(c.env, login),
@@ -3784,7 +3784,7 @@ async function loadOpenQueueCounts(env: Env, fullName: string): Promise<{ openIs
 
 async function loadContributorFastContext(env: Env, login: string) {
   const [github, contributorPullRequests, contributorIssues, repositories, syncStates, syncSegments, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-    fetchPublicContributorProfile(login),
+    fetchPublicContributorProfile(login, env),
     listContributorPullRequests(env, login),
     listContributorIssues(env, login),
     listRepositories(env),

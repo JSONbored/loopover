@@ -123,4 +123,20 @@ describe("small adapters and normalizers", () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
     await expect(fetchPublicContributorProfile("missing")).resolves.toMatchObject({ login: "missing", source: "unavailable", topLanguages: [] });
   });
+
+  it("authenticates public profile requests with GITHUB_PUBLIC_TOKEN to lift the rate ceiling (#790)", async () => {
+    const authHeaders: Array<string | null> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      authHeaders.push(new Headers(init?.headers).get("authorization"));
+      const url = input.toString();
+      if (url.endsWith("/users/dev")) return Response.json({ login: "dev", public_repos: 0, followers: 0 });
+      return Response.json([]);
+    });
+    await fetchPublicContributorProfile("dev", { GITHUB_PUBLIC_TOKEN: "public-token" });
+    expect(authHeaders).toEqual(["Bearer public-token", "Bearer public-token"]);
+
+    authHeaders.length = 0;
+    await fetchPublicContributorProfile("dev");
+    expect(authHeaders).toEqual([null, null]);
+  });
 });

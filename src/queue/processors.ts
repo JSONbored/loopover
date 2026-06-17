@@ -407,7 +407,7 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
     // 500-login batch and poison-pill the queue on retry (#787).
     try {
     const [github, contributorPullRequests, contributorIssues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(contributorLogin),
+      fetchPublicContributorProfile(contributorLogin, env),
       listContributorPullRequests(env, contributorLogin),
       listContributorIssues(env, contributorLogin),
       listContributorRepoStats(env, contributorLogin),
@@ -1270,7 +1270,7 @@ async function maybePublishPrPublicSurface(
   if (!prelimHasPublicOutput) return;
   if (publicSurfaceSkipped || !official || !author) return;
 
-  const [github] = await Promise.all([fetchPublicContributorProfile(author)]);
+  const [github] = await Promise.all([fetchPublicContributorProfile(author, env)]);
   const contributorPullRequests: Awaited<ReturnType<typeof listContributorPullRequests>> = [];
   const contributorIssues: Awaited<ReturnType<typeof listContributorIssues>> = [];
   const repoStats: Awaited<ReturnType<typeof listContributorRepoStats>> = official.status === "confirmed" ? contributorRepoStatsFromGittensor(official.snapshot) : [];

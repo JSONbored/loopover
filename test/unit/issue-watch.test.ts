@@ -50,6 +50,27 @@ describe("issue-watch subscriptions (CRUD)", () => {
     expect(await deleteIssueWatchSubscription(env, "miner", "owner/repo")).toBe(false); // already gone
     expect(await listIssueWatchSubscriptionsForLogin(env, "miner")).toHaveLength(0);
   });
+
+  it("matches the watched repo case-insensitively (GitHub repo names are case-insensitive)", async () => {
+    const env = createTestEnv();
+    // owner/repo is a tracked PUBLIC repo, so the visibility-aware fan-out gate (#742) admits any watcher.
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" }, default_branch: "main" }, 100);
+    // Subscribe with non-canonical casing — the webhook delivers the canonical `repository.full_name`,
+    // so the stored repo must still match it (and be normalized for display + idempotency).
+    await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "Owner/Repo" });
+    expect((await listIssueWatchSubscriptionsForLogin(env, "alice"))[0]!.repoFullName).toBe("owner/repo");
+
+    // Delivery-side lookup uses the canonical webhook casing and still finds the watcher.
+    expect(await listIssueWatchersForRepo(env, "owner/repo")).toHaveLength(1);
+    const events = await detectIssueWatchEvents(env, "owner/repo", issue({ number: 21, authorLogin: "maintainer" }));
+    expect(events.map((e) => e.recipientLogin)).toEqual(["alice"]);
+
+    // Re-subscribing under yet another casing is idempotent (no duplicate row), and unwatch is case-insensitive.
+    await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "OWNER/REPO", labels: ["bug"] });
+    expect(await listIssueWatchSubscriptionsForLogin(env, "alice")).toHaveLength(1);
+    expect(await deleteIssueWatchSubscription(env, "alice", "owner/REPO")).toBe(true);
+    expect(await listIssueWatchersForRepo(env, "owner/repo")).toHaveLength(0);
+  });
 });
 
 describe("detectIssueWatchEvents", () => {

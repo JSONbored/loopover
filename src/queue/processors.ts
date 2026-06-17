@@ -1222,6 +1222,15 @@ async function maybePublishPrPublicSurface(
       if (gateCheckResult?.kind === "published") gateFinalized = true;
       if (gateCheckResult?.kind === "permission_missing") {
         await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
+        // A 403 on the COMPLETION call is classified as permission_missing and does NOT throw, so the catch
+        // below never runs and the pending in_progress check would be orphaned. But the pending check already
+        // posted (pendingGateCheckRunId is set), proving the App had Checks:write — so a 403 here is almost
+        // always a transient secondary-rate-limit, not a real revocation. Finalize the pending check to
+        // neutral (mirrors the catch); if it were a genuine revocation this PATCH also 403s and is swallowed.
+        if (pendingGateCheckRunId !== undefined && !gateFinalized) {
+          await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }).catch(() => undefined);
+          gateFinalized = true;
+        }
       }
     }
   } catch (error) {

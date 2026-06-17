@@ -51,6 +51,28 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
     expect(await other.json()).toMatchObject({ error: "forbidden_repo" });
   });
 
+  it("a maintainer can REACH validate-linked-issue on their OWN repo, scoped per-repo (allowlist parity with check-before-start)", async () => {
+    const { app, env } = await setup();
+    const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
+    const cookie = `gittensory_session=${token}`;
+    // Before the fix this returned 403 insufficient_role at the session allowlist (the route was omitted),
+    // even though the handler's requireSessionRepoAccess guard would admit a maintainer of their own repo.
+    const own = await app.request(
+      "/v1/repos/alice/repo-a/validate-linked-issue",
+      { method: "POST", headers: { cookie }, body: JSON.stringify({ issueNumber: 1 }) },
+      env,
+    );
+    expect(own.status).toBe(200);
+    // The per-route guard still scopes: maintainer of A cannot validate against B.
+    const other = await app.request(
+      "/v1/repos/bob/repo-b/validate-linked-issue",
+      { method: "POST", headers: { cookie }, body: JSON.stringify({ issueNumber: 1 }) },
+      env,
+    );
+    expect(other.status).toBe(403);
+    expect(await other.json()).toMatchObject({ error: "forbidden_repo" });
+  });
+
   it("a pure miner (no maintainer role on any repo) cannot read ANY repo's maintainer settings", async () => {
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "miner-only", id: 900 });

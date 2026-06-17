@@ -52,6 +52,7 @@ import {
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
+import { buildRemediationPlan } from "../services/remediation-plan";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
@@ -531,6 +532,14 @@ const checkBeforeStartOutputSchema = {
   reasons: z.unknown().optional(),
   blockers: z.unknown().optional(),
   report: z.unknown().optional(),
+};
+
+const remediationPlanOutputSchema = {
+  repoFullName: z.string().optional(),
+  login: z.string().optional(),
+  summary: z.string().optional(),
+  recommendedRerunCondition: z.string().optional(),
+  items: z.unknown().optional(),
 };
 
 const scoreBreakdownOutputSchema = {
@@ -1088,6 +1097,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_remediation_plan",
+      {
+        description:
+          "Turn local branch blocker lists into an ordered, deduplicated public-safe remediation checklist with rerun conditions. Metadata only.",
+        inputSchema: localBranchAnalysisShape,
+        outputSchema: remediationPlanOutputSchema,
+      },
+      async (input) => this.toolResult(await this.remediationPlan(input)),
+    );
+
+    server.registerTool(
       "gittensory_prepare_pr_packet",
       {
         description: "Analyze current-branch metadata and return a public-safe PR packet for coding agents.",
@@ -1530,6 +1550,13 @@ export class GittensoryMcp {
       loadOrComputeIssueQualityResponse(this.env, repoFullName),
       loadRepoFocusManifest(this.env, repoFullName),
     ]);
+    // Parity with the maintainer gate: only CONFIRMED Gittensor contributors are ever hard-blocked, so the
+    // prediction must know the caller's own confirmed status — otherwise it over-reports `failure` for a
+    // non-confirmed contributor whose synthetic PR trips a blocker. Resolve it the same way the pipeline
+    // does (official Gittensor API → confirmed). The oss-anti-slop pack drops the contributor gate entirely,
+    // so skip the lookup there (keeps the prediction account-free for non-Gittensor adopters).
+    const pack = manifest.gate.pack ?? "gittensor";
+    const confirmedContributor = pack === "oss-anti-slop" ? undefined : (await fetchGittensorContributorSnapshot(input.login)) !== null;
     const verdict = buildPredictedGateVerdict({
       input: {
         repoFullName,
@@ -1545,6 +1572,7 @@ export class GittensoryMcp {
       pullRequests,
       bounties,
       issueQuality: issueQuality?.report,
+      confirmedContributor,
     });
     return {
       summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
@@ -1903,6 +1931,23 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory base-agent public-safe PR packet for ${input.repoFullName}.`,
       data: bundle as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async remediationPlan(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+    const analysis = await this.analyzeLocalBranch(input);
+    const plan = buildRemediationPlan({
+      login: analysis.login,
+      repoFullName: analysis.repoFullName,
+      branchQualityBlockers: analysis.branchQualityBlockers,
+      accountStateBlockers: analysis.accountStateBlockers,
+      scoreBlockers: analysis.scoreBlockers,
+      recommendedRerunCondition: analysis.recommendedRerunCondition,
+      localFindings: analysis.localFindings,
+    });
+    return {
+      summary: `Gittensory remediation plan for ${analysis.login} in ${analysis.repoFullName}.`,
+      data: plan as unknown as Record<string, unknown>,
     };
   }
 

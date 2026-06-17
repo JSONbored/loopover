@@ -1113,6 +1113,66 @@ describe("queue processors", () => {
     expect(audit?.outcome).toBe("error");
   });
 
+  it("finalizes the Gate to neutral when the completion call returns a transient 403 (not left in_progress)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    const patchBodies: Array<{ status?: string; conclusion?: string; output?: { title?: string } }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/forbidden403/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 971 }, { status: 201 }); // pending in_progress
+      if (url.includes("/check-runs/971") && method === "PATCH") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
+        patchBodies.push(body);
+        // First PATCH = the gate completion; a transient 403 (e.g. secondary rate limit) is classified as
+        // permission_missing and does NOT throw — the fix must still finalize the already-posted pending check.
+        if (patchBodies.length === 1) return new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit" }), { status: 403 });
+        return Response.json({ id: 971 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-finalize-on-403",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 81, title: "Some change", state: "open", user: { login: "contributor" }, head: { sha: "forbidden403" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    // The completion PATCH 403'd (permission_missing, no throw), so the fix finalized the SAME check (id 971)
+    // to a neutral, non-blocking terminal state instead of orphaning it in_progress.
+    expect(patchBodies.length).toBe(2);
+    const finalize = patchBodies[1];
+    expect(finalize?.status).toBe("completed");
+    expect(finalize?.conclusion).toBe("neutral");
+    expect(finalize?.output?.title).toBe("Gittensory Gate — could not finish evaluating");
+  });
+
   it("disables the gate from .gittensory.yml (gate.enabled: false) even when repo settings enable it", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

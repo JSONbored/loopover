@@ -252,7 +252,7 @@ describe("api route guards and error branches", () => {
       branchName: "feature/private-work",
       changedFiles: [{ path: "src/private.ts", additions: 4, deletions: 1, status: "modified" }],
     };
-    for (const path of ["/v1/local/branch-analysis", "/v1/agent/preflight-branch", "/v1/agent/prepare-pr-packet"] as const) {
+    for (const path of ["/v1/local/branch-analysis", "/v1/local/remediation-plan", "/v1/agent/preflight-branch", "/v1/agent/prepare-pr-packet"] as const) {
       const response = await app.request(path, { method: "POST", headers: sessionHeaders, body: JSON.stringify(victimBranchPayload) }, env);
       expect(response.status).toBe(403);
       await expect(response.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
@@ -531,6 +531,7 @@ describe("api route guards and error branches", () => {
     expect((await app.request("/v1/preflight/pr", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/preflight/local-diff", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/local/branch-analysis", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
+    expect((await app.request("/v1/local/remediation-plan", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/runs/missing-run", { headers: apiHeaders(env) }, env)).status).toBe(404);
     expect((await app.request("/v1/agent/runs", { headers: apiHeaders(env) }, env)).status).toBe(400);
     expect((await app.request("/v1/agent/runs", { method: "POST", headers: apiHeaders(env), body: "{}" }, env)).status).toBe(400);

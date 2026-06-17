@@ -1312,20 +1312,24 @@ function toIssueWatchSubscription(row: typeof issueWatchSubscriptions.$inferSele
 }
 
 /** Subscribe a miner to a repo's new grabbable issues; idempotent on (login, repo) — re-subscribing just
- *  updates the label filter. `labels` ([]=any) are lowercased for case-insensitive matching at delivery. */
+ *  updates the label filter. `login`, `repoFullName`, and `labels` ([]=any) are all lowercased so matching
+ *  is case-insensitive: GitHub repo names are case-insensitive, and the delivery lookup keys off the
+ *  webhook's canonical `repository.full_name`, so a watch stored under a different casing must still match. */
 export async function upsertIssueWatchSubscription(env: Env, input: { login: string; repoFullName: string; labels?: string[] | undefined }): Promise<IssueWatchSubscription> {
   const db = getDb(env.DB);
   const login = input.login.toLowerCase();
+  const repoFullName = input.repoFullName.toLowerCase();
   const labels = [...new Set((input.labels ?? []).map((label) => label.toLowerCase().trim()).filter(Boolean))];
   await db
     .insert(issueWatchSubscriptions)
-    .values({ id: crypto.randomUUID(), login, repoFullName: input.repoFullName, labelsJson: jsonString(labels), updatedAt: nowIso() })
+    .values({ id: crypto.randomUUID(), login, repoFullName, labelsJson: jsonString(labels), updatedAt: nowIso() })
     .onConflictDoUpdate({ target: [issueWatchSubscriptions.login, issueWatchSubscriptions.repoFullName], set: { labelsJson: jsonString(labels), updatedAt: nowIso() } });
   const [row] = await db
     .select()
     .from(issueWatchSubscriptions)
-    .where(and(eq(issueWatchSubscriptions.login, login), eq(issueWatchSubscriptions.repoFullName, input.repoFullName)));
-  return row ? toIssueWatchSubscription(row) : { login, repoFullName: input.repoFullName, labels };
+    .where(and(eq(issueWatchSubscriptions.login, login), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  /* v8 ignore next -- the row always exists immediately after the upsert above; the literal is a type-safety fallback. */
+  return row ? toIssueWatchSubscription(row) : { login, repoFullName, labels };
 }
 
 export async function listIssueWatchSubscriptionsForLogin(env: Env, login: string): Promise<IssueWatchSubscription[]> {
@@ -1337,19 +1341,17 @@ export async function listIssueWatchSubscriptionsForLogin(env: Env, login: strin
 /** Returns whether a watch existed and was removed (so the caller can report it accurately). */
 export async function deleteIssueWatchSubscription(env: Env, login: string, repoFullName: string): Promise<boolean> {
   const db = getDb(env.DB);
-  const existing = await db
-    .select({ id: issueWatchSubscriptions.id })
-    .from(issueWatchSubscriptions)
-    .where(and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  const where = and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName.toLowerCase()));
+  const existing = await db.select({ id: issueWatchSubscriptions.id }).from(issueWatchSubscriptions).where(where);
   if (existing.length === 0) return false;
-  await db.delete(issueWatchSubscriptions).where(and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
+  await db.delete(issueWatchSubscriptions).where(where);
   return true;
 }
 
 /** All miners watching a repo — the candidate recipients when a new grabbable issue opens there. */
 export async function listIssueWatchersForRepo(env: Env, repoFullName: string): Promise<IssueWatchSubscription[]> {
   const db = getDb(env.DB);
-  const rows = await db.select().from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.repoFullName, repoFullName)).limit(5000);
+  const rows = await db.select().from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.repoFullName, repoFullName.toLowerCase())).limit(5000);
   return rows.map(toIssueWatchSubscription);
 }
 

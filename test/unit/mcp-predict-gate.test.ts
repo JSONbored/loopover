@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
@@ -44,6 +44,86 @@ describe("MCP gittensory_predict_gate", () => {
     });
     expect(minimal.isError).toBeFalsy();
     expect((minimal.structuredContent as { pack: string }).pack).toBe("oss-anti-slop");
+  });
+
+  // Parity regression (#627-class): under the default `gittensor` pack, only CONFIRMED Gittensor
+  // contributors are ever hard-blocked. The prediction must resolve the caller's confirmed status — if it
+  // doesn't (the bug), a non-confirmed contributor whose synthetic PR trips a blocker is wrongly told
+  // `failure` when the real maintainer gate would return `neutral`.
+  describe("contributor-confirmation parity under the gittensor pack", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    function stubGittensorMiners(confirmedLogins: Array<{ login: string; id: number }>) {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        // The miners LIST endpoint decides confirmation; follow-up detail/prs/issues calls are best-effort.
+        if (/\/miners$/.test(url)) {
+          return Response.json(confirmedLogins.map((m) => ({ githubId: m.id, githubUsername: m.login })));
+        }
+        return Response.json([]);
+      });
+    }
+
+    it("stays NEUTRAL for a non-confirmed contributor even when a blocker fires", async () => {
+      const env = createTestEnv();
+      await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+      // gittensor pack, linked-issue blocks; the contributor supplies no linked issue → blocker fires.
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } });
+      stubGittensorMiners([]); // miner1 is NOT a confirmed Gittensor contributor
+      const client = await connect(env);
+
+      const result = await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
+      });
+      expect(result.isError).toBeFalsy();
+      const data = result.structuredContent as { pack: string; conclusion: string; confirmedContributor: boolean | undefined };
+      expect(data.pack).toBe("gittensor");
+      expect(data.conclusion).toBe("neutral");
+      expect(data.confirmedContributor).toBe(false);
+    });
+
+    it("predicts FAILURE for a confirmed contributor when the same blocker fires", async () => {
+      const env = createTestEnv();
+      await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } });
+      stubGittensorMiners([{ login: "miner1", id: 4242 }]); // miner1 IS confirmed
+      const client = await connect(env);
+
+      const result = await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
+      });
+      expect(result.isError).toBeFalsy();
+      const data = result.structuredContent as { conclusion: string; confirmedContributor: boolean | undefined; blockers: Array<{ code: string }> };
+      expect(data.confirmedContributor).toBe(true);
+      expect(data.conclusion).toBe("failure");
+      expect(data.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+    });
+
+    it("treats a Gittensor API failure as non-confirmed (fail-safe NEUTRAL, never a false FAILURE)", async () => {
+      const env = createTestEnv();
+      await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
+      // No explicit pack → defaults to the gittensor pack, which still resolves confirmed status via the API.
+      await upsertRepoFocusManifest(env, "acme/widgets", { gate: { linkedIssue: "block" } });
+      // The confirmation lookup is the only network call on the prediction path (the URL is a fixed constant
+      // base; the login is never interpolated into it — it is filtered client-side — so there is no SSRF
+      // surface). When that call fails/times out, fetchGittensorContributorSnapshot resolves to null, so the
+      // contributor is treated as non-confirmed → the gate stays neutral rather than wrongly blocking them.
+      vi.stubGlobal("fetch", async () => {
+        throw new Error("network down");
+      });
+      const client = await connect(env);
+
+      const result = await client.callTool({
+        name: "gittensory_predict_gate",
+        arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
+      });
+      expect(result.isError).toBeFalsy();
+      const data = result.structuredContent as { conclusion: string; confirmedContributor: boolean | undefined };
+      expect(data.confirmedContributor).toBe(false);
+      expect(data.conclusion).toBe("neutral");
+    });
   });
 
   it("is repo-scoped: a session cannot predict against an inaccessible repo", async () => {

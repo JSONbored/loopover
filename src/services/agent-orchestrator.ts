@@ -326,7 +326,7 @@ async function executeLocalBranchRun(env: Env, run: AgentRunRecord, kind: string
 async function analyzeLocalBranch(env: Env, input: LocalBranchAnalysisInput): Promise<LocalBranchAnalysis & { dataQuality?: { status: "complete" | "degraded" | "blocked" | "unknown"; warnings: string[] } }> {
   const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot, repo, issues, pullRequests, recentMergedPullRequests, bounties, scoringSnapshot, issueQuality, repoManifest] =
     await Promise.all([
-      fetchPublicContributorProfile(input.login),
+      fetchPublicContributorProfile(input.login, env),
       listContributorPullRequests(env, input.login),
       listContributorIssues(env, input.login),
       listRepositories(env),

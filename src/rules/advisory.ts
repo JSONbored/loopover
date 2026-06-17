@@ -28,6 +28,18 @@ export type GateCheckPolicy = {
   slopGateMode?: GateRuleMode | undefined;
   slopGateMinScore?: number | null | undefined;
   slopRisk?: number | null | undefined;
+  /** Master "merge-readiness" composite (#551). When set (advisory/block) it OVERRIDES all four sub-gates —
+   *  linked-issue, duplicate, quality/readiness, slop — to its mode, so a maintainer flips ONE switch instead
+   *  of four and `Gittensory Gate` stays the single required check. `off` = sub-gates use their own modes. */
+  mergeReadinessGateMode?: GateRuleMode | undefined;
+  /** First-time-contributor grace (#552). When true AND the author is a genuine newcomer (0 merged PRs in
+   *  this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs), a would-be BLOCK is softened to a
+   *  neutral/advisory gate. `undefined`/false = the grace rule does not apply and blockers gate normally. */
+  firstTimeContributorGrace?: boolean | undefined;
+  /** The PR author's merged PR count in THIS repo (newcomer = 0). Used only by the grace rule. */
+  authorMergedPrCount?: number | undefined;
+  /** The PR author's closed-unmerged PR count in THIS repo (repeat offender = >= 3). Used only by grace. */
+  authorClosedUnmergedPrCount?: number | undefined;
   /** ONLY confirmed gittensor contributors can be hard-blocked. When explicitly `false`, the gate is
    *  forced to a neutral (non-blocking) conclusion regardless of blockers — gittensory must never block
    *  a non-confirmed contributor. `undefined` = the caller did not gate on contributor status. */
@@ -303,19 +315,40 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
       warnings,
     };
   }
-  const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding.code, policy));
-  const qualityBlocker = buildQualityGateBlocker(policy);
-  const slopBlocker = buildSlopGateBlocker(policy);
+  // Merge-readiness composite (#551): when set, escalate every sub-gate to its mode so they roll into one
+  // pass/fail. When off, this is a no-op and each sub-gate keeps its own mode.
+  const effective = applyMergeReadinessGate(policy);
+  const configuredBlockers = advisoryResult.findings.filter((finding) => isConfiguredGateBlocker(finding.code, effective));
+  const qualityBlocker = buildQualityGateBlocker(effective);
+  const slopBlocker = buildSlopGateBlocker(effective);
   const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : []), ...(slopBlocker ? [slopBlocker] : [])];
   // Contributor-gated: ONLY confirmed Gittensor contributors can be hard-blocked. For everyone else the
   // gate is neutral (non-blocking) + the minimal advisory comment — gittensory must never block a
   // non-confirmed contributor, regardless of what blockers fired.
-  if (policy.confirmedContributor === false && blockers.length > 0) {
+  if (effective.confirmedContributor === false && blockers.length > 0) {
     return {
       enabled: true,
       conclusion: "neutral",
       title: "Gittensory Gate — advisory only",
       summary: "The PR author is not a confirmed Gittensor contributor, so gittensory does not block this PR. Findings stay advisory.",
+      blockers: [],
+      warnings,
+    };
+  }
+  // First-time-contributor grace (#552): when the maintainer opted in, a genuine newcomer (0 merged PRs in
+  // this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs) gets a neutral, non-blocking gate even
+  // when blockers fired — they keep the advisory findings without the hard block. Repeat offenders, authors
+  // with merge history, and repos with the setting off are gated normally below. Public-safe: this only
+  // expresses advisory-vs-block, never any reward/trust internals.
+  const isNewcomer = (effective.authorMergedPrCount ?? 0) === 0;
+  const isRepeatOffender = (effective.authorClosedUnmergedPrCount ?? 0) >= 3;
+  const graceApplies = effective.firstTimeContributorGrace === true && isNewcomer && !isRepeatOffender;
+  if (graceApplies && blockers.length > 0) {
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: "Gittensory Gate — first-contribution grace",
+      summary: "This is a first-time contribution to this repo, so the gate stays advisory rather than blocking. The findings remain visible, and the gate will apply normally once this author has merge history here.",
       blockers: [],
       warnings,
     };
@@ -608,6 +641,21 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
 
 function gateMode(value: GateRuleMode | null | undefined): GateRuleMode {
   return value === "off" || value === "block" ? value : "advisory";
+}
+
+// #551: the master merge-readiness composite. When mergeReadinessGateMode is set (advisory/block) it
+// OVERRIDES the four sub-gates to its mode so they roll into one pass/fail; when off, the policy is returned
+// unchanged and each sub-gate keeps its own mode.
+function applyMergeReadinessGate(policy: GateCheckPolicy): GateCheckPolicy {
+  const composite = gateMode(policy.mergeReadinessGateMode ?? "off");
+  if (composite === "off") return policy;
+  return {
+    ...policy,
+    linkedIssueGateMode: composite,
+    duplicatePrGateMode: composite,
+    qualityGateMode: composite,
+    slopGateMode: composite,
+  };
 }
 
 function normalizeScore(value: number | null | undefined): number | null {

@@ -61,6 +61,15 @@ describe("extension packet helper internals", () => {
     expect(markdown).not.toMatch(/private reviewability|trust score|reward estimate|payout|\/100/i);
   });
 
+  it("wraps a single repo's issue-quality report in a by-repo map, and yields undefined when absent", () => {
+    const report = { generatedAt: "2026-06-14T00:00:00.000Z", issues: [] } as never;
+    const map = __routesInternals.issueQualityMap("octo/demo", report);
+    expect(map).toBeInstanceOf(Map);
+    expect(map?.get("octo/demo")).toBe(report);
+    // Defensive branch: no report → undefined (so buildContributorOpportunities skips quality adjustment).
+    expect(__routesInternals.issueQualityMap("octo/demo", undefined)).toBeUndefined();
+  });
+
   it("authenticates request identity from browser session cookie fallback", async () => {
     const env = createTestEnv();
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 7 });

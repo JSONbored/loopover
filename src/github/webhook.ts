@@ -37,7 +37,11 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
 
   const payloadHash = await sha256Hex(rawBody);
   const existingEvent = await getWebhookEvent(c.env, deliveryId);
-  if (existingEvent && existingEvent.payloadHash === payloadHash && existingEvent.status !== "error") {
+  // Suppress redelivery of an already-processed event (on success its payloadHash is overwritten to a
+  // "processed" sentinel, so a hash match alone misses it and the event re-runs its side effects) or one
+  // still in flight with the same payload. "error" rows are never suppressed so a failed enqueue/processing
+  // can still be retried (#789).
+  if (existingEvent && existingEvent.status !== "error" && (existingEvent.status === "processed" || existingEvent.payloadHash === payloadHash)) {
     return c.json({ ok: true, deliveryId, eventName, status: "duplicate" }, 202);
   }
 
@@ -57,7 +61,22 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
     eventName,
     payload,
   };
-  await c.env.JOBS.send(message);
+  try {
+    await c.env.JOBS.send(message);
+  } catch {
+    // Enqueue failed: flip the event to "error" so the dedup guard above lets GitHub redeliver,
+    // and return 500 so GitHub retries instead of treating the webhook as handled (#786).
+    await recordWebhookEvent(c.env, {
+      deliveryId,
+      eventName,
+      action: payload.action,
+      installationId: payload.installation?.id,
+      repositoryFullName: payload.repository?.full_name,
+      payloadHash,
+      status: "error",
+    });
+    return c.json({ error: "enqueue_failed", deliveryId }, 500);
+  }
 
   return c.json({ ok: true, deliveryId, eventName, status: "queued" }, 202);
 }

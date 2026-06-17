@@ -1848,15 +1848,20 @@ async function upsertContributorStats(
   recentMerged: GitHubPullRequestPayload[],
 ): Promise<void> {
   /* v8 ignore start -- Contributor-stat payload fallbacks normalize optional GitHub fields already covered by backfill round trips. */
-  const logins = new Set<string>();
-  for (const pr of pullRequests) if (pr.authorLogin) logins.add(pr.authorLogin);
-  for (const pr of recentMerged) if (pr.user?.login) logins.add(pr.user.login);
-  for (const issue of issues) if (issue.user?.login) logins.add(issue.user.login);
+  // Canonical case-insensitive login key so one user across mixed casings collapses to one row (#791).
+  const loginByKey = new Map<string, string>();
+  const addLogin = (value: string | null | undefined): void => {
+    const key = value?.toLowerCase();
+    if (key && !loginByKey.has(key)) loginByKey.set(key, value as string);
+  };
+  for (const pr of pullRequests) addLogin(pr.authorLogin);
+  for (const pr of recentMerged) addLogin(pr.user?.login);
+  for (const issue of issues) addLogin(issue.user?.login);
 
-  for (const login of logins) {
-    const authoredPullRequests = pullRequests.filter((pr) => pr.authorLogin === login);
-    const authoredMerged = recentMerged.filter((pr) => pr.user?.login === login);
-    const authoredIssues = issues.filter((issue) => issue.user?.login === login);
+  for (const [loginKey, login] of loginByKey) {
+    const authoredPullRequests = pullRequests.filter((pr) => pr.authorLogin?.toLowerCase() === loginKey);
+    const authoredMerged = recentMerged.filter((pr) => pr.user?.login?.toLowerCase() === loginKey);
+    const authoredIssues = issues.filter((issue) => issue.user?.login?.toLowerCase() === loginKey);
     const labels = [...authoredPullRequests.flatMap((pr) => pr.labels), ...authoredIssues.flatMap((issue) => (issue.labels ?? []).flatMap((label) => (label.name ? [label.name] : [])))];
     const stat: ContributorRepoStatRecord = {
       login,

@@ -188,12 +188,15 @@ export type RepoSettingsPreview = {
     qualityGateMode: RepositorySettings["qualityGateMode"];
     qualityGateMinScore?: number | null | undefined;
     slopGateMode: RepositorySettings["slopGateMode"];
+    mergeReadinessGateMode: RepositorySettings["mergeReadinessGateMode"];
+    firstTimeContributorGrace: boolean;
     slopGateMinScore?: number | null | undefined;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
     createMissingLabel: boolean;
     includeMaintainerAuthors: boolean;
     requireLinkedIssue: boolean;
+    badgeEnabled: boolean;
     commandAuthorization: {
       defaultAllowed: CommandAuthorizationRole[];
       commandOverrides: Array<{ command: string; allowedRoles: CommandAuthorizationRole[] }>;
@@ -302,12 +305,15 @@ export function buildRepoSettingsPreview(args: {
       qualityGateMode: settings.qualityGateMode,
       qualityGateMinScore: settings.qualityGateMinScore ?? null,
       slopGateMode: settings.slopGateMode,
+      mergeReadinessGateMode: settings.mergeReadinessGateMode,
+      firstTimeContributorGrace: settings.firstTimeContributorGrace,
       slopGateMinScore: settings.slopGateMinScore ?? null,
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
       createMissingLabel: settings.createMissingLabel,
       includeMaintainerAuthors: settings.includeMaintainerAuthors,
       requireLinkedIssue: settings.requireLinkedIssue,
+      badgeEnabled: settings.badgeEnabled ?? false,
       commandAuthorization: summarizeCommandAuthorizationPolicy(settings.commandAuthorization),
     },
     commandAuthorizationPreview,

@@ -50,10 +50,18 @@ export type GittensoryMentionCommandName = (typeof GITTENSORY_MENTION_COMMAND_CA
 export type MaintainerQueueDigestCommandName = (typeof MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG)[number]["id"];
 type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner-context" | MaintainerQueueDigestCommandName>;
 
+// Action commands are NOT Q&A: they perform a side effect (handled before the mention-command path) rather
+// than producing a public answer card. They are intentionally kept OUT of the Q&A catalog/unions so the
+// exhaustive Q&A switches stay total, but parseGittensoryMentionCommand still recognizes them (so a bare
+// @gittensory gate-override is not silently downgraded to "help").
+export const GITTENSORY_ACTION_COMMANDS = ["gate-override"] as const;
+export type GittensoryActionCommandName = (typeof GITTENSORY_ACTION_COMMANDS)[number];
+
 export type GittensoryMentionCommand = {
-  name: GittensoryMentionCommandName;
+  name: GittensoryMentionCommandName | GittensoryActionCommandName;
   raw: string;
   question?: string | undefined;
+  reason?: string | undefined;
 };
 
 type PublicAnswerCard = {
@@ -72,6 +80,7 @@ export type AgentCommandFeedbackContext = {
 };
 
 const COMMANDS = new Set<GittensoryMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
+const ACTION_COMMANDS = new Set<GittensoryActionCommandName>(GITTENSORY_ACTION_COMMANDS);
 const MAINTAINER_QUEUE_DIGEST_COMMANDS = new Set<MaintainerQueueDigestCommandName>(MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG.map((command) => command.id));
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const AGENT_COMMAND_FEEDBACK_MARKER = "gittensory-agent-command-answer";
@@ -155,8 +164,12 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
   if (!body) return null;
   const match = body.match(/(?:^|\s)@gittensory(?:\s+([a-z-]+))?([^\n\r]*)/i);
   if (!match) return null;
-  const requested = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName;
-  const name = COMMANDS.has(requested) ? requested : "help";
+  const requested = (match[1]?.toLowerCase() || "help") as GittensoryMentionCommandName | GittensoryActionCommandName;
+  if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {
+    const reason = (match[2] ?? "").trim();
+    return { name: requested as GittensoryActionCommandName, raw: match[0].trim(), reason: reason.length > 0 ? reason : undefined };
+  }
+  const name = COMMANDS.has(requested as GittensoryMentionCommandName) ? (requested as GittensoryMentionCommandName) : "help";
   const question = name === "ask" ? (match[2] ?? "").trim() : undefined;
   return { name, raw: match[0].trim(), question: question && question.length > 0 ? question : undefined };
 }
@@ -218,29 +231,32 @@ export function buildPublicAgentCommandComment(args: {
   maintainerDigest?: MaintainerQueueDigest | null | undefined;
 }): string {
   const repoFullName = args.repo?.fullName ?? args.pullRequest?.repoFullName ?? "this repository";
-  const sections = commandSections(args.command.name, args.bundle, args.officialMiner, args.maintainerDigest, args.command.question);
+  // Action commands (e.g. gate-override) never reach this Q&A renderer — they are handled and short-circuited
+  // earlier — so narrow the widened parse name back to a Q&A command name for the answer-card helpers.
+  const commandName = args.command.name as GittensoryMentionCommandName;
+  const sections = commandSections(commandName, args.bundle, args.officialMiner, args.maintainerDigest, args.command.question);
   const card = buildPublicAnswerCard({
-    command: args.command.name,
+    command: commandName,
     sections,
     bundle: args.bundle,
     officialMiner: args.officialMiner,
     actorKind: args.actorKind,
-    question: args.command.name === "ask" ? args.command.question : undefined,
+    question: commandName === "ask" ? args.command.question : undefined,
   });
   const body = [
     AGENT_COMMAND_COMMENT_MARKER,
     "",
     "> [!NOTE]",
-    `> **${COMMAND_TITLES[args.command.name]}**`,
+    `> **${COMMAND_TITLES[commandName]}**`,
     "> Gittensory updated this command response in place from cached public-safe context.",
     "",
     "| Signal | State |",
     "| --- | --- |",
-    `| Command | \`@gittensory ${args.command.name}\` |`,
+    `| Command | \`@gittensory ${commandName}\` |`,
     `| Scope | ${repoFullName}#${args.issue.number} |`,
     `| Actor | ${args.actorKind} |`,
     "",
-    `Command: \`@gittensory ${args.command.name}\``,
+    `Command: \`@gittensory ${commandName}\``,
     "",
     "<details>",
     "<summary>Command result</summary>",

@@ -52,6 +52,8 @@ import {
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
+import { buildRemediationPlan } from "../services/remediation-plan";
+import { explainScoreBreakdown } from "../services/score-breakdown";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
@@ -532,6 +534,23 @@ const checkBeforeStartOutputSchema = {
   report: z.unknown().optional(),
 };
 
+const remediationPlanOutputSchema = {
+  repoFullName: z.string().optional(),
+  login: z.string().optional(),
+  summary: z.string().optional(),
+  recommendedRerunCondition: z.string().optional(),
+  items: z.unknown().optional(),
+};
+
+const scoreBreakdownOutputSchema = {
+  repoFullName: z.string().optional(),
+  scoreabilityStatus: z.string().optional(),
+  effectiveEstimatedScore: z.number().optional(),
+  components: z.unknown().optional(),
+  gateHighlights: z.unknown().optional(),
+  highestLeverageLever: z.unknown().optional(),
+};
+
 const lintPrTextOutputSchema = {
   verdict: z.string().optional(),
   score: z.number().optional(),
@@ -978,6 +997,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_explain_score_breakdown",
+      {
+        description:
+          "Explain a private score preview multiplier-by-multiplier with plain-English levers and the single highest-impact improvement. Login and repo scoped; no new computation beyond the preview projection.",
+        inputSchema: scorePreviewShape,
+        outputSchema: scoreBreakdownOutputSchema,
+      },
+      async (input) => this.toolResult(await this.explainScoreBreakdown(input)),
+    );
+
+    server.registerTool(
       "gittensory_explain_review_risk",
       {
         description: "Explain review risk for a planned PR using preflight, lane, duplicate, and role context.",
@@ -1064,6 +1094,17 @@ export class GittensoryMcp {
         outputSchema: explainLocalBlockersOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
+    );
+
+    server.registerTool(
+      "gittensory_remediation_plan",
+      {
+        description:
+          "Turn local branch blocker lists into an ordered, deduplicated public-safe remediation checklist with rerun conditions. Metadata only.",
+        inputSchema: localBranchAnalysisShape,
+        outputSchema: remediationPlanOutputSchema,
+      },
+      async (input) => this.toolResult(await this.remediationPlan(input)),
     );
 
     server.registerTool(
@@ -1444,7 +1485,7 @@ export class GittensoryMcp {
   private async getContributorProfile(login: string): Promise<ToolPayload> {
     this.requireContributorAccess(login);
     const [github, pullRequests, issues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(login),
+      fetchPublicContributorProfile(login, this.env),
       listContributorPullRequests(this.env, login),
       listContributorIssues(this.env, login),
       listContributorRepoStats(this.env, login),
@@ -1509,6 +1550,13 @@ export class GittensoryMcp {
       loadOrComputeIssueQualityResponse(this.env, repoFullName),
       loadRepoFocusManifest(this.env, repoFullName),
     ]);
+    // Parity with the maintainer gate: only CONFIRMED Gittensor contributors are ever hard-blocked, so the
+    // prediction must know the caller's own confirmed status — otherwise it over-reports `failure` for a
+    // non-confirmed contributor whose synthetic PR trips a blocker. Resolve it the same way the pipeline
+    // does (official Gittensor API → confirmed). The oss-anti-slop pack drops the contributor gate entirely,
+    // so skip the lookup there (keeps the prediction account-free for non-Gittensor adopters).
+    const pack = manifest.gate.pack ?? "gittensor";
+    const confirmedContributor = pack === "oss-anti-slop" ? undefined : (await fetchGittensorContributorSnapshot(input.login)) !== null;
     const verdict = buildPredictedGateVerdict({
       input: {
         repoFullName,
@@ -1524,6 +1572,7 @@ export class GittensoryMcp {
       pullRequests,
       bounties,
       issueQuality: issueQuality?.report,
+      confirmedContributor,
     });
     return {
       summary: `Predicted Gittensory gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
@@ -1686,6 +1735,23 @@ export class GittensoryMcp {
     return {
       summary: `Private Gittensory scoring preview for ${input.repoFullName}.`,
       data: makeScorePreviewRecord(scoreInput, snapshot, result) as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async explainScoreBreakdown(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+    if (!input.contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
+    this.requireContributorAccess(input.contributorLogin);
+    await this.requireRepoAccess(input.repoFullName);
+    const [repo, snapshot, evidence] = await Promise.all([
+      getRepository(this.env, input.repoFullName),
+      getOrCreateScoringModelSnapshot(this.env),
+      getContributorEvidence(this.env, input.contributorLogin),
+    ]);
+    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    const breakdown = explainScoreBreakdown(preview);
+    return {
+      summary: `Private Gittensory score breakdown for ${input.contributorLogin} in ${input.repoFullName}. Highest leverage: ${breakdown.highestLeverageLever.component}.`,
+      data: breakdown as unknown as Record<string, unknown>,
     };
   }
 
@@ -1868,6 +1934,23 @@ export class GittensoryMcp {
     };
   }
 
+  private async remediationPlan(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+    const analysis = await this.analyzeLocalBranch(input);
+    const plan = buildRemediationPlan({
+      login: analysis.login,
+      repoFullName: analysis.repoFullName,
+      branchQualityBlockers: analysis.branchQualityBlockers,
+      accountStateBlockers: analysis.accountStateBlockers,
+      scoreBlockers: analysis.scoreBlockers,
+      recommendedRerunCondition: analysis.recommendedRerunCondition,
+      localFindings: analysis.localFindings,
+    });
+    return {
+      summary: `Gittensory remediation plan for ${analysis.login} in ${analysis.repoFullName}.`,
+      data: plan as unknown as Record<string, unknown>,
+    };
+  }
+
   private async draftPrBody(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     const draft = buildPublicPrBodyDraft(analysis);
@@ -1943,7 +2026,7 @@ export class GittensoryMcp {
 
   private async loadContributorFastContext(login: string) {
     const [github, contributorPullRequests, contributorIssues, repositories, syncStates, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(login),
+      fetchPublicContributorProfile(login, this.env),
       listContributorPullRequests(this.env, login),
       listContributorIssues(this.env, login),
       listRepositories(this.env),

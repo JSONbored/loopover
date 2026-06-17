@@ -14,57 +14,221 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  # Detect which areas a PR touches so the heavy jobs can skip when irrelevant.
+  # On push to main everything runs regardless (keeps the coverage baseline solid).
+  changes:
+    name: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      ui: ${{ steps.filter.outputs.ui }}
+      mcp: ${{ steps.filter.outputs.mcp }}
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
       - name: Check whitespace
         run: git diff --check
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            backend:
+              - 'src/**'
+              - 'test/**'
+              - 'vitest*.config.ts'
+              - 'tsconfig*.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'scripts/**'
+              - 'migrations/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+            ui:
+              - 'apps/gittensory-ui/**'
+              - 'src/**'
+              - 'scripts/write-ui-openapi.ts'
+              - 'scripts/build-extension.mjs'
+              - 'package.json'
+              - 'package-lock.json'
+            mcp:
+              # Self-contained package: build is `node --check` on its own files
+              # and the pack check only inspects the tarball. Root src/ cannot
+              # affect it, so it is intentionally NOT a trigger here.
+              - 'packages/gittensory-mcp/**'
+              - 'scripts/check-mcp-package.mjs'
+              - 'package-lock.json'
 
+  # Fast-failing checks first: workflow lint + typecheck.
+  lint:
+    name: lint
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
       - name: Lint workflows
         run: npm run actionlint
-
+      - name: Check migrations
+        run: npm run db:migrations:check
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test with coverage
+  # Unit/integration suite + coverage, sharded across parallel runners to cut the
+  # critical-path wall-clock. Each shard uploads its partial lcov; Codecov merges
+  # all shards for the commit before computing the patch/project status, so the
+  # gate sees the full picture. vitest's local 90% backstop is disabled here
+  # (COVERAGE_NO_THRESHOLDS) because a single shard only exercises part of the
+  # tree; the backstop still runs on the full local `npm run test:coverage`.
+  test:
+    name: test
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Full history so Codecov can resolve the merge base for patch coverage.
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
+      - name: Test with coverage (shard ${{ matrix.shard }}/2)
         id: coverage
-        run: npm run test:coverage
-
-      - name: Coverage gate guidance
+        env:
+          COVERAGE_NO_THRESHOLDS: "1"
+        run: npm run test:coverage -- --shard=${{ matrix.shard }}/2
+      - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Coverage gate::Tests or the 97% coverage gate failed."
-          echo "The repo enforces 97% global coverage for lines, statements, functions, and branches."
-          echo "Review the per-file coverage table printed above to find undercovered files and branch arms."
-          echo "Run 'npm run test:coverage' locally and add tests for the missing branches, fallback paths, and sanitizer rules."
-          echo "See CONTRIBUTING.md (Testing & coverage): aim for 98%+ branch coverage locally so small CI variance does not fail near the threshold."
+          echo "::error title=Tests::A test in shard ${{ matrix.shard }}/2 failed."
+          echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from the merged shards."
+          echo "Reproduce locally with the full suite: 'npm run test:coverage' (no sharding)."
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
 
+  # Worker-pool runtime tests (separate vitest config); split out of `test` so it
+  # runs in parallel instead of serially after the coverage run.
+  workers:
+    name: workers
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
       - name: Worker runtime tests
         run: npm run test:workers
 
+  # MCP package build + publishable-package smoke check.
+  mcp:
+    name: mcp
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
+      - name: Build MCP
+        run: npm run build:mcp
       - name: MCP package check
-        run: npm run build:mcp && npm run test:mcp-pack
+        run: npm run test:mcp-pack
 
-      - name: UI check
-        env:
-          VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
-        run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build
+  # UI checks: each split into its own step for legible failures.
+  ui:
+    name: ui
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
+      - name: OpenAPI drift check
+        run: npm run ui:openapi:check
+      - name: UI/MCP version audit
+        run: npm run ui:version-audit
+      - name: UI lint
+        run: npm run ui:lint
+      - name: UI typecheck
+        run: npm run ui:typecheck
+      - name: UI tests
+        run: npm run ui:test
+      - name: UI build
+        run: npm run ui:build
 
-      - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+  # Diff-scoped security gate: fails only on vulnerabilities this PR introduces.
+  # Ambient advisories in untouched deps are handled by Renovate + the scheduled
+  # audit workflow, so one upstream CVE never blocks unrelated PRs.
+  security:
+    name: security
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
+
+  # Single required status check. Branch protection points at "validate"; this
+  # aggregates the fan-out jobs so that requirement keeps working unchanged.
+  # Path-filtered jobs report "skipped", which is treated as success.
+  validate:
+    name: validate
+    needs: [changes, lint, test, workers, mcp, ui, security]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: All required jobs passed
+        if: ${{ !(contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+        run: echo "All required CI jobs passed (path-filtered jobs reported skipped, which is OK)."
+      - name: A required job failed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "::error title=CI::A required CI job failed or was cancelled."
+          echo "Job results: ${{ join(needs.*.result, ', ') }}"
+          exit 1

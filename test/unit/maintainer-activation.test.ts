@@ -33,6 +33,8 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     duplicatePrGateMode: "advisory",
     qualityGateMode: "advisory",
     slopGateMode: "off",
+    mergeReadinessGateMode: "off",
+    firstTimeContributorGrace: false,
     slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,

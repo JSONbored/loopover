@@ -1,0 +1,35 @@
+# Codecov configuration.
+#
+# The real coverage gate is `patch`: every line a PR changes must be >=97%
+# covered. Patch coverage depends only on the PR's own diff, so merging one PR
+# can never push another below the bar -- this is what kills the cross-PR churn
+# the old global vitest threshold caused.
+#
+# `project` (whole-repo total) is informational only: it is reported as a trend
+# but never blocks a merge. vitest keeps a loose 90% local backstop separately.
+coverage:
+  status:
+    patch:
+      default:
+        target: 97%
+        threshold: 0%
+        # Only fail if the PR actually changes coverable lines.
+        if_ci_failed: error
+    project:
+      default:
+        informational: true
+
+# Don't post a verdict until the CI run that produced the report has finished.
+require_ci_to_pass: true
+
+comment:
+  layout: "condensed_header, diff, flags, files"
+  require_changes: false
+
+# Coverage is collected by vitest (v8) over src/**; mirror its exclusions so the
+# Codecov total matches the local report.
+ignore:
+  - "src/env.d.ts"
+  - "apps/**"
+  - "test/**"
+  - "scripts/**"

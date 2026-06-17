@@ -41,8 +41,9 @@
   ],
   "postUpdateOptions": ["npmDedupe"],
   "prBodyNotes": [
-    "Dependency PRs must keep `npm run test:ci` passing and preserve the 97% global coverage gate.",
-    "GitHub Actions updates must remain SHA-pinned."
+    "Dependency PRs must keep `npm run test:ci` passing. The 97% coverage requirement is enforced as Codecov patch coverage on changed lines (codecov/patch), so dependency-only bumps satisfy it without new tests.",
+    "GitHub Actions updates must remain SHA-pinned.",
+    "Renovate is the sole dependency and security-update bot for this repo; GitHub Dependabot security updates are disabled to avoid duplicate PRs (e.g. the two hono advisory PRs)."
   ],
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,

@@ -8006,6 +8006,17 @@
           },
           "slopAiAdvisory": {
             "type": "boolean"
+          },
+          "mergeReadinessGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "firstTimeContributorGrace": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -8021,6 +8032,8 @@
           "duplicatePrGateMode",
           "qualityGateMode",
           "slopGateMode",
+          "mergeReadinessGateMode",
+          "firstTimeContributorGrace",
           "slopAiAdvisory",
           "autoLabelEnabled",
           "gittensorLabel",
@@ -8600,6 +8613,17 @@
               "slopGateMinScore": {
                 "type": "number",
                 "nullable": true
+              },
+              "mergeReadinessGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "firstTimeContributorGrace": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -8615,6 +8639,8 @@
               "duplicatePrGateMode",
               "qualityGateMode",
               "slopGateMode",
+              "mergeReadinessGateMode",
+              "firstTimeContributorGrace",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",

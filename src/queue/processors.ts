@@ -64,8 +64,8 @@ import {
   refreshInstallationHealth,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
-import { createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
+import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import {
   buildMaintainerQueueDigest,
@@ -76,6 +76,7 @@ import {
   isMaintainerQueueDigestCommand,
   parseAgentCommandFeedbackContext,
   parseGittensoryMentionCommand,
+  sanitizePublicComment,
 } from "../github/commands";
 import { ensurePullRequestLabel } from "../github/labels";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -297,7 +298,16 @@ async function buildContributorDecisionPacks(env: Env, login?: string): Promise<
   const logins = login ? [login] : await discoverContributorLogins(env);
   // Load the login-independent full-table datasets once, then reuse across every login instead of re-scanning per contributor.
   const shared = await loadDecisionPackSharedInputs(env);
-  for (const contributorLogin of logins) await buildAndPersistContributorDecisionPack(env, contributorLogin, shared);
+  for (const contributorLogin of logins) {
+    try {
+      await buildAndPersistContributorDecisionPack(env, contributorLogin, shared);
+    } catch (error) {
+      // Isolate per-login failures so one bad login can't fail the whole batch (which would re-run
+      // from the first login on retry and poison-pill the queue) (#787).
+      /* v8 ignore next -- defensive per-login isolation; the log-and-continue path is not exercised in tests */
+      console.error(JSON.stringify({ level: "warn", event: "decision_pack_login_failed", login: contributorLogin, error: errorMessage(error) }));
+    }
+  }
 }
 
 async function fanOutRepoSignalSnapshotJobs(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
@@ -395,8 +405,11 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
   const logins = login ? [login] : [...new Set([...allPullRequests, ...allIssues].flatMap((record) => (record.authorLogin ? [record.authorLogin] : [])))].slice(0, 500);
   const issueQualityByRepo = await loadIssueQualityReportMap(env, repositories);
   for (const contributorLogin of logins) {
+    // Isolate each login so one failure (transient GitHub/D1 error) doesn't abort the whole
+    // 500-login batch and poison-pill the queue on retry (#787).
+    try {
     const [github, contributorPullRequests, contributorIssues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
-      fetchPublicContributorProfile(contributorLogin),
+      fetchPublicContributorProfile(contributorLogin, env),
       listContributorPullRequests(env, contributorLogin),
       listContributorIssues(env, contributorLogin),
       listContributorRepoStats(env, contributorLogin),
@@ -488,6 +501,10 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
       payload: evidenceGraph as unknown as Record<string, JsonValue>,
       generatedAt: evidenceGraph.generatedAt,
     });
+    } catch (error) {
+      /* v8 ignore next -- defensive per-login isolation; the log-and-continue path is not exercised in tests */
+      console.error(JSON.stringify({ level: "warn", event: "contributor_evidence_login_failed", login: contributorLogin, error: errorMessage(error) }));
+    }
   }
 }
 
@@ -714,6 +731,19 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       return;
     }
 
+    if (eventName === "issue_comment" && (await maybeProcessGateOverrideCommand(env, deliveryId, payload))) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
+    }
+
     if (eventName === "issue_comment" && (await maybeProcessGittensoryMentionCommand(env, deliveryId, payload))) {
       await recordWebhookEvent(env, {
         deliveryId,
@@ -831,7 +861,13 @@ function shouldProcessPullRequestPublicSurface(action: string | undefined): bool
   return PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") || PR_GATE_CLOSED_ACTIONS.has(action ?? "");
 }
 
-export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: number | null, confirmedContributor?: boolean, slopRisk?: number | null) {
+export function gateCheckPolicy(
+  settings: RepositorySettings,
+  readinessScore?: number | null,
+  confirmedContributor?: boolean,
+  slopRisk?: number | null,
+  authorHistory?: { mergedPrCount: number; closedUnmergedPrCount: number },
+) {
   // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
   // resolveRepositorySettings, so the blocker modes here reflect the repo's config file directly.
   // The `oss-anti-slop` pack (#692) is repo-agnostic: it blocks ANY author whose PR trips an opted-in
@@ -846,6 +882,10 @@ export function gateCheckPolicy(settings: RepositorySettings, readinessScore?: n
     aiReviewGateMode: settings.aiReviewMode,
     readinessScore: readinessScore ?? null,
     slopGateMode: settings.slopGateMode,
+    mergeReadinessGateMode: settings.mergeReadinessGateMode,
+    firstTimeContributorGrace: settings.firstTimeContributorGrace,
+    authorMergedPrCount: authorHistory?.mergedPrCount,
+    authorClosedUnmergedPrCount: authorHistory?.closedUnmergedPrCount,
     slopGateMinScore: settings.slopGateMinScore ?? null,
     slopRisk: slopRisk ?? null,
     confirmedContributor: confirmedContributorForPack,
@@ -1210,7 +1250,16 @@ async function maybePublishPrPublicSurface(
     // failure is caught and the gate is still finalized (never left in_progress).
     aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
 
-    const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk);
+    // First-time-contributor grace (#552): the author's per-repo PR history (excluding this PR). Newcomer =
+    // 0 merged here; repeat offender = >= 3 closed-unmerged here. Cheap (in-memory over the already-loaded
+    // repo PRs) and only consulted by evaluateGateCheck when firstTimeContributorGrace is on.
+    const authorPrs = author ? repoPullRequests.filter((candidate) => candidate.authorLogin === author && candidate.number !== pr.number) : [];
+    const authorHistory = {
+      mergedPrCount: authorPrs.filter((candidate) => candidate.mergedAt || candidate.state === "merged").length,
+      closedUnmergedPrCount: authorPrs.filter((candidate) => candidate.state === "closed" && !candidate.mergedAt).length,
+    };
+
+    const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;
     if (gateEnabled) {
       const gateCheckResult = await createOrUpdateGateCheckRun(
@@ -1226,6 +1275,15 @@ async function maybePublishPrPublicSurface(
       if (gateCheckResult?.kind === "published") gateFinalized = true;
       if (gateCheckResult?.kind === "permission_missing") {
         await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
+        // A 403 on the COMPLETION call is classified as permission_missing and does NOT throw, so the catch
+        // below never runs and the pending in_progress check would be orphaned. But the pending check already
+        // posted (pendingGateCheckRunId is set), proving the App had Checks:write — so a 403 here is almost
+        // always a transient secondary-rate-limit, not a real revocation. Finalize the pending check to
+        // neutral (mirrors the catch); if it were a genuine revocation this PATCH also 403s and is swallowed.
+        if (pendingGateCheckRunId !== undefined && !gateFinalized) {
+          await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }).catch(() => undefined);
+          gateFinalized = true;
+        }
       }
       // Gate false-positive telemetry (#554): record a hard block so an eventual merge can mark it a false
       // positive. No-op unless the gate concluded `failure` (confirmed-contributor hard block).
@@ -1252,7 +1310,7 @@ async function maybePublishPrPublicSurface(
   if (!prelimHasPublicOutput) return;
   if (publicSurfaceSkipped || !official || !author) return;
 
-  const [github] = await Promise.all([fetchPublicContributorProfile(author)]);
+  const [github] = await Promise.all([fetchPublicContributorProfile(author, env)]);
   const contributorPullRequests: Awaited<ReturnType<typeof listContributorPullRequests>> = [];
   const contributorIssues: Awaited<ReturnType<typeof listContributorIssues>> = [];
   const repoStats: Awaited<ReturnType<typeof listContributorRepoStats>> = official.status === "confirmed" ? contributorRepoStatsFromGittensor(official.snapshot) : [];
@@ -1410,6 +1468,130 @@ async function recordGithubProductUsage(
   }).catch(() => undefined);
 }
 
+/**
+ * Handle `@gittensory gate-override <reason>` on a PR thread. SECURITY-SENSITIVE: this finalizes the Gate
+ * check to neutral for the current commit, so authorization MUST come from real repo permission
+ * (resolveRealRepoPermissionAssociation → getRepositoryCollaboratorPermission), never the spoofable
+ * payload.comment.author_association. The override is intentionally NOT persisted: a follow-up push
+ * re-evaluates the Gate from scratch (no permanent bypass).
+ */
+async function maybeProcessGateOverrideCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  const comment = payload.comment;
+  const command = parseGittensoryMentionCommand(comment?.body);
+  if (!command || command.name !== "gate-override") return false;
+
+  const repoFullName = payload.repository?.full_name;
+  const issue = payload.issue;
+  const installationId = getInstallationId(payload);
+  const actor = comment?.user?.login ?? payload.sender?.login ?? null;
+  const targetKey = repoFullName && issue ? `${repoFullName}#${issue.number}` : repoFullName;
+  if (comment?.user?.type === "Bot" || payload.sender?.type === "Bot" || /\[bot\]$/i.test(actor ?? "")) {
+    await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "bot_author");
+    return true;
+  }
+  if (!repoFullName || !issue?.pull_request || !installationId || !actor) {
+    await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "missing_repo_pr_installation_or_actor");
+    return true;
+  }
+  const [pr, settings] = await Promise.all([getPullRequest(env, repoFullName, issue.number), resolveRepositorySettings(env, repoFullName)]);
+  if (!pr) {
+    await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "cached_pr_missing");
+    return true;
+  }
+
+  const actorAssociation = await resolveRealRepoPermissionAssociation(env, installationId, repoFullName, actor);
+  const pullRequestAuthor = pr.authorLogin ?? issue.user?.login ?? null;
+  const authorization = isAuthorizedCommandActor({
+    commandName: "gate-override" as GittensoryMentionCommandName,
+    commenterLogin: actor,
+    commenterAssociation: actorAssociation,
+    pullRequestAuthorLogin: pullRequestAuthor,
+    commandAuthorizationPolicy: settings.commandAuthorization,
+  });
+  if (!authorization.authorized) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.gate_override_denied",
+      actor,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      detail: authorization.reason,
+      metadata: { deliveryId, repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "gate-override") },
+    });
+    await recordGithubProductUsage(env, "gate_override_denied", {
+      actor,
+      repoFullName,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "denied",
+      metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "gate-override") },
+    });
+    return true;
+  }
+
+  const [repo, otherOpenPullRequests] = await Promise.all([getRepository(env, repoFullName), listOtherOpenPullRequests(env, repoFullName, pr.number)]);
+  const advisory = buildPullRequestAdvisory(repo, pr, {
+    otherOpenPullRequests,
+    requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+  });
+  const safeReason = sanitizePublicComment((command.reason ?? "").trim() || "No reason provided.");
+  await createOrUpdateOverriddenGateCheckRun(env, installationId, repoFullName, advisory, { actor, reason: safeReason });
+  await recordAuditEvent(env, {
+    eventType: "github_app.gate_overridden",
+    actor,
+    targetKey: `${repoFullName}#${pr.number}`,
+    outcome: "completed",
+    detail: safeReason,
+    metadata: { deliveryId, repoFullName, headSha: advisory.headSha ?? null },
+  });
+  const confirmation = sanitizePublicComment(
+    [
+      AGENT_COMMAND_COMMENT_MARKER,
+      "",
+      "> [!NOTE]",
+      `> **Gittensory Gate overridden by @${actor}**`,
+      "> The Gate check was set to neutral for the current commit only. This does NOT permanently bypass the Gate; a new push re-evaluates it.",
+      "",
+      `- Reason: ${safeReason}`,
+      "",
+      "---",
+      gittensoryFooter(),
+    ].join("\n"),
+  );
+  await createOrUpdateAgentCommandComment(env, installationId, repoFullName, issue.number, confirmation);
+  await recordGithubProductUsage(env, "gate_overridden", {
+    actor,
+    repoFullName,
+    targetKey: `${repoFullName}#${pr.number}`,
+    outcome: "completed",
+    metadata: { actorKind: authorization.actorKind, headSha: advisory.headSha ?? null },
+  });
+  return true;
+}
+
+async function recordGateOverrideSkip(
+  env: Env,
+  deliveryId: string,
+  repoFullName: string | null | undefined,
+  targetKey: string | null | undefined,
+  actor: string | null,
+  reason: string,
+): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: "github_app.gate_override_skipped",
+    actor,
+    targetKey,
+    outcome: "completed",
+    detail: reason,
+    metadata: { deliveryId, repoFullName: repoFullName ?? null, reason },
+  });
+  await recordGithubProductUsage(env, "gate_override_skipped", {
+    actor,
+    repoFullName,
+    targetKey,
+    outcome: "skipped",
+    metadata: { reason },
+  });
+}
+
 async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
   const comment = payload.comment;
   if (payload.action !== "edited" || !comment || !isCheckedPrPanelRetrigger(comment.body)) return false;
@@ -1434,7 +1616,7 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     return true;
   }
 
-  const actorAssociation = await resolvePrPanelRetriggerActorAssociation(env, installationId, repoFullName, actor);
+  const actorAssociation = await resolveRealRepoPermissionAssociation(env, installationId, repoFullName, actor);
   const pullRequestAuthor = pr.authorLogin ?? issue.user?.login ?? null;
   const needsMinerDetection = commandAuthorizationNeedsMinerDetection({
     policy: settings.commandAuthorization,
@@ -1494,7 +1676,7 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
   return true;
 }
 
-async function resolvePrPanelRetriggerActorAssociation(env: Env, installationId: number, repoFullName: string, actor: string | null): Promise<string | null> {
+async function resolveRealRepoPermissionAssociation(env: Env, installationId: number, repoFullName: string, actor: string | null): Promise<string | null> {
   if (!actor) return null;
   const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, actor).catch(() => null);
   if (permission === "admin" || permission === "maintain") return "MEMBER";
@@ -1547,6 +1729,9 @@ async function recordPrPanelRetriggerSkip(
 async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
   const command = parseGittensoryMentionCommand(payload.comment?.body);
   if (!command) return false;
+  // Action commands (e.g. gate-override) are handled by their own dispatch earlier in processGitHubWebhook;
+  // they never produce a Q&A answer card here. Bail so the rest of this handler narrows to Q&A commands.
+  if (command.name === "gate-override") return false;
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
   const installationId = getInstallationId(payload);

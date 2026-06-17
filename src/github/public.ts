@@ -55,17 +55,25 @@ const REPO_STATS_CACHE_TTL_MS = 1000 * 60 * 10;
 const REPO_STATS_STALE_TTL_MS = 1000 * 60 * 60 * 24;
 const repoStatsCache = new Map<string, RepoStatsCacheEntry>();
 
-export async function fetchPublicContributorProfile(login: string): Promise<PublicContributorProfile> {
+// Bound the api.github.com round trips so a hung response can't stall the 500-login evidence loop
+// indefinitely (mirrors GITHUB_FETCH_TIMEOUT_MS in src/github/app.ts) (#790).
+const GITHUB_PUBLIC_FETCH_TIMEOUT_MS = 12_000;
+
+export async function fetchPublicContributorProfile(login: string, env?: Pick<Env, "GITHUB_PUBLIC_TOKEN">): Promise<PublicContributorProfile> {
   const safeLogin = encodeURIComponent(login);
   const headers = {
     accept: "application/vnd.github+json",
     "user-agent": "gittensory/0.1",
     "x-github-api-version": "2022-11-28",
+    // Authenticated requests lift the 60/hr unauthenticated ceiling to 5000/hr so the 500-login evidence
+    // loop doesn't exhaust it and silently degrade (mirrors fetchPublicRepoStats) (#790).
+    ...(env?.GITHUB_PUBLIC_TOKEN ? { authorization: `Bearer ${env.GITHUB_PUBLIC_TOKEN}` } : {}),
   };
   try {
+    const signal = AbortSignal.timeout(GITHUB_PUBLIC_FETCH_TIMEOUT_MS);
     const [userResponse, reposResponse] = await Promise.all([
-      fetch(`https://api.github.com/users/${safeLogin}`, { headers }),
-      fetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`, { headers }),
+      fetch(`https://api.github.com/users/${safeLogin}`, { headers, signal }),
+      fetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated`, { headers, signal }),
     ]);
     if (!userResponse.ok) throw new Error(`GitHub user lookup failed (${userResponse.status})`);
     const user = (await userResponse.json()) as GitHubUserResponse;

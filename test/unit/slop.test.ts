@@ -3,6 +3,7 @@ import {
   buildEmptyIssueBodyFinding,
   buildIssueSlopAssessment,
   buildMissingTestEvidenceFinding,
+  buildNonSubstantivePaddingFinding,
   buildSlopAssessment,
   buildTrivialWhitespaceChurnFinding,
   buildUnfilledIssueTemplateFinding,
@@ -230,5 +231,87 @@ describe("buildIssueSlopAssessment (#533 issue-side triage)", () => {
     expect(buildUnfilledIssueTemplateFinding({ body: "" })).toBeNull();
     expect(buildUnfilledIssueTemplateFinding({ body: "Real prose explaining the bug." })).toBeNull();
     expect(buildEmptyIssueBodyFinding({ body: "has content" })).toBeNull();
+  });
+});
+
+describe("buildNonSubstantivePaddingFinding (#561 path-matcher signal)", () => {
+  const FORBIDDEN =
+    /wallet|hotkey|coldkey|mnemonic|reward|payout|raw trust|trust score|scoreability|private reviewability|\/Users|\/home|\/tmp/i;
+
+  it("fires when generated/vendored/minified output dominates a high-churn diff with negligible source", () => {
+    const finding = buildNonSubstantivePaddingFinding({
+      changedFiles: [
+        { path: "dist/bundle.min.js", additions: 300, deletions: 100 },
+        { path: "vendor/lib.go", additions: 50, deletions: 0 },
+        { path: "src/app.ts", additions: 4, deletions: 2 },
+        { path: "test/unit/app.test.ts", additions: 6, deletions: 0 },
+        { path: "untouched.ts", additions: 0, deletions: 0 }, // zero-line entry is skipped
+      ],
+    });
+    expect(finding).toMatchObject({ code: "non_substantive_padding", severity: "warning" });
+    expect(JSON.stringify(finding)).not.toMatch(FORBIDDEN);
+  });
+
+  it("does not fire when substantive source/test work is present", () => {
+    // Padding is the minority of the churn.
+    expect(
+      buildNonSubstantivePaddingFinding({
+        changedFiles: [
+          { path: "dist/bundle.min.js", additions: 20, deletions: 0 },
+          { path: "src/app.ts", additions: 100, deletions: 30 },
+          { path: "test/unit/app.test.ts", additions: 40, deletions: 0 },
+        ],
+      }),
+    ).toBeNull();
+    // Padding dominates by count, but real source is still a meaningful share of the diff.
+    expect(
+      buildNonSubstantivePaddingFinding({
+        changedFiles: [
+          { path: "dist/bundle.min.js", additions: 60, deletions: 0 },
+          { path: "src/app.ts", additions: 30, deletions: 10 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("does not fire for dependency bumps or docs-only diffs", () => {
+    expect(
+      buildNonSubstantivePaddingFinding({
+        changedFiles: [
+          { path: "package-lock.json", additions: 400, deletions: 200 },
+          { path: "package.json", additions: 2, deletions: 2 },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      buildNonSubstantivePaddingFinding({
+        changedFiles: [{ path: "docs/guide.md", additions: 300, deletions: 100 }],
+      }),
+    ).toBeNull();
+  });
+
+  it("does not fire below the churn threshold or with no padding files", () => {
+    expect(
+      buildNonSubstantivePaddingFinding({ changedFiles: [{ path: "dist/app.min.js", additions: 20, deletions: 0 }] }),
+    ).toBeNull();
+    expect(
+      buildNonSubstantivePaddingFinding({ changedFiles: [{ path: "src/app.ts", additions: 200, deletions: 50 }] }),
+    ).toBeNull();
+    expect(buildNonSubstantivePaddingFinding({})).toBeNull();
+  });
+
+  it("contributes to the aggregate slop assessment without colliding with trivial-churn", () => {
+    const result = buildSlopAssessment({
+      changedFiles: [
+        { path: "dist/bundle.min.js", additions: 300, deletions: 100 },
+        { path: "src/app.ts", additions: 5, deletions: 2 },
+        { path: "test/unit/app.test.ts", additions: 8, deletions: 0 },
+      ],
+      description: "Rebuild the minified bundle.",
+    });
+    expect(result.findings.map((finding) => finding.code)).toEqual(["non_substantive_padding"]);
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.nonSubstantivePadding);
+    expect(result.band).toBe("elevated");
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN);
   });
 });

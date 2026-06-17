@@ -1,0 +1,166 @@
+import { describe, expect, it } from "vitest";
+import {
+  classifyChangedFile,
+  isDependencyManifestFile,
+  isDocsFile,
+  isGeneratedFile,
+  isLockfile,
+  isMinifiedFile,
+  isNonSubstantivePaddingFile,
+  isVendoredFile,
+} from "../../src/signals/path-matchers";
+
+describe("isGeneratedFile", () => {
+  it("matches generated output by directory, suffix, codegen, and source maps", () => {
+    for (const path of [
+      "src/__generated__/schema.ts",
+      "app/generated/client.ts",
+      "src/api.generated.ts",
+      "src/types.gen.ts",
+      "proto/service.pb.go",
+      "proto/service.pb.ts",
+      "gen/service_pb2.py",
+      "gen/service_pb2.pyi",
+      "lib/models.g.dart",
+      "dist/app.js.map",
+      "styles/site.css.map",
+      "worker-configuration.d.ts",
+      "C:\\repo\\src\\api.generated.ts",
+    ]) {
+      expect(isGeneratedFile(path)).toBe(true);
+    }
+  });
+
+  it("does not match hand-authored files that merely contain the word", () => {
+    for (const path of ["src/generated-helpers.ts", "src/regenerated.ts", "src/codegen.ts", "src/app.ts"]) {
+      expect(isGeneratedFile(path)).toBe(false);
+    }
+  });
+});
+
+describe("isVendoredFile", () => {
+  it("matches vendored / third-party directories", () => {
+    for (const path of ["vendor/lib.go", "vendored/x.js", "third_party/y.py", "third-party/z.ts", "node_modules/pkg/index.js"]) {
+      expect(isVendoredFile(path)).toBe(true);
+    }
+  });
+
+  it("does not match files that only resemble vendor names", () => {
+    for (const path of ["src/vendor.ts", "src/vendoring.ts"]) {
+      expect(isVendoredFile(path)).toBe(false);
+    }
+  });
+});
+
+describe("isLockfile", () => {
+  it("matches known lockfiles regardless of directory or case", () => {
+    for (const path of [
+      "package-lock.json",
+      "frontend/yarn.lock",
+      "pnpm-lock.yaml",
+      "Cargo.lock",
+      "go.sum",
+      "uv.lock",
+      "poetry.lock",
+    ]) {
+      expect(isLockfile(path)).toBe(true);
+    }
+  });
+
+  it("does not match dependency manifests or other json", () => {
+    for (const path of ["package.json", "tsconfig.json", "data/values.json"]) {
+      expect(isLockfile(path)).toBe(false);
+    }
+  });
+});
+
+describe("isMinifiedFile", () => {
+  it("matches minified bundles", () => {
+    for (const path of ["dist/app.min.js", "public/styles.min.css", "vendor/lib.min.mjs"]) {
+      expect(isMinifiedFile(path)).toBe(true);
+    }
+  });
+
+  it("does not match unminified files", () => {
+    for (const path of ["src/app.js", "src/minify.ts", "src/app.minify.js"]) {
+      expect(isMinifiedFile(path)).toBe(false);
+    }
+  });
+});
+
+describe("isDocsFile", () => {
+  it("matches docs by extension or a docs directory", () => {
+    for (const path of ["README.md", "guide.mdx", "notes.rst", "manual.adoc", "docs/architecture.ts", "doc/legacy.md"]) {
+      expect(isDocsFile(path)).toBe(true);
+    }
+  });
+
+  it("does not match source, config, or extensionless files outside docs", () => {
+    for (const path of ["src/app.ts", "config.json", "notes.txt", "LICENSE", ".gitignore"]) {
+      expect(isDocsFile(path)).toBe(false);
+    }
+  });
+});
+
+describe("defensive input handling", () => {
+  it("treats null/undefined paths as non-matching, uncategorized input", () => {
+    for (const path of [null, undefined] as unknown as string[]) {
+      expect(isLockfile(path)).toBe(false);
+      expect(isGeneratedFile(path)).toBe(false);
+      expect(classifyChangedFile(path)).toBe("other");
+    }
+  });
+});
+
+describe("isDependencyManifestFile", () => {
+  it("matches dependency manifests", () => {
+    for (const path of ["package.json", "Cargo.toml", "go.mod", "requirements.txt", "pyproject.toml", "build.gradle.kts"]) {
+      expect(isDependencyManifestFile(path)).toBe(true);
+    }
+  });
+
+  it("does not match lockfiles or arbitrary config", () => {
+    for (const path of ["package-lock.json", "tsconfig.json"]) {
+      expect(isDependencyManifestFile(path)).toBe(false);
+    }
+  });
+});
+
+describe("isNonSubstantivePaddingFile", () => {
+  it("flags generated / vendored / minified output as padding", () => {
+    for (const path of ["src/api.generated.ts", "vendor/lib.go", "dist/app.min.js"]) {
+      expect(isNonSubstantivePaddingFile(path)).toBe(true);
+    }
+  });
+
+  it("does not flag lockfiles, manifests, docs, tests, or real source as padding", () => {
+    for (const path of ["package-lock.json", "package.json", "README.md", "test/unit/app.test.ts", "src/app.ts"]) {
+      expect(isNonSubstantivePaddingFile(path)).toBe(false);
+    }
+  });
+});
+
+describe("classifyChangedFile", () => {
+  it("classifies each representative path into its category", () => {
+    const cases: Array<[string, ReturnType<typeof classifyChangedFile>]> = [
+      ["dist/app.min.js", "minified"],
+      ["src/api.generated.ts", "generated"],
+      ["vendor/lib.go", "vendored"],
+      ["package-lock.json", "lockfile"],
+      ["package.json", "dependency_manifest"],
+      ["test/unit/app.test.ts", "test"],
+      ["README.md", "docs"],
+      ["src/app.ts", "source"],
+      ["data/values.json", "other"],
+    ];
+    for (const [path, expected] of cases) {
+      expect(classifyChangedFile(path)).toBe(expected);
+    }
+  });
+
+  it("prioritizes padding categories over test/source so they are never counted as effort", () => {
+    expect(classifyChangedFile("__generated__/schema.test.ts")).toBe("generated");
+    expect(classifyChangedFile("vendor/pkg/index.test.js")).toBe("vendored");
+    expect(classifyChangedFile("dist/bundle.min.js")).toBe("minified");
+  });
+});

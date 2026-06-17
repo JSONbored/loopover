@@ -45,6 +45,7 @@ jobs:
               - 'package-lock.json'
               - 'scripts/**'
               - '.github/workflows/**'
+              - '.github/actions/**'
             ui:
               - 'apps/gittensory-ui/**'
               - 'src/**'
@@ -72,25 +73,29 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
       - name: Lint workflows
         run: npm run actionlint
       - name: Typecheck
         run: npm run typecheck
 
-  # Worker unit/integration suite + coverage upload.
+  # Unit/integration suite + coverage, sharded across parallel runners to cut the
+  # critical-path wall-clock. Each shard uploads its partial lcov; Codecov merges
+  # all shards for the commit before computing the patch/project status, so the
+  # gate sees the full picture. vitest's local 90% backstop is disabled here
+  # (COVERAGE_NO_THRESHOLDS) because a single shard only exercises part of the
+  # tree; the backstop still runs on the full local `npm run test:coverage`.
   test:
     name: test
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -98,23 +103,19 @@ jobs:
           # Full history so Codecov can resolve the merge base for patch coverage.
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Test with coverage
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
+      - name: Test with coverage (shard ${{ matrix.shard }}/2)
         id: coverage
-        run: npm run test:coverage
-      - name: Coverage gate guidance
+        env:
+          COVERAGE_NO_THRESHOLDS: "1"
+        run: npm run test:coverage -- --shard=${{ matrix.shard }}/2
+      - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Coverage gate::Tests failed, or coverage fell below the 90% global backstop."
-          echo "The 97% requirement is enforced by Codecov on *changed lines* (the codecov/patch check), not here."
-          echo "This vitest step only fails on a catastrophic global drop below 90%."
-          echo "Review the per-file coverage table printed above, run 'npm run test:coverage' locally, and add tests for the missing branches, fallback paths, and sanitizer rules."
+          echo "::error title=Tests::A test in shard ${{ matrix.shard }}/2 failed."
+          echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from the merged shards."
+          echo "Reproduce locally with the full suite: 'npm run test:coverage' (no sharding)."
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
@@ -122,6 +123,22 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           fail_ci_if_error: false
+
+  # Worker-pool runtime tests (separate vitest config); split out of `test` so it
+  # runs in parallel instead of serially after the coverage run.
+  workers:
+    name: workers
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
       - name: Worker runtime tests
         run: npm run test:workers
 
@@ -137,13 +154,8 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
       - name: Build MCP
         run: npm run build:mcp
       - name: MCP package check
@@ -163,13 +175,8 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node + install
+        uses: ./.github/actions/npm-setup
       - name: OpenAPI drift check
         run: npm run ui:openapi:check
       - name: UI/MCP version audit
@@ -208,7 +215,7 @@ jobs:
   # Path-filtered jobs report "skipped", which is treated as success.
   validate:
     name: validate
-    needs: [changes, lint, test, mcp, ui, security]
+    needs: [changes, lint, test, workers, mcp, ui, security]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2

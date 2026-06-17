@@ -131,6 +131,7 @@ import {
   preflightBranchWithAgent,
   startAgentRun,
 } from "../services/agent-orchestrator";
+import { buildRemediationPlan } from "../services/remediation-plan";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
@@ -191,10 +192,18 @@ import {
   buildPreflightResult,
   buildQueueHealth,
   buildRegistryChangeReport,
+  buildContributorOpportunities,
+  buildPublicReadinessScore,
   type ContributorOutcomeHistory,
+  type IssueQualityReport,
   type PullRequestMaintainerPacket,
   type RoleContext,
 } from "../signals/engine";
+import {
+  buildExtensionIssueFit,
+  buildExtensionIssueBadges,
+  buildExtensionPrStatus,
+} from "../signals/extension-contributor-context";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
@@ -688,6 +697,10 @@ export function createApp() {
     if (!identity) return c.json({ error: "unauthorized" }, 401);
     if (identity.kind === "session" && !canSessionAccessPath(c.env, identity, c.req.path)) return c.json({ error: "insufficient_role" }, 403);
     if (isExtensionScopedSession(identity) && c.req.path !== EXTENSION_PULL_CONTEXT_PATH) return c.json({ error: "insufficient_scope" }, 403);
+    // Contributor extension tokens are STRICTLY self-only: like the pull-context token above, they are
+    // confined to their own surface and may not reach any other path (control-panel /v1/app/*, the
+    // session-mint endpoint, etc.). Without this they would be LESS confined than the maintainer token.
+    if (isExtensionContributorScopedSession(identity) && !isExtensionContributorContextPath(c.req.path)) return c.json({ error: "insufficient_scope" }, 403);
     return next();
   });
 
@@ -843,15 +856,22 @@ export function createApp() {
   app.post("/v1/auth/extension/session", async (c) => {
     const identity = await authenticateRequestIdentity(c);
     if (!identity || identity.kind !== "session") return c.json({ error: "browser_session_required" }, 403);
-    if (isExtensionScopedSession(identity)) return c.json({ error: "browser_session_required" }, 403);
+    // An extension token (maintainer OR contributor scope) may not mint another — only a full browser
+    // session can. Without covering the contributor scope here, a contributor token could self-renew an
+    // unbounded, effectively non-revocable chain of sessions.
+    if (isExtensionScopedSession(identity) || isExtensionContributorScopedSession(identity)) return c.json({ error: "browser_session_required" }, 403);
     const roleSummary = await loadControlPanelRoleSummary(c.env, identity.actor);
-    if (!roleSummary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator")) return c.json({ error: "insufficient_role" }, 403);
+    // Maintainers (own/installed a repo, or operators) get the maintainer pull-context scope; everyone
+    // else gets the strictly self-only contributor scope (#556). Either way the session is minted from a
+    // verified browser sign-in, so a non-maintainer can only ever read its OWN contributor data.
+    const isMaintainer = roleSummary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator");
+    const scope = isMaintainer ? EXTENSION_PULL_CONTEXT_SCOPE : EXTENSION_CONTRIBUTOR_CONTEXT_SCOPE;
     const githubUser = identity.session.githubUserId === undefined ? { login: identity.session.login } : { login: identity.session.login, id: identity.session.githubUserId };
     const { token, session } = await createSessionForGitHubUser(
       c.env,
       githubUser,
       {
-        scopes: [EXTENSION_PULL_CONTEXT_SCOPE],
+        scopes: [scope],
         metadata: {
           source: "browser_extension",
           parentSessionId: identity.session.id,
@@ -861,7 +881,7 @@ export function createApp() {
     await recordRouteProductUsage(c, {
       surface: "browser_extension",
       eventName: "extension_session_created",
-      role: "maintainer",
+      role: isMaintainer ? "maintainer" : "contributor",
       identity,
       sessionId: session.id,
       outcome: "success",
@@ -2190,6 +2210,88 @@ export function createApp() {
     return c.json(buildLocalDiffPreflightResult(parsed.data, repo, issues, pullRequests, bounties, issueQuality?.report));
   });
 
+  // ─── Extension contributor-context endpoints (#556) ─────────────────────────────────────────────
+  // Self-only (requireContributorAccess: actor === login), public-safe, scores returned as BANDS.
+  // The coarse path allowlist (canSessionAccessPath) only lets the contributor scope reach these paths.
+  app.get("/v1/extension/contributors/:login/issue-fit", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const owner = c.req.query("owner") ?? "";
+    const repoName = c.req.query("repo") ?? "";
+    const issueNumber = Number(c.req.query("issueNumber") ?? "");
+    if (!owner || !repoName || !Number.isInteger(issueNumber) || issueNumber <= 0) return c.json({ error: "valid_owner_repo_issue_required" }, 400);
+    const repoFullName = `${owner}/${repoName}`;
+    const [context, repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+      loadContributorFastContext(c.env, login),
+      getRepository(c.env, repoFullName),
+      listIssues(c.env, repoFullName),
+      listPullRequests(c.env, repoFullName),
+      listBountiesByRepo(c.env, repoFullName),
+      loadOrComputeIssueQualityResponse(c.env, repoFullName),
+    ]);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
+    const opportunity = opportunities.find((entry) => entry.issueNumber === issueNumber);
+    if (!opportunity) return c.json({ repoFullName, issueNumber, eligible: false, reason: "Issue is not an open, unclaimed outside-contributor target right now." }, 200);
+    return c.json({ eligible: true, ...buildExtensionIssueFit(opportunity) });
+  });
+
+  app.get("/v1/extension/contributors/:login/issue-badges", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const owner = c.req.query("owner") ?? "";
+    const repoName = c.req.query("repo") ?? "";
+    if (!owner || !repoName) return c.json({ error: "valid_owner_repo_required" }, 400);
+    const repoFullName = `${owner}/${repoName}`;
+    const [context, repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+      loadContributorFastContext(c.env, login),
+      getRepository(c.env, repoFullName),
+      listIssues(c.env, repoFullName),
+      listPullRequests(c.env, repoFullName),
+      listBountiesByRepo(c.env, repoFullName),
+      loadOrComputeIssueQualityResponse(c.env, repoFullName),
+    ]);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
+    return c.json({ repoFullName, badges: buildExtensionIssueBadges(opportunities, repoFullName) });
+  });
+
+  app.get("/v1/extension/contributors/:login/pr-status", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const owner = c.req.query("owner") ?? "";
+    const repoName = c.req.query("repo") ?? "";
+    const pullNumber = Number(c.req.query("pullNumber") ?? "");
+    if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
+    const repoFullName = `${owner}/${repoName}`;
+    const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+      getRepository(c.env, repoFullName),
+      listIssues(c.env, repoFullName),
+      listPullRequests(c.env, repoFullName),
+      listBountiesByRepo(c.env, repoFullName),
+      loadOrComputeIssueQualityResponse(c.env, repoFullName),
+    ]);
+    const pr = pullRequests.find((entry) => entry.number === pullNumber);
+    if (!pr) return c.json({ error: "pull_request_not_found" }, 404);
+    // Self-only on the PR itself: a contributor reads only their OWN PR's status.
+    if ((pr.authorLogin ?? "").toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
+    const preflight = buildPreflightResult(
+      { repoFullName, contributorLogin: login, title: pr.title, body: pr.body ?? undefined, labels: pr.labels, linkedIssues: pr.linkedIssues, authorAssociation: pr.authorAssociation ?? undefined },
+      repo,
+      issues,
+      pullRequests,
+      bounties,
+      issueQuality?.report,
+    );
+    const collisions = buildCollisionReport(repoFullName, issues, pullRequests);
+    const queueHealth = buildQueueHealth(repo, issues, pullRequests, collisions);
+    const readiness = buildPublicReadinessScore({ pr, preflight, queueHealth });
+    return c.json(buildExtensionPrStatus({ repoFullName, pullNumber, readiness }));
+  });
+
   app.post("/v1/local/branch-analysis", async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = localBranchAnalysisSchema.safeParse(body);
@@ -2263,6 +2365,59 @@ export function createApp() {
       metadata: { hasLocalScorer: Boolean(parsed.data.localScorer), changedFileCount: parsed.data.changedFiles?.length ?? 0, linkedIssueCount: parsed.data.linkedIssues?.length ?? 0 },
     });
     return c.json(response);
+  });
+
+  app.post("/v1/local/remediation-plan", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = localBranchAnalysisSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
+    const unauthorized = await requireContributorAccess(c, parsed.data.login);
+    if (unauthorized) return unauthorized;
+    const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([
+      loadContributorFastContext(c.env, parsed.data.login),
+      getRepository(c.env, parsed.data.repoFullName),
+      listIssues(c.env, parsed.data.repoFullName),
+      listPullRequests(c.env, parsed.data.repoFullName),
+      listRecentMergedPullRequests(c.env, parsed.data.repoFullName),
+      listBountiesByRepo(c.env, parsed.data.repoFullName),
+      getOrCreateScoringModelSnapshot(c.env),
+      loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
+      loadRepoFocusManifest(c.env, parsed.data.repoFullName),
+    ]);
+    const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
+    const scoringProfile = buildContributorScoringProfile({ login: parsed.data.login, fit, scoringSnapshot: snapshot });
+    const checkSummaries = await loadCheckSummariesForPullRequests(c.env, parsed.data.repoFullName, parsed.data, pullRequests);
+    const analysisInput = parsed.data.focusManifest !== undefined || !repoManifest.present
+      ? parsed.data
+      : { ...parsed.data, focusManifest: repoManifest as unknown };
+    const analysis = buildLocalBranchAnalysis({
+      input: analysisInput,
+      repo,
+      issues,
+      pullRequests,
+      contributorPullRequests: context.contributorPullRequests,
+      recentMergedPullRequests,
+      bounties,
+      repositories: context.repositories,
+      checkSummaries,
+      profile: context.profile,
+      outcomeHistory: context.outcomeHistory,
+      scoringSnapshot: snapshot,
+      scoringProfile,
+      issueQuality: issueQuality?.report,
+      gittensorSnapshot: context.gittensorSnapshot,
+    });
+    return c.json(
+      buildRemediationPlan({
+        login: analysis.login,
+        repoFullName: analysis.repoFullName,
+        branchQualityBlockers: analysis.branchQualityBlockers,
+        accountStateBlockers: analysis.accountStateBlockers,
+        scoreBlockers: analysis.scoreBlockers,
+        recommendedRerunCondition: analysis.recommendedRerunCondition,
+        localFindings: analysis.localFindings,
+      }),
+    );
   });
 
   app.post("/v1/agent/runs", async (c) => {
@@ -4024,6 +4179,11 @@ const EXTENSION_PULL_CONTEXT_SCOPE = "extension:pull_context";
 const LINT_PR_TEXT_PATH = "/v1/lint/pr-text";
 const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
 const LINT_ISSUE_SLOP_PATH = "/v1/lint/issue-slop";
+// Contributor (miner) side of the extension (#556). Minted for NON-maintainer sign-ins; strictly
+// self-only — a token may only reach `/v1/extension/contributors/<self>/*`, enforced by the coarse
+// path check below plus `requireContributorAccess` (actor === login) in every handler.
+const EXTENSION_CONTRIBUTOR_CONTEXT_SCOPE = "extension:contributor_context";
+const EXTENSION_CONTRIBUTOR_CONTEXT_PATH = /^\/v1\/extension\/contributors\/[^/]+\/[^/]+$/;
 
 type ProtectedRouteContext = {
   env: Env;
@@ -4033,6 +4193,19 @@ type ProtectedRouteContext = {
 
 function isExtensionScopedSession(identity: AuthIdentity): boolean {
   return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_PULL_CONTEXT_SCOPE);
+}
+
+function isExtensionContributorScopedSession(identity: AuthIdentity): boolean {
+  return identity.kind === "session" && identity.session.scopes.includes(EXTENSION_CONTRIBUTOR_CONTEXT_SCOPE);
+}
+
+function isExtensionContributorContextPath(path: string): boolean {
+  return EXTENSION_CONTRIBUTOR_CONTEXT_PATH.test(path);
+}
+
+// Wrap a single repo's issue-quality report in the by-repo map buildContributorOpportunities expects.
+function issueQualityMap(repoFullName: string, report: IssueQualityReport | undefined): Map<string, IssueQualityReport> | undefined {
+  return report ? new Map([[repoFullName, report]]) : undefined;
 }
 
 // ─── Authorization model (the miner ⊕ maintainer boundary) ──────────────────────────────────────
@@ -4063,9 +4236,13 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoFocusManifestPath(path)) return true;
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
+  if (isRepoValidateLinkedIssuePath(path)) return true;
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
+  // Contributor extension scope reaches only `/v1/extension/contributors/<login>/*`; the handler's
+  // requireContributorAccess then enforces actor === login (self-only).
+  if (isExtensionContributorContextPath(path) && isExtensionContributorScopedSession(identity)) return true;
   return false;
 }
 
@@ -4095,6 +4272,10 @@ function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
 
 function isRepoCheckBeforeStartPath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/check-before-start$/.test(path);
+}
+
+function isRepoValidateLinkedIssuePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/validate-linked-issue$/.test(path);
 }
 
 function isIssueQualityPath(path: string): boolean {
@@ -4369,4 +4550,5 @@ export const __routesInternals = {
   buildExtensionPrivateBlockers,
   ensureExtensionPublicSafeText,
   authenticateRequestIdentity,
+  issueQualityMap,
 };

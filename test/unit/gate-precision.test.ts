@@ -90,8 +90,10 @@ describe("buildGatePrecisionReport", () => {
     const own = { repoFullName: "owner/repo", pullNumber: 1, blockerCodes: ["x"], overridden: false };
     const other = { repoFullName: "other/repo", pullNumber: 2, blockerCodes: ["x"], overridden: false };
     const otherPr: PullRequestRecord = { repoFullName: "other/repo", number: 2, title: "PR 2", state: "closed", mergedAt: "2026-06-01T00:00:00.000Z", labels: [], linkedIssues: [] };
-    const report = buildGatePrecisionReport([own, other], [pr(1, "merged"), otherPr], { repoFullName: "owner/repo" });
-    // Only owner/repo's single block counts; other/repo's block + merged PR are filtered out.
+    // A PR with a null repoFullName exercises sameRepo's nullish-coalesce guard.
+    const nullRepoPr: PullRequestRecord = { repoFullName: null as unknown as string, number: 3, title: "PR 3", state: "closed", mergedAt: null, labels: [], linkedIssues: [] };
+    const report = buildGatePrecisionReport([own, other], [pr(1, "merged"), otherPr, nullRepoPr], { repoFullName: "owner/repo" });
+    // Only owner/repo's single block counts; other/repo's block + merged PR (and the null-repo PR) are filtered out.
     expect(report.overall).toMatchObject({ blocked: 1, blockedThenMerged: 1 });
   });
 });
@@ -167,5 +169,15 @@ describe("loadGatePrecisionReport (env loader)", () => {
     const env = createTestEnv();
     await markGateOutcomeOverridden(env, "owner/repo", 99); // must not throw
     expect(await listGateOutcomes(env, { repoFullName: "owner/repo" })).toHaveLength(0);
+  });
+
+  it("listGateOutcomes honors the windowDays/now/limit options and an unscoped (no-repo) listing", async () => {
+    const env = createTestEnv();
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 7, blockerCodes: ["x"] });
+    // windowDays + an explicit `now` (exercises the provided-now branch) + an explicit limit.
+    const windowed = await listGateOutcomes(env, { repoFullName: "owner/repo", windowDays: 7, now: "2026-06-17T00:00:00.000Z", limit: 10 });
+    expect(windowed).toHaveLength(1);
+    // No repoFullName → unscoped listing (exercises the absent-repo branch + the empty-conditions path).
+    expect(await listGateOutcomes(env, {})).toHaveLength(1);
   });
 });

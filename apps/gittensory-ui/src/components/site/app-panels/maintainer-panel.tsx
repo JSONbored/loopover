@@ -18,6 +18,7 @@ import {
   type Status,
 } from "@/components/site/control-primitives";
 import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
+import { MaintainerSettings } from "@/components/site/app-panels/maintainer-settings";
 import { StatCard } from "@/components/site/primitives";
 import { EmptyState, LoadingState, StateBoundary } from "@/components/site/state-views";
 import { apiFetch } from "@/lib/api/request";
@@ -337,6 +338,8 @@ function MaintainerDashboardView() {
           </section>
 
           <SurfacePreview reviewability={data.reviewability} />
+
+          <MaintainerSettings reviewability={data.reviewability} />
 
           <AiReviewSettings reviewability={data.reviewability} />
         </div>

@@ -52,6 +52,7 @@ import {
 } from "../services/agent-orchestrator";
 import { loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
+import { buildRemediationPlan } from "../services/remediation-plan";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
@@ -531,6 +532,14 @@ const checkBeforeStartOutputSchema = {
   reasons: z.unknown().optional(),
   blockers: z.unknown().optional(),
   report: z.unknown().optional(),
+};
+
+const remediationPlanOutputSchema = {
+  repoFullName: z.string().optional(),
+  login: z.string().optional(),
+  summary: z.string().optional(),
+  recommendedRerunCondition: z.string().optional(),
+  items: z.unknown().optional(),
 };
 
 const scoreBreakdownOutputSchema = {
@@ -1085,6 +1094,17 @@ export class GittensoryMcp {
         outputSchema: explainLocalBlockersOutputSchema,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
+    );
+
+    server.registerTool(
+      "gittensory_remediation_plan",
+      {
+        description:
+          "Turn local branch blocker lists into an ordered, deduplicated public-safe remediation checklist with rerun conditions. Metadata only.",
+        inputSchema: localBranchAnalysisShape,
+        outputSchema: remediationPlanOutputSchema,
+      },
+      async (input) => this.toolResult(await this.remediationPlan(input)),
     );
 
     server.registerTool(
@@ -1911,6 +1931,23 @@ export class GittensoryMcp {
     return {
       summary: `Gittensory base-agent public-safe PR packet for ${input.repoFullName}.`,
       data: bundle as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async remediationPlan(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+    const analysis = await this.analyzeLocalBranch(input);
+    const plan = buildRemediationPlan({
+      login: analysis.login,
+      repoFullName: analysis.repoFullName,
+      branchQualityBlockers: analysis.branchQualityBlockers,
+      accountStateBlockers: analysis.accountStateBlockers,
+      scoreBlockers: analysis.scoreBlockers,
+      recommendedRerunCondition: analysis.recommendedRerunCondition,
+      localFindings: analysis.localFindings,
+    });
+    return {
+      summary: `Gittensory remediation plan for ${analysis.login} in ${analysis.repoFullName}.`,
+      data: plan as unknown as Record<string, unknown>,
     };
   }
 

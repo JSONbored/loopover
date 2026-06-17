@@ -1277,6 +1277,38 @@ describe("api routes", () => {
     });
     expect(JSON.stringify(localBranchPayload.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
 
+    const remediationPlan = await app.request(
+      "/v1/local/remediation-plan",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          login: "oktofeesh1",
+          repoFullName: "entrius/allways-ui",
+          baseRef: "origin/test",
+          headRef: "fix-cache",
+          branchName: "fix-cache-reconnect",
+          title: "Fix dashboard cache refresh after reconnect",
+          body: "Fixes #7",
+          labels: ["bug"],
+          changedFiles: [
+            { path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" },
+            { path: "test/cache.test.ts", additions: 20, deletions: 0, status: "added" },
+          ],
+          validation: [{ command: "npm test -- cache", status: "failed", summary: "cache regression failed" }],
+          localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 66, sourceLines: 44, testTokenScore: 20 },
+          branchEligibility: { status: "eligible", source: "github_metadata", checkedAt: "2026-05-30T00:00:00.000Z" },
+        }),
+      },
+      env,
+    );
+    expect(remediationPlan.status).toBe(200);
+    await expect(remediationPlan.json()).resolves.toMatchObject({
+      login: "oktofeesh1",
+      repoFullName: "entrius/allways-ui",
+      items: expect.arrayContaining([expect.objectContaining({ rank: 1, step: expect.any(String), rerunCondition: expect.any(String) })]),
+    });
+
     const localBranchWithMcpToken = await app.request(
       "/v1/local/branch-analysis",
       {
@@ -1498,6 +1530,42 @@ describe("api routes", () => {
       env,
     );
     expect(noContributorScorePreview.status).toBe(200);
+
+    const scoreBreakdown = await app.request(
+      "/v1/scoring/explain-breakdown",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({
+          repoFullName: "entrius/allways-ui",
+          contributorLogin: "oktofeesh1",
+          sourceTokenScore: 42,
+          totalTokenScore: 60,
+          sourceLines: 40,
+          openPrCount: 1,
+          linkedIssueMode: "standard",
+        }),
+      },
+      env,
+    );
+    expect(scoreBreakdown.status).toBe(200);
+    await expect(scoreBreakdown.json()).resolves.toMatchObject({
+      repoFullName: "entrius/allways-ui",
+      components: expect.arrayContaining([expect.objectContaining({ component: expect.any(String), lever: expect.any(String) })]),
+      highestLeverageLever: expect.objectContaining({ component: expect.any(String), lever: expect.any(String) }),
+    });
+
+    const missingContributorBreakdown = await app.request(
+      "/v1/scoring/explain-breakdown",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ repoFullName: "entrius/allways-ui", sourceTokenScore: 42 }),
+      },
+      env,
+    );
+    expect(missingContributorBreakdown.status).toBe(400);
+    await expect(missingContributorBreakdown.json()).resolves.toMatchObject({ error: "contributor_login_required" });
 
     for (const [signalType, payload] of [
       ["queue-health", { repoFullName: "entrius/allways-ui", signals: { openPullRequests: 2 } }],
@@ -4481,6 +4549,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_rank_local_next_actions");
     expect(toolNames).toContain("gittensory_compare_local_variants");
     expect(toolNames).toContain("gittensory_explain_local_blockers");
+    expect(toolNames).toContain("gittensory_remediation_plan");
     expect(toolNames).toContain("gittensory_prepare_pr_packet");
     expect(toolNames).toContain("gittensory_agent_plan_next_work");
     expect(toolNames).toContain("gittensory_agent_start_run");

@@ -72,6 +72,8 @@
     "@cloudflare/vitest-pool-workers": "^0.16.10",
     "@tktco/node-actionlint": "^1.6.0",
     "@types/node": "^24.10.1",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.7",
     "drizzle-kit": "^0.31.7",
     "git-cliff": "^2.13.1",
@@ -79,6 +81,8 @@
     "node-addon-api": "^8.5.0",
     "node-gyp": "^12.1.0",
     "playwright": "^1.56.1",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "vitest": "^4.1.7",
@@ -91,6 +95,9 @@
     "@lovable.dev/vite-plugin-dev-server-bridge": "1.0.1",
     "@lovable.dev/vite-plugin-hmr-gate": "1.0.1",
     "esbuild": "^0.28.1",
+    "ws": "^8.21.0",
+    "tar": "^7.5.16",
+    "js-yaml": "^4.2.0",
     "lovable-tagger@1.2.0": {
       "esbuild": "^0.28.1"
     },

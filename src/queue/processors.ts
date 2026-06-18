@@ -1100,9 +1100,11 @@ export function buildAiReviewDiff(files: Awaited<ReturnType<typeof listPullReque
 /**
  * Run the opt-in AI maintainer review and fold it into the gate + panel. Mutates `advisory.findings`
  * with a dual-model consensus defect (when `aiReviewMode: block` and the free Workers-AI pair agrees with
- * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs — still confirmed-
- * contributor gated. Returns the advisory notes for the public panel. Fully fail-safe: disabled / not a
- * confirmed contributor / no head SHA / non-ok AI / any thrown error → no finding and no notes.
+ * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs. The default `gittensor`
+ * pack keeps AI spend confirmed-contributor gated; `oss-anti-slop` may run the blocking review for any
+ * author because that pack is explicitly author-agnostic. Returns the advisory notes for the public panel.
+ * Fully fail-safe: disabled / ineligible author / no head SHA / non-ok AI / any thrown error → no finding
+ * and no notes.
  */
 export async function runAiReviewForAdvisory(
   env: Env,
@@ -1115,7 +1117,8 @@ export async function runAiReviewForAdvisory(
     confirmedContributor: boolean;
   },
 ): Promise<{ notes: string } | undefined> {
-  if (args.settings.aiReviewMode === "off" || !args.confirmedContributor || !args.advisory.headSha) return undefined;
+  const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
+  if (args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha) return undefined;
   try {
     // BYOK: decrypt the maintainer's provider key only when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).

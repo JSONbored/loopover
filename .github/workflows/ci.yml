@@ -49,6 +49,7 @@ jobs:
               - '.github/actions/**'
             ui:
               - 'apps/gittensory-ui/**'
+              - 'apps/gittensory-extension/**'
               - 'src/**'
               - 'scripts/write-ui-openapi.ts'
               - 'scripts/build-extension.mjs'

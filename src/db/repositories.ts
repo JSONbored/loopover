@@ -2626,6 +2626,11 @@ export async function upsertPullRequestFile(env: Env, file: PullRequestFileRecor
     });
 }
 
+export async function deletePullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<void> {
+  const db = getDb(env.DB);
+  await db.delete(pullRequestFiles).where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
+}
+
 export async function listPullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<PullRequestFileRecord[]> {
   const db = getDb(env.DB);
   const rows = await db

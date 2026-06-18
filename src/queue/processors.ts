@@ -64,6 +64,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   refreshContributorActivity,
   refreshInstallationHealth,
+  refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
 import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
@@ -928,6 +929,9 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
+        if (settings.slopGateMode !== "off" || settings.manifestPolicyGateMode !== "off") {
+          await refreshPullRequestDetails(env, repoFullName, pr.number);
+        }
         await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
           deliveryId,
           authorType: payload.pull_request.user?.type,

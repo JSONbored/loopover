@@ -836,6 +836,9 @@ describe("agent orchestrator", () => {
       freshness: "fresh",
       sources: expect.arrayContaining([expect.objectContaining({ name: "local_branch_metadata", source: "metadata_only" })]),
     });
+    expect(actions[1]).toMatchObject({ actionType: "prepare_pr_packet", safetyClass: "public_safe", approvalRequired: false });
+    expect(actions[1]?.payload.recommendationEvidence).toBeUndefined();
+    expect(JSON.stringify(actions[1]?.payload)).not.toMatch(/private score preview|score_preview|linked_issue_multiplier|scoreabilityStatus/i);
     expect(blockers[0]).toMatchObject({ status: "ready", recommendation: "No hard scoreability blocker is visible from local metadata." });
     expect(blockedActions.map((entry) => entry.actionType)).toEqual(["preflight_branch", "prepare_pr_packet", "explain_score_blockers"]);
     expect(blockedActions[0]?.scoreabilityImpact).toContain("scenario projections");
@@ -1044,6 +1047,8 @@ describe("agent orchestrator", () => {
     expect(preflight.actions.map((action) => action.actionType)).toEqual(expect.arrayContaining(["preflight_branch", "prepare_pr_packet"]));
     expect(packet.actions).toHaveLength(1);
     expect(packet.actions[0]).toMatchObject({ actionType: "prepare_pr_packet", safetyClass: "public_safe", approvalRequired: false });
+    expect(packet.actions[0]?.payload.recommendationEvidence).toBeUndefined();
+    expect(JSON.stringify(packet.actions[0]?.payload)).not.toMatch(/private score preview|score_preview|linked_issue_multiplier|scoreabilityStatus/i);
     expect(blockers.actions[0]).toMatchObject({ actionType: "explain_score_blockers", targetRepoFullName: "entrius/allways-ui" });
     expect(JSON.stringify(preflight.actions)).toContain("linked_issue_bounty_historical");
     expect(JSON.stringify(preflight.actions)).toContain("Source upload disabled");

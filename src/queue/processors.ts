@@ -924,7 +924,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       ]);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
-        requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+        requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
@@ -1017,6 +1017,18 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
 
 type PublicSurfaceOutput = "comment" | "label" | "check_run";
 type PublicSurfaceOutputFailure = { output: PublicSurfaceOutput; error: string };
+
+function mergeReadinessGateEnabled(settings: Pick<RepositorySettings, "mergeReadinessGateMode">): boolean {
+  return settings.mergeReadinessGateMode !== "off";
+}
+
+export function shouldCollectLinkedIssueEvidence(settings: Pick<RepositorySettings, "requireLinkedIssue" | "linkedIssueGateMode" | "mergeReadinessGateMode">): boolean {
+  return settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || mergeReadinessGateEnabled(settings);
+}
+
+export function shouldCollectSlopEvidence(settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">): boolean {
+  return settings.slopGateMode !== "off" || mergeReadinessGateEnabled(settings);
+}
 
 function shouldProcessPullRequestPublicSurface(action: string | undefined): boolean {
   return PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") || PR_GATE_CLOSED_ACTIONS.has(action ?? "");
@@ -1392,10 +1404,10 @@ async function maybePublishPrPublicSurface(
     // Slop (#530) and focus-manifest-policy (#555) gates both need the PR's changed files. Load ONCE and
     // share so two opted-in gates don't double-fetch; the load is lazy so a repo with both off pays nothing.
     let gateFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null = null;
-    if (settings.slopGateMode !== "off" || settings.manifestPolicyGateMode !== "off") {
+    if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
       gateFiles = await listPullRequestFiles(env, repoFullName, pr.number);
     }
-    if (settings.slopGateMode !== "off") {
+    if (shouldCollectSlopEvidence(settings)) {
       const slopFiles = gateFiles ?? [];
       const slop = buildSlopAssessment({
         changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
@@ -1933,7 +1945,7 @@ async function buildAuthorizedPrActionAdvisory(
   const [repo, otherOpenPullRequests] = await Promise.all([getRepository(env, repoFullName), listOtherOpenPullRequests(env, repoFullName, pr.number)]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
-    requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+    requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
   });
   return { repo, advisory };
 }

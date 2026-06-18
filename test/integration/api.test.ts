@@ -220,10 +220,22 @@ describe("api routes", () => {
     await expect(json.json()).resolves.toMatchObject({ schemaVersion: 1, label: "gittensory", message: expect.stringContaining("real") });
 
     // Installed but NOT opted in → unavailable, no metrics.
-    await upsertRepositoryFromGitHub(env, { name: "private", full_name: "acme/private", private: false, owner: { login: "acme" }, default_branch: "main" }, 556);
-    const notOptedIn = await app.request("/v1/public/repos/acme/private/badge.svg", {}, env);
+    await upsertRepositoryFromGitHub(env, { name: "not-opted-in", full_name: "acme/not-opted-in", private: false, owner: { login: "acme" }, default_branch: "main" }, 556);
+    const notOptedIn = await app.request("/v1/public/repos/acme/not-opted-in/badge.svg", {}, env);
     expect(notOptedIn.status).toBe(404);
     expect(await notOptedIn.text()).toContain("unavailable");
+
+    // Private repos stay unavailable even when installed and explicitly opted in.
+    await upsertRepositoryFromGitHub(env, { name: "private", full_name: "acme/private", private: true, owner: { login: "acme" }, default_branch: "main" }, 558);
+    await upsertRepositorySettings(env, { repoFullName: "acme/private", badgeEnabled: true });
+    await upsertPullRequestFromGitHub(env, "acme/private", { number: 1, title: "Secret", state: "merged", created_at: "2026-06-03T00:00:00Z", merged_at: "2026-06-03T02:00:00Z", labels: [] });
+    await updatePullRequestSlopAssessment(env, "acme/private", 1, { slopRisk: 0, slopBand: "clean" });
+    const privateSvg = await app.request("/v1/public/repos/acme/private/badge.svg", {}, env);
+    expect(privateSvg.status).toBe(404);
+    expect(await privateSvg.text()).toContain("unavailable");
+    const privateJson = await app.request("/v1/public/repos/acme/private/badge.json", {}, env);
+    expect(privateJson.status).toBe(404);
+    await expect(privateJson.json()).resolves.toMatchObject({ message: "unavailable" });
 
     // Opted in but NOT installed → unavailable.
     await upsertRepositoryFromGitHub(env, { name: "uninstalled", full_name: "acme/uninstalled", private: false, owner: { login: "acme" }, default_branch: "main" });

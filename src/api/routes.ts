@@ -252,12 +252,13 @@ import { errorMessage, nowIso } from "../utils/json";
 type AppBindings = { Bindings: Env };
 type AppContext = Context<AppBindings>;
 
-// Resolves the public README badge metrics for a repo, enforcing the two gates in one place: the repo must
-// be installed AND have opted in via `badgeEnabled`. Returns null (→ a benign "unavailable" badge) for any
-// repo that is unknown, uninstalled, or has not opted in — so no metrics are ever served otherwise.
+// Resolves the public README badge metrics for a repo, enforcing the public-safety gates in one place:
+// the repo must be public, installed, and opted in via `badgeEnabled`. Returns null (→ a benign
+// "unavailable" badge) for any repo that is unknown, private, uninstalled, or has not opted in — so no
+// metrics are ever served otherwise.
 async function loadPublicRepoBadge(env: Env, owner: string, repo: string): Promise<PublicRepoQuality | null> {
   const repository = await getRepository(env, `${owner}/${repo}`);
-  if (!repository || !repository.isInstalled) return null;
+  if (!repository || repository.isPrivate || !repository.isInstalled) return null;
   const settings = await getRepositorySettings(env, repository.fullName);
   if (!settings.badgeEnabled) return null;
   const pullRequests = await listPullRequests(env, repository.fullName);
@@ -1901,14 +1902,8 @@ export function createApp() {
 
   app.put("/v1/repos/:owner/:repo/focus-manifest", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
-    if (forbidden) return forbidden;
-    const identity = await authenticateRequestIdentity(c);
-    const repo = await getRepository(c.env, fullName);
-    if (identity?.kind === "session") {
-      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
-      if (repoForbidden) return repoForbidden;
-    }
+    const gate = await requireRepoWriteAccess(c, fullName);
+    if (gate instanceof Response) return gate;
     const body = await c.req.json().catch(() => null);
     if (body === null) return c.json({ error: "invalid_json" }, 400);
     const manifest = await upsertRepoFocusManifest(c.env, fullName, body, "api_record");

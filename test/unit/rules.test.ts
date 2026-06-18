@@ -698,6 +698,33 @@ describe("advisory rules", () => {
     expect(output.text).toContain("…5 more hotspot annotation(s) omitted from inline check output.");
   });
 
+  it("buildCheckRunAnnotations only targets annotatable live changed files", () => {
+    const advisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "public_lane",
+          title: "Configured lane",
+          severity: "info" as const,
+          detail: "Private detail",
+          publicText: "Public context for the changed file.",
+        },
+      ],
+    };
+    const files: PullRequestFileRecord[] = [
+      { repoFullName: repo.fullName, pullNumber: 41, path: "src/deleted.ts", status: "removed", additions: 0, deletions: 5, changes: 5, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 41, path: "src/renamed.ts", status: "renamed", additions: 2, deletions: 1, changes: 3, payload: { patch: "@@ -1,1 +3,2 @@\n+renamed" } },
+      { repoFullName: repo.fullName, pullNumber: 41, path: "assets/diagram.png", status: "added", additions: 1, deletions: 0, changes: 1, payload: {} },
+      { repoFullName: repo.fullName, pullNumber: 41, path: "src/live.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@ -10,0 +11,1 @@\n+const live = true;" } },
+      { repoFullName: repo.fullName, pullNumber: 41, path: "src/no-added-lines.ts", status: "modified", additions: 0, deletions: 1, changes: 1, payload: { patch: "@@ -1,1 +1,0 @@\n-const stale = true;" } },
+    ];
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions: emptyCollisions(), pullNumber: 41 }, "standard");
+
+    expect(annotations.map((entry) => entry.path)).toEqual(["src/live.ts", "src/live.ts"]);
+    expect(annotations.every((entry) => entry.start_line === 11 && entry.end_line === 11)).toBe(true);
+  });
+
   it("buildCheckRunAnnotations stays empty for minimal detail level", () => {
     const files: PullRequestFileRecord[] = [
       { repoFullName: repo.fullName, pullNumber: 1, path: "src/x.ts", additions: 1, deletions: 0, changes: 1, payload: {} },

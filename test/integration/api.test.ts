@@ -36,12 +36,19 @@ import {
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { clearPublicRepoStatsCacheForTests } from "../../src/github/public";
+import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
+
+vi.mock("../../src/github/app", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/app")>()),
+  getRepositoryCollaboratorPermission: vi.fn(),
+}));
+const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
 const FORBIDDEN_PUBLIC_REPORT_TERMS =
   /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i;
@@ -52,6 +59,7 @@ describe("api routes", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
+    mockedPermission.mockReset();
   });
 
   afterEach(() => {
@@ -2185,6 +2193,10 @@ describe("api routes", () => {
     });
     const { token: ownerToken } = await createSessionForGitHubUser(ownerEnv, { login: "repo-owner", id: 777 });
     const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
+    mockedPermission.mockImplementation(async (_env, _installationId, repoFullName, login) => {
+      if (repoFullName === "repo-owner/owned-repo" && login === "repo-owner") return "write";
+      return "read";
+    });
     const ownerRoles = await app.request("/v1/app/roles", { headers: ownerHeaders }, ownerEnv);
     expect(ownerRoles.status).toBe(200);
     await expect(ownerRoles.json()).resolves.toMatchObject({

@@ -1595,7 +1595,9 @@ export function createApp() {
       getOrCreateScoringModelSnapshot(c.env),
       getContributorEvidence(c.env, parsed.data.contributorLogin),
     ]);
-    const preview = buildScorePreview({ input: parsed.data, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
   });
 

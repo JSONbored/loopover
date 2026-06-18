@@ -2094,7 +2094,9 @@ export class GittensoryMcp {
       getOrCreateScoringModelSnapshot(this.env),
       getContributorEvidence(this.env, input.contributorLogin),
     ]);
-    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const preview = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     const breakdown = explainScoreBreakdown(preview);
     return {
       summary: `Private Gittensory score breakdown for ${input.contributorLogin} in ${input.repoFullName}. Highest leverage: ${breakdown.highestLeverageLever.component}.`,

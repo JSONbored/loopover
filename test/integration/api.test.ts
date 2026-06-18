@@ -1627,29 +1627,44 @@ describe("api routes", () => {
     );
     expect(noContributorScorePreview.status).toBe(200);
 
+    const agedScoreInput = {
+      repoFullName: "entrius/allways-ui",
+      contributorLogin: "oktofeesh1",
+      sourceTokenScore: 42,
+      totalTokenScore: 60,
+      sourceLines: 40,
+      openPrCount: 1,
+      linkedIssueMode: "standard",
+      prAgeHours: 240,
+    };
+    env.SCORING_TIME_DECAY_ENABLED = "true";
+    const agedScorePreview = await app.request(
+      "/v1/scoring/preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify(agedScoreInput) },
+      env,
+    );
+    expect(agedScorePreview.status).toBe(200);
+    const agedScorePreviewBody = (await agedScorePreview.json()) as { input: { applyTimeDecay?: boolean; prAgeHours?: number }; result: { effectiveEstimatedScore: number; scoreEstimate: { timeDecayMultiplier: number } } };
+
     const scoreBreakdown = await app.request(
       "/v1/scoring/explain-breakdown",
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({
-          repoFullName: "entrius/allways-ui",
-          contributorLogin: "oktofeesh1",
-          sourceTokenScore: 42,
-          totalTokenScore: 60,
-          sourceLines: 40,
-          openPrCount: 1,
-          linkedIssueMode: "standard",
-        }),
+        body: JSON.stringify(agedScoreInput),
       },
       env,
     );
     expect(scoreBreakdown.status).toBe(200);
-    await expect(scoreBreakdown.json()).resolves.toMatchObject({
+    const scoreBreakdownBody = (await scoreBreakdown.json()) as { effectiveEstimatedScore: number };
+    expect(scoreBreakdownBody).toMatchObject({
       repoFullName: "entrius/allways-ui",
       components: expect.arrayContaining([expect.objectContaining({ component: expect.any(String), lever: expect.any(String) })]),
       highestLeverageLever: expect.objectContaining({ component: expect.any(String), lever: expect.any(String) }),
     });
+    expect(agedScorePreviewBody.input).toMatchObject({ applyTimeDecay: true, prAgeHours: 240 });
+    expect(agedScorePreviewBody.result.scoreEstimate.timeDecayMultiplier).toBeLessThan(1);
+    expect(scoreBreakdownBody.effectiveEstimatedScore).toBe(agedScorePreviewBody.result.effectiveEstimatedScore);
 
     const missingContributorBreakdown = await app.request(
       "/v1/scoring/explain-breakdown",

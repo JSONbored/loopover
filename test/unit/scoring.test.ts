@@ -147,7 +147,10 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
   });
 
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({
+      GITTENSOR_UPSTREAM_REPO: "custom/upstream",
+      GITTENSOR_UPSTREAM_REF: "staging",
+    });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nNOVELTY_BONUS_SCALAR = 3\n");
@@ -163,7 +166,10 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect((await listUpstreamDriftReports(env, 10)).find((report) => report.fingerprint === fingerprint)).toMatchObject({
       status: "open",
       affectedAreas: ["scoring_model"],
-      payload: expect.objectContaining({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] }),
+      payload: expect.objectContaining({
+        unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"],
+        source: { repo: "custom/upstream", ref: "staging", commitSha: null },
+      }),
     });
   });
 

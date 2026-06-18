@@ -105,7 +105,6 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
   if (constantsResult.ok) {
     await syncUnmodeledScoringConstantDrift(env, {
       unmodeledConstants: findUnmodeledUpstreamConstants(constantsResult.value),
-      source: { repo: "entrius/gittensor", ref: "test", commitSha: null },
     });
   }
   return snapshot;

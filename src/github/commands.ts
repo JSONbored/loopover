@@ -335,7 +335,7 @@ function buildAskPublicAnswerCard(args: {
   ];
   const sourceEvidence = contributingSources.slice(0, 3).map((source) => {
     const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
-    return `Connected source ${source.label} (${source.origin}): freshness ${source.freshness}${observed}.`;
+    return `Connected source ${source.label}: freshness ${source.freshness}${observed}.`;
   });
   return {
     title,
@@ -737,7 +737,7 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
           origin: kind,
           generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : graphGeneratedAt,
           freshness: typeof record.freshness === "string" ? record.freshness : "unknown",
-          detail: typeof record.detail === "string" ? record.detail : "Connected contributor evidence graph source.",
+          detail: publicContextSnapshotSourceDetail(kind),
         });
       }
     }
@@ -762,16 +762,6 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
       generatedAt,
       freshness: branchEligibility.stale === true ? "stale" : branchEligibility.evidence === "missing" ? "missing" : "fresh",
       detail: "Branch eligibility metadata from connected local/GitHub context.",
-    });
-  }
-  if (typeof payload.scoreabilityStatus === "string") {
-    sources.push({
-      key: "scoreability_status",
-      label: "contribution readiness metadata",
-      origin: "metadata_only",
-      generatedAt,
-      freshness: snapshotFreshnessFromWarnings(snapshot),
-      detail: `Contribution readiness status: ${payload.scoreabilityStatus}.`,
     });
   }
   const dataQuality = readRecord(payload.dataQuality);
@@ -802,7 +792,7 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
       origin: "contributor_decision_pack",
       generatedAt: generatedAt ?? snapshot.decisionPackVersion ?? null,
       freshness: snapshotFreshnessFromWarnings(snapshot),
-      detail: `Contributor decision pack (${payload.source}).`,
+      detail: "Contributor decision-pack metadata was available for this cached agent run.",
     });
   }
   const openPrMonitor = readRecord(payload.openPrMonitor);
@@ -819,7 +809,17 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
   return sources;
 }
 
-const PRIVATE_ASK_ACTION_EVIDENCE_SOURCES = new Set(["repo_decision"]);
+function publicContextSnapshotSourceDetail(name: string): string {
+  const details: Record<string, string> = {
+    computed: "Computed contributor-signal metadata was available for this cached agent run.",
+    mirror: "Gittensor mirror registry metadata was available for this cached agent run.",
+    repo_focus_manifest: "Repo focus manifest metadata was available for this cached agent run.",
+    open_pr_monitor: "Cached open PR and issue queue metadata was available for this cached agent run.",
+  };
+  return details[name] ?? "Connected contributor evidence metadata was available for this cached agent run.";
+}
+
+const PRIVATE_ASK_ACTION_EVIDENCE_SOURCES = new Set(["repo_decision", "score_preview"]);
 
 function askSourcesFromActionEvidence(action: AgentActionRecord): AskContributingSource[] {
   const evidence = readRecord(action.payload.recommendationEvidence);
@@ -854,7 +854,7 @@ function publicActionEvidenceSourceDetail(name: string): string {
 }
 
 function formatAskCitation(source: AskContributingSource): string {
-  const header = `Source: ${source.label}; origin: ${source.origin}; freshness: ${source.freshness}`;
+  const header = `Source: ${source.label}; freshness: ${source.freshness}`;
   const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
   const detail = source.detail ? ` — ${publicBlockerDetail(source.detail)}` : "";
   return `- ${header}${observed}${detail}.`;

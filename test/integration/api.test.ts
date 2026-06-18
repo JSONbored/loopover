@@ -1718,13 +1718,12 @@ describe("api routes", () => {
     expect(snapshotIntelligenceBody.burdenForecastFreshness?.ageSeconds).toBeLessThan(Math.floor((BURDEN_FORECAST_MAX_AGE_MS + 120_000) / 1000));
 
     await upsertRepositoryFromGitHub(env, { name: "uncached-burden", full_name: "entrius/uncached-burden", private: false, owner: { login: "entrius" }, default_branch: "main" });
-    const computedIntelligence = await app.request("/v1/repos/entrius/uncached-burden/intelligence", { headers: apiHeaders(env) }, env);
-    expect(computedIntelligence.status).toBe(200);
-    await expect(computedIntelligence.json()).resolves.toMatchObject({
-      source: "computed",
-      burdenForecast: { repoFullName: "entrius/uncached-burden", level: "low" },
-      burdenForecastFreshness: { source: "computed", freshness: "fresh", ageSeconds: 0 },
-    });
+    const uncachedIntelligence = await app.request("/v1/repos/entrius/uncached-burden/intelligence", { headers: apiHeaders(env) }, env);
+    expect(uncachedIntelligence.status).toBe(200);
+    const uncachedIntelligenceBody = (await uncachedIntelligence.json()) as Record<string, unknown>;
+    expect(uncachedIntelligenceBody).toMatchObject({ source: "computed" });
+    expect(uncachedIntelligenceBody.burdenForecast).toBeUndefined();
+    expect(uncachedIntelligenceBody.burdenForecastFreshness).toBeUndefined();
 
     const degradedForecastEnv = withBurdenForecastReadFailure(env);
     const degradedIntelligence = await app.request("/v1/repos/entrius/allways-ui/intelligence", { headers: apiHeaders(env) }, degradedForecastEnv);
@@ -5049,26 +5048,20 @@ describe("api routes", () => {
       },
     });
 
-    await upsertRepositoryFromGitHub(env, { name: "mcp-computed-burden", full_name: "entrius/mcp-computed-burden", private: false, owner: { login: "entrius" }, default_branch: "main" });
-    const computedBurdenForecast = await app.request(
+    await upsertRepositoryFromGitHub(env, { name: "mcp-uncached-burden", full_name: "entrius/mcp-uncached-burden", private: false, owner: { login: "entrius" }, default_branch: "main" });
+    const uncachedBurdenForecast = await app.request(
       "/mcp",
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "computed-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "entrius", repo: "mcp-computed-burden" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "uncached-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "entrius", repo: "mcp-uncached-burden" } } }),
       },
       env,
     );
-    expect(computedBurdenForecast.status).toBe(200);
-    await expect(mcpJson(computedBurdenForecast)).resolves.toMatchObject({
+    expect(uncachedBurdenForecast.status).toBe(200);
+    await expect(mcpJson(uncachedBurdenForecast)).resolves.toMatchObject({
       result: {
-        structuredContent: {
-          status: "ready",
-          source: "computed",
-          repoFullName: "entrius/mcp-computed-burden",
-          freshness: "fresh",
-          report: { repoFullName: "entrius/mcp-computed-burden", level: "low" },
-        },
+        structuredContent: { status: "not_found", repoFullName: "entrius/mcp-uncached-burden" },
       },
     });
 

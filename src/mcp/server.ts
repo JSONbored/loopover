@@ -907,7 +907,7 @@ export class GittensoryMcp {
     server.registerTool(
       "gittensory_get_burden_forecast",
       {
-        description: "Return the cached or freshly-computed maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
+        description: "Return the cached maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
         inputSchema: ownerRepoShape,
         outputSchema: freshnessResponseOutputSchema,
       },
@@ -1577,10 +1577,7 @@ export class GittensoryMcp {
       };
     }
     return {
-      summary:
-        response.source === "snapshot"
-          ? `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`
-          : `Gittensory burden forecast for ${fullName} (computed from cached metadata).`,
+      summary: `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`,
       data: response as unknown as Record<string, unknown>,
     };
   }

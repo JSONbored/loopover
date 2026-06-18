@@ -111,6 +111,32 @@ describe("agent approval queue (#779)", () => {
     expect(audit).toMatchObject({ outcome: "completed", actor: "owner" });
   });
 
+  it("accept honors current dry-run setting instead of forcing a live mutation", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("dry_run");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("accept denies stale pending actions when current autonomy no longer acts for that class", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { approve: "auto" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("denied");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("reject: cancels without executing, marks it rejected, and audits", async () => {
     const env = createTestEnv({});
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });

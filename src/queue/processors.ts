@@ -6,6 +6,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getFreshOfficialMinerDetection,
   getPullRequest,
+  getRepoAuthorPullRequestHistory,
   getRepository,
   getDecryptedRepositoryAiKey,
   getRepositorySettings,
@@ -1066,6 +1067,17 @@ export function gateCheckPolicy(
   };
 }
 
+async function loadGateAuthorHistory(env: Env, repoFullName: string, author: string | null, pullNumber: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  if (!author) return { mergedPrCount: 1, closedUnmergedPrCount: 3 };
+  try {
+    return await getRepoAuthorPullRequestHistory(env, repoFullName, author, pullNumber);
+  } catch {
+    // Fail closed for firstTimeContributorGrace: if complete author history cannot be determined,
+    // make the author ineligible for grace rather than publishing a would-be blocking gate as neutral.
+    return { mergedPrCount: 1, closedUnmergedPrCount: 3 };
+  }
+}
+
 /**
  * Effective repository settings for webhook handling: the DB-backed settings overlaid with the repo's
  * `.gittensory.yml` (config-as-code). This single resolver is why EVERYTHING — gate on/off, all blocker
@@ -1457,14 +1469,10 @@ async function maybePublishPrPublicSurface(
     // failure is caught and the gate is still finalized (never left in_progress).
     aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
 
-    // First-time-contributor grace (#552): the author's per-repo PR history (excluding this PR). Newcomer =
-    // 0 merged here; repeat offender = >= 3 closed-unmerged here. Cheap (in-memory over the already-loaded
-    // repo PRs) and only consulted by evaluateGateCheck when firstTimeContributorGrace is on.
-    const authorPrs = author ? repoPullRequests.filter((candidate) => candidate.authorLogin === author && candidate.number !== pr.number) : [];
-    const authorHistory = {
-      mergedPrCount: authorPrs.filter((candidate) => candidate.mergedAt || candidate.state === "merged").length,
-      closedUnmergedPrCount: authorPrs.filter((candidate) => candidate.state === "closed" && !candidate.mergedAt).length,
-    };
+    // First-time-contributor grace (#552): compute the author's complete per-repo PR history
+    // (excluding this PR) with an aggregate DB query. Do not derive policy-enforcement history from
+    // the bounded repoPullRequests sample; missing or case-mismatched history could soften a block.
+    const authorHistory = await loadGateAuthorHistory(env, repoFullName, author, pr.number);
 
     const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;

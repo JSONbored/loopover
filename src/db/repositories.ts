@@ -2583,6 +2583,27 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
   return rows.map(toPullRequestRecordFromRow);
 }
 
+export async function getRepoAuthorPullRequestHistory(env: Env, fullName: string, login: string, excludeNumber?: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({
+      mergedPrCount: sql<number>`sum(case when ${pullRequests.mergedAt} is not null or ${pullRequests.state} = 'merged' then 1 else 0 end)`,
+      closedUnmergedPrCount: sql<number>`sum(case when ${pullRequests.state} = 'closed' and ${pullRequests.mergedAt} is null then 1 else 0 end)`,
+    })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repoFullName, fullName),
+        loginMatches(pullRequests.authorLogin, login),
+        excludeNumber === undefined ? undefined : not(eq(pullRequests.number, excludeNumber)),
+      ),
+    );
+  return {
+    mergedPrCount: Number(row?.mergedPrCount ?? 0),
+    closedUnmergedPrCount: Number(row?.closedUnmergedPrCount ?? 0),
+  };
+}
+
 export async function listContributorPullRequests(env: Env, login: string): Promise<PullRequestRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(pullRequests).where(loginMatches(pullRequests.authorLogin, login)).limit(1000);

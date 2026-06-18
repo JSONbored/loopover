@@ -1486,7 +1486,10 @@ function sanitizeFeedbackAnswerId(answerId: string): string {
 
 export function sanitizePublicComment(value: string): string {
   const sanitized = value
-    .replace(/\bprojected score changes?\b(?:\s+from)?\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
+    .replace(/\bopen pr count\s+\d+\s+exceeds threshold\s+\d+\b\.?/gi, "private context")
+    .replace(/\bopen pr count is at or below\s+\d+\b/gi, "private context")
+    .replace(/\bcredibility\s+[-+]?\d+(?:\.\d+)?\s+is below floor\s+[-+]?\d+(?:\.\d+)?\b\.?/gi, "private context")
+    .replace(/\b(?:effective|projected) score(?: changes?)?\b(?:\s+from)?\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
     .replace(/\b(raw trust score|trust score|wallet|hotkey|coldkey|seed phrase|mnemonic)\b/gi, "private context")
     .replace(/\b(public score estimate|estimated score|score estimate|reward estimates?|payout|farming|scoreability|score preview|projected score changes?)\b/gi, "private context")
     .replace(/\b(private reviewability|reviewability internals?)\b/gi, "private context")

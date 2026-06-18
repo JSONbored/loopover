@@ -155,6 +155,9 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("public score estimate and scoreability should stay private")).not.toMatch(/public score estimate|scoreability/i);
     expect(sanitizePublicComment("public score estimate private scoreability context score preview")).not.toMatch(/public score estimate|scoreability|score preview/i);
     expect(sanitizePublicComment("projected score changes 12.3 -> 45.6")).not.toMatch(/projected score changes|12\.3|45\.6/i);
+    expect(sanitizePublicComment("effective score 0 -> 42")).not.toMatch(/effective score|0|42/i);
+    expect(sanitizePublicComment("Open PR count 7 exceeds threshold 3.")).not.toMatch(/open PR count|7|threshold|3/i);
+    expect(sanitizePublicComment("Credibility 0.12 is below floor 0.4.")).not.toMatch(/credibility|0\.12|floor|0\.4/i);
     expect(sanitizePublicComment("open_pr_pressure closed_pr_credibility low_credibility credibility updates")).not.toMatch(/open_pr_pressure|closed_pr_credibility|low_credibility|credibility/i);
     expect(sanitizePublicComment("Command: @gittensory reviewability")).toContain("@gittensory reviewability");
     expect(sanitizePublicComment("private ranking, wallet, payout")).toBe("private context");

@@ -3925,6 +3925,7 @@ export function buildPublicPrIntelligenceComment(args: {
   const publicFindings = args.preflight.findings
     .filter((finding) => finding.severity !== "critical")
     .filter((finding) => args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
+    .filter((finding) => !isPrivateBountyLifecycleFinding(finding.code))
     .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
@@ -4524,6 +4525,10 @@ function formatCollisionItemRef(item: CollisionItem): string {
 
 function formatAlertBlock(lines: string[]): string[] {
   return lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+}
+
+function isPrivateBountyLifecycleFinding(code: string): boolean {
+  return code === "linked_issue_bounty_historical" || code === "linked_issue_bounty_unverified";
 }
 
 function containsPrivatePublicTerm(value: string): boolean {

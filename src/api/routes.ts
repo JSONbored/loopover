@@ -220,7 +220,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
-import { compileFocusManifestPolicy } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
@@ -301,6 +301,7 @@ async function recordRouteProductUsage(
   }).catch(() => undefined);
 }
 
+const LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES = 1024 * 1024;
 const QUEUE_INTELLIGENCE_MAX_BODY_BYTES = 1024 * 1024;
 const QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS = 250;
 const QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH = 100;
@@ -313,6 +314,14 @@ function parsePositiveInt(value: string | null | undefined): number | null {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return parsed;
+}
+
+function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maxBytes;
+  } catch {
+    return false;
+  }
 }
 
 async function readRequestBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {
@@ -471,6 +480,12 @@ const branchEligibilitySchema = z
   })
   .strict();
 
+const focusManifestInputSchema = z
+  .record(z.string(), z.unknown())
+  .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
+    message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
+  });
+
 const localBranchAnalysisSchema = z
   .object({
     login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
@@ -498,7 +513,7 @@ const localBranchAnalysisSchema = z
     scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
     pendingCommitCount: z.number().int().min(0).optional(),
     ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
-    focusManifest: z.record(z.string(), z.unknown()).optional(),
+    focusManifest: focusManifestInputSchema.optional(),
     branchEligibility: branchEligibilitySchema.optional(),
   })
   .strict();
@@ -2457,7 +2472,18 @@ export function createApp() {
   });
 
   app.post("/v1/local/branch-analysis", async (c) => {
-    const body = await c.req.json().catch(() => null);
+    const contentLength = parsePositiveInt(c.req.header("content-length"));
+    if (contentLength !== null && contentLength > LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES) {
+      return c.json({ error: "payload_too_large", maxBytes: LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES }, 413);
+    }
+    const rawBody = await readRequestBodyWithLimit(c.req.raw, LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES);
+    if (rawBody === null) return c.json({ error: "payload_too_large", maxBytes: LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES }, 413);
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      body = null;
+    }
     const parsed = localBranchAnalysisSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.login);
@@ -2532,7 +2558,18 @@ export function createApp() {
   });
 
   app.post("/v1/local/remediation-plan", async (c) => {
-    const body = await c.req.json().catch(() => null);
+    const contentLength = parsePositiveInt(c.req.header("content-length"));
+    if (contentLength !== null && contentLength > LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES) {
+      return c.json({ error: "payload_too_large", maxBytes: LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES }, 413);
+    }
+    const rawBody = await readRequestBodyWithLimit(c.req.raw, LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES);
+    if (rawBody === null) return c.json({ error: "payload_too_large", maxBytes: LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES }, 413);
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      body = null;
+    }
     const parsed = localBranchAnalysisSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_local_branch_analysis_request", issues: parsed.error.issues }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.login);

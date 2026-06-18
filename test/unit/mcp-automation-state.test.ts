@@ -2,11 +2,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
-import { createPendingAgentActionIfAbsent, upsertInstallation, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, listPendingAgentActions, upsertInstallation, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
-async function connect(env: Env) {
-  const server = new GittensoryMcp(env).createServer();
+async function connect(env: Env, identity?: AuthIdentity) {
+  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-automation-test", version: "0.1.0" }, { capabilities: {} });
@@ -60,5 +61,70 @@ describe("MCP gittensory_get_automation_state (#784)", () => {
     expect(data.permissionReadiness).toBe("not_required"); // no acting PR-write class
     expect(data.pendingActionCount).toBe(0);
     expect(data.mode).toBe("live"); // nothing paused or dry-run
+  });
+});
+
+describe("MCP gittensory_propose_action (#784)", () => {
+  it("stages a proposed action into the approval queue (idempotent)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    const first = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge", mergeMethod: "squash", reason: "clean" } });
+    expect(first.isError).toBeFalsy();
+    const data = first.structuredContent as { created: boolean; action: { actionClass: string; status: string; pullNumber: number } };
+    expect(data.created).toBe(true);
+    expect(data.action).toMatchObject({ actionClass: "merge", status: "pending", pullNumber: 7 });
+
+    const pending = await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" });
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.params).toMatchObject({ mergeMethod: "squash" });
+    expect(pending[0]?.autonomyLevel).toBe("auto_with_approval"); // staged, never auto-executes
+
+    const second = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+    expect((second.structuredContent as { created: boolean }).created).toBe(false);
+  });
+
+  it("carries the action-specific params (label / reviewBody / closeComment) into the staged action", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    await client.callTool({
+      name: "gittensory_propose_action",
+      arguments: { owner: "owner", repo: "repo", pullNumber: 9, actionClass: "close", label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" },
+    });
+    const [staged] = await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" });
+    expect(staged?.params).toMatchObject({ label: "gittensory:blocked", reviewBody: "please fix", closeComment: "closing as noise" });
+  });
+
+  it("allows a session that maintains the repo (owned installation)", async () => {
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env, { kind: "session", actor: "owner" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as { created: boolean }).created).toBe(true);
+  });
+
+  it("errors when the App is not installed on the repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "noinstall", full_name: "owner/noinstall", private: false, owner: { login: "owner" } });
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "noinstall", pullNumber: 7, actionClass: "merge" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/not installed/i);
+  });
+
+  it("forbids a session without maintainer access to the repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/maintainer access/i);
+    expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
   });
 });

@@ -233,9 +233,13 @@ export async function startFixtureServer(
       response.end(JSON.stringify(accepted ? { status: "accepted", executionOutcome: "completed" } : { status: "rejected" }));
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/settings" && request.method === "GET") {
+      response.end(JSON.stringify({ repoFullName: "owner/repo", autonomy: { label: "auto" }, agentPaused: false, agentDryRun: false }));
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/settings" && request.method === "PUT") {
-      const body = (await readJsonRequest(request)) as { agentPaused?: boolean };
-      response.end(JSON.stringify({ repoFullName: "owner/repo", agentPaused: body.agentPaused === true }));
+      const body = (await readJsonRequest(request)) as { agentPaused?: boolean; autonomy?: Record<string, string> };
+      response.end(JSON.stringify({ repoFullName: "owner/repo", agentPaused: body.agentPaused === true, ...(body.autonomy ? { autonomy: body.autonomy } : {}) }));
       return;
     }
     response.statusCode = 404;

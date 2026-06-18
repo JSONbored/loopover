@@ -42,10 +42,13 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear"],
   agent: ["plan", "status", "explain", "packet"],
-  maintain: ["status", "approve", "reject", "pause", "resume"],
+  maintain: ["status", "approve", "reject", "pause", "resume", "set-level"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
+// #784 maintain set-level — the autonomy dial's action classes + levels (must mirror src/settings/autonomy.ts).
+const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"];
+const MAINTAIN_AUTONOMY_LEVELS = ["observe", "suggest", "propose", "auto_with_approval", "auto"];
 const AGENT_PROFILES = {
   "miner-planner": {
     id: "miner-planner",
@@ -1316,11 +1319,14 @@ function printMaintainHelp() {
       "Maintainer controls for the agent auto-maintain layer (requires maintainer access; run `gittensory-mcp login`).",
       "",
       "Subcommands:",
-      "  status            List the agent approval queue (auto_with_approval actions awaiting a decision).",
-      "  approve <id>      Approve a staged action -> execute it.",
-      "  reject <id>       Reject a staged action -> cancel it.",
-      "  pause             Pause ALL agent actions on the repo (kill-switch).",
-      "  resume            Resume agent actions on the repo.",
+      "  status                       List the agent approval queue (auto_with_approval actions awaiting a decision).",
+      "  approve <id>                 Approve a staged action -> execute it.",
+      "  reject <id>                  Reject a staged action -> cancel it.",
+      "  pause                        Pause ALL agent actions on the repo (kill-switch).",
+      "  resume                       Resume agent actions on the repo.",
+      "  set-level <action> <level>   Set the autonomy level for one action class.",
+      `                               actions: ${MAINTAIN_ACTION_CLASSES.join(", ")}`,
+      `                               levels:  ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}`,
       "",
       "Pass --json for machine-readable output.",
     ].join("\n") + "\n",
@@ -1362,7 +1368,20 @@ async function maintainCli(args) {
     emit(payload, `Agent actions ${subcommand === "pause" ? "paused" : "resumed"} for ${repoFullName}.`);
     return;
   }
-  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | approve <id> | reject <id> | pause | resume.`);
+  if (subcommand === "set-level") {
+    const action = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+    const level = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
+    if (!action || !level) throw new Error("Usage: gittensory-mcp maintain set-level <action> <level> --repo owner/repo.");
+    if (!MAINTAIN_ACTION_CLASSES.includes(action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
+    if (!MAINTAIN_AUTONOMY_LEVELS.includes(level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
+    // Read-merge-write so one class is updated without clearing the others.
+    const current = await apiGet(`${repoBase}/settings`);
+    const autonomy = { ...(current.autonomy ?? {}), [action]: level };
+    const payload = await apiFetch(`${repoBase}/settings`, { method: "PUT", body: JSON.stringify({ autonomy }) });
+    emit(payload, `Set ${action} autonomy to ${level} for ${repoFullName}.`);
+    return;
+  }
+  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | approve <id> | reject <id> | pause | resume | set-level <action> <level>.`);
 }
 
 async function runCli(args) {

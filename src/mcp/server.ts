@@ -9,6 +9,7 @@ import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadCont
 import {
   countOpenIssues,
   countOpenPullRequests,
+  createPendingAgentActionIfAbsent,
   getBounty,
   listBountiesByRepo,
   getContributorEvidence,
@@ -321,6 +322,25 @@ const planViewOutputSchema = {
     .optional(),
   readySteps: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
   validation: z.object({ valid: z.boolean(), errors: z.array(z.string()) }).optional(),
+};
+
+// #784 (MCP slice) — propose-action: a maintainer stages an action into the approval queue (#779).
+const proposeActionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  pullNumber: z.number().int().positive(),
+  actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label"]),
+  reason: z.string().max(500).optional(),
+  label: z.string().min(1).max(100).optional(),
+  reviewBody: z.string().max(60000).optional(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+  closeComment: z.string().max(60000).optional(),
+};
+const proposeActionOutputSchema = {
+  created: z.boolean().optional(),
+  action: z
+    .object({ id: z.string(), actionClass: z.string(), pullNumber: z.number(), status: z.string(), reason: z.string().nullable() })
+    .optional(),
 };
 
 // #784 (MCP slice) — the read side of the agent automation control surface for a repo.
@@ -1199,6 +1219,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_propose_action",
+      {
+        description:
+          "Stage a PR action (label / request_changes / approve / merge / close) into the repo's approval queue for a maintainer to accept or reject. Maintainer access required; the action is NOT executed until approved.",
+        inputSchema: proposeActionShape,
+        outputSchema: proposeActionOutputSchema,
+      },
+      async (input) => this.toolResult(await this.proposeAction(input)),
+    );
+
+    server.registerTool(
       "gittensory_explain_score_breakdown",
       {
         description:
@@ -1482,6 +1513,15 @@ export class GittensoryMcp {
   private async requireRepoAccess(repoFullName: string): Promise<void> {
     if (await this.canAccessRepo(repoFullName)) return;
     throw new Error("Forbidden: session cannot access this repository.");
+  }
+
+  // Stricter than requireRepoAccess (read): a maintainer-MANAGE gate for write actions (#784 propose-action).
+  // A session must own/maintain the repo (or be an operator); private-token / static identities are trusted.
+  private async requireRepoManageAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind !== "session") return;
+    const scope = await this.loadSessionAccessScope();
+    if (scope.operator || scope.repositoryFullNames.includes(repoFullName)) return;
+    throw new Error("Forbidden: maintainer access is required to propose an action on this repository.");
   }
 
   // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC
@@ -2014,6 +2054,34 @@ export class GittensoryMcp {
         actingActionClasses,
         pendingActionCount: pending.length,
       },
+    };
+  }
+
+  // #784 — stage a proposed PR action into the approval queue (#779) for a maintainer to accept/reject. The
+  // action is auto_with_approval (never auto-executes); maintainer-manage access required.
+  private async proposeAction(input: z.infer<z.ZodObject<typeof proposeActionShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const repo = await getRepository(this.env, fullName);
+    if (!repo?.installationId) throw new Error("Cannot propose an action: the Gittensory App is not installed on this repository.");
+    const params = {
+      ...(input.label !== undefined ? { label: input.label } : {}),
+      ...(input.reviewBody !== undefined ? { reviewBody: input.reviewBody } : {}),
+      ...(input.mergeMethod !== undefined ? { mergeMethod: input.mergeMethod } : {}),
+      ...(input.closeComment !== undefined ? { closeComment: input.closeComment } : {}),
+    };
+    const { action, created } = await createPendingAgentActionIfAbsent(this.env, {
+      repoFullName: fullName,
+      pullNumber: input.pullNumber,
+      installationId: repo.installationId,
+      actionClass: input.actionClass,
+      autonomyLevel: "auto_with_approval",
+      params,
+      reason: input.reason ?? null,
+    });
+    return {
+      summary: `${created ? "Staged" : "Already staged"} a ${input.actionClass} on ${fullName}#${input.pullNumber} for maintainer approval.`,
+      data: { created, action: { id: action.id, actionClass: action.actionClass, pullNumber: action.pullNumber, status: action.status, reason: action.reason } },
     };
   }
 

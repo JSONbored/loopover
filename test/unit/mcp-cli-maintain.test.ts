@@ -40,11 +40,23 @@ describe("gittensory-mcp CLI — maintain (#784)", () => {
     expect(await runAsync(["maintain", "resume", "--repo", "owner/repo"], e)).toMatch(/Agent actions resumed for owner\/repo/);
   });
 
-  it("validates inputs: --repo required, id required for approve, known subcommand", async () => {
+  it("set-level merges one action class into the autonomy dial (read-merge-write)", async () => {
+    const e = await env();
+    const json = JSON.parse(await runAsync(["maintain", "set-level", "merge", "auto_with_approval", "--repo", "owner/repo", "--json"], e)) as { autonomy: Record<string, string> };
+    // existing label:auto preserved + merge added
+    expect(json.autonomy).toMatchObject({ label: "auto", merge: "auto_with_approval" });
+    const plain = await runAsync(["maintain", "set-level", "merge", "auto", "--repo", "owner/repo"], e);
+    expect(plain).toMatch(/Set merge autonomy to auto for owner\/repo/);
+  });
+
+  it("validates inputs: --repo required, id required for approve, known subcommand + action/level", async () => {
     const e = await env();
     await expect(runAsync(["maintain", "status"], e)).rejects.toThrow(/Pass --repo/);
     await expect(runAsync(["maintain", "approve", "--repo", "owner/repo"], e)).rejects.toThrow(/Pass the pending-action id/);
     await expect(runAsync(["maintain", "bogus", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown maintain subcommand/);
+    await expect(runAsync(["maintain", "set-level", "merge", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: gittensory-mcp maintain set-level/);
+    await expect(runAsync(["maintain", "set-level", "bogus", "auto", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown action/);
+    await expect(runAsync(["maintain", "set-level", "merge", "bogus", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown level/);
   });
 
   it("prints help when invoked with no subcommand", async () => {

@@ -14,7 +14,7 @@ import {
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 
-import { useSession } from "@/lib/api/session";
+import { PREVIEW_SESSION_ALLOWED, useSession } from "@/lib/api/session";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
 import {
   Sidebar,
@@ -85,7 +85,7 @@ const GROUPS: NavGroup[] = [
 ];
 
 export function AppShell() {
-  const { session, hydrated, signOut } = useSession();
+  const { session, hydrated, signOut, signInPreview } = useSession();
   const loc = useLocation();
   const navigate = useNavigate();
   const routerState = useRouterState();
@@ -95,6 +95,16 @@ export function AppShell() {
     const m = document.cookie.match(/(?:^|; )sidebar_state=([^;]+)/);
     setSidebarOpen(m ? m[1] === "true" : true);
   }, []);
+
+  // Preview deploys: when this is a preview build (VITE_PREVIEW) and the URL carries `?preview=1`, start
+  // the synthetic demo session automatically once hydration confirms there's no real session. This lets the
+  // reviewbot screenshot pipeline capture the authenticated /app/* UI instead of the sign-in wall. The
+  // effect depends on `session`, so it self-heals if a later refresh clears the synthetic session. Inert in
+  // production (PREVIEW_SESSION_ALLOWED is compiled to false) and without the param. (#authed-route-preview)
+  useEffect(() => {
+    if (!PREVIEW_SESSION_ALLOWED || session || !hydrated) return;
+    if (new URLSearchParams(window.location.search).get("preview") === "1") signInPreview();
+  }, [session, hydrated, signInPreview]);
 
   // Keyboard shortcuts: g+o overview, g+w workbench, g+r runs, g+p repos, g+a analytics.
   useEffect(() => {

@@ -175,6 +175,29 @@ describe("public vs private serialization", () => {
     expect(snapshot.branchState?.branchName).toBe("feat/x");
   });
 
+  it("allows public repo and branch identifiers that contain protocol terms", () => {
+    const snapshot = serializeScenarioInputPublic(
+      buildScenarioInput({
+        scenarioType: "branch_preflight",
+        repoFullName: "wallet-tools/api",
+        branchState: { branchName: "feature/wallet-ui", baseRef: "hotkey-fix" },
+        facts: [
+          createScenarioSignalEntry({
+            id: "branch",
+            kind: "fact",
+            label: "Branch",
+            detail: "Active branch feature/wallet-ui against hotkey-fix.",
+            source: "local_metadata",
+          }),
+        ],
+      }),
+    );
+
+    expect(snapshot.repo.repoFullName).toBe("wallet-tools/api");
+    expect(snapshot.branchState).toMatchObject({ branchName: "feature/wallet-ui", baseRef: "hotkey-fix" });
+    expect(JSON.stringify(snapshot.facts)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+  });
+
   it("keeps advisory-only flags in both serializations", () => {
     const input = completeInput();
     expect(serializeScenarioInputPublic(input)).toMatchObject({

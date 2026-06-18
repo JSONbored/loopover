@@ -1571,6 +1571,29 @@ describe("local MCP git metadata collection", () => {
     );
   });
 
+  it("does not throw when branch analysis identifiers contain protocol terms", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "wallet-tools/api",
+        branchName: "feature/wallet-ui",
+        baseRef: "hotkey-fix",
+        changedFiles: [{ path: "src/util.ts", additions: 20, deletions: 1, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 35, totalTokenScore: 55, sourceLines: 30 },
+      },
+      repo: { ...repo, fullName: "wallet-tools/api", owner: "wallet-tools", name: "api" },
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.repoFullName).toBe("wallet-tools/api");
+    expect(analysis.scenarioSummary.dataClassification.facts).toEqual(expect.arrayContaining(["Contributor", "Repository", "Branch"]));
+  });
+
   it("populates scenarioSummary.dataClassification with contributor and repo facts from branch metadata", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

@@ -332,7 +332,11 @@ function sanitizeScenarioEntryPublic(entry: ScenarioSignalEntry): ScenarioSignal
 }
 
 function assertPublicScenarioSnapshotSafe(snapshot: PublicScenarioInputSnapshot): void {
-  const serialized = JSON.stringify(snapshot);
+  // Scan only sanitized narrative signal entries. Repo names, branch refs, and issue/PR state are
+  // structural identifiers that callers may legitimately name with protocol words such as
+  // "wallet" or "hotkey"; those identifiers must not make public rendering fail closed.
+  const { facts, assumptions, estimates, unavailableSignals } = snapshot;
+  const serialized = JSON.stringify({ facts, assumptions, estimates, unavailableSignals });
   /* v8 ignore start -- Public entries are sanitized before this guard; defensive check for future fields. */
   if (FORBIDDEN_PUBLIC_LANGUAGE.test(serialized)) {
     throw new Error("Public scenario serialization still contains forbidden language.");

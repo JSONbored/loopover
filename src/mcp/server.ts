@@ -43,6 +43,7 @@ import {
 } from "../db/repositories";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
+import { getRepositoryCollaboratorPermission } from "../github/app";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
@@ -336,6 +337,11 @@ const proposeActionShape = {
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   closeComment: z.string().max(60000).optional(),
 };
+
+// GitHub permissions that imply real write access to a repo. Cached PR author_association can report
+// MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
+const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
 const proposeActionOutputSchema = {
   created: z.boolean().optional(),
   action: z
@@ -1520,8 +1526,20 @@ export class GittensoryMcp {
   private async requireRepoManageAccess(repoFullName: string): Promise<void> {
     if (this.identity.kind !== "session") return;
     const scope = await this.loadSessionAccessScope();
-    if (scope.operator || scope.repositoryFullNames.includes(repoFullName)) return;
-    throw new Error("Forbidden: maintainer access is required to propose an action on this repository.");
+    if (scope.operator) return;
+
+    const repo = await getRepository(this.env, repoFullName);
+    const installationId = repo?.installationId ?? null;
+    let permission: string | null = null;
+    if (installationId !== null) {
+      try {
+        permission = await getRepositoryCollaboratorPermission(this.env, installationId, repoFullName, this.identity.actor);
+      } catch {
+        permission = null;
+      }
+    }
+    if (permission && REPO_WRITE_PERMISSIONS.has(permission)) return;
+    throw new Error("Forbidden: write access is required to propose an action on this repository.");
   }
 
   // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC

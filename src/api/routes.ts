@@ -2030,7 +2030,7 @@ export function createApp() {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const decision = c.req.param("decision");
     if (decision !== "accept" && decision !== "reject") return c.json({ error: "invalid_decision", detail: "decision must be 'accept' or 'reject'" }, 400);
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     /* v8 ignore next -- unauthorized requests are rejected by the auth middleware before reaching the handler. */
     if (gate instanceof Response) return gate;
     const pending = await getPendingAgentAction(c.env, c.req.param("id"));

@@ -446,6 +446,9 @@ function buildScenarioPreviews(
       input.expectedOpenPrCountAfterMerge !== undefined ? expectedOpenPrCountAfterMerge : Math.max(0, current.gates.openPrCount - combinedPendingCount),
       current.gates.openPrThreshold,
     ),
+    // Project open-issue spam cleanup (#808): mirror the open-PR projection so the
+    // "best reasonable case" can clear the open-issue gate just like it clears open-PR pressure.
+    openIssueCount: Math.min(current.gates.openIssueCount, current.gates.openIssueThreshold),
     credibility: Math.max(projectedCredibility, observedApprovalCredibility, current.gates.credibilityFloor),
   };
   return [
@@ -510,7 +513,7 @@ function buildScenarioPreviews(
         : "Linked issue mode was already supplied; this scenario projects solved-by-PR validation where needed.",
     ], repo),
     scenario("bestReasonableCase", "gittensory_projection", bestReasonableInput, computeScoreCore(bestReasonableInput, repo, snapshot, contributorEvidence), [
-      "Combines plausible near-term gate cleanup: open PR pressure at threshold or below, credibility at floor or above, and linked-issue context where applicable.",
+      "Combines plausible near-term gate cleanup: open PR pressure at threshold or below, open-issue spam pressure at threshold or below, credibility at floor or above, and linked-issue context where applicable.",
       ...(input.scenarioNotes ?? []),
       ...observedScenarioNotes(input),
     ], repo),

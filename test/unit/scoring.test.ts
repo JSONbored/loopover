@@ -839,6 +839,33 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
       expect(preview.scoreEstimate.openIssueMultiplier).toBe(0); // 6 > 5
     });
 
+    it("bestReasonableCase clears the open-issue gate and surfaces an open_issue_threshold gate delta (#808)", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 30 },
+      };
+      // Current state is over the threshold (3 > 2) so the gate blocks the live preview.
+      const preview = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0, openIssueCount: 3 },
+      });
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(0);
+      expect(preview.effectiveEstimatedScore).toBe(0);
+      // The best-reasonable-case scenario projects the open-issue count down to the threshold (2),
+      // clearing the gate so the underlying potential is visible there.
+      const bestReasonable = preview.scenarioPreviews.find((scenario) => scenario.name === "bestReasonableCase");
+      expect(bestReasonable?.gates.openIssueCount).toBe(2);
+      expect(bestReasonable?.gates.openIssueThreshold).toBe(2);
+      expect(bestReasonable?.scoreEstimate.openIssueMultiplier).toBe(1);
+      expect(bestReasonable?.effectiveEstimatedScore).toBeGreaterThan(0);
+      // Because the multiplier differs between current and best-reasonable-case, an open_issue_threshold
+      // gate delta must be emitted — this is the branch previously missing coverage.
+      expect(preview.gateDeltas).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "open_issue_threshold" })]));
+      const issueDelta = preview.gateDeltas.find((delta) => delta.gate === "open_issue_threshold");
+      expect(issueDelta?.current).toContain("multiplier 0");
+      expect(issueDelta?.projected).toContain("multiplier 1");
+    });
+
     it("all nine issue-discovery constants are modeled and do not surface as upstream drift warnings (#808)", () => {
       const upstreamSource = [
         "TEST_FILE_CONTRIBUTION_WEIGHT = 0.05",

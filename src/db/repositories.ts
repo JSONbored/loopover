@@ -3206,11 +3206,20 @@ export async function getAgentRecommendationOutcome(env: Env, actionId: string):
 
 export async function listAgentRecommendationOutcomes(
   env: Env,
-  options: { actorLogin?: string; windowDays?: number; now?: string; limit?: number } = {},
+  options: { actorLogin?: string; repoFullName?: string; windowDays?: number; now?: string; limit?: number } = {},
 ): Promise<AgentRecommendationOutcomeRecord[]> {
   const limit = clampInteger(options.limit ?? 500, 1, 5000);
   const conditions = [];
   if (options.actorLogin) conditions.push(eq(agentRecommendationOutcomes.actorLogin, options.actorLogin));
+  if (options.repoFullName) {
+    const repoFullName = options.repoFullName.toLowerCase();
+    conditions.push(
+      or(
+        sql`lower(${agentRecommendationOutcomes.outcomeRepoFullName}) = ${repoFullName}`,
+        sql`lower(${agentRecommendationOutcomes.targetRepoFullName}) = ${repoFullName}`,
+      ),
+    );
+  }
   if (options.windowDays !== undefined) {
     const windowDays = clampInteger(options.windowDays, 1, 365);
     const now = options.now ?? nowIso();

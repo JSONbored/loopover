@@ -3761,6 +3761,9 @@ describe("api routes", () => {
     await upsertPullRequestFromGitHub(env, "octo/demo", { number: 14, title: "Tidy labels output", state: "open", html_url: "https://github.com/octo/demo/pull/14", user: { login: "contributor-dev" }, labels: [], head: { sha: "aaa111", ref: "tidy" }, base: { ref: "main" } });
     // A PR with no author -- exercises the authorLogin-defaulting path of the self-only PR guard (→ 403).
     await upsertPullRequestFromGitHub(env, "octo/demo", { number: 15, title: "Authorless PR", state: "open", html_url: "https://github.com/octo/demo/pull/15", labels: [], head: { sha: "bbb222", ref: "ghost" }, base: { ref: "main" } });
+    await upsertRepositoryFromGitHub(env, { name: "secret", full_name: "victim-org/secret", private: true, owner: { login: "victim-org" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "victim-org/secret", { number: 99, title: "Private roadmap", state: "open", html_url: "https://github.com/victim-org/secret/issues/99", user: { login: "victim-org" }, labels: [{ name: "feature" }], body: "Confidential issue." });
+    await upsertPullRequestFromGitHub(env, "victim-org/secret", { number: 101, title: "Private implementation", state: "open", html_url: "https://github.com/victim-org/secret/pull/101", user: { login: "contributor-dev" }, labels: [], body: "Fixes #99", head: { sha: "ccc333", ref: "private" }, base: { ref: "main" } });
 
     // A non-maintainer mints a CONTRIBUTOR-scoped extension session.
     const { token: browserToken } = await createSessionForGitHubUser(env, { login: "contributor-dev", id: 555 });
@@ -3791,6 +3794,15 @@ describe("api routes", () => {
     const badgesBody = (await badges.json()) as { badges: unknown[] };
     expect(Array.isArray(badgesBody.badges)).toBe(true);
     expect(JSON.stringify(badgesBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+
+    const privateIssueFit = await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=victim-org&repo=secret&issueNumber=99", { headers: bearer }, env);
+    expect(privateIssueFit.status).toBe(403);
+    await expect(privateIssueFit.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    const privateIssueBadges = await app.request("/v1/extension/contributors/contributor-dev/issue-badges?owner=victim-org&repo=secret", { headers: bearer }, env);
+    expect(privateIssueBadges.status).toBe(403);
+    await expect(privateIssueBadges.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=victim-org&repo=secret&pullNumber=101", { headers: bearer }, env)).status).toBe(403);
+    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=victim-org&repo=secret&pullNumber=999", { headers: bearer }, env)).status).toBe(403);
 
     const prStatus = await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=12", { headers: bearer }, env);
     expect(prStatus.status).toBe(200);

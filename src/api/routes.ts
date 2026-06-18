@@ -2386,15 +2386,17 @@ export function createApp() {
     const issueNumber = Number(c.req.query("issueNumber") ?? "");
     if (!owner || !repoName || !Number.isInteger(issueNumber) || issueNumber <= 0) return c.json({ error: "valid_owner_repo_issue_required" }, 400);
     const repoFullName = `${owner}/${repoName}`;
-    const [context, repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+    const repo = await getRepository(c.env, repoFullName);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [context, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       loadContributorFastContext(c.env, login),
-      getRepository(c.env, repoFullName),
       listIssues(c.env, repoFullName),
       listPullRequests(c.env, repoFullName),
       listBountiesByRepo(c.env, repoFullName),
       loadOrComputeIssueQualityResponse(c.env, repoFullName),
     ]);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
     const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
     const opportunity = opportunities.find((entry) => entry.issueNumber === issueNumber);
     if (!opportunity) return c.json({ repoFullName, issueNumber, eligible: false, reason: "Issue is not an open, unclaimed outside-contributor target right now." }, 200);
@@ -2409,15 +2411,17 @@ export function createApp() {
     const repoName = c.req.query("repo") ?? "";
     if (!owner || !repoName) return c.json({ error: "valid_owner_repo_required" }, 400);
     const repoFullName = `${owner}/${repoName}`;
-    const [context, repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+    const repo = await getRepository(c.env, repoFullName);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [context, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       loadContributorFastContext(c.env, login),
-      getRepository(c.env, repoFullName),
       listIssues(c.env, repoFullName),
       listPullRequests(c.env, repoFullName),
       listBountiesByRepo(c.env, repoFullName),
       loadOrComputeIssueQualityResponse(c.env, repoFullName),
     ]);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
     const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
     return c.json({ repoFullName, badges: buildExtensionIssueBadges(opportunities, repoFullName) });
   });
@@ -2431,8 +2435,11 @@ export function createApp() {
     const pullNumber = Number(c.req.query("pullNumber") ?? "");
     if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
     const repoFullName = `${owner}/${repoName}`;
-    const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
-      getRepository(c.env, repoFullName),
+    const repo = await getRepository(c.env, repoFullName);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [issues, pullRequests, bounties, issueQuality] = await Promise.all([
       listIssues(c.env, repoFullName),
       listPullRequests(c.env, repoFullName),
       listBountiesByRepo(c.env, repoFullName),
@@ -4494,6 +4501,15 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
   return null;
+}
+
+async function requireContributorRepoAccess(c: ProtectedRouteContext, repoFullName: string, repo: RepositoryRecord): Promise<Response | null> {
+  if (!repo.isPrivate) return null;
+  const identity = await authenticateRequestIdentity(c);
+  /* v8 ignore next -- Contributor route guard authenticates before repository access is checked. */
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind !== "session") return null;
+  return requireSessionRepoAccess(c, identity, repoFullName, repo);
 }
 
 async function requireCommandPreviewRepoAccess(

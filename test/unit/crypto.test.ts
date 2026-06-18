@@ -12,11 +12,14 @@ describe("crypto helpers", () => {
 
   it("compares hex strings in constant time and rejects malformed input", () => {
     expect(timingSafeEqualHex("ab12", "ab12")).toBe(true);
+    expect(timingSafeEqualHex("AB12", "ab12")).toBe(true);
     expect(timingSafeEqualHex("ab12", "ab13")).toBe(false);
     expect(timingSafeEqualHex("ab12", "ab1234")).toBe(false);
     expect(timingSafeEqualHex("zz", "00")).toBe(false);
+    expect(timingSafeEqualHex("gg", "gg")).toBe(false);
     expect(timingSafeEqualHex("abc", "def")).toBe(false);
     expect(timingSafeEqualHex("", "00")).toBe(false);
+    expect(timingSafeEqualHex("00", "")).toBe(false);
   });
 
   it("base64url-encodes strings and byte arrays without padding", () => {

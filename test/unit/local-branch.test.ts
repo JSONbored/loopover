@@ -1259,6 +1259,15 @@ describe("local branch analysis", () => {
     expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual([]);
     expect(analysis.workspaceIntelligence.blockers.accountState.length).toBeGreaterThan(0);
     expect(analysis.recommendedRerunCondition).toBe("Rerun after account/queue maturity blockers clear.");
+    expect(analysis.prPacket.markdown).not.toMatch(/account\/queue maturity|account-state|score|credibility|Open PR count/i);
+    expect(analysis.prPacket.bodySections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          heading: "Next Steps",
+          lines: expect.arrayContaining(["- Rerun after any branch, base, or PR state changes before opening/submitting."]),
+        }),
+      ]),
+    );
     expect(analysis.nextActions[0]?.actionKind).not.toBe("land_existing_prs");
   });
 

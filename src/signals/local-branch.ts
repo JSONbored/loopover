@@ -1136,7 +1136,10 @@ function linkedIssueHygieneLines(branchEligibility: BranchEligibilityResult): st
 }
 
 function publicSafeRerunCondition(condition: string): string {
-  return /eligibility|multiplier|scoreability|score/i.test(condition) ? "Refresh linked issue and base branch metadata before submission." : condition;
+  if (/account\/queue maturity|pending PRs merge\/close|open PR count|projected score|threshold|eligibility|multiplier|scoreability|score/i.test(condition)) {
+    return "Rerun after any branch, base, or PR state changes before opening/submitting.";
+  }
+  return condition;
 }
 
 function branchFreshnessLines(freshness: LocalBranchAnalysis["baseFreshness"]): string[] {

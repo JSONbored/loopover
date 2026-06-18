@@ -45,6 +45,34 @@ describe("repo command authorization policy", () => {
     expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterLogin: "author", pullRequestAuthorLogin: "author", commenterAssociation: null })).toMatchObject({ authorized: false });
   });
 
+  it("clamps maintainer-only command overrides to maintainer roles", () => {
+    const { policy, warnings } = normalizeCommandAuthorizationPolicy({
+      commands: {
+        "review-now": ["confirmed_miner"],
+        "queue-summary": ["collaborator", "pr_author"],
+      },
+    });
+
+    expect(warnings).toContain("Ignored author command authorization roles for maintainer-only command: review-now.");
+    expect(warnings).toContain("Ignored author command authorization roles for maintainer-only command: queue-summary.");
+    expect(policy.commands["review-now"]).toEqual(["maintainer", "collaborator"]);
+    expect(policy.commands["queue-summary"]).toEqual(["collaborator"]);
+    expect(commandAuthorizationAllowedRoles(policy, "review-now")).toEqual(["maintainer", "collaborator"]);
+    expect(
+      evaluateCommandAuthorization({
+        policy: { commands: { "review-now": ["confirmed_miner"] }, default: ["confirmed_miner"] },
+        commandName: "review-now",
+        commenterLogin: "miner",
+        pullRequestAuthorLogin: "miner",
+        minerStatus: "confirmed",
+      }),
+    ).toMatchObject({
+      authorized: false,
+      reason: "maintainer_command_requires_maintainer",
+      allowedRoles: ["maintainer", "collaborator"],
+    });
+  });
+
   it("honors command overrides and avoids miner lookup when plain PR author is allowed", () => {
     const policy = normalizeCommandAuthorizationPolicy({ default: ["maintainer"], commands: { "next-action": ["pr_author"] } }).policy;
     expect(

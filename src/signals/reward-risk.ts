@@ -827,8 +827,9 @@ function buildAdvisoryAdvice(args: {
   if (args.currentPreview.gates.credibilityObserved < args.currentPreview.gates.credibilityFloor) {
     items.push({ level: "CRITICAL", code: "credibility_below_floor", message: `Credibility (${round(args.currentPreview.gates.credibilityObserved)}) is below the floor (${args.currentPreview.gates.credibilityFloor}).` });
   }
-  if ((args.repoOutcome?.closedPullRequestRate ?? 0) >= 0.35) {
-    items.push({ level: "WARNING", code: "high_closed_pr_rate", message: `Closed PR rate of ${percent(args.repoOutcome?.closedPullRequestRate ?? 0)} creates credibility risk.` });
+  const closedPullRequestRate = args.repoOutcome?.closedPullRequestRate ?? 0;
+  if (closedPullRequestRate >= 0.35) {
+    items.push({ level: "WARNING", code: "high_closed_pr_rate", message: `Closed PR rate of ${percent(closedPullRequestRate)} creates credibility risk.` });
   }
   if (args.queueHealth.level === "critical" || args.queueHealth.level === "high") {
     items.push({ level: "WARNING", code: "high_queue_burden", message: `Maintainer queue burden is ${args.queueHealth.level}.` });
@@ -863,6 +864,7 @@ function computeFreshnessFactor(issues: IssueRecord[]): number {
   const ages = openWithDate
     .map((issue) => (nowMs - new Date(issue.createdAt!).getTime()) / (1000 * 60 * 60 * 24))
     .sort((a, b) => a - b);
+  /* v8 ignore next -- openWithDate is non-empty here and the median index is always valid; the ?? 0 only satisfies noUncheckedIndexedAccess. */
   const medianAge = ages[Math.floor(ages.length / 2)] ?? 0;
   return round(clamp(Math.exp(-medianAge / 90), 0, 1));
 }

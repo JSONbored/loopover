@@ -280,6 +280,18 @@ describe("buildDecisionPackAdvisoryAdvice", () => {
     })) as any;
     expect(buildDecisionPackAdvisoryAdvice(blockers)).toHaveLength(10);
   });
+
+  it("falls back to INFO level and stable order for an unexpected severity", () => {
+    // The severity maps are exhaustively typed, but an unexpected severity must never crash: the sort
+    // ranks it lowest (?? 3) and the level falls back to "INFO" (?? "INFO").
+    const blockers = [
+      { code: "x", severity: "bogus", detail: "unknown severity a.", repoFullName: "r" },
+      { code: "y", severity: "other", detail: "unknown severity b.", repoFullName: "r" },
+    ] as any;
+    const advice = buildDecisionPackAdvisoryAdvice(blockers);
+    expect(advice).toHaveLength(2);
+    expect(advice.every((item) => item.level === "INFO")).toBe(true);
+  });
 });
 
 // ── buildDecisionPackEligibilityGap ──────────────────────────────────────────
@@ -324,5 +336,14 @@ describe("buildDecisionPackEligibilityGap", () => {
     const gap = buildDecisionPackEligibilityGap(decisions);
     expect(gap[0]!.repoFullName).toBe("owner/a");
     expect(gap[1]!.repoFullName).toBe("owner/b");
+  });
+
+  it("breaks ties in prsNeededToUnlock by repoFullName", () => {
+    const decisions = [
+      makeDecision("owner/b", 6), // needs 2
+      makeDecision("owner/a", 6), // needs 2 (tie → localeCompare puts a first)
+    ];
+    const gap = buildDecisionPackEligibilityGap(decisions);
+    expect(gap.map((entry) => entry.repoFullName)).toEqual(["owner/a", "owner/b"]);
   });
 });

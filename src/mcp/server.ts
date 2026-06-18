@@ -2303,7 +2303,7 @@ export class GittensoryMcp {
     const draft = buildPublicPrBodyDraft(analysis);
     // Human-readable summary carries the rendered markdown body; structured draft is returned as JSON.
     return {
-      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; private scoreability excluded).\n\n${draft.markdown}`,
+      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; internal analysis context omitted).\n\n${draft.markdown}`,
       data: draft as unknown as Record<string, unknown>,
     };
   }

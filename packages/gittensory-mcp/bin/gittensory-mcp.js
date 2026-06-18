@@ -42,6 +42,7 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear"],
   agent: ["plan", "status", "explain", "packet"],
+  maintain: ["status", "approve", "reject", "pause", "resume"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -1307,6 +1308,63 @@ function workspaceRootStatus(roots) {
   };
 }
 
+function printMaintainHelp() {
+  process.stdout.write(
+    [
+      "Usage: gittensory-mcp maintain <subcommand> --repo owner/repo",
+      "",
+      "Maintainer controls for the agent auto-maintain layer (requires maintainer access; run `gittensory-mcp login`).",
+      "",
+      "Subcommands:",
+      "  status            List the agent approval queue (auto_with_approval actions awaiting a decision).",
+      "  approve <id>      Approve a staged action -> execute it.",
+      "  reject <id>       Reject a staged action -> cancel it.",
+      "  pause             Pause ALL agent actions on the repo (kill-switch).",
+      "  resume            Resume agent actions on the repo.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+// #784 maintainer CLI controls — thin proxies over the agent approval-queue API (#779) and the maintainer
+// settings kill-switch (#130). The API enforces maintainer authorization; the CLI never decides locally.
+async function maintainCli(args) {
+  const subcommand = args[0];
+  if (!subcommand || subcommand === "--help" || subcommand === "help") return printMaintainHelp();
+  const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+  const options = parseOptions(args.slice(1));
+  const repoFullName = options.repo;
+  if (!repoFullName || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
+  const [owner, repo] = repoFullName.split("/", 2);
+  const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const queueBase = `${repoBase}/agent/pending-actions`;
+  const emit = (payload, line) => {
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`${line}\n`);
+  };
+  if (subcommand === "status") {
+    const payload = await apiGet(queueBase);
+    const actions = payload.pendingActions ?? [];
+    emit(payload, [`Agent approval queue for ${repoFullName}: ${actions.length} pending.`, ...actions.map((action) => `- ${action.id}  ${action.actionClass} on #${action.pullNumber}  ${action.reason ?? ""}`)].join("\n"));
+    return;
+  }
+  if (subcommand === "approve" || subcommand === "reject") {
+    if (!positional) throw new Error(`Pass the pending-action id: gittensory-mcp maintain ${subcommand} <id> --repo owner/repo.`);
+    // The approval-queue route's decision verb is accept|reject (#779); the CLI exposes approve|reject.
+    const decision = subcommand === "approve" ? "accept" : "reject";
+    const payload = await apiPost(`${queueBase}/${encodeURIComponent(positional)}/${decision}`, {});
+    emit(payload, `${subcommand === "approve" ? "Accepted" : "Rejected"} ${positional}: ${payload.status ?? "ok"}${payload.executionOutcome ? ` (${payload.executionOutcome})` : ""}.`);
+    return;
+  }
+  if (subcommand === "pause" || subcommand === "resume") {
+    const payload = await apiFetch(`${repoBase}/settings`, { method: "PUT", body: JSON.stringify({ agentPaused: subcommand === "pause" }) });
+    emit(payload, `Agent actions ${subcommand === "pause" ? "paused" : "resumed"} for ${repoFullName}.`);
+    return;
+  }
+  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | approve <id> | reject <id> | pause | resume.`);
+}
+
 async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
@@ -1314,6 +1372,7 @@ async function runCli(args) {
   if (command === "completion") return completionCommand(args.slice(1));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
+  if (command === "maintain") return maintainCli(args.slice(1));
   const options = parseOptions(args.slice(1));
   if (command === "login") return login(options);
   if (command === "logout") return logout(options);

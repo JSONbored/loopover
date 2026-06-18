@@ -30,7 +30,7 @@ export const scenarioSignalSources = [
 export type ScenarioSignalSource = (typeof scenarioSignalSources)[number];
 
 const FORBIDDEN_PUBLIC_LANGUAGE =
-  /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
+  /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|estimated[-\s]?rewards?|rewards?|reward[-\s]?estimate|rankings?|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
 
 const FORBIDDEN_SOURCE_UPLOAD_KEYS =
   /^(?:sourceContent|sourceContents|fileContent|fileContents|rawSource|rawSourceContent|content|contents|diff|patch|rawDiff)$/i;

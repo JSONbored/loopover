@@ -1488,9 +1488,9 @@ export function sanitizePublicComment(value: string): string {
   const sanitized = value
     .replace(/\bprojected score changes?\b(?:\s+from)?\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
     .replace(/\b(raw trust score|trust score|wallet|hotkey|coldkey|seed phrase|mnemonic)\b/gi, "private context")
-    .replace(/\b(public score estimate|estimated score|score estimate|reward estimates?|payout|farming|scoreability|score preview|projected score changes?)\b/gi, "private context")
+    .replace(/\b(public score estimate|estimated score|score estimate|estimated rewards?|rewards?|reward estimates?|payout|farming|scoreability|score preview|projected score changes?)\b/gi, "private context")
     .replace(/\b(private reviewability|reviewability internals?)\b/gi, "private context")
-    .replace(/\b(private ranking|private rankings)\b/gi, "private context")
+    .replace(/\b(private rankings?|rankings?)\b/gi, "private context")
     .replace(/\b(?:open_pr_pressure|closed_pr_credibility|low_credibility|maintainer_lane|inactive_or_unknown_lane|issue_discovery_only)\b/gi, "private context")
     .replace(/\b(?:credibility(?: updates?)?|closed pr credibility|low credibility|open pr pressure)\b/gi, "private context")
     .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work");

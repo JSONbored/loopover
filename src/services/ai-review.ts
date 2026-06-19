@@ -108,12 +108,22 @@ export function estimateNeurons(promptChars: number, maxOutputTokens: number, ca
   return Math.max(1, Math.ceil((inputTokens + maxOutputTokens) * 0.035) * Math.max(1, calls));
 }
 
-/** Returns the text unchanged if it is public-safe, otherwise null (drop — never publish). */
+function neutralizePublicMarkdown(text: string): string {
+  return text
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/@/g, "@\u200B")
+    .replace(/:\/\//g, ":\u200B//")
+    .replace(/([\\`*_{}\[\]()#+!|])/g, "\\$1");
+}
+
+/** Returns neutralized text if it is public-safe, otherwise null (drop — never publish). */
 export function toPublicSafe(text: string | null | undefined): string | null {
   const trimmed = (text ?? "").trim();
   if (!trimmed) return null;
   try {
-    return sanitizePublicComment(trimmed);
+    return neutralizePublicMarkdown(sanitizePublicComment(trimmed));
   } catch {
     return null;
   }

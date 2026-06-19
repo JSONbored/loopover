@@ -758,6 +758,50 @@ describe("world-class backend signals", () => {
     const ambiguousPreflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Fix cache", body: "Fixes #7" }, repo, [openIssue], [], [ambiguousStatus]);
     expect(stalePreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_unverified");
     expect(ambiguousPreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_unverified");
+
+    const currentPr: PullRequestRecord = { ...pullRequests[0]!, body: "Fixes #7", linkedIssues: [7] };
+    const publicPreflight = buildPreflightResult({ repoFullName: repo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: [7] }, repo, [openIssue], [], [completed]);
+    const publicComment = buildPublicPrIntelligenceComment({
+      repo,
+      pr: currentPr,
+      profile: buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []),
+      detection: { ...detectGittensorContributor("oktofeesh1", currentPr, [currentPr], []), detected: true, source: "official_gittensor_api", reason: "Official Gittensor API confirms this GitHub user." },
+      queueHealth: buildQueueHealth(repo, [openIssue], [currentPr], buildCollisionReport(repo.fullName, [openIssue], [currentPr])),
+      collisions: buildCollisionReport(repo.fullName, [openIssue], [currentPr]),
+      preflight: publicPreflight,
+      settings: {
+        repoFullName: repo.fullName,
+        commentMode: "all_prs",
+        publicAudienceMode: "gittensor_only",
+        publicSignalLevel: "standard",
+        checkRunMode: "off",
+        checkRunDetailLevel: "minimal",
+        gateCheckMode: "off",
+        gatePack: "gittensor",
+        linkedIssueGateMode: "advisory",
+        duplicatePrGateMode: "advisory",
+        qualityGateMode: "advisory",
+        slopGateMode: "off",
+        mergeReadinessGateMode: "off",
+        manifestPolicyGateMode: "off",
+        firstTimeContributorGrace: false,
+        slopAiAdvisory: false,
+        qualityGateMinScore: null,
+        autoLabelEnabled: true,
+        gittensorLabel: "gittensor",
+        createMissingLabel: true,
+        publicSurface: "comment_and_label",
+        includeMaintainerAuthors: false,
+        requireLinkedIssue: false,
+        backfillEnabled: true,
+        privateTrustEnabled: true,
+        aiReviewMode: "off",
+        aiReviewByok: false,
+      },
+    });
+    expect(publicPreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_historical");
+    expect(publicComment).not.toContain("Linked issue bounty is historical");
+    expect(publicComment).not.toContain("Issue #7 has a completed bounty");
   });
 
   it("includes linked PR validity when PR records are available", () => {

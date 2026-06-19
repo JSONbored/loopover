@@ -3,6 +3,7 @@ import {
   persistScoringModelSnapshot,
 } from "../db/repositories";
 import { getLatestRegistrySnapshot } from "../registry/sync";
+import { syncUnmodeledScoringConstantDrift } from "../upstream/unmodeled-scoring-drift";
 import type { JsonValue, ScoringModelSnapshotRecord } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -48,20 +49,36 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   TIME_DECAY_MIN_MULTIPLIER: 0.05,
 };
 
+export const DEFAULT_GITTENSOR_UPSTREAM_REPO = "entrius/gittensor";
+export const DEFAULT_GITTENSOR_UPSTREAM_REF = "test";
 export const SCORING_CONSTANTS_URL =
   "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/constants.py";
 export const PROGRAMMING_LANGUAGES_URL =
   "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/programming_languages.json";
+
+function scoringUpstreamConfig(env: Env): { repo: string; ref: string } {
+  return {
+    repo: env.GITTENSOR_UPSTREAM_REPO || DEFAULT_GITTENSOR_UPSTREAM_REPO,
+    ref: env.GITTENSOR_UPSTREAM_REF || DEFAULT_GITTENSOR_UPSTREAM_REF,
+  };
+}
+
+function upstreamRawUrl(config: { repo: string; ref: string }, path: string): string {
+  return `https://raw.githubusercontent.com/${config.repo}/${encodeURIComponent(config.ref)}/${path}`;
+}
 
 const SCORING_CONSTANT_NAMES = new Set([...Object.keys(DEFAULT_SCORING_CONSTANTS), "MIN_TOKEN_SCORE_FOR_BASE_SCORE", "MAX_CODE_DENSITY_MULTIPLIER"]);
 
 export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringModelSnapshotRecord> {
   const warnings: string[] = [];
   const fetchedAt = nowIso();
+  const upstream = scoringUpstreamConfig(env);
+  const constantsUrl = upstreamRawUrl(upstream, "gittensor/constants.py");
+  const programmingLanguagesUrl = upstreamRawUrl(upstream, "gittensor/validator/weights/programming_languages.json");
   const [registrySnapshot, constantsResult, languagesResult] = await Promise.all([
     getLatestRegistrySnapshot(env),
-    fetchText(SCORING_CONSTANTS_URL, env.GITHUB_PUBLIC_TOKEN),
-    fetchJson(PROGRAMMING_LANGUAGES_URL, env.GITHUB_PUBLIC_TOKEN),
+    fetchText(constantsUrl, env.GITHUB_PUBLIC_TOKEN),
+    fetchJson(programmingLanguagesUrl, env.GITHUB_PUBLIC_TOKEN),
   ]);
 
   let sourceKind: ScoringModelSnapshotRecord["sourceKind"] = "raw-github";
@@ -93,7 +110,7 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
   const snapshot: ScoringModelSnapshotRecord = {
     id: crypto.randomUUID(),
     sourceKind,
-    sourceUrl: SCORING_CONSTANTS_URL,
+    sourceUrl: constantsUrl,
     fetchedAt,
     activeModel: detectActiveModel(activeModelConstants),
     constants,
@@ -102,11 +119,17 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
     warnings,
     payload: {
       constants: constantsPayload,
-      programmingLanguagesSourceUrl: PROGRAMMING_LANGUAGES_URL,
+      programmingLanguagesSourceUrl: programmingLanguagesUrl,
       registryRepoCount: registrySnapshot?.repoCount ?? 0,
     },
   };
   await persistScoringModelSnapshot(env, snapshot);
+  if (constantsResult.ok) {
+    await syncUnmodeledScoringConstantDrift(env, {
+      unmodeledConstants: findUnmodeledUpstreamConstants(constantsResult.value),
+      source: { repo: upstream.repo, ref: upstream.ref, commitSha: null },
+    });
+  }
   return snapshot;
 }
 
@@ -134,11 +157,14 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
  * staleness visible: if upstream adds a scoring dimension, an operator sees it instead of the gate
  * silently drifting behind. Detection only — it does not change any score.
  */
-export function findUnmodeledUpstreamConstants(source: string): string[] {
-  const all = parsePythonNumberConstants(source, { knownOnly: false });
-  return Object.keys(all)
+export function findUnmodeledConstantKeys(allConstants: Record<string, number>): string[] {
+  return Object.keys(allConstants)
     .filter((name) => !SCORING_CONSTANT_NAMES.has(name))
     .sort();
+}
+
+export function findUnmodeledUpstreamConstants(source: string): string[] {
+  return findUnmodeledConstantKeys(parsePythonNumberConstants(source, { knownOnly: false }));
 }
 
 /**

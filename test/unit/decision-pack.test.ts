@@ -223,7 +223,7 @@ describe("decision-pack service", () => {
       },
     });
 
-    expect(decision.recommendationOutcomeFeedback).toMatchObject({ signal: "positive", positive: 3, negative: 1, maintainerLaneTotal: 2 });
+    expect(decision.recommendationOutcomeFeedback).toMatchObject({ signal: "positive", positive: 3, rejected: 0, negative: 1, maintainerLaneTotal: 2 });
     expect(decision.priorityScore).toBeGreaterThan(baseline.priorityScore);
     expect(decision.whyThisHelps.some((line) => line.includes("Private recommendation feedback"))).toBe(true);
     expect(decision.riskReasons.some((line) => line.includes("Private recommendation feedback"))).toBe(true);
@@ -244,11 +244,11 @@ describe("decision-pack service", () => {
         repoFullName: "owner/direct",
         total: 6,
         accepted: 0,
-        rejected: 0,
+        rejected: 2,
         ignored: 2,
-        stale: 2,
+        stale: 1,
         merged: 0,
-        closed: 2,
+        closed: 1,
         improved: 0,
         positive: 0,
         negative: 6,
@@ -280,7 +280,9 @@ describe("decision-pack service", () => {
     });
 
     expect(negative.priorityScore).toBeLessThan(baseline.priorityScore);
+    expect(negative.recommendationOutcomeFeedback).toMatchObject({ negative: 6, rejected: 2, closed: 1, stale: 1, ignored: 2 });
     expect(negative.riskReasons.join(" ")).toMatch(/6 unresolved or negative/);
+    expect(negative.riskReasons.join(" ")).toContain("2 rejected, 1 closed, 1 stale, 2 ignored");
     expect(negative.whyThisHelps.some((line) => line.includes("Private recommendation feedback"))).toBe(false);
     expect(mixed.priorityScore).toBeLessThan(baseline.priorityScore);
     expect(mixed.riskReasons.join(" ")).toMatch(/2 unresolved or negative/);

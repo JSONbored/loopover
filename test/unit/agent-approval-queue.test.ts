@@ -15,10 +15,12 @@ import { ensurePullRequestLabel } from "../../src/github/labels";
 import { actionParams, executeAgentMaintenanceActions, pendingActionToPlanned, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import { decidePendingAgentAction } from "../../src/services/agent-approval-queue";
 import {
+  countPendingAgentActions,
   createPendingAgentActionIfAbsent,
   getPendingAgentAction,
   listNotificationDeliveriesForRecipient,
   listPendingAgentActions,
+  setPendingAgentActionStatus,
   upsertInstallation,
   upsertPullRequestFromGitHub,
   upsertRepositorySettings,
@@ -189,5 +191,40 @@ describe("agent approval queue (#779)", () => {
   it("pendingActionToPlanned clears requiresApproval and defaults the reason", () => {
     expect(pendingActionToPlanned({ actionClass: "merge", params: { mergeMethod: "squash" } })).toMatchObject({ actionClass: "merge", requiresApproval: false, reason: "maintainer-approved", mergeMethod: "squash" });
     expect(pendingActionToPlanned({ actionClass: "label", params: { label: "L" }, reason: "explicit" }).reason).toBe("explicit");
+  });
+
+  it("countPendingAgentActions respects both the repo filter and the status filter", async () => {
+    const env = createTestEnv({});
+    // owner/repo: 3 pending rows (PRs 1-3) + 1 that we decide as rejected (PR 4).
+    for (let pullNumber = 1; pullNumber <= 4; pullNumber += 1) {
+      await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    }
+    const { action: rejected } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 5, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    await setPendingAgentActionStatus(env, rejected.id, { status: "rejected", decidedBy: "owner" });
+    // other/repo: 2 pending rows (PRs 1-2) — must be excluded by the repo filter.
+    for (let pullNumber = 1; pullNumber <= 2; pullNumber += 1) {
+      await createPendingAgentActionIfAbsent(env, { repoFullName: "other/repo", pullNumber, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    }
+
+    // No filter: counts every row across both repos and all statuses (4 + 1 rejected + 2 = 7).
+    expect(await countPendingAgentActions(env, {})).toBe(7);
+    // Repo filter only: every owner/repo row regardless of status (4 pending + 1 rejected).
+    expect(await countPendingAgentActions(env, { repoFullName: "owner/repo" })).toBe(5);
+    // Status filter only: every pending row across both repos (4 + 2).
+    expect(await countPendingAgentActions(env, { status: "pending" })).toBe(6);
+    // Both filters: only owner/repo's pending rows, excluding the rejected one and other/repo.
+    expect(await countPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" })).toBe(4);
+    // Sanity: a repo with no rows counts zero.
+    expect(await countPendingAgentActions(env, { repoFullName: "nobody/repo", status: "pending" })).toBe(0);
+  });
+
+  it("countPendingAgentActions counts the full set beyond the 200-row list page size", async () => {
+    const env = createTestEnv({});
+    for (let pullNumber = 1; pullNumber <= 201; pullNumber += 1) {
+      await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    }
+    // listPendingAgentActions caps at 200 by default; the count query is not page-limited.
+    expect(await listPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" })).toHaveLength(200);
+    expect(await countPendingAgentActions(env, { repoFullName: "owner/repo", status: "pending" })).toBe(201);
   });
 });

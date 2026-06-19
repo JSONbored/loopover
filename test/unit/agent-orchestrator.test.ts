@@ -733,6 +733,15 @@ describe("agent orchestrator", () => {
       publicSafeSummary: "Cleanup existing PRs before asking for another review.",
       safetyClass: "public_safe",
     });
+    const publicPacket = buildAgentActionExplanationCard({
+      actionType: "prepare_pr_packet",
+      status: "ready",
+      why: ["A concise packet keeps public context focused on linked work."],
+      blockedBy: [],
+      rerunWhen: "Rerun after pending PRs merge/close or after open PR count is at or below 1; projected score changes 0.2 -> 0.7.",
+      publicSafeSummary: "Prepare public PR packet after validation completes.",
+      safetyClass: "public_safe",
+    });
 
     expect(recommended.summary).toMatch(/Pursue now/);
     expect(recommended.whyNow).toMatch(/deterministic planning signals/);
@@ -762,6 +771,9 @@ describe("agent orchestrator", () => {
     expect(cleanup.risk).toMatch(/increase stale or duplicate review pressure/);
     expect(cleanup.maintainerFriction).toMatch(/reduces queue noise/);
     expect(cleanup.expectedImpact).toMatch(/Lower active review pressure/);
+    expect(publicPacket.rerunWhen).toContain("projected score changes 0.2 -> 0.7");
+    expect(publicPacket.publicSafe.rerunWhen).not.toMatch(/score|0\.2|0\.7/i);
+    expect(publicPacket.publicSafe.rerunWhen).toMatch(/private context/);
   });
 
   it("covers local action ready and blocker-free branches from prepared metadata", () => {
@@ -836,6 +848,9 @@ describe("agent orchestrator", () => {
       freshness: "fresh",
       sources: expect.arrayContaining([expect.objectContaining({ name: "local_branch_metadata", source: "metadata_only" })]),
     });
+    expect(actions[1]).toMatchObject({ actionType: "prepare_pr_packet", safetyClass: "public_safe", approvalRequired: false });
+    expect(actions[1]?.payload.recommendationEvidence).toBeUndefined();
+    expect(JSON.stringify(actions[1]?.payload)).not.toMatch(/private score preview|score_preview|linked_issue_multiplier|scoreabilityStatus/i);
     expect(blockers[0]).toMatchObject({ status: "ready", recommendation: "No hard scoreability blocker is visible from local metadata." });
     expect(blockedActions.map((entry) => entry.actionType)).toEqual(["preflight_branch", "prepare_pr_packet", "explain_score_blockers"]);
     expect(blockedActions[0]?.scoreabilityImpact).toContain("scenario projections");
@@ -1044,6 +1059,8 @@ describe("agent orchestrator", () => {
     expect(preflight.actions.map((action) => action.actionType)).toEqual(expect.arrayContaining(["preflight_branch", "prepare_pr_packet"]));
     expect(packet.actions).toHaveLength(1);
     expect(packet.actions[0]).toMatchObject({ actionType: "prepare_pr_packet", safetyClass: "public_safe", approvalRequired: false });
+    expect(packet.actions[0]?.payload.recommendationEvidence).toBeUndefined();
+    expect(JSON.stringify(packet.actions[0]?.payload)).not.toMatch(/private score preview|score_preview|linked_issue_multiplier|scoreabilityStatus/i);
     expect(blockers.actions[0]).toMatchObject({ actionType: "explain_score_blockers", targetRepoFullName: "entrius/allways-ui" });
     expect(JSON.stringify(preflight.actions)).toContain("linked_issue_bounty_historical");
     expect(JSON.stringify(preflight.actions)).toContain("Source upload disabled");

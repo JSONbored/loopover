@@ -703,6 +703,8 @@ export type PullRequestFileRecord = {
   payload: Record<string, JsonValue>;
 };
 
+export type PullRequestFilePathRecord = Pick<PullRequestFileRecord, "repoFullName" | "pullNumber" | "path">;
+
 export type PullRequestReviewRecord = {
   id: string;
   repoFullName: string;

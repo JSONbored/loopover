@@ -45,6 +45,55 @@ describe("repo command authorization policy", () => {
     expect(evaluateCommandAuthorization({ commandName: "gate-override", commenterLogin: "author", pullRequestAuthorLogin: "author", commenterAssociation: null })).toMatchObject({ authorized: false });
   });
 
+  it("clamps the spoofable pr_author role off maintainer-only commands but keeps confirmed_miner (#824)", () => {
+    const { policy, warnings } = normalizeCommandAuthorizationPolicy({
+      commands: {
+        "review-now": ["confirmed_miner"],
+        "queue-summary": ["collaborator", "pr_author"],
+        "needs-author": ["pr_author"],
+      },
+    });
+
+    // confirmed_miner is exempt from the maintainer-only clamp, so it survives without a warning.
+    expect(warnings).not.toContain("Ignored author command authorization roles for maintainer-only command: review-now.");
+    expect(warnings).toContain("Ignored author command authorization roles for maintainer-only command: queue-summary.");
+    expect(warnings).toContain("Ignored author command authorization roles for maintainer-only command: needs-author.");
+    expect(policy.commands["review-now"]).toEqual(["confirmed_miner"]);
+    expect(policy.commands["queue-summary"]).toEqual(["collaborator"]);
+    // Dropping the only role (plain pr_author) falls back to the secure maintainer/collaborator default.
+    expect(policy.commands["needs-author"]).toEqual(["maintainer", "collaborator"]);
+    expect(commandAuthorizationAllowedRoles(policy, "review-now")).toEqual(["confirmed_miner"]);
+    // A confirmed-miner PR author can self-trigger a maintainer-only command when the policy allows it.
+    expect(
+      evaluateCommandAuthorization({
+        policy: { commands: { "review-now": ["confirmed_miner"] }, default: ["confirmed_miner"] },
+        commandName: "review-now",
+        commenterLogin: "miner",
+        pullRequestAuthorLogin: "miner",
+        minerStatus: "confirmed",
+      }),
+    ).toMatchObject({
+      authorized: true,
+      reason: "confirmed_miner_pr_author",
+      actorKind: "author",
+      allowedRoles: ["confirmed_miner"],
+    });
+    // A plain PR author (not a confirmed miner) is still denied on the same maintainer-only command.
+    expect(
+      evaluateCommandAuthorization({
+        policy: { commands: { "review-now": ["confirmed_miner"] }, default: ["confirmed_miner"] },
+        commandName: "review-now",
+        commenterLogin: "author",
+        pullRequestAuthorLogin: "author",
+        minerStatus: "not_found",
+      }),
+    ).toMatchObject({
+      authorized: false,
+      reason: "pr_author_not_confirmed_miner",
+      allowedRoles: ["confirmed_miner"],
+    });
+  });
+
   it("honors command overrides and avoids miner lookup when plain PR author is allowed", () => {
     const policy = normalizeCommandAuthorizationPolicy({ default: ["maintainer"], commands: { "next-action": ["pr_author"] } }).policy;
     expect(

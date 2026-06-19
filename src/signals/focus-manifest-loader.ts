@@ -94,10 +94,12 @@ async function loadRepoFocusManifestWithCachePolicy(
   } catch {
     manifest = parseFocusManifest(null);
   }
-  // Persist even an ABSENT manifest (negative cache): effective settings are resolved from
-  // `.gittensory.yml` on every webhook, so a repo without one must not re-fetch the raw file each time.
-  // The TTL still refreshes it, so a newly-added manifest is picked up on the next window.
-  await persistRepoFocusManifest(env, repoFullName, manifest);
+  if (!cachePolicy.publicOnly) {
+    // Persist even an ABSENT manifest (negative cache): effective settings are resolved from
+    // `.gittensory.yml` on every webhook, so a repo without one must not re-fetch the raw file each time.
+    // The TTL still refreshes it, so a newly-added manifest is picked up on the next window.
+    await persistRepoFocusManifest(env, repoFullName, manifest);
+  }
   return manifest;
 }
 

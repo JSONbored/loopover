@@ -114,6 +114,29 @@ describe("focus-manifest loader", () => {
     expect(manifest.gate.readinessMinScore).toBeNull();
   });
 
+  it("does not let public-only loads overwrite API-backed private manifests", async () => {
+    const env = createTestEnv();
+    await upsertRepoFocusManifest(env, "owner/private-gates", {
+      wantedPaths: ["private/"],
+      gate: { linkedIssue: "block", readinessMinScore: 99 },
+    });
+
+    const publicManifest = await loadPublicRepoFocusManifest(env, "owner/private-gates", {
+      fetcher: async () => JSON.stringify({ wantedPaths: ["public/"], gate: { linkedIssue: "advisory" } }),
+    });
+    const privateManifest = await loadRepoFocusManifest(env, "owner/private-gates", {
+      fetcher: async () => {
+        throw new Error("should keep using the API-backed private manifest");
+      },
+    });
+
+    expect(publicManifest.source).toBe("repo_file");
+    expect(publicManifest.wantedPaths).toEqual(["public/"]);
+    expect(privateManifest.source).toBe("api_record");
+    expect(privateManifest.wantedPaths).toEqual(["private/"]);
+    expect(privateManifest.gate.linkedIssue).toBe("block");
+  });
+
   it("bulk-loads manifests for many repos with a concurrency cap", async () => {
     const env = createTestEnv();
     let active = 0;

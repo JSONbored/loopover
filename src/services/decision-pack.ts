@@ -230,6 +230,7 @@ export type RepoRecommendationOutcomeFeedback = {
   positive: number;
   negative: number;
   merged: number;
+  rejected: number;
   closed: number;
   stale: number;
   ignored: number;
@@ -353,7 +354,7 @@ export async function loadContributorDecisionPackForServing(
   };
 }
 
-async function tryEnqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
+export async function tryEnqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
   const pending = pendingDecisionPackRebuilds.get(login);
   if (pending) return pending;
   const sinceIso = new Date(Date.now() - DECISION_PACK_REBUILD_DEBOUNCE_MS).toISOString();
@@ -1027,6 +1028,7 @@ function summarizeRecommendationOutcomeFeedback(feedback: AgentRecommendationOut
     positive: feedback.positive,
     negative: feedback.negative,
     merged: feedback.merged,
+    rejected: feedback.rejected,
     closed: feedback.closed,
     stale: feedback.stale,
     ignored: feedback.ignored,
@@ -1043,7 +1045,7 @@ function recommendationFeedbackWhyThisHelps(feedback: RepoRecommendationOutcomeF
 
 function recommendationFeedbackRiskReasons(feedback: RepoRecommendationOutcomeFeedback | undefined): string[] {
   if (!feedback || feedback.negative === 0) return [];
-  return [`Private recommendation feedback has ${feedback.negative} unresolved or negative contributor-lane outcome(s) for this repo (${feedback.closed} closed, ${feedback.stale} stale, ${feedback.ignored} ignored).`];
+  return [`Private recommendation feedback has ${feedback.negative} unresolved or negative contributor-lane outcome(s) for this repo (${feedback.rejected} rejected, ${feedback.closed} closed, ${feedback.stale} stale, ${feedback.ignored} ignored).`];
 }
 
 function recommendationOutcomePriorityAdjustment(feedback: RepoRecommendationOutcomeFeedback | undefined): number {

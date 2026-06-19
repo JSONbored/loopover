@@ -3925,6 +3925,7 @@ export function buildPublicPrIntelligenceComment(args: {
   const publicFindings = args.preflight.findings
     .filter((finding) => finding.severity !== "critical")
     .filter((finding) => args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
+    .filter((finding) => !isPrivateBountyLifecycleFinding(finding.code))
     .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
@@ -4088,9 +4089,9 @@ export function buildPublicPrIntelligenceComment(args: {
           "",
           "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
           "",
-          // Notes are already public-safe (built via toPublicSafe upstream). Escape angle brackets so a
-          // stray tag (e.g. </details> or an HTML comment marker) cannot break the panel structure, while
-          // preserving the markdown bullet/line layout that sanitizePanelText would otherwise flatten.
+          // Notes are already public-safe and markdown-neutralized (built via toPublicSafe upstream). Escape
+          // angle brackets as a final guard so a stray tag (e.g. </details> or an HTML comment marker) cannot
+          // break the panel structure while preserving the section/bullet layout we add ourselves.
           args.aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
           "",
           "</details>",
@@ -4524,6 +4525,10 @@ function formatCollisionItemRef(item: CollisionItem): string {
 
 function formatAlertBlock(lines: string[]): string[] {
   return lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+}
+
+function isPrivateBountyLifecycleFinding(code: string): boolean {
+  return code === "linked_issue_bounty_historical" || code === "linked_issue_bounty_unverified";
 }
 
 function containsPrivatePublicTerm(value: string): boolean {

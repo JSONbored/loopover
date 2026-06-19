@@ -1,4 +1,5 @@
 import { normalizeNewlines } from "./mcp-release-core.mjs";
+import YAML from "yaml";
 
 /**
  * Pure, deterministic checks for the MCP release-candidate dry-run.
@@ -108,9 +109,18 @@ export function checkTarball({ files, contentsByFile }) {
 export function checkTokenlessPublish(workflowYaml) {
   const yaml = String(workflowYaml ?? "");
   const issues = [];
-  if (!/id-token:\s*write/.test(yaml)) issues.push("publish job is missing 'id-token: write' for trusted publishing");
-  if (!/--provenance\b/.test(yaml)) issues.push("publish step is missing '--provenance'");
-  if (NPM_TOKEN_PATTERN.test(yaml)) issues.push("publish workflow references an npm auth token — trusted publishing must stay tokenless");
+  const workflow = parseWorkflowYaml(yaml);
+  const publishJobs = findPublishJobs(workflow);
+  if (publishJobs.length === 0) {
+    issues.push("publish workflow is missing an active 'npm publish' step");
+  }
+  if (publishJobs.some((job) => !hasIdTokenWrite(job.job?.permissions) && !hasIdTokenWrite(workflow?.permissions))) {
+    issues.push("publish job is missing 'id-token: write' for trusted publishing");
+  }
+  if (publishJobs.some((job) => job.publishRuns.some((run) => !hasEnabledProvenanceFlag(run)))) {
+    issues.push("publish step is missing '--provenance'");
+  }
+  if (NPM_TOKEN_PATTERN.test(JSON.stringify(workflow ?? {}))) issues.push("publish workflow references an npm auth token — trusted publishing must stay tokenless");
   const ok = issues.length === 0;
   return {
     ok,
@@ -120,6 +130,38 @@ export function checkTokenlessPublish(workflowYaml) {
       ? "Publish workflow uses tokenless trusted publishing (id-token + provenance, no npm token)."
       : `Publish workflow provenance/tokenless config needs attention — ${issues.join("; ")}.`,
   };
+}
+
+function parseWorkflowYaml(yaml) {
+  try {
+    const parsed = YAML.parse(yaml);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function findPublishJobs(workflow) {
+  return Object.values(workflow?.jobs ?? {})
+    .filter((job) => job && typeof job === "object")
+    .map((job) => ({
+      job,
+      publishRuns: (Array.isArray(job.steps) ? job.steps : [])
+        .map((step) => (step && typeof step === "object" ? String(step.run ?? "") : ""))
+        .filter((run) => /\bnpm(?:@[^\s]+)?\s+publish\b/.test(run)),
+    }))
+    .filter((job) => job.publishRuns.length > 0);
+}
+
+function hasIdTokenWrite(permissions) {
+  return permissions && typeof permissions === "object" && String(permissions["id-token"] ?? "").toLowerCase() === "write";
+}
+
+function hasEnabledProvenanceFlag(run) {
+  return run
+    .split(/\r?\n/)
+    .map((line) => line.replace(/(^|\s)#.*$/, ""))
+    .some((line) => /(^|\s)--provenance(?:\s|$)/.test(line));
 }
 
 const REMEDIATION = {

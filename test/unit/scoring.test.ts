@@ -221,8 +221,10 @@ NOVELTY_BONUS_SCALAR = 3
 
   it("detects the active model from fetched constants before default fallback constants", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    const fetchedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      fetchedUrls.push(url);
       if (url.includes("constants.py")) {
         return new Response("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
       }
@@ -238,6 +240,7 @@ NOVELTY_BONUS_SCALAR = 3
     expect(refreshed.constants.MAX_CONTRIBUTION_BONUS).toBe(5);
     expect(refreshed.constants.SRC_TOK_SATURATION_SCALE).toBe(58);
     expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
+    expect(fetchedUrls).toContain("https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/constants.py");
   });
 
   it("warns when fetched constants do not identify a known active model", async () => {
@@ -271,8 +274,10 @@ NOVELTY_BONUS_SCALAR = 3
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",
       GITTENSOR_UPSTREAM_REF: "staging",
     });
+    const fetchedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      fetchedUrls.push(url);
       if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nNOVELTY_BONUS_SCALAR = 3\n");
       if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
       return new Response("not found", { status: 404 });
@@ -280,6 +285,8 @@ NOVELTY_BONUS_SCALAR = 3
 
     const refreshed = await refreshScoringModelSnapshot(env);
 
+    expect(refreshed.sourceUrl).toBe("https://raw.githubusercontent.com/custom/upstream/staging/gittensor/constants.py");
+    expect(fetchedUrls).toContain("https://raw.githubusercontent.com/custom/upstream/staging/gittensor/constants.py");
     expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*NOVELTY_BONUS_SCALAR/);
     expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] });
     const fingerprint = await unmodeledScoringConstantsFingerprint();
@@ -311,6 +318,7 @@ NOVELTY_BONUS_SCALAR = 3
         labels: ["bug"],
         linkedIssueMode: "standard",
         linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
         sourceTokenScore: 58,
         totalTokenScore: 1500,
         sourceLines: 120,
@@ -393,6 +401,7 @@ NOVELTY_BONUS_SCALAR = 3
         labels: ["bug"],
         linkedIssueMode: "standard",
         linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
         sourceTokenScore: 60,
         totalTokenScore: 90,
         sourceLines: 50,
@@ -478,7 +487,7 @@ NOVELTY_BONUS_SCALAR = 3
     expect(ineligible.recommendation.actions).toEqual(expect.arrayContaining([expect.stringMatching(/eligible branch/i)]));
     expect(missing.branchEligibility).toMatchObject({ required: true, status: "unknown", evidence: "missing", source: "missing" });
     expect(missing.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "branch_eligibility_missing", severity: "context" })]));
-    expect(missing.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(missing.scoreEstimate.issueMultiplier).toBe(1);
     expect(unknown.branchEligibility).toMatchObject({ required: true, status: "unknown", evidence: "provided", source: "user_supplied", stale: true });
     expect(unknown.branchEligibility.warnings.join(" ")).toMatch(/unknown.*stale/i);
     expect(unknown.recommendation.actions).toEqual(expect.arrayContaining([expect.stringMatching(/refresh branch\/base eligibility metadata/i)]));
@@ -503,7 +512,7 @@ NOVELTY_BONUS_SCALAR = 3
     const validated = buildScorePreview({
       repo,
       snapshot,
-      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] } },
+      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] }, branchEligibility: { status: "eligible", source: "github_metadata" } },
     });
     const invalid = buildScorePreview({
       repo,
@@ -523,7 +532,7 @@ NOVELTY_BONUS_SCALAR = 3
     const defaultValidated = buildScorePreview({
       repo,
       snapshot,
-      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] } },
+      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] }, branchEligibility: { status: "eligible", source: "github_metadata" } },
     });
     const validatedWithoutSolverNumber = buildScorePreview({
       repo,
@@ -569,8 +578,8 @@ NOVELTY_BONUS_SCALAR = 3
     expect(raw.scoreEstimate.issueMultiplier).toBe(1);
     expect(raw.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "linked_issue_unvalidated", severity: "context" })]));
     const rawFixedScenario = raw.scenarioPreviews.find((scenario) => scenario.name === "linkedIssueFixed");
-    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1.33 });
-    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toBe("Linked issue context is solved-by-PR validated for issue(s) #7.");
+    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1 });
+    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toMatch(/Branch eligibility evidence is missing/);
     expect(validated.linkedIssueMultiplier).toMatchObject({ status: "validated", eligible: true, solvedByPullRequests: [101], appliedMultiplier: 1.33 });
     expect(validated.scoreEstimate.issueMultiplier).toBe(1.33);
     expect(invalid.linkedIssueMultiplier).toMatchObject({ status: "invalid", eligible: false, appliedMultiplier: 1 });
@@ -639,7 +648,7 @@ NOVELTY_BONUS_SCALAR = 3
     expect(afterPending?.source).toBe("user_supplied");
     expect(afterPending?.gates.credibilityObserved).toBe(0.8);
     expect(afterPending?.effectiveEstimatedScore).toBeGreaterThan(0);
-    expect(linkedIssueFixed?.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(linkedIssueFixed?.scoreEstimate.issueMultiplier).toBe(1);
     expect(JSON.stringify(preview)).not.toMatch(/guaranteed payout|wallet|hotkey|farming/i);
   });
 

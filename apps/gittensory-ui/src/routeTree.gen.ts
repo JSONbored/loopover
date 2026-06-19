@@ -28,6 +28,7 @@ import { Route as DocsScoreabilityRouteImport } from './routes/docs.scoreability
 import { Route as DocsQuickstartRouteImport } from './routes/docs.quickstart'
 import { Route as DocsPrivacySecurityRouteImport } from './routes/docs.privacy-security'
 import { Route as DocsMinerWorkflowRouteImport } from './routes/docs.miner-workflow'
+import { Route as DocsMinerQuickstartRouteImport } from './routes/docs.miner-quickstart'
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
 import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
@@ -142,6 +143,11 @@ const DocsPrivacySecurityRoute = DocsPrivacySecurityRouteImport.update({
 const DocsMinerWorkflowRoute = DocsMinerWorkflowRouteImport.update({
   id: '/miner-workflow',
   path: '/miner-workflow',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsMinerQuickstartRoute = DocsMinerQuickstartRouteImport.update({
+  id: '/miner-quickstart',
+  path: '/miner-quickstart',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsMcpClientsRoute = DocsMcpClientsRouteImport.update({
@@ -277,6 +283,7 @@ export interface FileRoutesByFullPath {
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
@@ -315,6 +322,7 @@ export interface FileRoutesByTo {
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
@@ -357,6 +365,7 @@ export interface FileRoutesById {
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
@@ -400,6 +409,7 @@ export interface FileRouteTypes {
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
     | '/docs/privacy-security'
     | '/docs/quickstart'
@@ -438,6 +448,7 @@ export interface FileRouteTypes {
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
     | '/docs/privacy-security'
     | '/docs/quickstart'
@@ -479,6 +490,7 @@ export interface FileRouteTypes {
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
     | '/docs/privacy-security'
     | '/docs/quickstart'
@@ -636,6 +648,13 @@ declare module '@tanstack/react-router' {
       path: '/miner-workflow'
       fullPath: '/docs/miner-workflow'
       preLoaderRoute: typeof DocsMinerWorkflowRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/miner-quickstart': {
+      id: '/docs/miner-quickstart'
+      path: '/miner-quickstart'
+      fullPath: '/docs/miner-quickstart'
+      preLoaderRoute: typeof DocsMinerQuickstartRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/mcp-clients': {
@@ -835,6 +854,7 @@ interface DocsRouteChildren {
   DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
+  DocsMinerQuickstartRoute: typeof DocsMinerQuickstartRoute
   DocsMinerWorkflowRoute: typeof DocsMinerWorkflowRoute
   DocsPrivacySecurityRoute: typeof DocsPrivacySecurityRoute
   DocsQuickstartRoute: typeof DocsQuickstartRoute
@@ -852,6 +872,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,
   DocsMcpClientsRoute: DocsMcpClientsRoute,
+  DocsMinerQuickstartRoute: DocsMinerQuickstartRoute,
   DocsMinerWorkflowRoute: DocsMinerWorkflowRoute,
   DocsPrivacySecurityRoute: DocsPrivacySecurityRoute,
   DocsQuickstartRoute: DocsQuickstartRoute,

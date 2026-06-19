@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getLatestScorePreview,
+  getRepoAuthorPullRequestHistory,
   getLatestScoringModelSnapshot,
   getFreshOfficialMinerDetection,
   listPullRequests,
@@ -51,6 +52,37 @@ describe("database row parser hardening", () => {
         expect.objectContaining({ number: 2, isDraft: false, mergeableState: "mergeable", reviewDecision: "APPROVED" }),
       ]),
     );
+  });
+
+  it("computes complete case-insensitive repo author PR history for gate grace", async () => {
+    const env = createTestEnv();
+
+    for (let number = 1; number <= 503; number += 1) {
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number,
+        title: `PR ${number}`,
+        state: number <= 3 ? "closed" : "open",
+        user: { login: number <= 3 ? "RepeatUser" : `other-${number}` },
+        labels: [],
+      });
+    }
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 600,
+      title: "Merged work",
+      state: "closed",
+      merged_at: "2025-01-01T00:00:00.000Z",
+      user: { login: "RepeatUser" },
+      labels: [],
+    });
+
+    await expect(getRepoAuthorPullRequestHistory(env, "owner/repo", "repeatuser", 999)).resolves.toEqual({
+      mergedPrCount: 1,
+      closedUnmergedPrCount: 3,
+    });
+    await expect(getRepoAuthorPullRequestHistory(env, "owner/repo", "repeatuser", 600)).resolves.toEqual({
+      mergedPrCount: 0,
+      closedUnmergedPrCount: 3,
+    });
   });
 
   it("normalizes enum-like database values from stored sync, scoring, and preview rows", async () => {

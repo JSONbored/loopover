@@ -18,6 +18,7 @@ import {
   upsertInstallation,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
+  upsertPullRequestFile,
   upsertPullRequestFromGitHub,
   upsertIssueFromGitHub,
   upsertRepositoryFromGitHub,
@@ -32,6 +33,7 @@ import {
   enrichInstallationHealth,
   refreshContributorActivity,
   refreshInstallationHealth,
+  refreshPullRequestDetails,
 } from "../../src/github/backfill";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -1790,6 +1792,84 @@ describe("GitHub backfill", () => {
     expect(await listPullRequestReviews(env, "JSONbored/gittensory", 10)).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "JSONbored/gittensory#10#44", reviewerLogin: "maintainer", state: "APPROVED" }), expect.objectContaining({ id: "JSONbored/gittensory#10#45", state: "UNKNOWN" })]),
     );
+  });
+
+
+  it("refreshes one pull request's files before gate evaluation and drops stale cached paths", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 12,
+      title: "Refresh files",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "new-head" },
+      labels: [],
+      body: "",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 12,
+      path: "stale/old-secret.txt",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: { filename: "stale/old-secret.txt" },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/pulls/12/files")) return Response.json([{ filename: "src/current.ts", status: "modified", additions: 2, deletions: 1, changes: 3 }]);
+      if (url.includes("/pulls/12/reviews")) return Response.json([]);
+      if (url.includes("/commits/new-head/check-runs")) return Response.json({ check_runs: [] });
+      return Response.json([]);
+    });
+
+    const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 12);
+
+    expect(result).toMatchObject({ status: "complete", pullNumber: 12 });
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 12)).toEqual([expect.objectContaining({ path: "src/current.ts", changes: 3 })]);
+  });
+
+  it("preserves cached pull request files when refresh cannot reload the current file list", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 12,
+      title: "Refresh unavailable",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "new-head" },
+      labels: [],
+      body: "",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 12,
+      path: "src/cached.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: { filename: "src/cached.ts" },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("GittensoryPullRequestDetails")) return Response.json({ data: { repository: { pullRequest: null } } });
+      }
+      if (url.includes("/pulls/12/files")) return new Response("files unavailable", { status: 503 });
+      if (url.includes("/pulls/12/reviews")) return Response.json([]);
+      if (url.includes("/commits/new-head/check-runs")) return Response.json({ check_runs: [] });
+      return Response.json([]);
+    });
+
+    const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 12);
+
+    expect(result).toMatchObject({ status: "partial", pullNumber: 12 });
+    expect(result.warnings).toEqual([expect.stringContaining("File sync failed for #12")]);
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 12)).toEqual([expect.objectContaining({ path: "src/cached.ts", changes: 1 })]);
   });
 
   it("records partial PR detail state and check summary segment when check-run fetches fail", async () => {

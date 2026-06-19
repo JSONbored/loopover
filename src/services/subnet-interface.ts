@@ -9,13 +9,13 @@ const SUBNET_INTERFACE_SCHEMA_VERSION = "1.0";
 // Curated, contribution-relevant MCP tools surfaced to agents/devs who discover gittensor via metagraphed.
 // Names mirror src/mcp/server.ts registrations; the list is intentionally a miner-facing subset (not all 33).
 const CONTRIBUTION_MCP_TOOLS: ReadonlyArray<{ name: string; summary: string }> = [
-  { name: "gittensory_get_decision_pack", summary: "Rank high-fit, low-duplicate issues to contribute to across registered repos." },
+  { name: "gittensory_get_decision_pack", summary: "Surface contribution candidates across registered repos with duplicate-risk context." },
   { name: "gittensory_check_before_start", summary: "Check whether an issue is already claimed or solved before writing code." },
-  { name: "gittensory_validate_linked_issue", summary: "Confirm that linking an issue will earn the linked-issue scoring multiplier." },
+  { name: "gittensory_validate_linked_issue", summary: "Confirm whether a planned PR has a linked issue before opening it." },
   { name: "gittensory_preflight_pr", summary: "Preflight a planned PR for lane fit, duplicate risk, and review burden." },
   { name: "gittensory_monitor_open_prs", summary: "Track your open PRs and what to clean up first." },
   { name: "gittensory_list_notifications", summary: "See review feedback (e.g. changes requested) on your PRs." },
-  { name: "gittensory_agent_plan_next_work", summary: "Deterministically rank your next gittensor contribution actions." },
+  { name: "gittensory_agent_plan_next_work", summary: "Suggest useful next gittensor contribution actions from current repo and PR context." },
 ];
 
 const ONBOARDING_STEPS: ReadonlyArray<string> = [
@@ -65,7 +65,7 @@ export function buildSubnetInterfaceDescriptor(args: { origin: string; generated
       name: "Gittensory",
       role: "contribution_interface",
       site: GITTENSORY_SITE_URL,
-      summary: "Gittensor-native contribution quality & planning layer: deterministic signals for miners and a free anti-slop + AI second-opinion gate for maintainers.",
+      summary: "Gittensor-native contribution planning layer: MCP guidance for contributors and a free anti-slop + AI second-opinion gate for maintainers.",
     },
     interfaces: {
       mcp: {

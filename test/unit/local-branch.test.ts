@@ -234,6 +234,7 @@ describe("local branch analysis", () => {
         changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" }],
         validation: [{ command: "npm test -- cache", status: "passed" }],
         localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 70, sourceLines: 42 },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
       },
       repo,
       issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
@@ -1259,6 +1260,15 @@ describe("local branch analysis", () => {
     expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual([]);
     expect(analysis.workspaceIntelligence.blockers.accountState.length).toBeGreaterThan(0);
     expect(analysis.recommendedRerunCondition).toBe("Rerun after account/queue maturity blockers clear.");
+    expect(analysis.prPacket.markdown).not.toMatch(/account\/queue maturity|account-state|score|credibility|Open PR count/i);
+    expect(analysis.prPacket.bodySections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          heading: "Next Steps",
+          lines: expect.arrayContaining(["- Rerun after any branch, base, or PR state changes before opening/submitting."]),
+        }),
+      ]),
+    );
     expect(analysis.nextActions[0]?.actionKind).not.toBe("land_existing_prs");
   });
 
@@ -1569,6 +1579,29 @@ describe("local MCP git metadata collection", () => {
     expect(JSON.stringify(analysis.scenarioSummary)).not.toMatch(
       /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i,
     );
+  });
+
+  it("does not throw when branch analysis identifiers contain protocol terms", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "wallet-tools/api",
+        branchName: "feature/wallet-ui",
+        baseRef: "hotkey-fix",
+        changedFiles: [{ path: "src/util.ts", additions: 20, deletions: 1, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 35, totalTokenScore: 55, sourceLines: 30 },
+      },
+      repo: { ...repo, fullName: "wallet-tools/api", owner: "wallet-tools", name: "api" },
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.repoFullName).toBe("wallet-tools/api");
+    expect(analysis.scenarioSummary.dataClassification.facts).toEqual(expect.arrayContaining(["Contributor", "Repository", "Branch"]));
   });
 
   it("populates scenarioSummary.dataClassification with contributor and repo facts from branch metadata", () => {

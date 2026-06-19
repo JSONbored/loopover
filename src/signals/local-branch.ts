@@ -1124,11 +1124,14 @@ function buildPublicSafePrPacket(args: {
 
 function linkedIssueHygieneLines(branchEligibility: BranchEligibilityResult): string[] {
   if (!branchEligibility.required) return ["- No issue-specific branch gate was required from supplied metadata."];
-  if (branchEligibility.status === "eligible") {
+  if (branchEligibility.status === "eligible" && branchEligibility.source !== "user_supplied") {
     return [
       "- Linked issue context was checked from local/GitHub metadata.",
       ...(branchEligibility.stale ? ["- Reconfirm linked issue and base branch metadata before submission."] : []),
     ];
+  }
+  if (branchEligibility.status === "eligible") {
+    return ["- Linked issue context was not confirmed; verify the issue reference and base branch before submission."];
   }
   if (branchEligibility.status === "ineligible") {
     return ["- Linked issue context needs cleanup before presenting this PR as solving the issue."];
@@ -1137,7 +1140,10 @@ function linkedIssueHygieneLines(branchEligibility: BranchEligibilityResult): st
 }
 
 function publicSafeRerunCondition(condition: string): string {
-  return /eligibility|multiplier|scoreability|score/i.test(condition) ? "Refresh linked issue and base branch metadata before submission." : condition;
+  if (/account\/queue maturity|pending PRs merge\/close|open PR count|projected score|threshold|eligibility|multiplier|scoreability|score/i.test(condition)) {
+    return "Rerun after any branch, base, or PR state changes before opening/submitting.";
+  }
+  return condition;
 }
 
 function branchFreshnessLines(freshness: LocalBranchAnalysis["baseFreshness"]): string[] {

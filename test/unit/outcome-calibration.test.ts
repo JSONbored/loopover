@@ -5,9 +5,9 @@ import {
   buildRepoOutcomeCalibration,
   buildSlopOutcomeCalibration,
 } from "../../src/services/outcome-calibration";
-import { updatePullRequestSlopAssessment, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { createAgentRun, replaceAgentActions, updatePullRequestSlopAssessment, upsertAgentRecommendationOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import type { SlopBand } from "../../src/signals/slop";
-import type { AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, PullRequestRecord } from "../../src/types";
+import type { AgentActionRecord, AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, AgentRunRecord, PullRequestRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 // A resolved PR carrying a slop assessment. `merged` → has a merge timestamp; otherwise closed-unmerged.
@@ -119,4 +119,100 @@ describe("buildRepoOutcomeCalibration (env loader)", () => {
     expect(report.signals.length).toBeGreaterThan(0);
     expect(JSON.stringify(report)).not.toMatch(/reward|payout|trust score|wallet|hotkey/i);
   });
+
+  it("queries recommendation outcomes by repo before applying the default limit", async () => {
+    const env = createTestEnv();
+    const oldBase = Date.parse("2026-06-01T00:00:00.000Z");
+    await createAgentRun(env, runRecord("r-target", "miner", new Date(oldBase).toISOString()));
+    await createAgentRun(env, runRecord("r-other", "miner", new Date(oldBase + 10_000).toISOString()));
+    await replaceAgentActions(env, "r-target", [actionRecord("target-merged", "r-target"), actionRecord("target-closed", "r-target")]);
+    await replaceAgentActions(
+      env,
+      "r-other",
+      Array.from({ length: 500 }, (_, index) => actionRecord(`other-${index}`, "r-other")),
+    );
+    await upsertAgentRecommendationOutcome(env, {
+      actionId: "target-merged",
+      runId: "r-target",
+      actorLogin: "miner",
+      actionType: "choose_next_work",
+      targetRepoFullName: "owner/repo",
+      source: "explicit",
+      outcomeState: "merged",
+      outcomeTargetType: "pull_request",
+      maintainerLane: false,
+      confidence: "high",
+      reason: "target positive",
+      metadata: {},
+      updatedAt: new Date(oldBase).toISOString(),
+    });
+    await upsertAgentRecommendationOutcome(env, {
+      actionId: "target-closed",
+      runId: "r-target",
+      actorLogin: "miner",
+      actionType: "choose_next_work",
+      outcomeRepoFullName: "owner/repo",
+      source: "explicit",
+      outcomeState: "closed",
+      outcomeTargetType: "pull_request",
+      maintainerLane: false,
+      confidence: "high",
+      reason: "target negative",
+      metadata: {},
+      updatedAt: new Date(oldBase + 1000).toISOString(),
+    });
+
+    for (let index = 0; index < 500; index += 1) {
+      await upsertAgentRecommendationOutcome(env, {
+        actionId: `other-${index}`,
+        runId: "r-other",
+        actorLogin: "miner",
+        actionType: "choose_next_work",
+        targetRepoFullName: `other/repo-${index}`,
+        source: "explicit",
+        outcomeState: "accepted",
+        outcomeTargetType: "pull_request",
+        maintainerLane: false,
+        confidence: "high",
+        reason: "other repo",
+        metadata: {},
+        updatedAt: new Date(oldBase + 10_000 + index * 1000).toISOString(),
+      });
+    }
+
+    const report = await buildRepoOutcomeCalibration(env, "owner/repo", 365);
+    expect(report.recommendations).toMatchObject({ total: 2, positive: 1, negative: 1, positiveRate: 0.5 });
+  });
 });
+
+function runRecord(id: string, actorLogin: string, createdAt: string): AgentRunRecord {
+  return {
+    id,
+    objective: "Plan the next Gittensor OSS contribution action.",
+    actorLogin,
+    surface: "api",
+    mode: "copilot",
+    status: "completed",
+    dataQualityStatus: "complete",
+    payload: { kind: "plan_next_work", login: actorLogin },
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+function actionRecord(id: string, runId: string): AgentActionRecord {
+  return {
+    id,
+    runId,
+    actionType: "choose_next_work",
+    status: "recommended",
+    recommendation: "Pick narrow work and validate it.",
+    why: ["The repo has cached opportunity signals."],
+    blockedBy: [],
+    publicSafeSummary: "Use local branch preflight before posting.",
+    approvalRequired: true,
+    safetyClass: "public_safe",
+    payload: {},
+    createdAt: "2026-06-01T00:00:00.000Z",
+  };
+}

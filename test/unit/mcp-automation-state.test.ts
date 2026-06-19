@@ -1,10 +1,22 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
-import { createPendingAgentActionIfAbsent, listPendingAgentActions, upsertInstallation, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { getRepositoryCollaboratorPermission } from "../../src/github/app";
+import { createPendingAgentActionIfAbsent, listPendingAgentActions, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
+
+vi.mock("../../src/github/app", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/app")>()),
+  getRepositoryCollaboratorPermission: vi.fn(),
+}));
+const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
+
+beforeEach(() => {
+  mockedPermission.mockReset();
+  mockedPermission.mockResolvedValue("write");
+});
 
 async function connect(env: Env, identity?: AuthIdentity) {
   const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
@@ -134,13 +146,33 @@ describe("MCP gittensory_propose_action (#784)", () => {
     expect(JSON.stringify(result)).toMatch(/not installed/i);
   });
 
-  it("forbids a session without maintainer access to the repo", async () => {
+  it("forbids a session without live GitHub write access to the repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    mockedPermission.mockResolvedValue("read");
     const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
     const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toMatch(/maintainer access/i);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+    expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
+  });
+
+  it("does not trust cached collaborator association without live write permission", async () => {
+    const env = createTestEnv();
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "x", state: "open", user: { login: "reader" }, author_association: "COLLABORATOR", head: { sha: "sha" } });
+    mockedPermission.mockResolvedValue("read");
+
+    const client = await connect(env, { kind: "session", actor: "reader" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_propose_action", arguments: { owner: "owner", repo: "repo", pullNumber: 7, actionClass: "merge" } });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+    expect(mockedPermission).toHaveBeenCalledWith(env, 5, "owner/repo", "reader");
     expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
   });
 });

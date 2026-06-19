@@ -52,6 +52,51 @@ describe("upstream ruleset drift tracking", () => {
     });
   });
 
+  it("opens an upstream drift report when upstream defines scoring constants gittensory does not model", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-30T00:00:00.000Z"));
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    const files = fixtures("58", 0.01);
+    files["gittensor/constants.py"] += "\nNOVELTY_BONUS_SCALAR = 3\n";
+    vi.stubGlobal("fetch", upstreamFetch(files));
+
+    await refreshUpstreamDrift(env);
+    const reports = await listUpstreamDriftReports(env, 10);
+    const status = await loadUpstreamStatus(env);
+
+    expect(reports).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "open",
+          severity: "medium",
+          affectedAreas: ["scoring_model"],
+          summary: expect.stringContaining("NOVELTY_BONUS_SCALAR"),
+          payload: expect.objectContaining({
+            kind: "unmodeled_scoring_constants",
+            unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"],
+          }),
+        }),
+      ]),
+    );
+    expect(status).toMatchObject({
+      status: "drift_detected",
+      openReportCount: 1,
+      affectedAreas: ["scoring_model"],
+    });
+  });
+
+  it("skips unmodeled-constant drift sync when the constants source fetch failed", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", upstreamFetch(fixtures("58", 0.01)));
+    await refreshUpstreamSourceSnapshots(env);
+
+    vi.stubGlobal("fetch", upstreamFailedFetch());
+    const result = await refreshUpstreamDrift(env);
+
+    expect(result.sources.find((source) => source.sourceKey === "constants")?.status).toBe("error");
+    expect((await listUpstreamDriftReports(env, 10)).some((report) => report.payload.kind === "unmodeled_scoring_constants")).toBe(false);
+  });
+
   it("detects high-severity scoring and registry drift between semantic rulesets", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });

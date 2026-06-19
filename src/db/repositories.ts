@@ -2583,6 +2583,27 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
   return rows.map(toPullRequestRecordFromRow);
 }
 
+export async function getRepoAuthorPullRequestHistory(env: Env, fullName: string, login: string, excludeNumber?: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({
+      mergedPrCount: sql<number>`sum(case when ${pullRequests.mergedAt} is not null or ${pullRequests.state} = 'merged' then 1 else 0 end)`,
+      closedUnmergedPrCount: sql<number>`sum(case when ${pullRequests.state} = 'closed' and ${pullRequests.mergedAt} is null then 1 else 0 end)`,
+    })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repoFullName, fullName),
+        loginMatches(pullRequests.authorLogin, login),
+        excludeNumber === undefined ? undefined : not(eq(pullRequests.number, excludeNumber)),
+      ),
+    );
+  return {
+    mergedPrCount: Number(row?.mergedPrCount ?? 0),
+    closedUnmergedPrCount: Number(row?.closedUnmergedPrCount ?? 0),
+  };
+}
+
 export async function listContributorPullRequests(env: Env, login: string): Promise<PullRequestRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(pullRequests).where(loginMatches(pullRequests.authorLogin, login)).limit(1000);
@@ -3206,11 +3227,20 @@ export async function getAgentRecommendationOutcome(env: Env, actionId: string):
 
 export async function listAgentRecommendationOutcomes(
   env: Env,
-  options: { actorLogin?: string; windowDays?: number; now?: string; limit?: number } = {},
+  options: { actorLogin?: string; repoFullName?: string; windowDays?: number; now?: string; limit?: number } = {},
 ): Promise<AgentRecommendationOutcomeRecord[]> {
   const limit = clampInteger(options.limit ?? 500, 1, 5000);
   const conditions = [];
   if (options.actorLogin) conditions.push(eq(agentRecommendationOutcomes.actorLogin, options.actorLogin));
+  if (options.repoFullName) {
+    const repoFullName = options.repoFullName.toLowerCase();
+    conditions.push(
+      or(
+        sql`lower(${agentRecommendationOutcomes.outcomeRepoFullName}) = ${repoFullName}`,
+        sql`lower(${agentRecommendationOutcomes.targetRepoFullName}) = ${repoFullName}`,
+      ),
+    );
+  }
   if (options.windowDays !== undefined) {
     const windowDays = clampInteger(options.windowDays, 1, 365);
     const now = options.now ?? nowIso();

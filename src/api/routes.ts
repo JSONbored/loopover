@@ -142,6 +142,7 @@ import {
   CONTRIBUTOR_DECISION_PACK_SIGNAL,
   loadContributorDecisionPackForServing,
   repoDecisionFromPack,
+  tryEnqueueDecisionPackRebuild,
 } from "../services/decision-pack";
 import {
   buildMinerDashboardNextActions,
@@ -221,7 +222,7 @@ import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
-import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { loadPublicRepoFocusManifest, loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
 import { buildRepoSettingsPreview, type PublicSurfaceSkipReason } from "../signals/settings-preview";
@@ -469,7 +470,8 @@ const branchEligibilitySchema = z
     checkedAt: z.string().max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     stale: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
 
 const localBranchAnalysisSchema = z
   .object({
@@ -1108,8 +1110,8 @@ export function createApp() {
     if (!login) return c.json({ error: "login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
-    const message: JobMessage = { type: "build-contributor-decision-packs", requestedBy: "api", login };
-    await c.env.JOBS.send(message);
+    const queued = await tryEnqueueDecisionPackRebuild(c.env, login);
+    if (!queued) return c.json({ error: "refresh_enqueue_failed", login }, 503);
     return c.json({ status: "queued", login }, 202);
   });
 
@@ -1501,7 +1503,7 @@ export function createApp() {
     const privateBlockers = buildExtensionPrivateBlockers(reviewability);
     await recordAuditEvent(c.env, {
       eventType: "extension.pull_context_view",
-      actor: contributor ?? "unknown",
+      actor: identity.actor,
       route: c.req.path,
       outcome: "success",
       metadata: {
@@ -1595,7 +1597,9 @@ export function createApp() {
       getOrCreateScoringModelSnapshot(c.env),
       getContributorEvidence(c.env, parsed.data.contributorLogin),
     ]);
-    const preview = buildScorePreview({ input: parsed.data, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
   });
 
@@ -1888,14 +1892,8 @@ export function createApp() {
 
   app.post("/v1/repos/:owner/:repo/focus-manifest/refresh", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
-    if (forbidden) return forbidden;
-    const identity = await authenticateRequestIdentity(c);
-    const repo = await getRepository(c.env, fullName);
-    if (identity?.kind === "session") {
-      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
-      if (repoForbidden) return repoForbidden;
-    }
+    const gate = await requireRepoWriteAccess(c, fullName);
+    if (gate instanceof Response) return gate;
     const manifest = await loadRepoFocusManifest(c.env, fullName, { refresh: true });
     return c.json({ repoFullName: fullName, manifest, policy: compileFocusManifestPolicy(manifest) });
   });
@@ -1969,6 +1967,10 @@ export function createApp() {
     if (parsed.data.create && parsed.data.dryRun !== false) {
       return c.json({ error: "explicit_create_requires_dry_run_false" }, 400);
     }
+    if (parsed.data.create && parsed.data.dryRun === false) {
+      const writeForbidden = await requireRepoWriteAccess(c, fullName);
+      if (writeForbidden instanceof Response) return writeForbidden;
+    }
     return c.json(
       await generateContributorIssueDrafts(c.env, fullName, {
         dryRun: parsed.data.dryRun,
@@ -1990,12 +1992,13 @@ export function createApp() {
   });
 
   // #130 maintainer settings editor: PATCH-style save of the gate / slop / label / surface / command-auth
-  // settings. Maintainer-authenticated + audited. upsertRepositorySettings defaults any absent field, so we
-  // merge the sent keys onto the current settings rather than overwriting unrelated groups. The secret
+  // settings. Write-access gated + audited because these repo-visible settings include agent autonomy
+  // controls. upsertRepositorySettings defaults any absent field, so we merge the sent keys onto the
+  // current settings rather than overwriting unrelated groups. The secret
   // aiReview key + the operator-only scoring internals are deliberately not settable here.
   app.put("/v1/repos/:owner/:repo/settings", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const body = await c.req.json().catch(() => null);
     const parsed = maintainerSettingsSchema.safeParse(body);
@@ -2030,7 +2033,7 @@ export function createApp() {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
     const decision = c.req.param("decision");
     if (decision !== "accept" && decision !== "reject") return c.json({ error: "invalid_decision", detail: "decision must be 'accept' or 'reject'" }, 400);
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     /* v8 ignore next -- unauthorized requests are rejected by the auth middleware before reaching the handler. */
     if (gate instanceof Response) return gate;
     const pending = await getPendingAgentAction(c.env, c.req.param("id"));
@@ -2102,11 +2105,11 @@ export function createApp() {
   });
 
   // Maintainer self-serve AI-review config (non-secret: mode/byok/provider/model). Session-authenticated +
-  // scoped to repos the maintainer owns/maintains. The secret provider key goes through the ai-key route.
+  // scoped to repos the maintainer has live GitHub write access to. The secret provider key goes through the ai-key route.
   // Merges onto current settings so unrelated settings are preserved.
   app.put("/v1/repos/:owner/:repo/ai-review", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     const parsed = repositoryAiReviewSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_ai_review_config", issues: parsed.error.issues }, 400);
@@ -2127,11 +2130,11 @@ export function createApp() {
     });
   });
 
-  // Maintainer self-serve BYOK provider key. Write-only + maintainer-scoped. GET returns only
+  // Maintainer self-serve BYOK provider key. Write-only + live GitHub write-access scoped. GET returns only
   // {configured, provider, last4, model}; the key is never returned, logged, or surfaced.
   app.get("/v1/repos/:owner/:repo/ai-key", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const gate = await requireRepoMaintainer(c, fullName);
+    const gate = await requireRepoWriteAccess(c, fullName);
     if (gate instanceof Response) return gate;
     return c.json(await getRepositoryAiKeyStatus(c.env, fullName));
   });
@@ -2386,15 +2389,17 @@ export function createApp() {
     const issueNumber = Number(c.req.query("issueNumber") ?? "");
     if (!owner || !repoName || !Number.isInteger(issueNumber) || issueNumber <= 0) return c.json({ error: "valid_owner_repo_issue_required" }, 400);
     const repoFullName = `${owner}/${repoName}`;
-    const [context, repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+    const repo = await getRepository(c.env, repoFullName);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [context, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       loadContributorFastContext(c.env, login),
-      getRepository(c.env, repoFullName),
       listIssues(c.env, repoFullName),
       listPullRequests(c.env, repoFullName),
       listBountiesByRepo(c.env, repoFullName),
       loadOrComputeIssueQualityResponse(c.env, repoFullName),
     ]);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
     const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
     const opportunity = opportunities.find((entry) => entry.issueNumber === issueNumber);
     if (!opportunity) return c.json({ repoFullName, issueNumber, eligible: false, reason: "Issue is not an open, unclaimed outside-contributor target right now." }, 200);
@@ -2409,15 +2414,17 @@ export function createApp() {
     const repoName = c.req.query("repo") ?? "";
     if (!owner || !repoName) return c.json({ error: "valid_owner_repo_required" }, 400);
     const repoFullName = `${owner}/${repoName}`;
-    const [context, repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
+    const repo = await getRepository(c.env, repoFullName);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [context, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       loadContributorFastContext(c.env, login),
-      getRepository(c.env, repoFullName),
       listIssues(c.env, repoFullName),
       listPullRequests(c.env, repoFullName),
       listBountiesByRepo(c.env, repoFullName),
       loadOrComputeIssueQualityResponse(c.env, repoFullName),
     ]);
-    if (!repo) return c.json({ error: "repo_not_found" }, 404);
     const opportunities = buildContributorOpportunities(context.profile, [repo], issues, pullRequests, bounties, issueQualityMap(repoFullName, issueQuality?.report));
     return c.json({ repoFullName, badges: buildExtensionIssueBadges(opportunities, repoFullName) });
   });
@@ -2431,8 +2438,11 @@ export function createApp() {
     const pullNumber = Number(c.req.query("pullNumber") ?? "");
     if (!owner || !repoName || !Number.isInteger(pullNumber) || pullNumber <= 0) return c.json({ error: "valid_owner_repo_pull_required" }, 400);
     const repoFullName = `${owner}/${repoName}`;
-    const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
-      getRepository(c.env, repoFullName),
+    const repo = await getRepository(c.env, repoFullName);
+    if (!repo) return c.json({ error: "repo_not_found" }, 404);
+    const repoForbidden = await requireContributorRepoAccess(c, repoFullName, repo);
+    if (repoForbidden) return repoForbidden;
+    const [issues, pullRequests, bounties, issueQuality] = await Promise.all([
       listIssues(c.env, repoFullName),
       listPullRequests(c.env, repoFullName),
       listBountiesByRepo(c.env, repoFullName),
@@ -2471,7 +2481,7 @@ export function createApp() {
       listBountiesByRepo(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
-      loadRepoFocusManifest(c.env, parsed.data.repoFullName),
+      loadPublicRepoFocusManifest(c.env, parsed.data.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: parsed.data.login, fit, scoringSnapshot: snapshot });
@@ -2546,7 +2556,7 @@ export function createApp() {
       listBountiesByRepo(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       loadOrComputeIssueQualityResponse(c.env, parsed.data.repoFullName),
-      loadRepoFocusManifest(c.env, parsed.data.repoFullName),
+      loadPublicRepoFocusManifest(c.env, parsed.data.repoFullName),
     ]);
     const fit = buildContributorFit(context.profile, context.repositories, [], [], context.syncStates, context.repoStats);
     const scoringProfile = buildContributorScoringProfile({ login: parsed.data.login, fit, scoringSnapshot: snapshot });
@@ -4496,6 +4506,15 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   return null;
 }
 
+async function requireContributorRepoAccess(c: ProtectedRouteContext, repoFullName: string, repo: RepositoryRecord): Promise<Response | null> {
+  if (!repo.isPrivate) return null;
+  const identity = await authenticateRequestIdentity(c);
+  /* v8 ignore next -- Contributor route guard authenticates before repository access is checked. */
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind !== "session") return null;
+  return requireSessionRepoAccess(c, identity, repoFullName, repo);
+}
+
 async function requireCommandPreviewRepoAccess(
   c: ProtectedRouteContext,
   identity: AuthIdentity | null,
@@ -4552,7 +4571,7 @@ async function requireRepoMaintainer(c: ProtectedRouteContext, fullName: string)
 const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
 /**
- * Stricter gate for repo-visible settings/secret WRITES. On top of the maintainer gate, a session caller
+ * Stricter gate for repo-visible settings and secret-key status/writes. On top of the maintainer gate, a session caller
  * must have real GitHub write access to the repo — resolved via the installation, not merely inferred
  * from a PR author_association (which includes org MEMBER / read-only COLLABORATOR). Operators and
  * server-to-server tokens are exempt. Fails closed (403) if write access can't be verified.

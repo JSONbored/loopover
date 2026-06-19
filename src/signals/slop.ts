@@ -302,8 +302,7 @@ export function buildEmptyIssueBodyFinding(input: IssueSlopAssessmentInput): Sig
 export function buildUnfilledIssueTemplateFinding(input: IssueSlopAssessmentInput): SignalFinding | null {
   const body = (input.body ?? "").trim();
   if (body.length === 0) return null;
-  const substantive = body
-    .replace(/<!--[\s\S]*?-->/g, "") // HTML comment placeholders
+  const substantive = stripHtmlComments(body) // HTML comment placeholders
     .replace(/^#{1,6}\s.*$/gm, "") // markdown heading lines
     .replace(/^\s*[-*]\s*(\[[ xX]\])?\s*$/gm, "") // empty bullets / checkboxes
     .replace(/[\s>#*_`+-]/g, "") // residual markdown punctuation + whitespace
@@ -319,6 +318,30 @@ export function buildUnfilledIssueTemplateFinding(input: IssueSlopAssessmentInpu
     action: "Fill in the template sections with the actual problem details.",
     publicText: detail,
   };
+}
+
+function stripHtmlComments(input: string): string {
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < input.length) {
+    const commentStart = input.indexOf("<!--", cursor);
+    if (commentStart === -1) {
+      output += input.slice(cursor);
+      break;
+    }
+
+    output += input.slice(cursor, commentStart);
+    const commentEnd = input.indexOf("-->", commentStart + 4);
+    if (commentEnd === -1) {
+      output += input.slice(commentStart);
+      break;
+    }
+
+    cursor = commentEnd + 3;
+  }
+
+  return output;
 }
 
 function nonNegative(value: number | undefined): number {

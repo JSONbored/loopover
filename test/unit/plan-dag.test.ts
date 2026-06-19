@@ -42,6 +42,16 @@ describe("plan DAG (#783)", () => {
     plan = applyStepResult(plan, "a", { outcome: "failed" });
     expect(plan.steps[0]).toMatchObject({ status: "failed", attempts: 2, lastError: "step failed" });
     expect(applyStepResult(buildPlanDag([{ id: "x", title: "X" }]), "x", { outcome: "skipped" }).steps[0]?.status).toBe("skipped");
+
+    const completed = applyStepResult(buildPlanDag([{ id: "done", title: "Done" }]), "done", { outcome: "completed" });
+    expect(applyStepResult(completed, "done", { outcome: "failed", error: "late failure" }).steps[0]).toMatchObject({ status: "completed", attempts: 0, lastError: null });
+
+    const skipped = applyStepResult(buildPlanDag([{ id: "skip", title: "Skip" }]), "skip", { outcome: "skipped" });
+    expect(applyStepResult(skipped, "skip", { outcome: "completed" }).steps[0]).toMatchObject({ status: "skipped", attempts: 0, lastError: null });
+
+    const failed = applyStepResult(buildPlanDag([{ id: "fail", title: "Fail" }]), "fail", { outcome: "failed", error: "boom" });
+    expect(applyStepResult(failed, "fail", { outcome: "completed" }).steps[0]).toMatchObject({ status: "failed", attempts: 1, lastError: "boom" });
+
     // unknown id → no-op
     expect(applyStepResult(buildPlanDag([{ id: "x", title: "X" }]), "nope", { outcome: "completed" }).steps[0]?.status).toBe("pending");
   });

@@ -7,7 +7,8 @@ type AgentActionExplanationInput = Pick<
 
 const BLOCKER_CATEGORY_ORDER: AgentActionBlockerCategory[] = ["branch", "account", "queue", "scoreability", "risk", "maintainer", "unknown"];
 const PUBLIC_FORBIDDEN_PATTERN =
-  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw[-_\s]?trust scores?|trust scores?|private reviewability|reviewability internals?|private scoreability|scoreability|public score estimates?|estimated scores?|score estimates?|score previews?|reward estimates?|payouts?|farming|reward optimization|private rankings?)\b/gi;
+  /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|raw[-_\s]?trust scores?|trust scores?|private reviewability|reviewability internals?|private scoreability|scoreability|projected scores?|score(?:d|s|ability)?|public score estimates?|estimated scores?|score estimates?|score previews?|reward estimates?|payouts?|farming|reward optimization|private rankings?)\b/gi;
+const PUBLIC_SCORE_DELTA_PATTERN = /\b(?:projected\s+)?score\w*(?:\s+\w+){0,4}\s+[-+]?\d+(?:\.\d+)?\s*->\s*[-+]?\d+(?:\.\d+)?\b/gi;
 const TOKEN_OR_PATH_PATTERN = /\bgithub_pat_[A-Za-z0-9_]+|\bgh[pousr]_[A-Za-z0-9_]+|\/Users\/\S+|\/home\/\S+|\/tmp\/\S+|[A-Z]:\\Users\\\S+/gi;
 
 export function withAgentActionExplanationCard(action: AgentActionRecord): AgentActionRecord {
@@ -118,6 +119,7 @@ function categorizeBlocker(blocker: string): AgentActionBlockerCategory {
 function sanitizePublicCardText(value: string): string {
   return compactText(value)
     .replace(TOKEN_OR_PATH_PATTERN, "<redacted>")
+    .replace(PUBLIC_SCORE_DELTA_PATTERN, "private context")
     .replace(PUBLIC_FORBIDDEN_PATTERN, "private context")
     .replace(/private context(?:[,\s]+private context)+/gi, "private context")
     .replace(/\s+([,.])/g, "$1")

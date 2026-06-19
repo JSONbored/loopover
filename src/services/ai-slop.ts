@@ -12,9 +12,10 @@
 //   • Fail-safe on every path: AI off / no binding / over-budget / unparseable / unsafe text → no finding.
 //   • Opt-in: only runs when the repo set `gate.slop.aiAdvisory: true` on top of `gate.slop.mode != off`.
 //
-// Free Cloudflare Workers AI only (one call, metered against the shared daily neuron budget). BYOK is a
-// possible later enhancement; slop assessment does not need a frontier model. Every public string is
-// forced through `toPublicSafe`; anything tripping the public/private boundary is dropped, not published.
+// Free Cloudflare Workers AI only (bounded retry/fallback attempts, metered against the shared daily neuron
+// budget). BYOK is a possible later enhancement; slop assessment does not need a frontier model. Every
+// public string is forced through `toPublicSafe`; anything tripping the public/private boundary is dropped,
+// not published.
 import type { SignalFinding } from "../signals/engine";
 import type { SlopBand } from "../signals/slop";
 import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
@@ -77,6 +78,9 @@ export type AiSlopResult =
 type SlopOpinion = { band: SlopBand; rationale: string; signals: string[] };
 
 const SLOP_BANDS: readonly SlopBand[] = ["clean", "low", "elevated", "high"];
+const WORKERS_SLOP_MODELS = [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]] as const;
+const WORKERS_SLOP_ATTEMPTS_PER_MODEL = 3;
+const WORKERS_SLOP_MAX_CALLS = WORKERS_SLOP_MODELS.length * WORKERS_SLOP_ATTEMPTS_PER_MODEL;
 
 function isSlopBand(value: unknown): value is SlopBand {
   return typeof value === "string" && (SLOP_BANDS as readonly string[]).includes(value);
@@ -130,15 +134,15 @@ export function slopFindingFromOpinion(opinion: SlopOpinion): SignalFinding | nu
   };
 }
 
-/** One free Workers-AI slop opinion with a reliable per-slot fallback and a 3× retry on the primary. */
+/** Free Workers-AI slop opinion with bounded retry/fallback attempts, all pre-budgeted. */
 async function runWorkersSlopOpinion(env: Env, system: string, user: string, maxTokens: number): Promise<SlopOpinion | null> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return null;
   const gatewayId = env.AI_GATEWAY_ID?.trim();
   const extra: AiGatewayOptions | undefined = gatewayId ? { gateway: { id: gatewayId } } : undefined;
   // Primary then a reliable per-slot fallback (distinct model families), 3× retry each before giving up.
-  for (const model of [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]]) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (const model of WORKERS_SLOP_MODELS) {
+    for (let attempt = 0; attempt < WORKERS_SLOP_ATTEMPTS_PER_MODEL; attempt += 1) {
       try {
         const result = await ai.run(
           model,
@@ -181,9 +185,11 @@ export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput):
   const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
   const user = buildUserPrompt(input);
   // BYOK bills the maintainer's own account, so it does NOT draw on the free neuron budget — it has a
-  // separate per-repo/day cap shared with the AI review path. Free Workers-AI = one metered call.
-  const freeCalls = input.providerKey ? 0 : 1;
-  const estimatedNeurons = freeCalls === 0 ? 0 : estimateNeurons(SLOP_SYSTEM_PROMPT.length + user.length, maxTokens, 1);
+  // separate per-repo/day cap shared with the AI review path. Free Workers-AI retry/fallback attempts are
+  // pre-budgeted at their worst case so malformed output or transient failures cannot amplify spend beyond
+  // the daily neuron budget.
+  const freeCalls = input.providerKey ? 0 : WORKERS_SLOP_MAX_CALLS;
+  const estimatedNeurons = freeCalls === 0 ? 0 : estimateNeurons(SLOP_SYSTEM_PROMPT.length + user.length, maxTokens, freeCalls);
   const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
@@ -223,7 +229,7 @@ async function record(env: Env, input: AiSlopInput, status: string, estimatedNeu
     actor: input.actor ?? null,
     route: "github_app.ai_slop",
     // `byok:<provider>` so countByokAiEventsForRepoSince (model LIKE 'byok:%') counts it toward the cap.
-    model: input.providerKey ? `byok:${input.providerKey.provider}` : BEST_REVIEW_MODELS.join("+"),
+    model: input.providerKey ? `byok:${input.providerKey.provider}` : WORKERS_SLOP_MODELS.join("+"),
     status,
     estimatedNeurons,
     detail,

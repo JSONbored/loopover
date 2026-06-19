@@ -53,6 +53,45 @@ describe("MCP output schema discovery", () => {
     }
   });
 
+
+  it("keeps draft PR body MCP text free of private scoring taxonomy", async () => {
+    const mcp = new GittensoryMcp(createTestEnv()) as unknown as {
+      analyzeLocalBranch: () => Promise<unknown>;
+      draftPrBody(input: Record<string, unknown>): Promise<{ summary: string; data: Record<string, unknown> }>;
+      toolResult(payload: { summary: string; data: Record<string, unknown> }): { content: Array<{ type: "text"; text: string }>; structuredContent: Record<string, unknown> };
+    };
+    mcp.analyzeLocalBranch = async () => ({
+      repoFullName: "octo/demo",
+      prPacket: {
+        titleSuggestion: "Fix cache refresh race",
+        bodySections: [{ heading: "Changed Paths", lines: ["- src/cache.ts (modified, +12/-3)"] }],
+        validationSummary: {
+          passed: 1,
+          failed: 0,
+          notRun: 0,
+          commands: [{ command: "npm run test:ci", status: "passed", summary: "all green" }],
+        },
+        publicSafeWarnings: [],
+      },
+      baseFreshness: {
+        status: "fresh",
+        changedFileCount: 1,
+        testFileCount: 0,
+        warnings: [],
+        recommendation: undefined,
+      },
+      manifestGuidance: { present: false, publicNextSteps: [] },
+      preflight: { linkedIssues: [42], collisions: [], reviewBurden: "low" },
+    });
+
+    const payload = await mcp.draftPrBody({});
+    const result = mcp.toolResult(payload);
+    const visibleText = result.content[0]?.text ?? "";
+    expect(visibleText).not.toMatch(/private scoreability|score preview|scenario projections|risk signals|score-gate blockers|branch eligibility gate|ranked next actions/i);
+    expect(JSON.stringify(result.structuredContent)).not.toMatch(/private scoreability|score preview|risk signals|score-gate blockers|branch eligibility gate|ranked next actions/i);
+    expect(visibleText).toContain("internal analysis context omitted");
+  });
+
   it("exposes an outputSchema on EVERY registered tool (#550)", async () => {
     const { client } = await connectTestClient();
     const { tools } = await client.listTools();

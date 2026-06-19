@@ -740,14 +740,14 @@ function decideLinkedIssueMultiplier(
   const hasSolvedByPullRequestEvidence = solvedByPullRequests.length > 0 || projectedSolvedByPullRequestValidation;
   const status = requestedStatus === "validated" && !hasSolvedByPullRequestEvidence ? (issueNumbers.length > 0 ? "raw" : "unavailable") : requestedStatus;
   const source = context?.source ?? (status === "unavailable" ? "missing" : "user_supplied");
-  const branchEligible = !(branchEligibility.required && branchEligibility.status === "ineligible");
+  const branchEligible = isConfirmedBranchEligible(branchEligibility);
   const eligible = status === "validated" && hasSolvedByPullRequestEvidence && branchEligible;
   const reason =
     branchEligible || status !== "validated"
       ? status === requestedStatus
         ? context?.reason ?? linkedIssueReason(status, source, issueNumbers, solvedByPullRequests)
         : linkedIssueReason(status, source, issueNumbers, solvedByPullRequests)
-      : "Branch eligibility is confirmed ineligible; standard issue multiplier is not applied.";
+      : branchEligibilityFailureReason(branchEligibility);
   return {
     mode,
     status,
@@ -760,6 +760,19 @@ function decideLinkedIssueMultiplier(
     reason,
     warnings: [...new Set([...linkedIssueWarnings(status), ...branchEligibility.warnings, ...(context?.warnings ?? [])])],
   };
+}
+
+function isConfirmedBranchEligible(branchEligibility: BranchEligibilityResult): boolean {
+  return !branchEligibility.required || (branchEligibility.status === "eligible" && branchEligibility.evidence === "provided" && !branchEligibility.stale);
+}
+
+function branchEligibilityFailureReason(branchEligibility: BranchEligibilityResult): string {
+  if (branchEligibility.status === "ineligible") return "Branch eligibility is confirmed ineligible; standard issue multiplier is not applied.";
+  if (branchEligibility.evidence === "missing") return "Branch eligibility evidence is missing; standard issue multiplier is not applied.";
+  if (branchEligibility.status === "unknown") return "Branch eligibility is unknown; standard issue multiplier is not applied.";
+  if (branchEligibility.stale) return "Branch eligibility evidence is stale; standard issue multiplier is not applied.";
+  if (branchEligibility.source === "user_supplied") return "Branch eligibility evidence is user-supplied; standard issue multiplier is not applied until verified metadata is available.";
+  return "Branch eligibility is not confirmed; standard issue multiplier is not applied.";
 }
 
 function withValidatedLinkedIssueScenario(input: ScorePreviewInput): ScorePreviewInput {

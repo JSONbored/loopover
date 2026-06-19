@@ -10,7 +10,7 @@ import {
   listContributorPullRequests,
   listContributorRepoStats,
   listLatestRepoGithubTotalsSnapshots,
-  listRepoPullRequestFiles,
+  listRepoPullRequestFilePaths,
   listRepositories,
   listRepoSyncSegments,
   listRepoSyncStates,
@@ -57,7 +57,7 @@ import type {
   ContributorRepoStatRecord,
   IssueRecord,
   JsonValue,
-  PullRequestFileRecord,
+  PullRequestFilePathRecord,
   PullRequestRecord,
   RepositoryRecord,
   RepoGithubTotalsSnapshotRecord,
@@ -71,6 +71,8 @@ import { nowIso } from "../utils/json";
 export const CONTRIBUTOR_DECISION_PACK_SIGNAL = "contributor-decision-pack";
 export const DECISION_PACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_OSS_EMISSION_SHARE = DEFAULT_SCORING_CONSTANTS.OSS_EMISSION_SHARE ?? 0.9;
+const DECISION_PACK_MAX_PR_FILE_PATHS = 2000;
+const DECISION_PACK_PR_FILE_PATHS_PER_REPO = 200;
 
 function resolveOssEmissionShare(constants: Record<string, number> | undefined): number {
   const value = constants?.OSS_EMISSION_SHARE;
@@ -78,6 +80,38 @@ function resolveOssEmissionShare(constants: Record<string, number> | undefined):
 }
 export const DECISION_PACK_REBUILD_DEBOUNCE_MS = 15 * 1000;
 const pendingDecisionPackRebuilds = new Map<string, Promise<boolean>>();
+
+async function loadContributorPullRequestFilePaths(
+  env: Env,
+  args: {
+    login: string;
+    profile: ContributorProfile;
+    pullRequests: PullRequestRecord[];
+    issues: IssueRecord[];
+    repoStats: ContributorRepoStatRecord[];
+    repositories: RepositoryRecord[];
+  },
+): Promise<PullRequestFilePathRecord[]> {
+  const pullNumbersByRepo = new Map<string, Set<number>>();
+  for (const pr of args.pullRequests) {
+    if (pr.authorLogin?.toLowerCase() !== args.login.toLowerCase()) continue;
+    const key = pr.repoFullName.toLowerCase();
+    const current = pullNumbersByRepo.get(key) ?? new Set<number>();
+    current.add(pr.number);
+    pullNumbersByRepo.set(key, current);
+  }
+  const files: PullRequestFilePathRecord[] = [];
+  for (const repoFullName of evidenceGraphTouchedRepoFullNames(args)) {
+    if (files.length >= DECISION_PACK_MAX_PR_FILE_PATHS) break;
+    const remaining = DECISION_PACK_MAX_PR_FILE_PATHS - files.length;
+    const repoFiles = await listRepoPullRequestFilePaths(env, repoFullName, {
+      pullNumbers: [...(pullNumbersByRepo.get(repoFullName.toLowerCase()) ?? [])],
+      limit: Math.min(DECISION_PACK_PR_FILE_PATHS_PER_REPO, remaining),
+    });
+    files.push(...repoFiles);
+  }
+  return files;
+}
 
 export type DecisionRecommendation = "pursue" | "cleanup_first" | "maintainer_lane" | "avoid_for_now" | "watch";
 export type DecisionActionKind = "cleanup_existing_prs" | "land_existing_prs" | "open_new_direct_pr" | "file_issue_discovery" | "maintainer_lane_improve_repo" | "maintainer_cut_readiness";
@@ -230,6 +264,7 @@ export type RepoRecommendationOutcomeFeedback = {
   positive: number;
   negative: number;
   merged: number;
+  rejected: number;
   closed: number;
   stale: number;
   ignored: number;
@@ -353,7 +388,7 @@ export async function loadContributorDecisionPackForServing(
   };
 }
 
-async function tryEnqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
+export async function tryEnqueueDecisionPackRebuild(env: Env, login: string): Promise<boolean> {
   const pending = pendingDecisionPackRebuilds.get(login);
   if (pending) return pending;
   const sinceIso = new Date(Date.now() - DECISION_PACK_REBUILD_DEBOUNCE_MS).toISOString();
@@ -441,18 +476,14 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
     repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName),
   );
   const profile = buildContributorProfile(login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
-  const pullRequestFiles = (
-    await Promise.all(
-      evidenceGraphTouchedRepoFullNames({
-        login,
-        profile,
-        pullRequests: contributorPullRequests,
-        issues: contributorIssues,
-        repoStats,
-        repositories,
-      }).map((repoFullName) => listRepoPullRequestFiles(env, repoFullName)),
-    )
-  ).flat();
+  const pullRequestFiles = await loadContributorPullRequestFilePaths(env, {
+    login,
+    profile,
+    pullRequests: contributorPullRequests,
+    issues: contributorIssues,
+    repoStats,
+    repositories,
+  });
   const outcomeHistory = buildContributorOutcomeHistory({
     login,
     profile,
@@ -546,7 +577,7 @@ function buildContributorDecisionPack(args: {
   contributorPullRequests: Parameters<typeof buildRoleContext>[0]["pullRequests"];
   contributorIssues: Parameters<typeof buildRoleContext>[0]["issues"];
   repoStats?: ContributorRepoStatRecord[] | undefined;
-  pullRequestFiles?: PullRequestFileRecord[] | undefined;
+  pullRequestFiles?: PullRequestFilePathRecord[] | undefined;
   gittensorSnapshot?: Awaited<ReturnType<typeof fetchGittensorContributorSnapshot>> | undefined;
   issueQualityByRepo?: Map<string, IssueQualityReport> | undefined;
   openPrMonitor: ContributorOpenPrMonitor;
@@ -1027,6 +1058,7 @@ function summarizeRecommendationOutcomeFeedback(feedback: AgentRecommendationOut
     positive: feedback.positive,
     negative: feedback.negative,
     merged: feedback.merged,
+    rejected: feedback.rejected,
     closed: feedback.closed,
     stale: feedback.stale,
     ignored: feedback.ignored,
@@ -1043,7 +1075,7 @@ function recommendationFeedbackWhyThisHelps(feedback: RepoRecommendationOutcomeF
 
 function recommendationFeedbackRiskReasons(feedback: RepoRecommendationOutcomeFeedback | undefined): string[] {
   if (!feedback || feedback.negative === 0) return [];
-  return [`Private recommendation feedback has ${feedback.negative} unresolved or negative contributor-lane outcome(s) for this repo (${feedback.closed} closed, ${feedback.stale} stale, ${feedback.ignored} ignored).`];
+  return [`Private recommendation feedback has ${feedback.negative} unresolved or negative contributor-lane outcome(s) for this repo (${feedback.rejected} rejected, ${feedback.closed} closed, ${feedback.stale} stale, ${feedback.ignored} ignored).`];
 }
 
 function recommendationOutcomePriorityAdjustment(feedback: RepoRecommendationOutcomeFeedback | undefined): number {

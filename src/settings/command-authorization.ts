@@ -17,6 +17,9 @@ export const DEFAULT_COMMAND_AUTHORIZATION_POLICY: RepositoryCommandAuthorizatio
 };
 
 const COMMAND_AUTHORIZATION_ROLES = new Set<CommandAuthorizationRole>(["maintainer", "collaborator", "pr_author", "confirmed_miner"]);
+// Roles that may remain configured on a maintainer-only command. The clamp drops only the spoofable
+// plain `pr_author` role; `confirmed_miner` survives so a detected miner can self-trigger reruns (#824).
+const MAINTAINER_COMMAND_AUTHORIZATION_ROLES = new Set<CommandAuthorizationRole>(["maintainer", "collaborator", "confirmed_miner"]);
 const MAINTAINER_ONLY_DEFAULT_COMMANDS = new Set(Object.keys(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands));
 
 export type CommandAuthorizationDecision = {
@@ -44,7 +47,7 @@ export function normalizeCommandAuthorizationPolicy(input: unknown): { policy: R
           warnings.push(`Ignored malformed command authorization key: ${command.slice(0, 64)}`);
           continue;
         }
-        commands[commandName] = normalizeRoleList(roles, defaultRoles, commandName, warnings);
+        commands[commandName] = normalizeCommandRoleList(commandName, normalizeRoleList(roles, defaultRoles, commandName, warnings), warnings);
       }
     } else {
       warnings.push("commandAuthorization.commands must be an object; using command defaults.");
@@ -127,6 +130,16 @@ export function summarizeCommandAuthorizationPolicy(policy: RepositoryCommandAut
       .map(([command, allowedRoles]) => ({ command, allowedRoles }))
       .sort((left, right) => left.command.localeCompare(right.command)),
   };
+}
+
+function normalizeCommandRoleList(commandName: string, roles: CommandAuthorizationRole[], warnings: string[]): CommandAuthorizationRole[] {
+  if (!MAINTAINER_ONLY_DEFAULT_COMMANDS.has(commandName)) return roles;
+
+  const maintainerRoles = roles.filter((role) => MAINTAINER_COMMAND_AUTHORIZATION_ROLES.has(role));
+  if (maintainerRoles.length === roles.length) return roles;
+
+  warnings.push(`Ignored author command authorization roles for maintainer-only command: ${commandName}.`);
+  return maintainerRoles.length > 0 ? dedupeRoles(maintainerRoles) : [...(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands[commandName] ?? ["maintainer", "collaborator"])];
 }
 
 function actorRoles(args: {

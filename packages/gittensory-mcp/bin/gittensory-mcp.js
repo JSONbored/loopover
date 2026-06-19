@@ -588,7 +588,7 @@ server.registerTool(
       local: result.local,
       preflight: result.analysis.preflight,
       prPacket: result.analysis.prPacket,
-      workspaceIntelligence: result.analysis.workspaceIntelligence,
+      workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence),
     });
   },
 );
@@ -1428,7 +1428,7 @@ async function runCli(args) {
   });
   const payload =
     command === "preflight"
-      ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket, workspaceIntelligence: result.analysis.workspaceIntelligence }
+      ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket, workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence) }
       : result;
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -1566,7 +1566,7 @@ function outputAgentPayload(payload, options, summary) {
 
 function writeBranchAnalysisCli(result, command) {
   const analysis = result.analysis;
-  const intelligence = analysis.workspaceIntelligence;
+  const intelligence = command === "preflight" ? publicSafeWorkspaceIntelligence(analysis.workspaceIntelligence) : analysis.workspaceIntelligence;
   process.stdout.write(`${analysis.summary}\n`);
   process.stdout.write(`Top action: ${analysis.nextActions?.[0]?.actionKind ?? "none"}\n`);
   if (analysis.nextActions?.[0]?.whyThisHelps?.length) {
@@ -1613,6 +1613,28 @@ function writeWorkspaceIntelligenceCli(intelligence) {
     for (const hint of intelligence.ciStatusHints.slice(0, 3)) process.stdout.write(`  - ${hint}\n`);
   }
   process.stdout.write(`- Rerun when: ${intelligence.rerunWhen}\n`);
+}
+
+function publicSafeWorkspaceIntelligence(intelligence) {
+  if (!intelligence) return intelligence;
+  return {
+    ...intelligence,
+    blockers: {
+      ...intelligence.blockers,
+      accountState: [],
+    },
+    rerunWhen: publicSafeRerunWhen(intelligence),
+  };
+}
+
+function publicSafeRerunWhen(intelligence) {
+  if (intelligence.baseFreshness?.status === "stale" || intelligence.baseFreshness?.status === "possibly_stale") {
+    return "Run `git fetch origin` and rerun; current diff size may be inflated by stale base state.";
+  }
+  if (intelligence.blockers?.branchQuality?.length) {
+    return "Rerun after fixing branch-quality blockers or adding explicit validation/linked-context evidence.";
+  }
+  return "Rerun after any branch, base, or PR state changes before opening/submitting.";
 }
 
 function requirePublicSafePacketMarkdown(markdown) {

@@ -198,7 +198,7 @@ function collisionClustersForPull(collisions: CollisionReport, pullNumber: numbe
 
 const ANNOTATABLE_PR_FILE_STATUSES = new Set(["added", "changed", "modified"]);
 
-function firstAddedLineFromPatch(patch: string): number | null {
+export function firstAddedLineFromPatch(patch: string): number | null {
   for (const line of patch.split("\n")) {
     const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (match?.[1]) return Math.max(1, Number.parseInt(match[1], 10));

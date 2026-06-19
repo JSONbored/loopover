@@ -6,6 +6,7 @@ import {
   buildRepositoryAdvisory,
   CHECK_RUN_ANNOTATION_LIMIT,
   evaluateGateCheck,
+  firstAddedLineFromPatch,
   formatCheckRunOutput,
   formatGateCheckOutput,
 } from "../../src/rules/advisory";
@@ -725,6 +726,38 @@ describe("advisory rules", () => {
     expect(annotations.every((entry) => entry.start_line === 11 && entry.end_line === 11)).toBe(true);
   });
 
+  it("buildCheckRunAnnotations drops a modified file whose patch has no anchorable added line", () => {
+    const advisory = {
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "public_lane",
+          title: "Configured lane",
+          severity: "info" as const,
+          detail: "Private detail",
+          publicText: "Public context for the changed file.",
+        },
+      ],
+    };
+    // additions > 0 and status "modified", but the patch has no `@@ -x +y @@` header,
+    // so firstAddedLineFromPatch returns null -> annotationLineForFile null -> file filtered out.
+    const files: PullRequestFileRecord[] = [
+      {
+        repoFullName: repo.fullName,
+        pullNumber: 42,
+        path: "src/no-header.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: { patch: "+const orphan = true;" },
+      },
+    ];
+
+    const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions: emptyCollisions(), pullNumber: 42 }, "standard");
+    expect(annotations).toEqual([]);
+  });
+
   it("buildCheckRunAnnotations stays empty for minimal detail level", () => {
     const files: PullRequestFileRecord[] = [
       { repoFullName: repo.fullName, pullNumber: 1, path: "src/x.ts", additions: 1, deletions: 0, changes: 1, payload: {} },
@@ -834,6 +867,34 @@ describe("advisory rules", () => {
 
     const { annotations } = buildCheckRunAnnotations(advisory, { files, collisions: emptyCollisions(), pullNumber: 40 }, "standard");
     expect(annotations).toEqual([]);
+  });
+});
+
+describe("firstAddedLineFromPatch", () => {
+  it("returns null for a patch with no parseable hunk header (no added line to anchor)", () => {
+    // Deletion-only body lines without any `@@ -x +y @@` header -> nothing to anchor on.
+    const patch = "-const removed = 1;\n-const alsoRemoved = 2;\n const kept = 3;";
+    expect(firstAddedLineFromPatch(patch)).toBeNull();
+  });
+
+  it("returns null for an empty patch or non-annotatable diff text", () => {
+    expect(firstAddedLineFromPatch("")).toBeNull();
+    expect(firstAddedLineFromPatch("Binary files a/x.png and b/x.png differ")).toBeNull();
+  });
+
+  it("returns the first added line for a normal added-line hunk", () => {
+    const patch = "@@ -10,0 +11,1 @@\n+const live = true;";
+    expect(firstAddedLineFromPatch(patch)).toBe(11);
+  });
+
+  it("uses the first hunk header when multiple hunks are present", () => {
+    const patch = "@@ -1,2 +5,3 @@\n+first added\n@@ -40,1 +60,2 @@\n+later added";
+    expect(firstAddedLineFromPatch(patch)).toBe(5);
+  });
+
+  it("clamps a zero-based hunk start up to line 1", () => {
+    const patch = "@@ -0,0 +0,1 @@\n+first line of a new file";
+    expect(firstAddedLineFromPatch(patch)).toBe(1);
   });
 });
 

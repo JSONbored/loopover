@@ -956,7 +956,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
-        if (settings.slopGateMode !== "off" || settings.manifestPolicyGateMode !== "off") {
+        if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
           await refreshPullRequestDetails(env, repoFullName, pr.number);
         }
         const gate = await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {

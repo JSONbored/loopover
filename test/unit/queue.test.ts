@@ -4754,10 +4754,15 @@ describe("queue processors", () => {
     });
     expect((await getPullRequest(env, "JSONbored/gittensory", 91))?.slopRisk).toBe(80); // stale score present pre-run
 
+    const refreshedFiles: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/91/files")) {
+        refreshedFiles.push(url);
+        return Response.json([{ filename: "src/helper.ts", status: "modified", additions: 5, deletions: 0, changes: 5 }]);
+      }
       if (url.includes("/commits/slopoff123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
       if (url.includes("/check-runs")) return Response.json({ id: 991 }, { status: 201 });
       return new Response("not found", { status: 404 });
@@ -4779,6 +4784,7 @@ describe("queue processors", () => {
     const cleared = await getPullRequest(env, "JSONbored/gittensory", 91);
     expect(cleared?.slopRisk).toBeNull();
     expect(cleared?.slopBand).toBeNull();
+    expect(refreshedFiles).toHaveLength(1);
   });
 
   it("overrides the Gate to neutral for THIS commit only when a real write/admin maintainer runs gate-override", async () => {

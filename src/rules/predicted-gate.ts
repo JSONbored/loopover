@@ -141,14 +141,20 @@ export function buildPredictedGateVerdict(args: {
   const pack: GatePolicyPack = gate.pack ?? "gittensor";
   const effectiveConfirmedContributor = pack === "oss-anti-slop" ? undefined : args.confirmedContributor;
 
+  const authorHistory = pullRequests.filter((pr) => pr.repoFullName === input.repoFullName && pr.authorLogin === input.contributorLogin);
+
   const evaluation = evaluateGateCheck(advisory, {
     linkedIssueGateMode: gate.linkedIssue ?? undefined,
     duplicatePrGateMode: gate.duplicates ?? undefined,
     qualityGateMode: gate.readinessMode ?? undefined,
     qualityGateMinScore: gate.readinessMinScore ?? null,
     aiReviewGateMode: gate.aiReviewMode ?? undefined,
+    mergeReadinessGateMode: gate.mergeReadiness ?? undefined,
     readinessScore: readiness.total,
     confirmedContributor: effectiveConfirmedContributor,
+    firstTimeContributorGrace: gate.firstTimeContributorGrace ?? undefined,
+    authorMergedPrCount: authorHistory.filter((pr) => pr.state === "merged" || pr.mergedAt).length,
+    authorClosedUnmergedPrCount: authorHistory.filter((pr) => pr.state === "closed" && !pr.mergedAt).length,
   });
 
   return {

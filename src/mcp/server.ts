@@ -8,6 +8,7 @@ import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from 
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
+  countPendingAgentActions,
   countOpenPullRequests,
   createPendingAgentActionIfAbsent,
   getBounty,
@@ -43,6 +44,7 @@ import {
 } from "../db/repositories";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
+import { getRepositoryCollaboratorPermission } from "../github/app";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
@@ -104,6 +106,7 @@ import {
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
+import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
@@ -197,6 +200,11 @@ const branchEligibilityShape = {
   checkedAt: z.string().optional(),
   stale: z.boolean().optional(),
 };
+
+const callerBranchEligibilitySchema = z
+  .object(branchEligibilityShape)
+  .strict()
+  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
 
 // Changed-file metadata + local validation results — shared by the local-branch analysis and the #782 local
 // scorer. METADATA ONLY (paths + line counts), never source content, so the no-upload boundary holds.
@@ -336,6 +344,11 @@ const proposeActionShape = {
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   closeComment: z.string().max(60000).optional(),
 };
+
+// GitHub permissions that imply real write access to a repo. Cached PR author_association can report
+// MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
+const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
 const proposeActionOutputSchema = {
   created: z.boolean().optional(),
   action: z
@@ -356,6 +369,20 @@ const automationStateOutputSchema = {
   actingActionClasses: z.array(z.string()).optional(),
   pendingActionCount: z.number().optional(),
 };
+
+const focusManifestInputSchema = z
+  .record(z.string(), z.unknown())
+  .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
+    message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
+  });
+
+function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maxBytes;
+  } catch {
+    return false;
+  }
+}
 
 const localBranchAnalysisShape = {
   login: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
@@ -380,8 +407,8 @@ const localBranchAnalysisShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
-  focusManifest: z.record(z.string(), z.unknown()).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
+  focusManifest: focusManifestInputSchema.optional(),
+  branchEligibility: callerBranchEligibilitySchema.optional(),
   localScorer: z
     .object({
       mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
@@ -454,7 +481,7 @@ const scorePreviewShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
+  branchEligibility: callerBranchEligibilitySchema.optional(),
 };
 
 const variantsShape = {
@@ -907,7 +934,7 @@ export class GittensoryMcp {
     server.registerTool(
       "gittensory_get_burden_forecast",
       {
-        description: "Return the cached or freshly-computed maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
+        description: "Return the cached maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
         inputSchema: ownerRepoShape,
         outputSchema: freshnessResponseOutputSchema,
       },
@@ -1520,8 +1547,20 @@ export class GittensoryMcp {
   private async requireRepoManageAccess(repoFullName: string): Promise<void> {
     if (this.identity.kind !== "session") return;
     const scope = await this.loadSessionAccessScope();
-    if (scope.operator || scope.repositoryFullNames.includes(repoFullName)) return;
-    throw new Error("Forbidden: maintainer access is required to propose an action on this repository.");
+    if (scope.operator) return;
+
+    const repo = await getRepository(this.env, repoFullName);
+    const installationId = repo?.installationId ?? null;
+    let permission: string | null = null;
+    if (installationId !== null) {
+      try {
+        permission = await getRepositoryCollaboratorPermission(this.env, installationId, repoFullName, this.identity.actor);
+      } catch {
+        permission = null;
+      }
+    }
+    if (permission && REPO_WRITE_PERMISSIONS.has(permission)) return;
+    throw new Error("Forbidden: write access is required to propose an action on this repository.");
   }
 
   // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC
@@ -1577,10 +1616,7 @@ export class GittensoryMcp {
       };
     }
     return {
-      summary:
-        response.source === "snapshot"
-          ? `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`
-          : `Gittensory burden forecast for ${fullName} (computed from cached metadata).`,
+      summary: `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`,
       data: response as unknown as Record<string, unknown>,
     };
   }
@@ -2030,10 +2066,10 @@ export class GittensoryMcp {
   private async getAutomationState(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoAccess(fullName);
-    const [repo, settings, pending] = await Promise.all([
+    const [repo, settings, pendingActionCount] = await Promise.all([
       getRepository(this.env, fullName),
       getRepositorySettings(this.env, fullName),
-      listPendingAgentActions(this.env, { repoFullName: fullName, status: "pending" }),
+      countPendingAgentActions(this.env, { repoFullName: fullName, status: "pending" }),
     ]);
     const autonomy = settings.autonomy;
     const actingActionClasses = AGENT_ACTION_CLASSES.filter((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
@@ -2041,7 +2077,7 @@ export class GittensoryMcp {
     const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(this.env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
     const permissionReadiness = resolveAgentPermissionReadiness({ autonomy, installationPermissions: installation?.permissions ?? null });
     return {
-      summary: `Agent automation for ${fullName}: mode=${mode}, ${actingActionClasses.length} acting class(es), ${pending.length} pending approval(s).`,
+      summary: `Agent automation for ${fullName}: mode=${mode}, ${actingActionClasses.length} acting class(es), ${pendingActionCount} pending approval(s).`,
       data: {
         repoFullName: fullName,
         configured: actingActionClasses.length > 0,
@@ -2052,7 +2088,7 @@ export class GittensoryMcp {
         mode,
         permissionReadiness,
         actingActionClasses,
-        pendingActionCount: pending.length,
+        pendingActionCount,
       },
     };
   }
@@ -2094,7 +2130,9 @@ export class GittensoryMcp {
       getOrCreateScoringModelSnapshot(this.env),
       getContributorEvidence(this.env, input.contributorLogin),
     ]);
-    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const preview = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     const breakdown = explainScoreBreakdown(preview);
     return {
       summary: `Private Gittensory score breakdown for ${input.contributorLogin} in ${input.repoFullName}. Highest leverage: ${breakdown.highestLeverageLever.component}.`,
@@ -2303,7 +2341,7 @@ export class GittensoryMcp {
     const draft = buildPublicPrBodyDraft(analysis);
     // Human-readable summary carries the rendered markdown body; structured draft is returned as JSON.
     return {
-      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; private scoreability excluded).\n\n${draft.markdown}`,
+      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; internal analysis context omitted).\n\n${draft.markdown}`,
       data: draft as unknown as Record<string, unknown>,
     };
   }

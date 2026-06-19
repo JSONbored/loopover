@@ -1,6 +1,6 @@
 import { sanitizePublicComment } from "../github/commands";
 
-export type RemediationPlanSource = "account_state" | "branch_quality" | "score";
+export type RemediationPlanSource = "account_state" | "branch_quality" | "submission_readiness";
 
 export type RemediationPlanItem = {
   rank: number;
@@ -35,12 +35,12 @@ export type RemediationPlanInput = {
 };
 
 const FORBIDDEN_PATTERN =
-  /\b(reward\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i;
+  /\b(reward\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability|private[-_\s]?scoreability|scoreability|score\w*|token[-_\s]?gate|token[-_\s]?score|base[-_\s]?score|multiplier|eligibility)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i;
 
 const SOURCE_PRIORITY: Record<RemediationPlanSource, number> = {
   account_state: 0,
   branch_quality: 1,
-  score: 2,
+  submission_readiness: 2,
 };
 
 function publicSafeText(value: string): string {
@@ -52,9 +52,7 @@ function publicSafeText(value: string): string {
 function publicSafeRerunCondition(condition: string): string {
   const sanitized = publicSafeText(condition);
   if (!sanitized) return "Rerun after branch, base, or PR state changes before opening or submitting.";
-  return /eligibility|multiplier|scoreability|score/i.test(sanitized)
-    ? "Refresh linked issue and base branch metadata before submission."
-    : sanitized;
+  return sanitized;
 }
 
 function normalizeKey(value: string): string {
@@ -96,7 +94,7 @@ function stepFromBlocker(source: RemediationPlanSource, blocker: string, finding
   if (sanitized) return sanitized;
   if (source === "account_state") return "Clear account or queue maturity blockers before opening more work.";
   if (source === "branch_quality") return "Resolve branch-quality findings before submission.";
-  return "Resolve scoreability blockers before relying on this preview.";
+  return "Resolve submission readiness blockers before submission.";
 }
 
 function impactFor(source: RemediationPlanSource, blocker: string): "high" | "medium" {
@@ -107,19 +105,24 @@ function impactFor(source: RemediationPlanSource, blocker: string): "high" | "me
 
 function collectItems(input: RemediationPlanInput): Array<Omit<RemediationPlanItem, "rank">> {
   const seen = new Set<string>();
+  const seenSteps = new Set<string>();
   const items: Array<Omit<RemediationPlanItem, "rank">> = [];
   const push = (source: RemediationPlanSource, blocker: string) => {
     const key = normalizeKey(blocker);
     if (!key || seen.has(key)) return;
-    const step = stepFromBlocker(source, blocker, input.localFindings);
-    if (!step) return;
+    const step = source === "submission_readiness"
+      ? "Resolve submission readiness blockers before submission."
+      : stepFromBlocker(source, blocker, input.localFindings);
+    const stepKey = normalizeKey(step);
+    if (!step || seenSteps.has(stepKey)) return;
     seen.add(key);
+    seenSteps.add(stepKey);
     const rerunCondition =
       source === "account_state"
         ? rerunForAccountBlocker(blocker, input.recommendedRerunCondition)
         : source === "branch_quality"
           ? rerunForBranchBlocker(blocker, input.recommendedRerunCondition)
-          : publicSafeRerunCondition(input.recommendedRerunCondition);
+          : "Rerun after branch, base, or PR state changes before opening or submitting.";
     items.push({
       source,
       step,
@@ -130,7 +133,7 @@ function collectItems(input: RemediationPlanInput): Array<Omit<RemediationPlanIt
 
   for (const blocker of input.accountStateBlockers) push("account_state", blocker);
   for (const blocker of input.branchQualityBlockers) push("branch_quality", blocker);
-  for (const blocker of input.scoreBlockers) push("score", blocker);
+  for (const blocker of input.scoreBlockers) push("submission_readiness", blocker);
 
   items.sort(
     (left, right) =>

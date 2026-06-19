@@ -101,6 +101,55 @@ describe("maintainer activation routes", () => {
     expect(await response.json()).toMatchObject({ repoFullName: FULL_NAME, gateCheckMode: "enabled" });
   });
 
+  it("forbids read-only repo collaborators from writing agent settings", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRepo(env, "owner", "repo", 201);
+    await upsertPullRequestFromGitHub(env, FULL_NAME, {
+      number: 8,
+      title: "docs tweak",
+      state: "open",
+      user: { login: "reader" },
+      author_association: "COLLABORATOR",
+      head: { sha: "def456", ref: "docs-2" },
+      base: { ref: "main" },
+      labels: [],
+    });
+    stubMinerFetch();
+    mockedPermission.mockResolvedValue("read");
+    const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
+    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+
+    const update = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ autonomy: { merge: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "merge" } }),
+    }, env);
+
+    expect(update.status).toBe(403);
+    expect(await update.json()).toMatchObject({ error: "insufficient_repo_permission" });
+    const persisted = await getRepositorySettings(env, FULL_NAME);
+    expect(persisted.autonomy).not.toMatchObject({ merge: "auto" });
+    expect(persisted.autoMaintain?.requireApprovals).toBe(1);
+  });
+
+  it("allows a session with GitHub write permission to update repository settings", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRepo(env, "owner", "repo", 201);
+    stubMinerFetch();
+    mockedPermission.mockResolvedValue("write");
+    const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 201 });
+    const response = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
+      method: "PUT",
+      headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ autonomy: { merge: "auto_with_approval" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" } }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ autonomy: { merge: "auto_with_approval" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" } });
+  });
+
   it("forbids a non-maintainer session from the activation preview", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "operator-admin" });

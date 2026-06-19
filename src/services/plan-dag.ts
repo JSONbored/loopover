@@ -106,6 +106,7 @@ export function markStepRunning(plan: PlanDag, stepId: string): PlanDag {
  */
 export function applyStepResult(plan: PlanDag, stepId: string, result: { outcome: "completed" | "failed" | "skipped"; error?: string | null | undefined }): PlanDag {
   return mapStep(plan, stepId, (step) => {
+    if (isDone(step.status) || step.status === "failed") return step;
     if (result.outcome === "completed") return { ...step, status: "completed", lastError: null };
     if (result.outcome === "skipped") return { ...step, status: "skipped", lastError: null };
     const attempts = step.attempts + 1;

@@ -401,6 +401,51 @@ describe("GitHub check runs", () => {
     expect(gateBody.output?.annotations).toBeUndefined();
   });
 
+  it("omits annotations when updating an existing Context check run", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let patchedBody: { output?: { annotations?: Array<{ path: string; title: string }>; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 1, check_runs: [{ id: 77, name: "Gittensory Context" }] });
+      if (url.includes("/check-runs/77")) {
+        patchedBody = JSON.parse(String(init?.body)) as { output?: { annotations?: Array<{ path: string; title: string }>; text?: string } };
+        return Response.json({ id: 77 }, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-annot-update",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#9",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 9,
+      headSha: "bbb999",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory, "standard", {
+      pullNumber: 9,
+      files: [{ repoFullName: "JSONbored/gittensory", pullNumber: 9, path: "src/api/routes.ts", additions: 4, deletions: 0, changes: 4, payload: {} }],
+      collisions: {
+        repoFullName: "JSONbored/gittensory",
+        generatedAt: "2026-06-10T00:00:00.000Z",
+        summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 },
+        clusters: [],
+      },
+    });
+
+    expect(patchedBody.output?.text).toBe("No detailed findings are published in check runs.");
+    expect(patchedBody.output?.annotations).toBeUndefined();
+  });
+
   it("publishes check run with standard detail level and includes public-safe finding text", async () => {
     const privateKey = await generatePrivateKeyPem();
     let capturedBody: { output?: { text?: string } } = {};

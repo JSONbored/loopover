@@ -133,11 +133,12 @@ describe("maintainer route authz (session-scoped)", () => {
     expect((await app.request(`${OWNED}/ai-review`, { method: "PUT", body: "{}" }, env)).status).toBe(401);
   });
 
-  it("allows the repo owner via session to write the AI-review config", async () => {
+  it("allows the repo owner (admin permission) via session to write the AI-review config", async () => {
     const app = createApp();
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET, ADMIN_GITHUB_LOGINS: "" });
     await seedRepo(env, "repo-owner", "owned-repo", 201);
     stubMinerFetch();
+    mockedPermission.mockResolvedValue("admin"); // real GitHub write access
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const res = await app.request(`${OWNED}/ai-review`, { method: "PUT", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "advisory", byok: true, provider: "anthropic" }) }, env);
     expect(res.status).toBe(200);
@@ -156,7 +157,7 @@ describe("maintainer route authz (session-scoped)", () => {
     expect(await res.json()).toMatchObject({ configured: true, provider: "anthropic", last4: "4242" });
   });
 
-  it("forbids a read-only collaborator (in scope via a PR, but no push) from writing the BYOK key", async () => {
+  it("forbids a read-only collaborator (in scope via a PR, but no push) from AI-review and BYOK key routes", async () => {
     const app = createApp();
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET, ADMIN_GITHUB_LOGINS: "" });
     await seedRepo(env, "repo-owner", "owned-repo", 201);
@@ -171,8 +172,11 @@ describe("maintainer route authz (session-scoped)", () => {
     expect(await post.json()).toMatchObject({ error: "insufficient_repo_permission" });
     // DELETE is gated the same way.
     expect((await app.request(`${OWNED}/ai-key`, { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } }, env)).status).toBe(403);
-    // The read-only collaborator can still READ the secret-free status (GET is not write-gated).
-    expect((await app.request(`${OWNED}/ai-key`, { headers: { cookie: `gittensory_session=${token}` } }, env)).status).toBe(200);
+    // GET key status and AI-review writes are also gated by real GitHub write access.
+    expect((await app.request(`${OWNED}/ai-key`, { headers: { cookie: `gittensory_session=${token}` } }, env)).status).toBe(403);
+    const review = await app.request(`${OWNED}/ai-review`, { method: "PUT", headers: json, body: JSON.stringify({ mode: "advisory", byok: false }) }, env);
+    expect(review.status).toBe(403);
+    expect(await review.json()).toMatchObject({ error: "insufficient_repo_permission" });
   });
 
   it("allows an operator to set the BYOK key without a per-repo push check", async () => {

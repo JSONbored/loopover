@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPublicPrBodyDraft, EXCLUDED_PRIVATE_PR_BODY_FIELDS, type PrBodyDraftSource } from "../../src/services/pr-body-draft";
 
-const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![:/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
+const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
 const FORBIDDEN_PUBLIC_LANGUAGE = new RegExp(
   String.raw`\b(wallet|hotkey|coldkey|mnemonic|raw trust score|raw[-_\s]?trust|trust score|payout|reward estimate|reward|farming|private reviewability|reviewability|public score estimate|scoreability|ranking)\b|${LOCAL_PATH_SOURCE}`,
   "i",
@@ -205,12 +205,37 @@ describe("buildPublicPrBodyDraft — source-upload guard", () => {
     expect(draft.markdown).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
   });
 
-  it("lists the private analysis fields it deliberately excludes", () => {
+  it("redacts colon-prefixed Unix paths from validation metadata", () => {
+    const draft = buildPublicPrBodyDraft(
+      source({
+        prPacket: {
+          ...source().prPacket,
+          validationSummary: {
+            passed: 3,
+            failed: 0,
+            notRun: 0,
+            commands: [
+              { command: "npm test", status: "passed", summary: "cwd:/home/alice/private-repo" },
+              { command: "npm run lint", status: "passed", summary: "logs:/tmp/gittensory" },
+              { command: "npm run build", status: "passed", summary: "root:/Users/alice/work" },
+            ],
+          },
+        },
+      }),
+    );
+
+    const blob = JSON.stringify(draft);
+    expect(blob).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+    expect(blob).not.toMatch(/alice|private-repo|gittensory/);
+    expect(section(draft, "Tests run").join(" ")).toContain("[local path]");
+  });
+
+  it("lists excluded internal analysis categories using public-safe labels", () => {
     const draft = buildPublicPrBodyDraft(source());
     expect(draft.excludedPrivateFields).toEqual([...EXCLUDED_PRIVATE_PR_BODY_FIELDS]);
     // The exclusion list itself stays public-safe (no private/financial terms).
     expect(JSON.stringify(draft.excludedPrivateFields)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
-    expect(draft.excludedPrivateFields.join(" ")).toMatch(/score|risk|eligibility/i);
+    expect(draft.excludedPrivateFields.join(" ")).toMatch(/analysis|signals|readiness|actions/i);
   });
 });
 

@@ -154,11 +154,12 @@ describe("focus-manifest route auth", () => {
     expect(ownRepoGet.status).toBe(200);
   });
 
-  it("allows a same-repo owner session to POST focus-manifest refresh", async () => {
+  it("allows a same-repo owner session with GitHub write permission to POST focus-manifest refresh", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     await seedRegisteredInstalledRepo(env, 202, "other-owner", "other-repo");
+    mockedPermission.mockResolvedValue("write");
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
 
@@ -171,6 +172,29 @@ describe("focus-manifest route auth", () => {
     const crossRepo = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(crossRepo.status).toBe(403);
     await expect(crossRepo.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+  });
+
+  it("rejects focus-manifest refresh from sessions without live GitHub write permission", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", {
+      number: 6,
+      title: "manifest docs",
+      state: "open",
+      user: { login: "reader" },
+      author_association: "COLLABORATOR",
+      head: { sha: "def456", ref: "docs" },
+      base: { ref: "main" },
+      labels: [],
+    });
+    mockedPermission.mockResolvedValue("read");
+    const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
+
+    const response = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${token}` } }, env);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "insufficient_repo_permission" });
   });
 
   it("allows operator sessions to access any repo focus manifest", async () => {

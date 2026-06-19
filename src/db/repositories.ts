@@ -129,6 +129,7 @@ import type {
   ProductUsageSurface,
   ProductUsageSurfaceActivationFunnel,
   ProductUsageSurfaceRetention,
+  PullRequestFilePathRecord,
   PullRequestFileRecord,
   PullRequestDetailSyncStateRecord,
   PullRequestRecord,
@@ -2583,6 +2584,27 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
   return rows.map(toPullRequestRecordFromRow);
 }
 
+export async function getRepoAuthorPullRequestHistory(env: Env, fullName: string, login: string, excludeNumber?: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({
+      mergedPrCount: sql<number>`sum(case when ${pullRequests.mergedAt} is not null or ${pullRequests.state} = 'merged' then 1 else 0 end)`,
+      closedUnmergedPrCount: sql<number>`sum(case when ${pullRequests.state} = 'closed' and ${pullRequests.mergedAt} is null then 1 else 0 end)`,
+    })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repoFullName, fullName),
+        loginMatches(pullRequests.authorLogin, login),
+        excludeNumber === undefined ? undefined : not(eq(pullRequests.number, excludeNumber)),
+      ),
+    );
+  return {
+    mergedPrCount: Number(row?.mergedPrCount ?? 0),
+    closedUnmergedPrCount: Number(row?.closedUnmergedPrCount ?? 0),
+  };
+}
+
 export async function listContributorPullRequests(env: Env, login: string): Promise<PullRequestRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(pullRequests).where(loginMatches(pullRequests.authorLogin, login)).limit(1000);
@@ -2626,6 +2648,11 @@ export async function upsertPullRequestFile(env: Env, file: PullRequestFileRecor
     });
 }
 
+export async function deletePullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<void> {
+  const db = getDb(env.DB);
+  await db.delete(pullRequestFiles).where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
+}
+
 export async function listPullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<PullRequestFileRecord[]> {
   const db = getDb(env.DB);
   const rows = await db
@@ -2634,6 +2661,28 @@ export async function listPullRequestFiles(env: Env, fullName: string, pullNumbe
     .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)))
     .limit(500);
   return rows.map(toPullRequestFileRecord);
+}
+
+export async function listRepoPullRequestFilePaths(
+  env: Env,
+  fullName: string,
+  options: { pullNumbers?: number[] | undefined; limit?: number | undefined } = {},
+): Promise<PullRequestFilePathRecord[]> {
+  const db = getDb(env.DB);
+  const pullNumbers = [...new Set(options.pullNumbers ?? [])].filter((number) => Number.isInteger(number) && number > 0);
+  if (options.pullNumbers && pullNumbers.length === 0) return [];
+  const where = pullNumbers.length > 0
+    ? and(eq(pullRequestFiles.repoFullName, fullName), inArray(pullRequestFiles.pullNumber, pullNumbers))
+    : eq(pullRequestFiles.repoFullName, fullName);
+  return db
+    .select({
+      repoFullName: pullRequestFiles.repoFullName,
+      pullNumber: pullRequestFiles.pullNumber,
+      path: pullRequestFiles.path,
+    })
+    .from(pullRequestFiles)
+    .where(where)
+    .limit(Math.max(0, Math.min(options.limit ?? 500, 500)));
 }
 
 export async function listRepoPullRequestFiles(env: Env, fullName: string): Promise<PullRequestFileRecord[]> {
@@ -3206,11 +3255,20 @@ export async function getAgentRecommendationOutcome(env: Env, actionId: string):
 
 export async function listAgentRecommendationOutcomes(
   env: Env,
-  options: { actorLogin?: string; windowDays?: number; now?: string; limit?: number } = {},
+  options: { actorLogin?: string; repoFullName?: string; windowDays?: number; now?: string; limit?: number } = {},
 ): Promise<AgentRecommendationOutcomeRecord[]> {
   const limit = clampInteger(options.limit ?? 500, 1, 5000);
   const conditions = [];
   if (options.actorLogin) conditions.push(eq(agentRecommendationOutcomes.actorLogin, options.actorLogin));
+  if (options.repoFullName) {
+    const repoFullName = options.repoFullName.toLowerCase();
+    conditions.push(
+      or(
+        sql`lower(${agentRecommendationOutcomes.outcomeRepoFullName}) = ${repoFullName}`,
+        sql`lower(${agentRecommendationOutcomes.targetRepoFullName}) = ${repoFullName}`,
+      ),
+    );
+  }
   if (options.windowDays !== undefined) {
     const windowDays = clampInteger(options.windowDays, 1, 365);
     const now = options.now ?? nowIso();
@@ -3318,14 +3376,19 @@ export async function createPendingAgentActionIfAbsent(
   return { action: toAgentPendingActionRecord(existing), created: false };
 }
 
+function pendingAgentActionConditions(options: { repoFullName?: string; status?: AgentPendingActionStatus } = {}): SQL[] {
+  const conditions = [];
+  if (options.repoFullName) conditions.push(eq(agentPendingActions.repoFullName, options.repoFullName));
+  if (options.status) conditions.push(eq(agentPendingActions.status, options.status));
+  return conditions;
+}
+
 export async function listPendingAgentActions(
   env: Env,
   options: { repoFullName?: string; status?: AgentPendingActionStatus; limit?: number } = {},
 ): Promise<AgentPendingActionRecord[]> {
   const limit = clampInteger(options.limit ?? 200, 1, 2000);
-  const conditions = [];
-  if (options.repoFullName) conditions.push(eq(agentPendingActions.repoFullName, options.repoFullName));
-  if (options.status) conditions.push(eq(agentPendingActions.status, options.status));
+  const conditions = pendingAgentActionConditions(options);
   const rows = await getDb(env.DB)
     .select()
     .from(agentPendingActions)
@@ -3333,6 +3396,18 @@ export async function listPendingAgentActions(
     .orderBy(desc(agentPendingActions.createdAt), agentPendingActions.id)
     .limit(limit);
   return rows.map(toAgentPendingActionRecord);
+}
+
+export async function countPendingAgentActions(
+  env: Env,
+  options: { repoFullName?: string; status?: AgentPendingActionStatus } = {},
+): Promise<number> {
+  const conditions = pendingAgentActionConditions(options);
+  const [row] = await getDb(env.DB)
+    .select({ count: sql<number>`count(*)` })
+    .from(agentPendingActions)
+    .where(conditions.length === 0 ? undefined : and(...conditions));
+  return Number(row?.count ?? 0);
 }
 
 export async function getPendingAgentAction(env: Env, id: string): Promise<AgentPendingActionRecord | null> {
@@ -3792,15 +3867,15 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
 }
 
 /**
- * Persist the latest deterministic slop assessment onto an existing cached PR row. Kept separate from the
- * GitHub-sync upsert (whose SET clause never touches these columns) so a later sync cannot clobber the
- * score. A no-op when the PR row does not exist yet — the sync upsert creates it first.
+ * Persist or clear the latest deterministic slop assessment on an existing cached PR row. Kept separate
+ * from the GitHub-sync upsert (whose SET clause never touches these columns) so a later sync cannot
+ * clobber the score. A no-op when the PR row does not exist yet — the sync upsert creates it first.
  */
 export async function updatePullRequestSlopAssessment(
   env: Env,
   repoFullName: string,
   pullNumber: number,
-  assessment: { slopRisk: number; slopBand: string },
+  assessment: { slopRisk: number | null; slopBand: string | null },
 ): Promise<void> {
   const db = getDb(env.DB);
   await db

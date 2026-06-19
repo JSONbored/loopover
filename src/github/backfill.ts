@@ -1,9 +1,11 @@
 import {
   getRepositorySettings,
   getRepository,
+  getPullRequest,
   countOpenIssues,
   countOpenPullRequests,
   countRecentMergedPullRequests,
+  deletePullRequestFiles,
   countRepoLabels,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -45,6 +47,7 @@ import type {
   InstallationHealthRecord,
   InstallationRecord,
   JsonValue,
+  PullRequestDetailSyncStateRecord,
   PullRequestRecord,
   RecentMergedPullRequestRecord,
   RepoGithubTotalsSnapshotRecord,
@@ -558,6 +561,34 @@ export async function backfillOpenPullRequestDetails(
     ...(nextCursor === undefined ? {} : { nextCursor }),
     warnings,
   };
+}
+
+export async function refreshPullRequestDetails(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+): Promise<{ ok: true; repoFullName: string; pullNumber: number; status: PullRequestDetailSyncStateRecord["status"]; warnings: string[] }> {
+  const [repo, pr] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, pullNumber)]);
+  if (!repo || !pr) {
+    return { ok: true, repoFullName, pullNumber, status: "partial", warnings: ["Repository or pull request was not found."] };
+  }
+  const token = await tokenForRepo(env, repo);
+  const warnings: string[] = [];
+  await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
+  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings);
+  const syncedAt = nowIso();
+  const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber,
+    status,
+    filesSyncedAt: syncedAt,
+    reviewsSyncedAt: syncedAt,
+    checksSyncedAt: syncedAt,
+    lastSyncedAt: syncedAt,
+    errorSummary: warnings.at(-1),
+  });
+  return { ok: true, repoFullName, pullNumber, status, warnings };
 }
 
 export async function refreshContributorActivity(
@@ -1698,20 +1729,25 @@ async function fetchAndStorePullRequestDetails(
   token: string | undefined,
   warnings: string[],
 ): Promise<void> {
+  const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
+  const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
 
-  for (const file of files) {
-    await upsertPullRequestFile(env, {
-      repoFullName,
-      pullNumber: pr.number,
-      path: file.filename,
-      status: file.status,
-      additions: file.additions ?? 0,
-      deletions: file.deletions ?? 0,
-      changes: file.changes ?? 0,
-      previousFilename: file.previous_filename,
-      payload: file as unknown as Record<string, JsonValue>,
-    });
+  if (!fileSyncFailed) {
+    await deletePullRequestFiles(env, repoFullName, pr.number);
+    for (const file of files) {
+      await upsertPullRequestFile(env, {
+        repoFullName,
+        pullNumber: pr.number,
+        path: file.filename,
+        status: file.status,
+        additions: file.additions ?? 0,
+        deletions: file.deletions ?? 0,
+        changes: file.changes ?? 0,
+        previousFilename: file.previous_filename,
+        payload: file as unknown as Record<string, JsonValue>,
+      });
+    }
   }
   for (const review of reviews) {
     await upsertPullRequestReview(env, {

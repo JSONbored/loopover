@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
 
 const DRAFTS_PATH = "/v1/repos/JSONbored/gittensory/contributor-issue-drafts/generate";
 const OWNED_REPO_PATH = "/v1/repos/repo-owner/owned-repo/contributor-issue-drafts/generate";
+
+vi.mock("../../src/github/app", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/app")>()),
+  getRepositoryCollaboratorPermission: vi.fn(),
+}));
+const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
 function apiHeaders(env: Env): Record<string, string> {
   return {
@@ -35,6 +42,16 @@ async function seedRegisteredInstalledRepo(env: Env, installationId: number, own
 }
 
 describe("contributor-issue-drafts route auth", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() => mockedPermission.mockReset());
+
+  function stubMinerFetch() {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("gittensor.io")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+  }
+
   it("rejects unauthenticated access", async () => {
     const app = createApp();
     const env = createTestEnv();
@@ -76,6 +93,39 @@ describe("contributor-issue-drafts route auth", () => {
       dryRun: true,
       drafts: expect.any(Array),
     });
+  });
+
+  it("requires live GitHub write permission before session issue creation", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "", GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "service-token" });
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", {
+      number: 5,
+      title: "cached collaborator scope",
+      state: "open",
+      user: { login: "reader" },
+      author_association: "COLLABORATOR",
+      head: { sha: "a1", ref: "f" },
+      base: { ref: "main" },
+      labels: [],
+    });
+    stubMinerFetch();
+    mockedPermission.mockResolvedValue("read");
+    const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
+
+    const response = await app.request(
+      OWNED_REPO_PATH,
+      {
+        method: "POST",
+        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ dryRun: false, create: true, limit: 1 }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "insufficient_repo_permission" });
+    expect(mockedPermission).toHaveBeenCalledWith(env, 201, "repo-owner/owned-repo", "reader");
   });
 
   it("rejects cross-repo owner sessions with forbidden_repo", async () => {

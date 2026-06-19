@@ -196,8 +196,28 @@ function collisionClustersForPull(collisions: CollisionReport, pullNumber: numbe
   );
 }
 
-function annotationLineForFile(file: PullRequestFileRecord): number {
-  return Math.max(1, file.additions > 0 ? 1 : 1);
+const ANNOTATABLE_PR_FILE_STATUSES = new Set(["added", "changed", "modified"]);
+
+export function firstAddedLineFromPatch(patch: string): number | null {
+  for (const line of patch.split("\n")) {
+    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (match?.[1]) return Math.max(1, Number.parseInt(match[1], 10));
+  }
+  return null;
+}
+
+function annotationLineForFile(file: PullRequestFileRecord): number | null {
+  if (file.additions <= 0) return null;
+  const status = file.status?.toLowerCase();
+  if (status && !ANNOTATABLE_PR_FILE_STATUSES.has(status)) return null;
+  const patch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+  const addedLine = firstAddedLineFromPatch(patch);
+  if (addedLine !== null) return addedLine;
+  return status === "added" || !status ? 1 : null;
+}
+
+function annotatablePullRequestFiles(files: PullRequestFileRecord[]): PullRequestFileRecord[] {
+  return files.filter((file) => file.path && isCodePath(file.path) && annotationLineForFile(file) !== null);
 }
 
 export function buildCheckRunAnnotations(
@@ -235,13 +255,14 @@ export function buildCheckRunAnnotations(
     });
   };
 
-  const codeFiles = annotationContext.files.filter((file) => file.path && isCodePath(file.path) && !isTestPath(file.path));
-  const testFiles = annotationContext.files.filter((file) => file.path && isTestPath(file.path));
+  const annotatableFiles = annotatablePullRequestFiles(annotationContext.files);
+  const codeFiles = annotatableFiles.filter((file) => !isTestPath(file.path));
+  const testFiles = annotatableFiles.filter((file) => isTestPath(file.path));
   if (codeFiles.length > 0 && testFiles.length === 0) {
     for (const file of codeFiles) {
       addCandidate(
         file.path,
-        annotationLineForFile(file),
+        annotationLineForFile(file) ?? 1,
         "warning",
         "Missing test evidence",
         "Code changed without an obvious test file in this PR. Add focused tests or explain why existing coverage is sufficient.",
@@ -251,19 +272,19 @@ export function buildCheckRunAnnotations(
 
   for (const cluster of collisionClustersForPull(annotationContext.collisions, annotationContext.pullNumber)) {
     const level: CheckRunAnnotation["annotation_level"] = cluster.risk === "high" ? "warning" : "notice";
-    for (const file of annotationContext.files) {
-      addCandidate(file.path, annotationLineForFile(file), level, "Possible duplicate overlap", cluster.reason);
+    for (const file of annotatableFiles) {
+      addCandidate(file.path, annotationLineForFile(file) ?? 1, level, "Possible duplicate overlap", cluster.reason);
     }
   }
 
-  const changedPaths = annotationContext.files.map((file) => file.path).filter(Boolean);
+  const changedPaths = annotatableFiles.map((file) => file.path);
   for (const finding of advisoryResult.findings) {
     if (!finding.publicText) continue;
     const targets = changedPaths.length > 0 ? changedPaths : [];
     for (const path of targets) {
       addCandidate(
         path,
-        1,
+        annotationLineForFile(annotatableFiles.find((file) => file.path === path)!) ?? 1,
         severityToAnnotationLevel(finding.severity),
         finding.title,
         finding.publicText,

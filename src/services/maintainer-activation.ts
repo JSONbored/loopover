@@ -58,7 +58,7 @@ export function buildMaintainerActivationPreview(args: {
   const samples: MaintainerActivationSample[] = recent.map((pr) => {
     const advisory = buildPullRequestAdvisory(args.repo, pr, {
       otherOpenPullRequests: args.pullRequests.filter((other) => other.number !== pr.number),
-      requireLinkedIssue: true,
+      requireLinkedIssue: args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off",
     });
     for (const finding of advisory.findings) codeCounts.set(finding.code, (codeCounts.get(finding.code) ?? 0) + 1);
     return {

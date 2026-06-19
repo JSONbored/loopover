@@ -527,6 +527,11 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
+  // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
+  // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
+  if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {
+    effective.linkedIssueGateMode = "block";
+  }
   return effective;
 }
 

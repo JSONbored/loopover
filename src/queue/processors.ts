@@ -143,8 +143,9 @@ import {
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
+import { buildFocusManifestGuidance } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildFocusManifestGuidance, resolveEffectiveSettings } from "../signals/focus-manifest";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
 import type { AdvisoryFinding, ContributorEvidenceRecord, DetectedNotificationEvent, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
@@ -1064,16 +1065,6 @@ export function gateCheckPolicy(
     slopRisk: slopRisk ?? null,
     confirmedContributor: confirmedContributorForPack,
   };
-}
-
-/**
- * Effective repository settings for webhook handling: the DB-backed settings overlaid with the repo's
- * `.gittensory.yml` (config-as-code). This single resolver is why EVERYTHING — gate on/off, all blocker
- * modes, comments, labels, surface, audience — is controllable from the repo's config file.
- */
-async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
-  const [dbSettings, manifest] = await Promise.all([getRepositorySettings(env, repoFullName), loadRepoFocusManifest(env, repoFullName)]);
-  return resolveEffectiveSettings(dbSettings, manifest);
 }
 
 /** Build a bounded unified-diff string from cached PR files for the AI reviewer. Caps total size so a

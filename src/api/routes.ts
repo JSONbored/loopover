@@ -221,6 +221,7 @@ import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy } from "../signals/focus-manifest";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
@@ -2174,7 +2175,7 @@ export function createApp() {
       if (unauthorized) return unauthorized;
     }
     const [settings, issues, pullRequests] = await Promise.all([
-      getRepositorySettings(c.env, fullName),
+      resolveRepositorySettings(c.env, fullName),
       listIssues(c.env, fullName),
       listPullRequests(c.env, fullName),
     ]);

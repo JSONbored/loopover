@@ -1549,7 +1549,10 @@ async function maybePublishPrPublicSurface(
           targetKey: `${repoFullName}#${pr.number}`,
           outcome: "completed",
           metadata: { deliveryId: webhook.deliveryId, repoFullName },
-        }).catch(() => undefined);
+        }).catch(() => {
+          /* v8 ignore next -- best-effort: the posted audit is advisory; a D1 write failure is swallowed so it never aborts the webhook. */
+          return undefined;
+        });
       }
     } catch (error) {
       await recordAuditEvent(env, {
@@ -1559,7 +1562,10 @@ async function maybePublishPrPublicSurface(
         outcome: "error",
         detail: errorMessage(error),
         metadata: { deliveryId: webhook.deliveryId, repoFullName },
-      }).catch(() => undefined);
+      }).catch(() => {
+        /* v8 ignore next -- best-effort: the failed audit is advisory; a D1 write failure is swallowed so it never aborts the webhook. */
+        return undefined;
+      });
     }
   }
 

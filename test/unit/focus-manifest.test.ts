@@ -703,6 +703,28 @@ describe("parseFocusManifest gate config", () => {
     expect(bad.gate.present).toBe(false);
   });
 
+  it("parses gate.newcomerGuide + settings.newcomerGuideMode, round-trips, resolves, and warns on bad values (#803)", () => {
+    // gate.newcomerGuide parses, round-trips through gateConfigToJson, and resolves onto effective settings.
+    const m = parseFocusManifest({ gate: { newcomerGuide: "enabled" } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.newcomerGuide).toBe("enabled");
+    expect(gateConfigToJson(m.gate)).toMatchObject({ newcomerGuide: "enabled" });
+    const eff = resolveEffectiveSettings({ newcomerGuideMode: "off" } as RepositorySettings, m);
+    expect(eff.newcomerGuideMode).toBe("enabled");
+    // A bad value nulls out, marks the gate not-present, and warns.
+    const bad = parseFocusManifest({ gate: { newcomerGuide: "always" } });
+    expect(bad.gate.newcomerGuide).toBeNull();
+    expect(bad.gate.present).toBe(false);
+    expect(bad.warnings.some((w) => w.includes("gate.newcomerGuide"))).toBe(true);
+
+    // settings.newcomerGuideMode override parses, and an invalid value is dropped with a warning.
+    const s = parseFocusManifest({ settings: { newcomerGuideMode: "enabled" } });
+    expect(s.settings.newcomerGuideMode).toBe("enabled");
+    const sBad = parseFocusManifest({ settings: { newcomerGuideMode: "loud" } });
+    expect(sBad.settings.newcomerGuideMode).toBeUndefined();
+    expect(sBad.warnings.some((w) => /settings\.newcomerGuideMode/.test(w))).toBe(true);
+  });
+
   it("parses gate.manifestPolicy, round-trips it through gateConfigToJson, and warns + nulls on a bad value (#555)", () => {
     const m = parseFocusManifest({ gate: { manifestPolicy: "block" } });
     expect(m.gate.present).toBe(true);

@@ -861,6 +861,163 @@ describe("queue processors", () => {
     expect(calls).toEqual({ minerList: 1, gateChecks: 2 });
   });
 
+  it("posts the advisory newcomer guide for a first-time contributor when newcomerGuideMode is enabled (#803)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "block",
+      requireLinkedIssue: true,
+      newcomerGuideMode: "enabled",
+    });
+    const guidePosts: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/guide123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && (init?.method ?? "GET") === "POST") return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") return Response.json({ id: 900 });
+      if (url.includes("/issues/42/comments") && (init?.method ?? "GET") === "GET") return Response.json([]);
+      if (url.includes("/issues/42/comments") && init?.method === "POST") {
+        guidePosts.push(JSON.parse(String(init.body)).body);
+        return Response.json({ id: 777, html_url: "https://github.com/comment/777" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "newcomer-guide",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 42, title: "First contribution", state: "open", user: { login: "newcomer" }, head: { sha: "guide123" }, labels: [], body: "Hi" },
+      },
+    });
+
+    // Fires independently of commentMode (off here); first-time contributor (0 merged PRs).
+    expect(guidePosts.some((body) => body.includes("<!-- gittensory-newcomer-guide:v1 -->"))).toBe(true);
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.newcomer_guide_posted").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed");
+  });
+
+  it("records a failed audit (never aborting the gate) when posting the newcomer guide throws (#803)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "block",
+      requireLinkedIssue: true,
+      newcomerGuideMode: "enabled",
+    });
+    let gateChecks = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/guide123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && (init?.method ?? "GET") === "POST") {
+        gateChecks += 1;
+        return Response.json({ id: 900 }, { status: 201 });
+      }
+      if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") {
+        gateChecks += 1;
+        return Response.json({ id: 900 });
+      }
+      if (url.includes("/issues/42/comments") && (init?.method ?? "GET") === "GET") return Response.json([]);
+      if (url.includes("/issues/42/comments") && init?.method === "POST") return new Response("boom", { status: 500 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "newcomer-guide-failed",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 42, title: "First contribution", state: "open", user: { login: "newcomer" }, head: { sha: "guide123" }, labels: [], body: "Hi" },
+      },
+    });
+
+    // The guide failure is best-effort: the gate still finalized (both check-run calls).
+    expect(gateChecks).toBe(2);
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.newcomer_guide_failed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("error");
+    expect(audit?.detail).toBeTruthy();
+  });
+
+  it("skips the newcomer guide for a non-newcomer (author has a merged PR) even when newcomerGuideMode is enabled (#803)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "block",
+      requireLinkedIssue: true,
+      newcomerGuideMode: "enabled",
+    });
+    // Seed a previously-merged PR by the same author → mergedPrCount = 1 → NOT a newcomer.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 41, title: "Old merged PR", state: "closed", merged_at: "2026-05-20T00:00:00Z", user: { login: "newcomer" }, head: { sha: "old41" }, labels: [], body: "Closes #1" });
+    const guidePosts: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/guide123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && (init?.method ?? "GET") === "POST") return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") return Response.json({ id: 900 });
+      if (url.includes("/issues/42/comments") && init?.method === "POST") guidePosts.push(JSON.parse(String(init.body)).body);
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "newcomer-guide-non-newcomer",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 42, title: "Follow-up PR", state: "open", user: { login: "newcomer" }, head: { sha: "guide123" }, labels: [], body: "Hi" },
+      },
+    });
+
+    expect(guidePosts).toEqual([]);
+    const count = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.newcomer_guide_posted").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
   it("auto-maintain (#778): a blocking gate on an agent-configured repo records label + request-changes actions (dry-run)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

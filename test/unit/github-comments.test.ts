@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOrUpdatePrIntelligenceComment, PR_INTELLIGENCE_COMMENT_MARKER } from "../../src/github/comments";
+import { createOrUpdateNewcomerGuideComment, createOrUpdatePrIntelligenceComment, NEWCOMER_GUIDE_COMMENT_MARKER, PR_INTELLIGENCE_COMMENT_MARKER } from "../../src/github/comments";
 import { createTestEnv } from "../helpers/d1";
 
 describe("GitHub PR intelligence comments", () => {
@@ -162,6 +162,34 @@ describe("GitHub PR intelligence comments", () => {
 
   it("rejects invalid repository names before calling GitHub", async () => {
     await expect(createOrUpdatePrIntelligenceComment(createTestEnv(), 123, "invalid", 12, "body")).rejects.toThrow(/Invalid repository full name/);
+  });
+
+  it("posts a newcomer-guide comment under its own marker (#803)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") return Response.json([]);
+      if (url.includes("/issues/12/comments") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { body: string };
+        expect(body.body).toContain(NEWCOMER_GUIDE_COMMENT_MARKER);
+        return Response.json({ id: 303, html_url: "https://github.com/comment/303" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdateNewcomerGuideComment(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      12,
+      `${NEWCOMER_GUIDE_COMMENT_MARKER}\nwelcome`,
+    );
+
+    expect(result?.id).toBe(303);
+    expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(true);
   });
 });
 

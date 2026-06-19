@@ -280,6 +280,13 @@ describe("data spine repositories", () => {
     expect((await getRepositorySettings(env, "owner/saferepo")).agentPaused).toBe(false); // update persists
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ agentPaused: false, agentDryRun: false }); // defaults
     expect(updated.slopAiAdvisory).toBe(false);
+    // #803 newcomerGuideMode round-trips (enabled + off, update-persisted) and defaults to off.
+    await upsertRepositorySettings(env, { repoFullName: "owner/newcomerrepo", newcomerGuideMode: "enabled" });
+    expect((await getRepositorySettings(env, "owner/newcomerrepo")).newcomerGuideMode).toBe("enabled");
+    await upsertRepositorySettings(env, { repoFullName: "owner/newcomerrepo", newcomerGuideMode: "off" });
+    expect((await getRepositorySettings(env, "owner/newcomerrepo")).newcomerGuideMode).toBe("off");
+    expect((await getRepositorySettings(env, "owner/defaultpack")).newcomerGuideMode).toBe("off");
+    expect((await getRepositorySettings(env, "missing/repo")).newcomerGuideMode).toBe("off");
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();
     expect(await getIssue(env, "owner/repo", 404)).toBeNull();

@@ -101,8 +101,10 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
 
   it("detects the active model from fetched constants before default fallback constants", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    const fetchedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      fetchedUrls.push(url);
       if (url.includes("constants.py")) {
         return new Response("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
       }
@@ -118,6 +120,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(refreshed.constants.MAX_CONTRIBUTION_BONUS).toBe(5);
     expect(refreshed.constants.SRC_TOK_SATURATION_SCALE).toBe(58);
     expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
+    expect(fetchedUrls).toContain("https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/constants.py");
   });
 
   it("warns when fetched constants do not identify a known active model", async () => {
@@ -151,8 +154,10 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",
       GITTENSOR_UPSTREAM_REF: "staging",
     });
+    const fetchedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      fetchedUrls.push(url);
       if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nNOVELTY_BONUS_SCALAR = 3\n");
       if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
       return new Response("not found", { status: 404 });
@@ -160,6 +165,8 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
 
     const refreshed = await refreshScoringModelSnapshot(env);
 
+    expect(refreshed.sourceUrl).toBe("https://raw.githubusercontent.com/custom/upstream/staging/gittensor/constants.py");
+    expect(fetchedUrls).toContain("https://raw.githubusercontent.com/custom/upstream/staging/gittensor/constants.py");
     expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*NOVELTY_BONUS_SCALAR/);
     expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] });
     const fingerprint = await unmodeledScoringConstantsFingerprint();

@@ -53,7 +53,7 @@ export const EXCLUDED_PRIVATE_PR_BODY_FIELDS = [
 // (e.g. a bare "reward"/"score"/"ranking"); scrubbed to a neutral phrase as defense-in-depth.
 // The term vocabulary is the canonical PUBLIC_UNSAFE_TERMS (#542) so this surface cannot drift it.
 const RESIDUAL_PRIVATE_TERMS = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
-const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![:/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
+const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
 const LOCAL_PATH_PATTERN = new RegExp(LOCAL_PATH_SOURCE, "g");
 // Final guard used to drop anything that still looks unsafe after scrubbing. Same canonical terms, plus this
 // surface's richer local-path matcher.

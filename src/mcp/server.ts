@@ -43,6 +43,7 @@ import {
 } from "../db/repositories";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
+import { getRepositoryCollaboratorPermission } from "../github/app";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
@@ -198,6 +199,11 @@ const branchEligibilityShape = {
   stale: z.boolean().optional(),
 };
 
+const callerBranchEligibilitySchema = z
+  .object(branchEligibilityShape)
+  .strict()
+  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
+
 // Changed-file metadata + local validation results — shared by the local-branch analysis and the #782 local
 // scorer. METADATA ONLY (paths + line counts), never source content, so the no-upload boundary holds.
 const changedFileSchema = z
@@ -336,6 +342,11 @@ const proposeActionShape = {
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   closeComment: z.string().max(60000).optional(),
 };
+
+// GitHub permissions that imply real write access to a repo. Cached PR author_association can report
+// MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
+const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
 const proposeActionOutputSchema = {
   created: z.boolean().optional(),
   action: z
@@ -381,7 +392,7 @@ const localBranchAnalysisShape = {
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
   focusManifest: z.record(z.string(), z.unknown()).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
+  branchEligibility: callerBranchEligibilitySchema.optional(),
   localScorer: z
     .object({
       mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
@@ -454,7 +465,7 @@ const scorePreviewShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
+  branchEligibility: callerBranchEligibilitySchema.optional(),
 };
 
 const variantsShape = {
@@ -907,7 +918,7 @@ export class GittensoryMcp {
     server.registerTool(
       "gittensory_get_burden_forecast",
       {
-        description: "Return the cached or freshly-computed maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
+        description: "Return the cached maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
         inputSchema: ownerRepoShape,
         outputSchema: freshnessResponseOutputSchema,
       },
@@ -1520,8 +1531,20 @@ export class GittensoryMcp {
   private async requireRepoManageAccess(repoFullName: string): Promise<void> {
     if (this.identity.kind !== "session") return;
     const scope = await this.loadSessionAccessScope();
-    if (scope.operator || scope.repositoryFullNames.includes(repoFullName)) return;
-    throw new Error("Forbidden: maintainer access is required to propose an action on this repository.");
+    if (scope.operator) return;
+
+    const repo = await getRepository(this.env, repoFullName);
+    const installationId = repo?.installationId ?? null;
+    let permission: string | null = null;
+    if (installationId !== null) {
+      try {
+        permission = await getRepositoryCollaboratorPermission(this.env, installationId, repoFullName, this.identity.actor);
+      } catch {
+        permission = null;
+      }
+    }
+    if (permission && REPO_WRITE_PERMISSIONS.has(permission)) return;
+    throw new Error("Forbidden: write access is required to propose an action on this repository.");
   }
 
   // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC
@@ -1577,10 +1600,7 @@ export class GittensoryMcp {
       };
     }
     return {
-      summary:
-        response.source === "snapshot"
-          ? `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`
-          : `Gittensory burden forecast for ${fullName} (computed from cached metadata).`,
+      summary: `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`,
       data: response as unknown as Record<string, unknown>,
     };
   }
@@ -2094,7 +2114,9 @@ export class GittensoryMcp {
       getOrCreateScoringModelSnapshot(this.env),
       getContributorEvidence(this.env, input.contributorLogin),
     ]);
-    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const preview = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     const breakdown = explainScoreBreakdown(preview);
     return {
       summary: `Private Gittensory score breakdown for ${input.contributorLogin} in ${input.repoFullName}. Highest leverage: ${breakdown.highestLeverageLever.component}.`,

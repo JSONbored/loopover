@@ -78,13 +78,27 @@ describe("runAiReviewForAdvisory", () => {
     expect(adv.findings).toEqual([]);
   });
 
-  it("no-ops for a non-confirmed contributor and when there is no head SHA", async () => {
+  it("no-ops for a non-confirmed contributor under the gittensor pack and when there is no head SHA", async () => {
     const env = aiEnv(async () => ({ response: defectJson() }));
-    const base = { settings: { aiReviewMode: "block" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "alice" };
+    const base = { settings: { aiReviewMode: "block", gatePack: "gittensor" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "alice" };
     expect(await runAiReviewForAdvisory(env, { ...base, advisory: advisory(), confirmedContributor: false })).toBeUndefined();
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
     expect(await runAiReviewForAdvisory(env, { ...base, advisory: noSha, confirmedContributor: true })).toBeUndefined();
+  });
+
+  it("runs a blocking AI review for a non-confirmed contributor under oss-anti-slop", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      settings: { aiReviewMode: "block", gatePack: "oss-anti-slop" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: false,
+    });
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
+    expect(result?.notes).toContain("Likely crash.");
   });
 
   it("appends an ai_consensus_defect finding in block mode when the models agree", async () => {

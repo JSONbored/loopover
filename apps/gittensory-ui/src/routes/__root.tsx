@@ -81,6 +81,38 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
+const ANALYTICS_BEACON_SCRIPT = `
+(function () {
+  var website = "2ec37da2-e519-4bd5-bc16-76e17b03a458";
+  var endpoint = "/stats/api/send";
+  function send() {
+    if (navigator.doNotTrack === "1") return;
+    var payload = JSON.stringify({
+      type: "event",
+      payload: {
+        website: website,
+        hostname: location.hostname,
+        screen: screen.width + "x" + screen.height,
+        language: navigator.language,
+        title: document.title,
+        url: location.pathname + location.search,
+        referrer: document.referrer,
+      },
+    });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(endpoint, new Blob([payload], { type: "application/json" }));
+      return;
+    }
+    fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: payload, keepalive: true });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", send, { once: true });
+  } else {
+    send();
+  }
+})();
+`;
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
@@ -126,16 +158,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           description: "Deterministic base-agent layer for Gittensor OSS contribution mining.",
         }),
       },
-      // Self-hosted, privacy-friendly Umami analytics (cookieless, no PII).
-      // Served first-party via the Worker proxy in src/server.ts, which forwards
-      // /stats/* to tasty.aethereal.dev. The browser only talks to our own
-      // origin, so there's no cross-origin script (no SRI to re-pin on Umami
-      // upgrades) and the tracker derives its collect endpoint (/stats/api/send)
-      // from this src on its own.
+      // Local, cookieless analytics beacon. Do not load the mutable remote
+      // Umami tracker as first-party JavaScript; only the event payload is
+      // forwarded through /stats/api/send by the Worker proxy.
       {
-        src: "/stats/script.js",
-        defer: true,
-        "data-website-id": "2ec37da2-e519-4bd5-bc16-76e17b03a458",
+        children: ANALYTICS_BEACON_SCRIPT,
       },
     ],
   }),

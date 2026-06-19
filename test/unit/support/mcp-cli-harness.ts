@@ -109,6 +109,7 @@ export async function startFixtureServer(
     repoDecisionErrorBody?: string;
     repoDecisionErrorContentType?: string;
     packetMarkdown?: string;
+    localBranchAnalysis?: unknown;
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
   } = {},
@@ -223,6 +224,11 @@ export async function startFixtureServer(
       response.end(JSON.stringify(agentPacketFixture(options.packetMarkdown)));
       return;
     }
+    if (request.url === "/v1/local/branch-analysis" && request.method === "POST") {
+      await readJsonRequest(request);
+      response.end(JSON.stringify(options.localBranchAnalysis ?? localBranchAnalysisFixture()));
+      return;
+    }
     // #784 maintainer controls (agent approval queue + kill-switch).
     if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "GET") {
       response.end(JSON.stringify({ repoFullName: "owner/repo", pendingActions: [{ id: "pa-1", actionClass: "merge", pullNumber: 7, reason: "clean", status: "pending" }] }));
@@ -287,6 +293,32 @@ export function agentPacketFixture(markdown = "# Public-safe PR packet\n\n## Lin
         },
       },
     ],
+  };
+}
+
+export function localBranchAnalysisFixture() {
+  return {
+    login: "JSONbored",
+    repoFullName: "JSONbored/gittensory",
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    summary: "Local branch preflight fixture.",
+    nextActions: [{ actionKind: "prepare_pr_packet", whyThisHelps: ["Keeps public packet safe."] }],
+    preflight: { status: "ready", findings: [] },
+    prPacket: { titleSuggestion: "Local branch preflight", markdown: "# Public-safe PR packet\n" },
+    workspaceIntelligence: {
+      version: 2,
+      changedFiles: { total: 1, binary: 0, deleted: 0, renamed: 0 },
+      testEvidence: { level: "validation_commands" },
+      branch: { pendingCommitCount: 1 },
+      baseFreshness: { status: "fresh", warnings: [] },
+      blockers: {
+        branchQuality: [],
+        accountState: ["Open PR count 4 exceeds threshold 2.", "Credibility 0.2 is below floor 0.8."],
+      },
+      ciStatusHints: [],
+      rerunWhen: "Rerun after account/queue maturity blockers clear.",
+    },
+    dataQuality: { signalFidelity: { status: "complete" } },
   };
 }
 

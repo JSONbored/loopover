@@ -242,9 +242,12 @@ describe("Workers AI fallback + degraded output", () => {
 });
 
 describe("pure helpers", () => {
-  it("toPublicSafe drops forbidden public text and keeps safe text", () => {
+  it("toPublicSafe drops forbidden public text and neutralizes markdown, mentions, links, and control characters", () => {
     expect(toPublicSafe("This change is solid.")).toBe("This change is solid.");
     expect(toPublicSafe("Boost your reward payout")).toBeNull();
+    expect(toPublicSafe("Ping @octo-team about [urgent update](https://evil.example/p) ![pixel](https://evil.example/i.png)\n- injected")).toBe(
+      "Ping @\u200Bocto-team about \\[urgent update\\]\\(https:\u200B//evil.example/p\\) \\!\\[pixel\\]\\(https:\u200B//evil.example/i.png\\) - injected",
+    );
     expect(toPublicSafe("")).toBeNull();
     expect(toPublicSafe(null)).toBeNull();
     expect(toPublicSafe(undefined)).toBeNull();

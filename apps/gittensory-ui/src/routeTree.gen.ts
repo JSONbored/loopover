@@ -45,6 +45,7 @@ import { Route as AppMinerRouteImport } from './routes/app.miner'
 import { Route as AppMaintainerRouteImport } from './routes/app.maintainer'
 import { Route as AppDigestRouteImport } from './routes/app.digest'
 import { Route as AppCommandsRouteImport } from './routes/app.commands'
+import { Route as AppAuditRouteImport } from './routes/app.audit'
 import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
 import { Route as ApiOpRouteImport } from './routes/api.$op'
 
@@ -229,6 +230,11 @@ const AppCommandsRoute = AppCommandsRouteImport.update({
   path: '/commands',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAuditRoute = AppAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAnalyticsRoute = AppAnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -253,6 +259,7 @@ export interface FileRoutesByFullPath {
   '/roadmap': typeof RoadmapRoute
   '/api/$op': typeof ApiOpRoute
   '/app/analytics': typeof AppAnalyticsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/commands': typeof AppCommandsRoute
   '/app/digest': typeof AppDigestRoute
   '/app/maintainer': typeof AppMaintainerRoute
@@ -290,6 +297,7 @@ export interface FileRoutesByTo {
   '/roadmap': typeof RoadmapRoute
   '/api/$op': typeof ApiOpRoute
   '/app/analytics': typeof AppAnalyticsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/commands': typeof AppCommandsRoute
   '/app/digest': typeof AppDigestRoute
   '/app/maintainer': typeof AppMaintainerRoute
@@ -331,6 +339,7 @@ export interface FileRoutesById {
   '/roadmap': typeof RoadmapRoute
   '/api/$op': typeof ApiOpRoute
   '/app/analytics': typeof AppAnalyticsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/commands': typeof AppCommandsRoute
   '/app/digest': typeof AppDigestRoute
   '/app/maintainer': typeof AppMaintainerRoute
@@ -373,6 +382,7 @@ export interface FileRouteTypes {
     | '/roadmap'
     | '/api/$op'
     | '/app/analytics'
+    | '/app/audit'
     | '/app/commands'
     | '/app/digest'
     | '/app/maintainer'
@@ -410,6 +420,7 @@ export interface FileRouteTypes {
     | '/roadmap'
     | '/api/$op'
     | '/app/analytics'
+    | '/app/audit'
     | '/app/commands'
     | '/app/digest'
     | '/app/maintainer'
@@ -450,6 +461,7 @@ export interface FileRouteTypes {
     | '/roadmap'
     | '/api/$op'
     | '/app/analytics'
+    | '/app/audit'
     | '/app/commands'
     | '/app/digest'
     | '/app/maintainer'
@@ -745,6 +757,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCommandsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/audit': {
+      id: '/app/audit'
+      path: '/audit'
+      fullPath: '/app/audit'
+      preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/analytics': {
       id: '/app/analytics'
       path: '/analytics'
@@ -776,6 +795,7 @@ const ApiRouteWithChildren = ApiRoute._addFileChildren(ApiRouteChildren)
 
 interface AppRouteChildren {
   AppAnalyticsRoute: typeof AppAnalyticsRoute
+  AppAuditRoute: typeof AppAuditRoute
   AppCommandsRoute: typeof AppCommandsRoute
   AppDigestRoute: typeof AppDigestRoute
   AppMaintainerRoute: typeof AppMaintainerRoute
@@ -791,6 +811,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAnalyticsRoute: AppAnalyticsRoute,
+  AppAuditRoute: AppAuditRoute,
   AppCommandsRoute: AppCommandsRoute,
   AppDigestRoute: AppDigestRoute,
   AppMaintainerRoute: AppMaintainerRoute,

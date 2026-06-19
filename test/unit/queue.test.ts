@@ -9,6 +9,7 @@ import {
   getContributorScoringProfile,
   getInstallation,
   getLatestUpstreamRulesetSnapshot,
+  getPullRequest,
   getRepository,
   listUpstreamDriftReports,
   listInstallationHealth,
@@ -23,6 +24,7 @@ import {
   upsertIssueFromGitHub,
   upsertRepoSyncSegment,
   upsertInstallation,
+  updatePullRequestSlopAssessment,
   upsertOfficialMinerDetection,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
@@ -4540,6 +4542,78 @@ describe("queue processors", () => {
     const slopOff = await env.DB.prepare("select findings_json from advisories where target_type = 'issue' and repo_full_name = ?").bind("JSONbored/other").first<{ findings_json: string }>();
     expect(slopOn?.findings_json).toContain("empty_issue_body"); // opted in → triage finding present
     expect(slopOff?.findings_json ?? "").not.toContain("empty_issue_body"); // default off → no slop finding
+  });
+
+  it("clears the persisted dashboard slop score when the slop gate is off (#911)", async () => {
+    // Merge-readiness still collects the live slop score, so shouldCollectSlopEvidence runs even with the
+    // slop gate disabled — but with slopGateMode "off" the persisted dashboard row must be cleared to null
+    // so a previously cached score doesn't linger after a maintainer disables slop.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+      slopGateMode: "off", // dashboard slop disabled…
+      mergeReadinessGateMode: "advisory", // …but readiness keeps the live score in play
+    });
+    // Seed the PR row plus a stale dashboard slop score that the slop-off pass must clear.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 91,
+      title: "Add helper",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "slopoff123" },
+      labels: [],
+      body: "Adds a helper.",
+    });
+    await updatePullRequestSlopAssessment(env, "JSONbored/gittensory", 91, { slopRisk: 80, slopBand: "high" });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 91,
+      path: "src/helper.ts",
+      status: "modified",
+      additions: 5,
+      deletions: 0,
+      changes: 5,
+      payload: {},
+    });
+    expect((await getPullRequest(env, "JSONbored/gittensory", 91))?.slopRisk).toBe(80); // stale score present pre-run
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/slopoff123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) return Response.json({ id: 991 }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "slop-off-clear",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 91, title: "Add helper", state: "open", user: { login: "contributor" }, head: { sha: "slopoff123" }, labels: [], body: "Adds a helper." },
+      },
+    });
+
+    // Slop gate off → the previously persisted dashboard score is null-persisted, not left stale.
+    const cleared = await getPullRequest(env, "JSONbored/gittensory", 91);
+    expect(cleared?.slopRisk).toBeNull();
+    expect(cleared?.slopBand).toBeNull();
   });
 
   it("overrides the Gate to neutral for THIS commit only when a real write/admin maintainer runs gate-override", async () => {

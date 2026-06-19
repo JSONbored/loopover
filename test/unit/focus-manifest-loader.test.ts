@@ -3,6 +3,7 @@ import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
 import {
   fetchRepoFocusManifestFile,
+  loadPublicRepoFocusManifest,
   loadRepoFocusManifest,
   loadRepoFocusManifests,
   upsertRepoFocusManifest,
@@ -85,6 +86,32 @@ describe("focus-manifest loader", () => {
     });
     expect(reloaded.wantedPaths).toEqual(["lib/"]);
     expect(reloaded.source).toBe("api_record");
+  });
+
+  it("ignores API-backed records when loading a public-only repo manifest", async () => {
+    const env = createTestEnv();
+    await upsertRepoFocusManifest(env, "owner/public-only", { wantedPaths: ["private/"], gate: { linkedIssue: "block", readinessMinScore: 99 } });
+
+    const manifest = await loadPublicRepoFocusManifest(env, "owner/public-only", {
+      fetcher: async () => JSON.stringify({ wantedPaths: ["src/"], gate: { linkedIssue: "advisory" } }),
+    });
+
+    expect(manifest.source).toBe("repo_file");
+    expect(manifest.wantedPaths).toEqual(["src/"]);
+    expect(manifest.gate.linkedIssue).toBe("advisory");
+    expect(manifest.gate.readinessMinScore).toBeNull();
+  });
+
+  it("falls back to safe public defaults when only an API-backed record exists", async () => {
+    const env = createTestEnv();
+    await upsertRepoFocusManifest(env, "owner/no-public-file", { gate: { linkedIssue: "block", readinessMinScore: 99 } });
+
+    const manifest = await loadPublicRepoFocusManifest(env, "owner/no-public-file", { fetcher: async () => null });
+
+    expect(manifest.present).toBe(false);
+    expect(manifest.source).toBe("none");
+    expect(manifest.gate.linkedIssue).toBeNull();
+    expect(manifest.gate.readinessMinScore).toBeNull();
   });
 
   it("bulk-loads manifests for many repos with a concurrency cap", async () => {

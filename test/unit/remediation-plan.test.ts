@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildRemediationPlan } from "../../src/services/remediation-plan";
 
-const FORBIDDEN = /\b(wallet|hotkey|coldkey|mnemonic|farming|payout|raw[-_\s]?trust)\b/i;
+const FORBIDDEN = /\b(wallet|hotkey|coldkey|mnemonic|farming|payout|raw[-_\s]?trust|score\w*|scoreability|token[-_\s]?score|base[-_\s]?score)\b/i;
 
 describe("buildRemediationPlan", () => {
   it("returns an ordered, deduplicated checklist with rerun conditions", () => {
@@ -58,7 +58,7 @@ describe("buildRemediationPlan", () => {
 
     expect(plan.items).toHaveLength(2);
     expect(plan.items[0]?.step).toBe("Fix validation before asking maintainers to review.");
-    expect(plan.items.map((item) => item.step)).toEqual(["Fix validation before asking maintainers to review.", "GitHub checks need attention"]);
+    expect(plan.items.map((item) => item.step)).toEqual(["Fix validation before asking maintainers to review.", "Resolve submission readiness blockers before submission."]);
   });
 
   it("returns a public-safe empty-state plan when no blockers are present", () => {
@@ -87,8 +87,8 @@ describe("buildRemediationPlan", () => {
       recommendedRerunCondition: "Rerun after branch/base eligibility metadata confirms eligibility or after linked issue assumptions change.",
     });
 
-    expect(plan.recommendedRerunCondition).toMatch(/linked issue and base branch metadata/i);
-    expect(plan.recommendedRerunCondition).not.toMatch(/scoreability|multiplier/i);
+    expect(plan.recommendedRerunCondition).toMatch(/branch, base, or PR state changes/i);
+    expect(plan.recommendedRerunCondition).not.toMatch(/scoreability|multiplier|eligibility/i);
   });
 
   it("maps blocker-specific rerun conditions and fallback steps", () => {
@@ -106,7 +106,7 @@ describe("buildRemediationPlan", () => {
     expect(plan.items.find((item) => /stale/i.test(item.step))?.rerunCondition).toMatch(/git fetch origin/i);
     expect(plan.items.find((item) => /duplicate-prone/i.test(item.step))?.rerunCondition).toMatch(/linked issue and base branch metadata/i);
     expect(plan.items.find((item) => /GitHub checks/i.test(item.step))?.rerunCondition).toMatch(/validation evidence/i);
-    expect(plan.items.find((item) => item.source === "score")?.step).toBe("Resolve scoreability blockers before relying on this preview.");
+    expect(plan.items.find((item) => item.source === "submission_readiness")?.step).toBe("Resolve submission readiness blockers before submission.");
     expect(JSON.stringify(plan)).not.toMatch(/\bwallet\b|\bhotkey\b|\bpayout\b/i);
   });
 
@@ -122,7 +122,7 @@ describe("buildRemediationPlan", () => {
 
     expect(plan.items.find((item) => item.source === "account_state")?.step).toBe("Repository allocation is inactive");
     expect(plan.items.find((item) => item.source === "branch_quality")?.step).toBe("Resolve branch-quality findings before submission.");
-    expect(plan.recommendedRerunCondition).toMatch(/linked issue and base branch metadata/i);
+    expect(plan.recommendedRerunCondition).toMatch(/branch, base, or PR state changes/i);
     expect(plan.summary).toMatch(/2 remediation step/i);
   });
 
@@ -155,8 +155,8 @@ describe("buildRemediationPlan", () => {
         step: "Clear account or queue maturity blockers before opening more work.",
       }),
       expect.objectContaining({
-        source: "score",
-        step: "Resolve scoreability blockers before relying on this preview.",
+        source: "submission_readiness",
+        step: "Resolve submission readiness blockers before submission.",
       }),
     ]);
   });
@@ -201,12 +201,12 @@ describe("buildRemediationPlan", () => {
     expect(plan.items).toEqual([
       expect.objectContaining({ source: "account_state", step: "Clear account or queue maturity blockers before opening more work." }),
       expect.objectContaining({ source: "branch_quality", step: "Resolve branch-quality findings before submission." }),
-      expect.objectContaining({ source: "score", step: "Resolve scoreability blockers before relying on this preview." }),
+      expect.objectContaining({ source: "submission_readiness", step: "Resolve submission readiness blockers before submission." }),
     ]);
     expect(plan.recommendedRerunCondition).toMatch(/branch, base, or PR state changes/i);
   });
 
-  it("uses score-source rerun conditions and medium impact for generic score blockers", () => {
+  it("uses neutral submission-readiness rerun conditions and medium impact for generic score blockers", () => {
     const plan = buildRemediationPlan({
       login: "miner",
       repoFullName: "octo/demo",
@@ -218,11 +218,33 @@ describe("buildRemediationPlan", () => {
 
     expect(plan.items).toEqual([
       expect.objectContaining({
-        source: "score",
+        source: "submission_readiness",
+        step: "Resolve submission readiness blockers before submission.",
         impact: "medium",
-        rerunCondition: "Rerun after local validation passes.",
+        rerunCondition: "Rerun after branch, base, or PR state changes before opening or submitting.",
       }),
     ]);
+  });
+
+
+  it("does not expose score blocker text or score source on the public-safe surface", () => {
+    const plan = buildRemediationPlan({
+      login: "miner",
+      repoFullName: "octo/demo",
+      accountStateBlockers: [],
+      branchQualityBlockers: [],
+      scoreBlockers: ["Source token score does not pass the current base-score token gate."],
+      recommendedRerunCondition: "Rerun after scoreability multiplier eligibility score preview changes.",
+    });
+
+    expect(plan.items).toEqual([
+      expect.objectContaining({
+        source: "submission_readiness",
+        step: "Resolve submission readiness blockers before submission.",
+        rerunCondition: "Rerun after branch, base, or PR state changes before opening or submitting.",
+      }),
+    ]);
+    expect(JSON.stringify(plan)).not.toMatch(/score|scoreability|token[-_\s]?gate|token[-_\s]?score|base[-_\s]?score|multiplier|eligibility/i);
   });
 
   it("strips local filesystem paths from public remediation steps", () => {

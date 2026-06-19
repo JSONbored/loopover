@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
+import { getLatestScoringModelSnapshot, listUpstreamDriftReports } from "../../src/db/repositories";
 import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
 import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
+import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -146,7 +147,10 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
   });
 
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({
+      GITTENSOR_UPSTREAM_REPO: "custom/upstream",
+      GITTENSOR_UPSTREAM_REF: "staging",
+    });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nNOVELTY_BONUS_SCALAR = 3\n");
@@ -158,6 +162,15 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
 
     expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*NOVELTY_BONUS_SCALAR/);
     expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] });
+    const fingerprint = await unmodeledScoringConstantsFingerprint();
+    expect((await listUpstreamDriftReports(env, 10)).find((report) => report.fingerprint === fingerprint)).toMatchObject({
+      status: "open",
+      affectedAreas: ["scoring_model"],
+      payload: expect.objectContaining({
+        unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"],
+        source: { repo: "custom/upstream", ref: "staging", commitSha: null },
+      }),
+    });
   });
 
   it("uses saturation math as the active private preview model", () => {
@@ -178,6 +191,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
         labels: ["bug"],
         linkedIssueMode: "standard",
         linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
         sourceTokenScore: 58,
         totalTokenScore: 1500,
         sourceLines: 120,
@@ -260,6 +274,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
         labels: ["bug"],
         linkedIssueMode: "standard",
         linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
         sourceTokenScore: 60,
         totalTokenScore: 90,
         sourceLines: 50,
@@ -345,7 +360,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(ineligible.recommendation.actions).toEqual(expect.arrayContaining([expect.stringMatching(/eligible branch/i)]));
     expect(missing.branchEligibility).toMatchObject({ required: true, status: "unknown", evidence: "missing", source: "missing" });
     expect(missing.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "branch_eligibility_missing", severity: "context" })]));
-    expect(missing.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(missing.scoreEstimate.issueMultiplier).toBe(1);
     expect(unknown.branchEligibility).toMatchObject({ required: true, status: "unknown", evidence: "provided", source: "user_supplied", stale: true });
     expect(unknown.branchEligibility.warnings.join(" ")).toMatch(/unknown.*stale/i);
     expect(unknown.recommendation.actions).toEqual(expect.arrayContaining([expect.stringMatching(/refresh branch\/base eligibility metadata/i)]));
@@ -370,7 +385,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const validated = buildScorePreview({
       repo,
       snapshot,
-      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] } },
+      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] }, branchEligibility: { status: "eligible", source: "github_metadata" } },
     });
     const invalid = buildScorePreview({
       repo,
@@ -390,7 +405,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const defaultValidated = buildScorePreview({
       repo,
       snapshot,
-      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] } },
+      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] }, branchEligibility: { status: "eligible", source: "github_metadata" } },
     });
     const validatedWithoutSolverNumber = buildScorePreview({
       repo,
@@ -436,8 +451,8 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(raw.scoreEstimate.issueMultiplier).toBe(1);
     expect(raw.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "linked_issue_unvalidated", severity: "context" })]));
     const rawFixedScenario = raw.scenarioPreviews.find((scenario) => scenario.name === "linkedIssueFixed");
-    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1.33 });
-    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toBe("Linked issue context is solved-by-PR validated for issue(s) #7.");
+    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1 });
+    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toMatch(/Branch eligibility evidence is missing/);
     expect(validated.linkedIssueMultiplier).toMatchObject({ status: "validated", eligible: true, solvedByPullRequests: [101], appliedMultiplier: 1.33 });
     expect(validated.scoreEstimate.issueMultiplier).toBe(1.33);
     expect(invalid.linkedIssueMultiplier).toMatchObject({ status: "invalid", eligible: false, appliedMultiplier: 1 });
@@ -506,7 +521,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(afterPending?.source).toBe("user_supplied");
     expect(afterPending?.gates.credibilityObserved).toBe(0.8);
     expect(afterPending?.effectiveEstimatedScore).toBeGreaterThan(0);
-    expect(linkedIssueFixed?.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(linkedIssueFixed?.scoreEstimate.issueMultiplier).toBe(1);
     expect(JSON.stringify(preview)).not.toMatch(/guaranteed payout|wallet|hotkey|farming/i);
   });
 

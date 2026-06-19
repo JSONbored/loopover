@@ -15,7 +15,7 @@ import {
 } from "../../src/scenarios/input-model";
 
 const FORBIDDEN_PUBLIC_LANGUAGE =
-  /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
+  /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|estimated[-\s]?rewards?|rewards?|reward[-\s]?estimate|rankings?|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i;
 
 function completeInput() {
   return buildScenarioInput({
@@ -149,6 +149,26 @@ describe("public vs private serialization", () => {
     expect(privateSnapshot.assumptions[0]?.detail).toMatch(/trust score/i);
   });
 
+  it("sanitizes reward and ranking language in estimate snapshots", () => {
+    const input = buildScenarioInput({
+      scenarioType: "general_repo",
+      repoFullName: "octo/demo",
+      estimates: [
+        createScenarioSignalEntry({
+          id: "sensitive_estimate",
+          kind: "estimate",
+          label: "Estimated rewards ranking",
+          detail: "estimated rewards place this contributor in the top ranking and rankings table",
+          source: "gittensory_projection",
+        }),
+      ],
+    });
+
+    const serialized = JSON.stringify(serializeScenarioInputPublic(input));
+    expect(serialized).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
+    expect(serialized).toMatch(/private context/i);
+  });
+
   it("omits optional state sections when not provided", () => {
     const snapshot = serializeScenarioInputPublic(
       buildScenarioInput({
@@ -173,6 +193,29 @@ describe("public vs private serialization", () => {
     );
     expect(snapshot.pullRequestState?.openPrCount).toBe(1);
     expect(snapshot.branchState?.branchName).toBe("feat/x");
+  });
+
+  it("allows public repo and branch identifiers that contain protocol terms", () => {
+    const snapshot = serializeScenarioInputPublic(
+      buildScenarioInput({
+        scenarioType: "branch_preflight",
+        repoFullName: "wallet-tools/api",
+        branchState: { branchName: "feature/wallet-ui", baseRef: "hotkey-fix" },
+        facts: [
+          createScenarioSignalEntry({
+            id: "branch",
+            kind: "fact",
+            label: "Branch",
+            detail: "Active branch feature/wallet-ui against hotkey-fix.",
+            source: "local_metadata",
+          }),
+        ],
+      }),
+    );
+
+    expect(snapshot.repo.repoFullName).toBe("wallet-tools/api");
+    expect(snapshot.branchState).toMatchObject({ branchName: "feature/wallet-ui", baseRef: "hotkey-fix" });
+    expect(JSON.stringify(snapshot.facts)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
   });
 
   it("keeps advisory-only flags in both serializations", () => {
@@ -302,6 +345,10 @@ describe("invariants", () => {
       "public score estimate",
       "private reviewability",
       "farming loop",
+      "estimated rewards",
+      "rewards",
+      "ranking",
+      "rankings",
     ];
     for (const sample of samples) {
       const input = buildScenarioInput({

@@ -28,6 +28,6 @@ describe("buildSubnetInterfaceDescriptor", () => {
   it("defaults the upstream repo when not provided and contains no private/reward wording", () => {
     const descriptor = buildSubnetInterfaceDescriptor({ origin: "https://x.dev", generatedAt: "2026-06-14T00:00:00.000Z", appSlug: "gittensory" });
     expect(descriptor.subnet.upstreamRepo).toBe("entrius/gittensor");
-    expect(JSON.stringify(descriptor)).not.toMatch(/wallet|hotkey|reward|payout|trust score|scoreability|ranking/i);
+    expect(JSON.stringify(descriptor)).not.toMatch(/wallet|hotkey|reward|payout|earn|scoring|multiplier|trust score|scoreability|rank(?:ing)?/i);
   });
 });

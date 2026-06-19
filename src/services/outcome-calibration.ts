@@ -134,7 +134,7 @@ function sameRepo(a: string | null | undefined, b: string): boolean {
 export async function buildRepoOutcomeCalibration(env: Env, repoFullName: string, windowDays?: number): Promise<OutcomeCalibration> {
   const [pullRequests, outcomes] = await Promise.all([
     listPullRequests(env, repoFullName),
-    listAgentRecommendationOutcomes(env, windowDays !== undefined ? { windowDays } : {}),
+    listAgentRecommendationOutcomes(env, windowDays !== undefined ? { repoFullName, windowDays } : { repoFullName }),
   ]);
   const slop = buildSlopOutcomeCalibration(pullRequests);
   const recommendations = buildRecommendationOutcomeCalibration(outcomes, repoFullName);

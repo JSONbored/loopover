@@ -599,7 +599,11 @@ function actionRecord(args: {
   payload: Record<string, JsonValue>;
   evidence?: RecommendationEvidence | undefined;
 }): AgentActionRecord {
-  const evidence = args.evidence ?? defaultRecommendationEvidence(args.actionType);
+  const safetyClass = args.safetyClass ?? "private";
+  const payload = { ...args.payload };
+  if (safetyClass !== "public_safe") {
+    payload.recommendationEvidence = (args.evidence ?? defaultRecommendationEvidence(args.actionType)) as unknown as JsonValue;
+  }
   const action: AgentActionRecord = {
     id: `${args.run.id}:${String(args.index).padStart(2, "0")}:${args.actionType}`,
     runId: args.run.id,
@@ -617,11 +621,8 @@ function actionRecord(args: {
     rerunWhen: args.rerunWhen,
     publicSafeSummary: sanitizePublicSummary(args.publicSafeSummary),
     approvalRequired: args.approvalRequired ?? true,
-    safetyClass: args.safetyClass ?? "private",
-    payload: {
-      ...args.payload,
-      recommendationEvidence: evidence as unknown as JsonValue,
-    },
+    safetyClass,
+    payload,
     createdAt: nowIso(),
   };
   return withAgentActionExplanationCard(action);

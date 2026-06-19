@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, run } from "./support/mcp-cli-harness";
+import { closeFixtureServer, createPacketRepo, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
 describe("gittensory-mcp CLI — basics", () => {
   let tempDir: string | null = null;
@@ -127,6 +127,26 @@ describe("gittensory-mcp CLI — basics", () => {
     expect(payload.version).toBe("0.6.0");
     expect(payload.apiVersion).toBe("0.1.0");
     expect(payload.node).toBe(process.version);
+  });
+
+  it("redacts private account-state workspace intelligence from preflight output", async () => {
+    tempDir = createPacketRepo();
+    const url = await startFixtureServer();
+
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+    const jsonOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env);
+    const payload = JSON.parse(jsonOutput) as { workspaceIntelligence: { blockers: { accountState: string[] }; rerunWhen: string } };
+    expect(payload.workspaceIntelligence.blockers.accountState).toEqual([]);
+    expect(payload.workspaceIntelligence.rerunWhen).toBe("Rerun after any branch, base, or PR state changes before opening/submitting.");
+    expect(jsonOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
+
+    const humanOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory"], env);
+    expect(humanOutput).not.toContain("Account/queue blockers:");
+    expect(humanOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
   });
 
   it("guides unknown commands to --help", () => {

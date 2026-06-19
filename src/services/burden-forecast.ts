@@ -1,11 +1,5 @@
-import {
-  getBurdenForecast,
-  getRepository,
-  listIssueSignalSample,
-  listOpenPullRequests,
-  listRecentMergedPullRequests,
-} from "../db/repositories";
-import { buildBurdenForecast, buildCollisionReport, type BurdenForecast } from "../signals/engine";
+import { getBurdenForecast, getRepository } from "../db/repositories";
+import type { BurdenForecast } from "../signals/engine";
 
 export const BURDEN_FORECAST_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
@@ -39,22 +33,7 @@ export async function loadOrComputeBurdenForecastResponse(env: Env, fullName: st
       report: cached.payload as unknown as BurdenForecast,
     };
   }
-  const [issues, pullRequests, recentMergedPullRequests] = await Promise.all([
-    listIssueSignalSample(env, repoFullName),
-    listOpenPullRequests(env, repoFullName),
-    listRecentMergedPullRequests(env, repoFullName),
-  ]);
-  const collisions = buildCollisionReport(repoFullName, issues, pullRequests, recentMergedPullRequests);
-  const report = buildBurdenForecast(repo, issues, pullRequests, collisions, 30);
-  return {
-    status: "ready",
-    source: "computed",
-    repoFullName,
-    generatedAt: report.generatedAt,
-    ageSeconds: 0,
-    freshness: "fresh",
-    report,
-  };
+  return null;
 }
 
 function forecastAgeMs(generatedAt: string): number {

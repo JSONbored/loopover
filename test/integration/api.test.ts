@@ -36,12 +36,19 @@ import {
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
 import { clearPublicRepoStatsCacheForTests } from "../../src/github/public";
+import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
+
+vi.mock("../../src/github/app", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/app")>()),
+  getRepositoryCollaboratorPermission: vi.fn(),
+}));
+const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
 const FORBIDDEN_PUBLIC_REPORT_TERMS =
   /wallet|hotkey|raw trust|trust[-\s]?score|payout|reward[-\s]?estimate|farming|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)|private[-\s]?scoreability|scoreability/i;
@@ -52,6 +59,7 @@ describe("api routes", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
+    mockedPermission.mockReset();
   });
 
   afterEach(() => {
@@ -1339,7 +1347,7 @@ describe("api routes", () => {
       repoFullName: "entrius/allways-ui",
       preflight: { localDiff: { testFileCount: 1, inferredLinkedIssues: [7] } },
       scorePreview: { privateOnly: true },
-      branchEligibility: { required: true, status: "eligible", evidence: "provided" },
+      branchEligibility: { required: true, status: "unknown", evidence: "provided", source: "user_supplied" },
       rewardRisk: { rewardUpside: { relevantLane: "direct_pr" } },
       prPacket: { titleSuggestion: "Fix dashboard cache refresh after reconnect" },
     });
@@ -1627,29 +1635,44 @@ describe("api routes", () => {
     );
     expect(noContributorScorePreview.status).toBe(200);
 
+    const agedScoreInput = {
+      repoFullName: "entrius/allways-ui",
+      contributorLogin: "oktofeesh1",
+      sourceTokenScore: 42,
+      totalTokenScore: 60,
+      sourceLines: 40,
+      openPrCount: 1,
+      linkedIssueMode: "standard",
+      prAgeHours: 240,
+    };
+    env.SCORING_TIME_DECAY_ENABLED = "true";
+    const agedScorePreview = await app.request(
+      "/v1/scoring/preview",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify(agedScoreInput) },
+      env,
+    );
+    expect(agedScorePreview.status).toBe(200);
+    const agedScorePreviewBody = (await agedScorePreview.json()) as { input: { applyTimeDecay?: boolean; prAgeHours?: number }; result: { effectiveEstimatedScore: number; scoreEstimate: { timeDecayMultiplier: number } } };
+
     const scoreBreakdown = await app.request(
       "/v1/scoring/explain-breakdown",
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({
-          repoFullName: "entrius/allways-ui",
-          contributorLogin: "oktofeesh1",
-          sourceTokenScore: 42,
-          totalTokenScore: 60,
-          sourceLines: 40,
-          openPrCount: 1,
-          linkedIssueMode: "standard",
-        }),
+        body: JSON.stringify(agedScoreInput),
       },
       env,
     );
     expect(scoreBreakdown.status).toBe(200);
-    await expect(scoreBreakdown.json()).resolves.toMatchObject({
+    const scoreBreakdownBody = (await scoreBreakdown.json()) as { effectiveEstimatedScore: number };
+    expect(scoreBreakdownBody).toMatchObject({
       repoFullName: "entrius/allways-ui",
       components: expect.arrayContaining([expect.objectContaining({ component: expect.any(String), lever: expect.any(String) })]),
       highestLeverageLever: expect.objectContaining({ component: expect.any(String), lever: expect.any(String) }),
     });
+    expect(agedScorePreviewBody.input).toMatchObject({ applyTimeDecay: true, prAgeHours: 240 });
+    expect(agedScorePreviewBody.result.scoreEstimate.timeDecayMultiplier).toBeLessThan(1);
+    expect(scoreBreakdownBody.effectiveEstimatedScore).toBe(agedScorePreviewBody.result.effectiveEstimatedScore);
 
     const missingContributorBreakdown = await app.request(
       "/v1/scoring/explain-breakdown",
@@ -1718,13 +1741,12 @@ describe("api routes", () => {
     expect(snapshotIntelligenceBody.burdenForecastFreshness?.ageSeconds).toBeLessThan(Math.floor((BURDEN_FORECAST_MAX_AGE_MS + 120_000) / 1000));
 
     await upsertRepositoryFromGitHub(env, { name: "uncached-burden", full_name: "entrius/uncached-burden", private: false, owner: { login: "entrius" }, default_branch: "main" });
-    const computedIntelligence = await app.request("/v1/repos/entrius/uncached-burden/intelligence", { headers: apiHeaders(env) }, env);
-    expect(computedIntelligence.status).toBe(200);
-    await expect(computedIntelligence.json()).resolves.toMatchObject({
-      source: "computed",
-      burdenForecast: { repoFullName: "entrius/uncached-burden", level: "low" },
-      burdenForecastFreshness: { source: "computed", freshness: "fresh", ageSeconds: 0 },
-    });
+    const uncachedIntelligence = await app.request("/v1/repos/entrius/uncached-burden/intelligence", { headers: apiHeaders(env) }, env);
+    expect(uncachedIntelligence.status).toBe(200);
+    const uncachedIntelligenceBody = (await uncachedIntelligence.json()) as Record<string, unknown>;
+    expect(uncachedIntelligenceBody).toMatchObject({ source: "computed" });
+    expect(uncachedIntelligenceBody.burdenForecast).toBeUndefined();
+    expect(uncachedIntelligenceBody.burdenForecastFreshness).toBeUndefined();
 
     const degradedForecastEnv = withBurdenForecastReadFailure(env);
     const degradedIntelligence = await app.request("/v1/repos/entrius/allways-ui/intelligence", { headers: apiHeaders(env) }, degradedForecastEnv);
@@ -2075,6 +2097,14 @@ describe("api routes", () => {
     const refreshQueued = await app.request("/v1/app/miner-dashboard/refresh?login=oktofeesh1", { method: "POST", headers: apiHeaders(env) }, env);
     expect(refreshQueued.status).toBe(202);
     await expect(refreshQueued.json()).resolves.toMatchObject({ status: "queued", login: "oktofeesh1" });
+    const refreshDuplicate = await app.request("/v1/app/miner-dashboard/refresh?login=oktofeesh1", { method: "POST", headers: apiHeaders(env) }, env);
+    expect(refreshDuplicate.status).toBe(202);
+    const queuedRefreshRows = (
+      (await env.DB.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE event_type='decision_pack.rebuild_enqueued' AND actor='oktofeesh1'").all()) as {
+        results: Array<{ count: number }>;
+      }
+    ).results;
+    expect(queuedRefreshRows[0]?.count).toBe(1);
     // No ?login → the login resolves from the session actor (covers the session-actor fallback).
     const refreshSelf = await app.request("/v1/app/miner-dashboard/refresh", { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(refreshSelf.status).toBe(202);
@@ -2185,6 +2215,10 @@ describe("api routes", () => {
     });
     const { token: ownerToken } = await createSessionForGitHubUser(ownerEnv, { login: "repo-owner", id: 777 });
     const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
+    mockedPermission.mockImplementation(async (_env, _installationId, repoFullName, login) => {
+      if (repoFullName === "repo-owner/owned-repo" && login === "repo-owner") return "write";
+      return "read";
+    });
     const ownerRoles = await app.request("/v1/app/roles", { headers: ownerHeaders }, ownerEnv);
     expect(ownerRoles.status).toBe(200);
     await expect(ownerRoles.json()).resolves.toMatchObject({
@@ -3440,6 +3474,13 @@ describe("api routes", () => {
     });
     expect(JSON.stringify(extensionPayload)).not.toMatch(/wallet|hotkey|coldkey|raw trust|private ranking|github_pat|ghp_|payout|reward estimate|farming/i);
 
+    const pullContextAudit = await env.DB.prepare(
+      "select actor from audit_events where event_type = ? and route = ? order by created_at desc limit 1",
+    )
+      .bind("extension.pull_context_view", "/v1/extension/pull-context")
+      .first<{ actor: string }>();
+    expect(pullContextAudit?.actor).toBe("oktofeesh1");
+
     const nonMinerExtensionContext = await app.request(
       "/v1/extension/pull-context?owner=entrius&repo=allways-ui&pullNumber=13",
       { headers: { authorization: `Bearer ${extensionSessionBody.token}` } },
@@ -3770,6 +3811,9 @@ describe("api routes", () => {
     await upsertPullRequestFromGitHub(env, "octo/demo", { number: 14, title: "Tidy labels output", state: "open", html_url: "https://github.com/octo/demo/pull/14", user: { login: "contributor-dev" }, labels: [], head: { sha: "aaa111", ref: "tidy" }, base: { ref: "main" } });
     // A PR with no author -- exercises the authorLogin-defaulting path of the self-only PR guard (→ 403).
     await upsertPullRequestFromGitHub(env, "octo/demo", { number: 15, title: "Authorless PR", state: "open", html_url: "https://github.com/octo/demo/pull/15", labels: [], head: { sha: "bbb222", ref: "ghost" }, base: { ref: "main" } });
+    await upsertRepositoryFromGitHub(env, { name: "secret", full_name: "victim-org/secret", private: true, owner: { login: "victim-org" }, default_branch: "main" });
+    await upsertIssueFromGitHub(env, "victim-org/secret", { number: 99, title: "Private roadmap", state: "open", html_url: "https://github.com/victim-org/secret/issues/99", user: { login: "victim-org" }, labels: [{ name: "feature" }], body: "Confidential issue." });
+    await upsertPullRequestFromGitHub(env, "victim-org/secret", { number: 101, title: "Private implementation", state: "open", html_url: "https://github.com/victim-org/secret/pull/101", user: { login: "contributor-dev" }, labels: [], body: "Fixes #99", head: { sha: "ccc333", ref: "private" }, base: { ref: "main" } });
 
     // A non-maintainer mints a CONTRIBUTOR-scoped extension session.
     const { token: browserToken } = await createSessionForGitHubUser(env, { login: "contributor-dev", id: 555 });
@@ -3800,6 +3844,15 @@ describe("api routes", () => {
     const badgesBody = (await badges.json()) as { badges: unknown[] };
     expect(Array.isArray(badgesBody.badges)).toBe(true);
     expect(JSON.stringify(badgesBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+
+    const privateIssueFit = await app.request("/v1/extension/contributors/contributor-dev/issue-fit?owner=victim-org&repo=secret&issueNumber=99", { headers: bearer }, env);
+    expect(privateIssueFit.status).toBe(403);
+    await expect(privateIssueFit.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    const privateIssueBadges = await app.request("/v1/extension/contributors/contributor-dev/issue-badges?owner=victim-org&repo=secret", { headers: bearer }, env);
+    expect(privateIssueBadges.status).toBe(403);
+    await expect(privateIssueBadges.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=victim-org&repo=secret&pullNumber=101", { headers: bearer }, env)).status).toBe(403);
+    expect((await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=victim-org&repo=secret&pullNumber=999", { headers: bearer }, env)).status).toBe(403);
 
     const prStatus = await app.request("/v1/extension/contributors/contributor-dev/pr-status?owner=octo&repo=demo&pullNumber=12", { headers: bearer }, env);
     expect(prStatus.status).toBe(200);
@@ -5058,26 +5111,20 @@ describe("api routes", () => {
       },
     });
 
-    await upsertRepositoryFromGitHub(env, { name: "mcp-computed-burden", full_name: "entrius/mcp-computed-burden", private: false, owner: { login: "entrius" }, default_branch: "main" });
-    const computedBurdenForecast = await app.request(
+    await upsertRepositoryFromGitHub(env, { name: "mcp-uncached-burden", full_name: "entrius/mcp-uncached-burden", private: false, owner: { login: "entrius" }, default_branch: "main" });
+    const uncachedBurdenForecast = await app.request(
       "/mcp",
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "computed-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "entrius", repo: "mcp-computed-burden" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "uncached-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "entrius", repo: "mcp-uncached-burden" } } }),
       },
       env,
     );
-    expect(computedBurdenForecast.status).toBe(200);
-    await expect(mcpJson(computedBurdenForecast)).resolves.toMatchObject({
+    expect(uncachedBurdenForecast.status).toBe(200);
+    await expect(mcpJson(uncachedBurdenForecast)).resolves.toMatchObject({
       result: {
-        structuredContent: {
-          status: "ready",
-          source: "computed",
-          repoFullName: "entrius/mcp-computed-burden",
-          freshness: "fresh",
-          report: { repoFullName: "entrius/mcp-computed-burden", level: "low" },
-        },
+        structuredContent: { status: "not_found", repoFullName: "entrius/mcp-uncached-burden" },
       },
     });
 

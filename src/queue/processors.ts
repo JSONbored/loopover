@@ -6,6 +6,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getFreshOfficialMinerDetection,
   getPullRequest,
+  getRepoAuthorPullRequestHistory,
   getRepository,
   getDecryptedRepositoryAiKey,
   getRepositorySettings,
@@ -418,8 +419,8 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
 
 /**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
- * (an acting autonomy level), recompute the CANONICAL verdict (same inputs the gate published — confirmed-
- * contributor status + the persisted slop score), plan the GitHub state actions, and run them through the
+ * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
+ * GitHub state actions, and run them through the
  * executor's deny-toward-safety gate stack (pause → approval → write-permission → mode). Decoupled and
  * best-effort: a failure here never affects the gate or the public surface. gittensory never acts on a
  * non-confirmed contributor's PR — the same rule the gate uses to never block one.
@@ -434,23 +435,17 @@ async function maybeRunAgentMaintenance(
     settings: RepositorySettings;
     otherOpenPullRequests: PullRequestRecord[];
     deliveryId: string;
+    gate: ReturnType<typeof evaluateGateCheck> | undefined;
   },
 ): Promise<void> {
-  const { installationId, repoFullName, repo, settings, otherOpenPullRequests, deliveryId } = args;
+  const { installationId, repoFullName, settings, otherOpenPullRequests, gate } = args;
   if (!isAgentConfigured(settings.autonomy)) return;
   // Re-read the stored PR so we act on the persisted slop score the gate just wrote, not the pre-gate payload.
   const pr = await getPullRequest(env, repoFullName, args.pr.number);
   /* v8 ignore next -- defensive: the PR was upserted earlier in this same webhook, so it is always present. */
   if (!pr) return;
   if (pr.state !== "open") return;
-  // gittensory never acts on a non-confirmed contributor's PR — the same rule the gate uses to never block one.
-  const confirmedContributor = pr.authorLogin
-    ? (await getCachedOfficialMinerDetection(env, pr.authorLogin, { targetKey: `${repoFullName}#${pr.number}`, deliveryId })).status === "confirmed"
-    : false;
-
-  const requireLinkedIssue = settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off";
-  const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests, requireLinkedIssue });
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, confirmedContributor, pr.slopRisk));
+  if (!gate) return;
 
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
@@ -928,7 +923,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
-        await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
+        const gate = await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
           deliveryId,
           authorType: payload.pull_request.user?.type,
           action: payload.action,
@@ -943,11 +938,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
               error: errorMessage(error),
             }),
           );
+          return undefined;
         });
         // #778 maintainer auto-maintain: act on the PR's state (label/review/merge/close) per the repo's
         // autonomy config, after the gate has run. The function self-guards on agent config; best-effort here
         // so it never blocks the gate or public surface.
-        await maybeRunAgentMaintenance(env, { installationId, repoFullName, repo, pr, settings, otherOpenPullRequests, deliveryId }).catch((error) => {
+        await maybeRunAgentMaintenance(env, { installationId, repoFullName, repo, pr, settings, otherOpenPullRequests, deliveryId, gate }).catch((error) => {
           /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
           console.error(JSON.stringify({ level: "warn", event: "agent_maintenance_failed", deliveryId, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
         });
@@ -1066,6 +1062,17 @@ export function gateCheckPolicy(
   };
 }
 
+async function loadGateAuthorHistory(env: Env, repoFullName: string, author: string | null, pullNumber: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  if (!author) return { mergedPrCount: 1, closedUnmergedPrCount: 3 };
+  try {
+    return await getRepoAuthorPullRequestHistory(env, repoFullName, author, pullNumber);
+  } catch {
+    // Fail closed for firstTimeContributorGrace: if complete author history cannot be determined,
+    // make the author ineligible for grace rather than publishing a would-be blocking gate as neutral.
+    return { mergedPrCount: 1, closedUnmergedPrCount: 3 };
+  }
+}
+
 /**
  * Effective repository settings for webhook handling: the DB-backed settings overlaid with the repo's
  * `.gittensory.yml` (config-as-code). This single resolver is why EVERYTHING — gate on/off, all blocker
@@ -1100,9 +1107,11 @@ export function buildAiReviewDiff(files: Awaited<ReturnType<typeof listPullReque
 /**
  * Run the opt-in AI maintainer review and fold it into the gate + panel. Mutates `advisory.findings`
  * with a dual-model consensus defect (when `aiReviewMode: block` and the free Workers-AI pair agrees with
- * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs — still confirmed-
- * contributor gated. Returns the advisory notes for the public panel. Fully fail-safe: disabled / not a
- * confirmed contributor / no head SHA / non-ok AI / any thrown error → no finding and no notes.
+ * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs. The default `gittensor`
+ * pack keeps AI spend confirmed-contributor gated; `oss-anti-slop` may run the blocking review for any
+ * author because that pack is explicitly author-agnostic. Returns the advisory notes for the public panel.
+ * Fully fail-safe: disabled / ineligible author / no head SHA / non-ok AI / any thrown error → no finding
+ * and no notes.
  */
 export async function runAiReviewForAdvisory(
   env: Env,
@@ -1115,7 +1124,8 @@ export async function runAiReviewForAdvisory(
     confirmedContributor: boolean;
   },
 ): Promise<{ notes: string } | undefined> {
-  if (args.settings.aiReviewMode === "off" || !args.confirmedContributor || !args.advisory.headSha) return undefined;
+  const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
+  if (args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha) return undefined;
   try {
     // BYOK: decrypt the maintainer's provider key only when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
@@ -1262,7 +1272,7 @@ async function maybePublishPrPublicSurface(
   settings: Awaited<ReturnType<typeof getRepositorySettings>>,
   advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>,
   webhook: { deliveryId: string; authorType?: string | undefined; action?: string | undefined },
-): Promise<void> {
+): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
   // `settings` is the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved by the caller via
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
@@ -1285,8 +1295,8 @@ async function maybePublishPrPublicSurface(
     !publicSurfaceSkipped &&
     settings.commentMode === "detected_contributors_only" &&
     (settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only");
-  if (!gateEnabled && (publicSurfaceSkipped || (prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment))) return;
-  if (!author && !gateEnabled) return;
+  if (!gateEnabled && (publicSurfaceSkipped || (prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment))) return undefined;
+  if (!author && !gateEnabled) return undefined;
 
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
     const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.");
@@ -1301,7 +1311,7 @@ async function maybePublishPrPublicSurface(
       buildClosedPrPanelUpdate(repoFullName, pr.number),
       { createIfMissing: false },
     ).catch(() => undefined);
-    return;
+    return undefined;
   }
   const prelimHasPublicOutput =
     !publicSurfaceSkipped && (needsMinerCheckForDetectedComment || prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run"));
@@ -1315,12 +1325,11 @@ async function maybePublishPrPublicSurface(
     });
     if (requireOfficialMiner && official.status === "unavailable") {
       await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
-      if (!gateEnabled) return;
+      if (!gateEnabled) return undefined;
       publicSurfaceSkipped = true;
-    }
-    if (requireOfficialMiner && official.status !== "confirmed") {
+    } else if (requireOfficialMiner && official.status !== "confirmed") {
       await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
-      if (!gateEnabled) return;
+      if (!gateEnabled) return undefined;
       publicSurfaceSkipped = true;
     }
     decision = decidePublicSurface({
@@ -1331,7 +1340,7 @@ async function maybePublishPrPublicSurface(
       minerStatus: official.status,
     });
 
-    if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return;
+    if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return undefined;
   }
 
   let pendingGateCheckRunId: number | undefined;
@@ -1459,14 +1468,10 @@ async function maybePublishPrPublicSurface(
     // failure is caught and the gate is still finalized (never left in_progress).
     aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
 
-    // First-time-contributor grace (#552): the author's per-repo PR history (excluding this PR). Newcomer =
-    // 0 merged here; repeat offender = >= 3 closed-unmerged here. Cheap (in-memory over the already-loaded
-    // repo PRs) and only consulted by evaluateGateCheck when firstTimeContributorGrace is on.
-    const authorPrs = author ? repoPullRequests.filter((candidate) => candidate.authorLogin === author && candidate.number !== pr.number) : [];
-    const authorHistory = {
-      mergedPrCount: authorPrs.filter((candidate) => candidate.mergedAt || candidate.state === "merged").length,
-      closedUnmergedPrCount: authorPrs.filter((candidate) => candidate.state === "closed" && !candidate.mergedAt).length,
-    };
+    // First-time-contributor grace (#552): compute the author's complete per-repo PR history
+    // (excluding this PR) with an aggregate DB query. Do not derive policy-enforcement history from
+    // the bounded repoPullRequests sample; missing or case-mismatched history could soften a block.
+    const authorHistory = await loadGateAuthorHistory(env, repoFullName, author, pr.number);
 
     const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;
@@ -1527,8 +1532,8 @@ async function maybePublishPrPublicSurface(
     throw error;
   }
 
-  if (!prelimHasPublicOutput) return;
-  if (publicSurfaceSkipped || !official || !author) return;
+  if (!prelimHasPublicOutput) return gateEvaluation;
+  if (publicSurfaceSkipped || !official || !author) return gateEvaluation;
 
   const [github] = await Promise.all([fetchPublicContributorProfile(author, env)]);
   const contributorPullRequests: Awaited<ReturnType<typeof listContributorPullRequests>> = [];
@@ -1609,7 +1614,7 @@ async function maybePublishPrPublicSurface(
         metadata: { deliveryId: webhook.deliveryId, repoFullName, failedOutputs },
       });
     }
-    return;
+    return gateEvaluation;
   }
   await recordAuditEvent(env, {
     eventType: "github_app.pr_public_surface_published",
@@ -1642,6 +1647,7 @@ async function maybePublishPrPublicSurface(
       failedOutputs,
     },
   });
+  return gateEvaluation;
 }
 
 async function recordPublicSurfaceOutputFailure(
@@ -1703,8 +1709,12 @@ async function maybeProcessGateOverrideCommand(env: Env, deliveryId: string, pay
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
   const installationId = getInstallationId(payload);
-  const actor = comment?.user?.login ?? payload.sender?.login ?? null;
+  const actor = payload.sender?.login ?? comment?.user?.login ?? null;
   const targetKey = repoFullName && issue ? `${repoFullName}#${issue.number}` : repoFullName;
+  if (payload.action !== "created") {
+    await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "unsupported_comment_action");
+    return true;
+  }
   if (comment?.user?.type === "Bot" || payload.sender?.type === "Bot" || /\[bot\]$/i.test(actor ?? "")) {
     await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "bot_author");
     return true;

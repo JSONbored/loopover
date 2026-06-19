@@ -155,6 +155,9 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("public score estimate and scoreability should stay private")).not.toMatch(/public score estimate|scoreability/i);
     expect(sanitizePublicComment("public score estimate private scoreability context score preview")).not.toMatch(/public score estimate|scoreability|score preview/i);
     expect(sanitizePublicComment("projected score changes 12.3 -> 45.6")).not.toMatch(/projected score changes|12\.3|45\.6/i);
+    expect(sanitizePublicComment("effective score 0 -> 42")).not.toMatch(/effective score|0|42/i);
+    expect(sanitizePublicComment("Open PR count 7 exceeds threshold 3.")).not.toMatch(/open PR count|7|threshold|3/i);
+    expect(sanitizePublicComment("Credibility 0.12 is below floor 0.4.")).not.toMatch(/credibility|0\.12|floor|0\.4/i);
     expect(sanitizePublicComment("open_pr_pressure closed_pr_credibility low_credibility credibility updates")).not.toMatch(/open_pr_pressure|closed_pr_credibility|low_credibility|credibility/i);
     expect(sanitizePublicComment("Command: @gittensory reviewability")).toContain("@gittensory reviewability");
     expect(sanitizePublicComment("private ranking, wallet, payout")).toBe("private context");
@@ -292,7 +295,7 @@ describe("GitHub mention commands", () => {
     });
     expect(duplicateCheck).toContain("**Gittensory duplicate & WIP check**");
     expect(duplicateCheck).toContain("**Duplicate & WIP caution**");
-    expect(duplicateCheck).toContain("possible overlap with existing work");
+    expect(duplicateCheck).toContain("Possible overlap with existing work");
     expect(duplicateCheck).not.toMatch(/\blikely_duplicate\b/i);
 
     const nextAction = buildPublicAgentCommandComment({
@@ -319,12 +322,12 @@ describe("GitHub mention commands", () => {
     expect(ask).toContain("**Contribution context Q&A**");
     expect(ask).toContain("Question: what should I improve for contribution quality?");
     const askFindings = publicCardFindings(ask);
-    expect(askFindings).toContain("origin: contributor_decision_pack; freshness: fresh");
-    expect(askFindings).toContain("origin: open_pr_monitor; freshness: fresh");
-    expect(askFindings).toContain("origin: github_cache; freshness: fresh");
-    expect(askFindings).toContain("origin: official_gittensor; freshness: fresh");
-    expect(askFindings).toContain("signal data-quality status; origin: cached_signals");
-    expect(ask).toMatch(/Connected source contributor decision pack snapshot \(contributor_decision_pack\): freshness fresh/);
+    expect(askFindings).toContain("Source: contributor decision pack snapshot; freshness: fresh");
+    expect(askFindings).toContain("Source: cached GitHub open PR/issue queue; freshness: fresh");
+    expect(askFindings).toContain("Source: cached GitHub issues, PRs, reviews, and checks; freshness: fresh");
+    expect(askFindings).toContain("Source: official Gittensor API/cache; freshness: fresh");
+    expect(askFindings).toContain("signal data-quality status; freshness:");
+    expect(ask).toMatch(/Connected source contributor decision pack snapshot: freshness fresh/);
     expect(ask).toContain("README/docs context is included only when connected repo sources");
     expect(ask).not.toContain("source: action choose_next_work");
     expect(ask).not.toContain("**Source coverage**");
@@ -375,7 +378,7 @@ describe("GitHub mention commands", () => {
         ],
       }),
     });
-    expect(publicCardFindings(askWithTargets)).toContain("Source: repo focus manifest; origin: repo_focus_manifest; freshness: fresh");
+    expect(publicCardFindings(askWithTargets)).toContain("Source: repo focus manifest; freshness: fresh");
     expect(askWithTargets).toContain("owner/repo: Prepare a concise packet and verify linked context.");
   });
 
@@ -698,7 +701,7 @@ describe("GitHub mention commands", () => {
     });
     expect(askMetadata).toContain("repo sync freshness metadata");
     expect(askMetadata).toContain("branch eligibility metadata");
-    expect(askMetadata).toContain("contribution readiness metadata");
+    expect(askMetadata).not.toContain("Contribution readiness status");
     expect(publicCardFindings(askMetadata)).toContain("freshness: partial");
     expect(askMetadata).not.toContain("No concrete cached source reference is available for this response.");
 
@@ -745,7 +748,7 @@ describe("GitHub mention commands", () => {
         summary: "ask evidence only",
       },
     });
-    expect(askEvidenceOnly).toContain("origin: custom_unknown_source");
+    expect(askEvidenceOnly).toContain("Source: custom unknown source; freshness:");
     expect(askEvidenceOnly).toContain("custom unknown source");
 
     const askFallbackCitations = buildPublicAgentCommandComment({
@@ -1029,7 +1032,8 @@ describe("GitHub mention commands", () => {
       },
     });
     expect(duplicateViaRecommendation).toContain("**Duplicate & WIP caution**");
-    expect(duplicateViaRecommendation).toMatch(/overlap|WIP|Concurrent/i);
+    expect(duplicateViaRecommendation).toContain("Review linked issues before requesting detailed review.");
+    expect(duplicateViaRecommendation).not.toContain("Concurrent review pressure");
 
     const duplicateWithInjectedWhy = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory duplicate-check")!,
@@ -1059,7 +1063,7 @@ describe("GitHub mention commands", () => {
         summary: "duplicate",
       },
     });
-    expect(duplicateWithInjectedWhy).toContain("PRs touching duplicate @​octo-team/ \\[click\\]\\(https://example.test\\)");
+    expect(duplicateWithInjectedWhy).not.toContain("PRs touching duplicate");
     expect(duplicateWithInjectedWhy).not.toMatch(/\n@octo-team|@octo-team|[^\\]\[click\]\(https:\/\/example\.test\)/);
 
     const preflightWithRerun = buildPublicAgentCommandComment({
@@ -1769,7 +1773,7 @@ describe("ask citation helpers", () => {
       actorKind: "author",
       bundle,
     });
-    expect(comment).toContain("origin: open_pr_monitor");
+    expect(comment).toContain("Source: cached GitHub open PR/issue queue; freshness: fresh");
     expect(comment).not.toMatch(/ranked|pursue_now|priority 0\.87321/i);
     expect(comment).not.toContain("owner/private-repo ranked");
   });
@@ -1814,8 +1818,9 @@ describe("ask citation helpers", () => {
       summary: "internals",
     });
     expect(sources.map((source) => source.key)).toEqual(
-      expect.arrayContaining(["scoreability_status", "score_preview", "branch_eligibility", "base_freshness", "evidence_graph_computed"]),
+      expect.arrayContaining(["branch_eligibility", "base_freshness", "evidence_graph_computed"]),
     );
+    expect(sources.some((source) => source.key === "scoreability_status" || source.key === "score_preview")).toBe(false);
     expect(sources.find((source) => source.key === "branch_eligibility")?.freshness).toBe("fresh");
     expect(
       githubCommandsInternals.snapshotFreshnessFromWarnings({
@@ -1845,7 +1850,7 @@ describe("ask citation helpers", () => {
         freshness: "unknown",
         detail: "",
       }),
-    ).toBe("- Source: metadata-only source; origin: metadata_only; freshness: unknown.");
+    ).toBe("- Source: metadata-only source; freshness: unknown.");
 
     const extended = githubCommandsInternals.collectAskContributingSources({
       run: completedRun("run-ask-internals-extended"),
@@ -1871,9 +1876,9 @@ describe("ask citation helpers", () => {
     });
     expect(extended.find((source) => source.key === "branch_eligibility")?.freshness).toBe("missing");
     expect(extended.some((source) => source.label.includes("Gittensor mirror registry snapshot"))).toBe(true);
-    expect(extended.some((source) => source.detail.includes("Connected contributor evidence graph source"))).toBe(true);
+    expect(extended.some((source) => source.detail.includes("metadata was available"))).toBe(true);
     expect(extended.some((source) => source.key === "freshness_warnings")).toBe(true);
-    expect(extended.some((source) => source.key === "contributor_decision_pack" && source.detail.includes("gittensor_api"))).toBe(true);
+    expect(extended.some((source) => source.key === "contributor_decision_pack" && source.detail.includes("Contributor decision-pack metadata"))).toBe(true);
     expect(extended.find((source) => source.key === "open_pr_monitor")?.freshness).toBe("unknown");
 
     const askOverflow = buildPublicAgentCommandComment({
@@ -1885,7 +1890,7 @@ describe("ask citation helpers", () => {
       bundle: askCitedBundle(),
     });
     expect(askOverflow).toContain("<summary>Additional safe details</summary>");
-    expect(askOverflow).toContain("origin: open_pr_monitor");
+    expect(askOverflow).toContain("Source: cached GitHub open PR/issue queue; freshness:");
 
     const askWithoutTimestamps = buildPublicAgentCommandComment({
       command: parseGittensoryMentionCommand("@gittensory ask what is synced?")!,
@@ -1908,7 +1913,7 @@ describe("ask citation helpers", () => {
         summary: "no timestamps",
       },
     });
-    expect(askWithoutTimestamps).toContain("Connected source repo sync freshness metadata (metadata_only): freshness unknown.");
+    expect(askWithoutTimestamps).toContain("Connected source repo sync freshness metadata: freshness unknown.");
     expect(askWithoutTimestamps).not.toContain("freshness unknown as of");
 
     const askFourSources = buildPublicAgentCommandComment({

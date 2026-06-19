@@ -232,6 +232,12 @@ describe("buildIssueSlopAssessment (#533 issue-side triage)", () => {
     expect(buildUnfilledIssueTemplateFinding({ body: "Real prose explaining the bug." })).toBeNull();
     expect(buildEmptyIssueBodyFinding({ body: "has content" })).toBeNull();
   });
+
+  it("handles repeated unterminated HTML comment openers without excessive scanning", () => {
+    const maliciousBody = "<!--".repeat(30_000);
+
+    expect(buildUnfilledIssueTemplateFinding({ body: maliciousBody })).toBeNull();
+  }, 1_000);
 });
 
 describe("buildNonSubstantivePaddingFinding (#561 path-matcher signal)", () => {

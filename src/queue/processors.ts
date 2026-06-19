@@ -1922,6 +1922,12 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     outcome: "completed",
     metadata: { deliveryId, repoFullName, commentId: comment.id },
   });
+  // A manual re-run is a re-evaluation surface — the user clicks it AFTER the PR changed — so the slop and
+  // manifest-policy gates must see the PR's current files, not whatever is cached. Mirror the webhook path
+  // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set.
+  if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
+    await refreshPullRequestDetails(env, repoFullName, pr.number);
+  }
   await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
     deliveryId,
     action: "manual_retrigger",

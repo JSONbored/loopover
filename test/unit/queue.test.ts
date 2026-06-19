@@ -1975,6 +1975,82 @@ describe("queue processors", () => {
     expect(usageEvents).toEqual(expect.arrayContaining([expect.objectContaining({ surface: "github_app", eventName: "pr_panel_retriggered", outcome: "completed" })]));
   });
 
+  it("refreshes the PR's files on a manual rerun so the slop/manifest gate evaluates the current diff", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicAudienceMode: "oss_maintainer",
+      publicSignalLevel: "standard",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "off",
+      includeMaintainerAuthors: true,
+      // Slop gate on → the rerun must refresh the PR files before evaluating (the guard fires).
+      slopGateMode: "advisory",
+      commandAuthorization: { default: ["maintainer", "collaborator", "confirmed_miner"], commands: { "review-now": ["maintainer"] } },
+    });
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 45,
+      title: "Refresh panel",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "panel123" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const checkedPanel = ["<!-- gittensory-pr-panel:v1 -->", "", "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review"].join("\n");
+    const calls = { pullsFiles: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([{ uid: 7, githubUsername: "contributor", githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 }]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") return Response.json({ repositories: [] });
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/contributor")) return Response.json({ login: "contributor", public_repos: 2, followers: 1 });
+      if (url.includes("/users/contributor/repos")) return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "maintain" });
+      // The refresh fetches files/reviews/checks; count the files fetch to prove the refresh ran on the rerun.
+      if (url.includes("/pulls/45/files")) {
+        calls.pullsFiles += 1;
+        return Response.json([{ filename: "src/app.ts", status: "modified", additions: 5, deletions: 1, changes: 6 }]);
+      }
+      if (url.includes("/pulls/45/reviews")) return Response.json([]);
+      if (url.includes("/commits/panel123/check-runs")) return Response.json({ check_runs: [] });
+      if (url.includes("/issues/45/comments") && method === "GET") return Response.json([{ id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+      if (url.includes("/issues/comments/777") && method === "PATCH") return Response.json({ id: 777 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "panel-retrigger-refresh",
+      eventName: "issue_comment",
+      payload: {
+        action: "edited",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 45, title: "Refresh panel", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // The rerun fetched the PR's current files before publishing the panel/gate — not the stale cache.
+    expect(calls.pullsFiles).toBeGreaterThanOrEqual(1);
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.pr_panel_retriggered", "JSONbored/gittensory#45")
+      .first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed");
+  });
+
   it("reruns the panel when a confirmed-miner PR author checks the rerun task (#824 miner-detection path)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);

@@ -345,3 +345,27 @@ describe("focus-manifest policy gate (#555)", () => {
     expect(result.blockers.map((finding) => finding.code)).toContain("manifest_blocked_path");
   });
 });
+
+describe(".gittensory.yml settings.reviewerRoutingMode override (#830)", () => {
+  it("passes reviewerRoutingMode through resolveEffectiveSettings when set in manifest", () => {
+    const eff = resolveEffectiveSettings(
+      settings({ reviewerRoutingMode: "off" } as Partial<RepositorySettings>),
+      parseFocusManifest({ settings: { reviewerRoutingMode: "auto_request" } }),
+    );
+    expect(eff.reviewerRoutingMode).toBe("auto_request");
+  });
+
+  it("leaves reviewerRoutingMode unchanged when manifest has no settings override", () => {
+    const eff = resolveEffectiveSettings(
+      settings({ reviewerRoutingMode: "advisory" } as Partial<RepositorySettings>),
+      parseFocusManifest(null),
+    );
+    expect(eff.reviewerRoutingMode).toBe("advisory");
+  });
+
+  it("ignores an invalid reviewerRoutingMode value and accumulates a warning", () => {
+    const manifest = parseFocusManifest({ settings: { reviewerRoutingMode: "invalid_mode" } });
+    expect(manifest.settings.reviewerRoutingMode).toBeUndefined();
+    expect(manifest.warnings.some((w) => /reviewerRoutingMode/.test(w))).toBe(true);
+  });
+});

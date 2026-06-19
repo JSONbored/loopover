@@ -81,6 +81,8 @@ import {
   sanitizePublicComment,
 } from "../github/commands";
 import { ensurePullRequestLabel } from "../github/labels";
+import { fetchCodeownersFile, getRequestedReviewers, requestPullRequestReviewers } from "../github/reviewer-request";
+import { buildReviewerRouting } from "../signals/reviewer-routing";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath } from "../rules/advisory";
@@ -1354,6 +1356,10 @@ async function maybePublishPrPublicSurface(
   let gateEvaluation: ReturnType<typeof evaluateGateCheck> | undefined;
   let aiReview: { notes: string } | undefined;
   let gateFinalized = false;
+  // Tracks the PR author's merged-PR count in this repo for the reviewer auto-request newcomer
+  // guard. Set inside the try block when authorHistory is computed; null = try block failed,
+  // treat as unknown and skip auto-request conservatively.
+  let authorMergedPrCount: number | null = null;
   try {
     const [repoIssues, repoPullRequests, repoBounties] = await Promise.all([
       listIssues(env, repoFullName),
@@ -1465,6 +1471,7 @@ async function maybePublishPrPublicSurface(
       mergedPrCount: authorPrs.filter((candidate) => candidate.mergedAt || candidate.state === "merged").length,
       closedUnmergedPrCount: authorPrs.filter((candidate) => candidate.state === "closed" && !candidate.mergedAt).length,
     };
+    authorMergedPrCount = authorHistory.mergedPrCount;
 
     const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;
@@ -1523,6 +1530,48 @@ async function maybePublishPrPublicSurface(
       }).catch(() => undefined);
     }
     throw error;
+  }
+
+  // Reviewer auto-request (#540/#830): when auto_request mode is on and the PR is open, find the
+  // top CODEOWNERS reviewer for the changed files and request them — unless the author is a first-time
+  // contributor (0 merged PRs in this repo) or they are already a requested reviewer (idempotency).
+  // Best-effort: failures are audited but never abort the main surface publish.
+  if (settings.reviewerRoutingMode === "auto_request" && pr.state === "open" && author && webhook.action !== "closed") {
+    // Newcomer guard: skip auto-request for first-time external contributors.
+    // authorMergedPrCount is null when the gate try-block failed — treat unknown as newcomer.
+    const isNewcomer = authorMergedPrCount === null || authorMergedPrCount === 0;
+    if (!isNewcomer) {
+      try {
+        const codeownersContent = await fetchCodeownersFile(repoFullName);
+        if (codeownersContent) {
+          const prFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+          const filePaths = prFiles.map((f) => f.path).filter(Boolean);
+          const routing = buildReviewerRouting(filePaths, codeownersContent);
+          const authorLogin = author.toLowerCase();
+          const alreadyRequested = await getRequestedReviewers(env, installationId, repoFullName, pr.number);
+          const candidate = routing.suggestions.find((s) => s.login !== authorLogin && !alreadyRequested.has(s.login));
+          if (candidate) {
+            await requestPullRequestReviewers(env, installationId, repoFullName, pr.number, [candidate.login]);
+            await recordAuditEvent(env, {
+              eventType: "github_app.reviewer_auto_requested",
+              actor: author,
+              targetKey: `${repoFullName}#${pr.number}`,
+              outcome: "completed",
+              metadata: { deliveryId: webhook.deliveryId, repoFullName, reviewerLogin: candidate.login },
+            });
+          }
+        }
+      } catch (error) {
+        await recordAuditEvent(env, {
+          eventType: "github_app.reviewer_auto_request_failed",
+          actor: author,
+          targetKey: `${repoFullName}#${pr.number}`,
+          outcome: "error",
+          detail: errorMessage(error),
+          metadata: { deliveryId: webhook.deliveryId, repoFullName },
+        }).catch(() => undefined);
+      }
+    }
   }
 
   if (!prelimHasPublicOutput) return;
@@ -1596,6 +1645,7 @@ async function maybePublishPrPublicSurface(
       await recordPublicSurfaceOutputFailure(env, "label", author, repoFullName, pr.number, webhook.deliveryId, message);
     }
   }
+
   if (publishedOutputs.length === 0) {
     if (failedOutputs.length > 0) {
       await recordAuditEvent(env, {

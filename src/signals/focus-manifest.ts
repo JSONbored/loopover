@@ -1,5 +1,5 @@
 import { parse as parseYaml } from "yaml";
-import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings } from "../types";
+import type { GatePolicyPack, GateRuleMode, JsonValue, RepositorySettings, ReviewerRoutingMode } from "../types";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy } from "../settings/autonomy";
 
 export type FocusManifestSource = "repo_file" | "api_record" | "none";
@@ -67,6 +67,7 @@ export type FocusManifestSettings = Partial<
     | "requireLinkedIssue"
     | "backfillEnabled"
     | "privateTrustEnabled"
+    | "reviewerRoutingMode"
     | "autonomy"
     | "autoMaintain"
     | "agentPaused"
@@ -430,6 +431,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
     const flag = normalizeOptionalBoolean(r[key], `settings.${key}`, warnings);
     if (flag !== null) out[key] = flag;
   }
+  const reviewerRoutingMode = normalizeOptionalEnum(r.reviewerRoutingMode, "settings.reviewerRoutingMode", ["off", "advisory", "auto_request"] as const, warnings);
+  if (reviewerRoutingMode !== null) out.reviewerRoutingMode = reviewerRoutingMode as ReviewerRoutingMode;
   // Agent-layer autonomy dial (#773): `settings.autonomy` maps each action class to a level. Only set it
   // when at least one valid class→level pair survives normalization, so a malformed block never blanks the
   // DB-configured policy via the resolver's `{...dbSettings, ...manifest.settings}` overlay.

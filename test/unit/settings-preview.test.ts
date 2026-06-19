@@ -360,6 +360,19 @@ describe("buildRepoSettingsPreview", () => {
     expect(preview.installPreview.checklist.find((item) => item.id === "public-outputs")?.summary).toMatch(/no public output action is enabled/i);
   });
 
+  it("includes reviewerRoutingMode in the preview — defaults to off when not set", () => {
+    const preview = buildRepoSettingsPreview({ ...base, settings: settings(), installation: healthyInstall, sample: { authorLogin: "miner", minerStatus: "confirmed" } });
+    expect(preview.settings.reviewerRoutingMode).toBe("off");
+  });
+
+  it("passes reviewerRoutingMode advisory and auto_request through to settings", () => {
+    const advisory = buildRepoSettingsPreview({ ...base, settings: settings({ reviewerRoutingMode: "advisory" }), installation: healthyInstall, sample: {} });
+    expect(advisory.settings.reviewerRoutingMode).toBe("advisory");
+
+    const autoRequest = buildRepoSettingsPreview({ ...base, settings: settings({ reviewerRoutingMode: "auto_request" }), installation: healthyInstall, sample: {} });
+    expect(autoRequest.settings.reviewerRoutingMode).toBe("auto_request");
+  });
+
   it("derives read-only base permissions from REQUIRED_INSTALLATION_PERMISSIONS so the preview stays in sync with the canonical constant", () => {
     // Regression: settings-preview previously hardcoded ["metadata: read", "pull_requests: read"] instead
     // of reading from REQUIRED_INSTALLATION_PERMISSIONS, so any change to the constant would leave the

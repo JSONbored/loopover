@@ -192,6 +192,7 @@ export type RepoSettingsPreview = {
     manifestPolicyGateMode: RepositorySettings["manifestPolicyGateMode"];
     firstTimeContributorGrace: boolean;
     slopGateMinScore?: number | null | undefined;
+    reviewerRoutingMode: NonNullable<RepositorySettings["reviewerRoutingMode"]>;
     autoLabelEnabled: boolean;
     gittensorLabel: string;
     createMissingLabel: boolean;
@@ -310,6 +311,7 @@ export function buildRepoSettingsPreview(args: {
       manifestPolicyGateMode: settings.manifestPolicyGateMode,
       firstTimeContributorGrace: settings.firstTimeContributorGrace,
       slopGateMinScore: settings.slopGateMinScore ?? null,
+      reviewerRoutingMode: settings.reviewerRoutingMode ?? "off",
       autoLabelEnabled: settings.autoLabelEnabled,
       gittensorLabel: settings.gittensorLabel,
       createMissingLabel: settings.createMissingLabel,

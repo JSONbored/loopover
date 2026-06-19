@@ -25,6 +25,7 @@ import {
   upsertInstallation,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
+  upsertPullRequestFile,
   upsertIssueWatchSubscription,
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
@@ -4639,6 +4640,301 @@ function queueMinerSnapshot(login: string) {
     issueLabels: [],
   };
 }
+
+  describe("reviewerRoutingMode: auto_request (#540/#830)", () => {
+    const REPO = "JSONbored/gittensory";
+    const INSTALLATION_ID = 123;
+    const PR_NUMBER = 99;
+    const AUTHOR = "oktofeesh1";
+
+    async function setupAutoRequestBase(env: Env) {
+      await persistRegistrySnapshot(
+        env,
+        normalizeRegistryPayload(
+          { [REPO]: { emission_share: 0.01, issue_discovery_share: 0 } },
+          { kind: "raw-github", url: "https://example.test" },
+          "2026-05-23T00:00:00.000Z",
+        ),
+      );
+      await upsertInstallation(env, {
+        installation: {
+          id: INSTALLATION_ID,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+          events: ["pull_request"],
+        },
+      });
+      await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: REPO, private: false, owner: { login: "JSONbored" } }, INSTALLATION_ID);
+      await upsertRepositorySettings(env, {
+        repoFullName: REPO,
+        commentMode: "off",
+        publicSurface: "off",
+        autoLabelEnabled: false,
+        checkRunMode: "off",
+        // Gate enabled so the function doesn't early-return before the auto_request block.
+        gateCheckMode: "enabled",
+        linkedIssueGateMode: "advisory",
+        reviewerRoutingMode: "auto_request",
+      });
+    }
+
+    // Minimal fetch handler for check-run calls triggered by the enabled gate.
+    function handleCheckRunCalls(url: string, method: string, init?: RequestInit): Response | null {
+      if (url.includes(`/commits/abc123/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/check-runs/900") && method === "PATCH") return Response.json({ id: 900 });
+      return null;
+    }
+
+    function prWebhook(action = "opened") {
+      return {
+        type: "github-webhook" as const,
+        deliveryId: `auto-request-${action}`,
+        eventName: "pull_request",
+        payload: {
+          action,
+          installation: { id: INSTALLATION_ID, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: REPO, private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: PR_NUMBER,
+            title: "Add reviewer-routing feature",
+            state: "open",
+            user: { login: AUTHOR },
+            head: { sha: "abc123" },
+            labels: [],
+            body: "Implements #540.",
+          },
+        },
+      };
+    }
+
+    it("requests the top CODEOWNERS reviewer for a non-newcomer author", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await setupAutoRequestBase(env);
+      // Seed a prior merged PR so the author is NOT a newcomer.
+      await upsertPullRequestFromGitHub(env, REPO, {
+        number: 50,
+        title: "Prior merged work",
+        state: "closed",
+        merged_at: "2026-05-01T00:00:00.000Z",
+        user: { login: AUTHOR },
+        labels: [],
+        body: null,
+      });
+      // Seed a PR file so CODEOWNERS routing has something to match.
+      await upsertPullRequestFile(env, {
+        repoFullName: REPO,
+        pullNumber: PR_NUMBER,
+        path: "src/signals/reviewer-routing.ts",
+        status: "modified",
+        additions: 10,
+        deletions: 2,
+        changes: 12,
+        previousFilename: null,
+        payload: {},
+      });
+
+      const calls = { codeownersRequests: 0, reviewerRequests: 0 };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        const checkRunResponse = handleCheckRunCalls(url, method, init);
+        if (checkRunResponse) return checkRunResponse;
+        if (url.includes("raw.githubusercontent.com") && url.includes("CODEOWNERS")) {
+          calls.codeownersRequests++;
+          return new Response("* @reviewer1\n");
+        }
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "GET") {
+          return Response.json({ users: [] });
+        }
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "POST") {
+          calls.reviewerRequests++;
+          const body = JSON.parse(String(init?.body ?? "{}")) as { reviewers?: string[] };
+          expect(body.reviewers).toEqual(["reviewer1"]);
+          return Response.json({ id: PR_NUMBER }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, prWebhook());
+      expect(calls.codeownersRequests).toBeGreaterThan(0);
+      expect(calls.reviewerRequests).toBe(1);
+    });
+
+    it("skips the reviewer request for a newcomer author (0 merged PRs in repo)", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await setupAutoRequestBase(env);
+      // No merged PR → author is a newcomer; auto_request must be skipped.
+
+      const codeownersRequests: string[] = [];
+      const reviewerPostRequests: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        const checkRunResponse = handleCheckRunCalls(url, method, init);
+        if (checkRunResponse) return checkRunResponse;
+        if (url.includes("raw.githubusercontent.com") && url.includes("CODEOWNERS")) {
+          codeownersRequests.push(url);
+          return new Response("* @reviewer1\n");
+        }
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "POST") {
+          reviewerPostRequests.push(url);
+          return Response.json({ id: PR_NUMBER }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, prWebhook());
+      expect(codeownersRequests).toHaveLength(0);
+      expect(reviewerPostRequests).toHaveLength(0);
+    });
+
+    it("absorbs reviewer-request failure and does not abort PR surface processing", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await setupAutoRequestBase(env);
+      // Seed merged PR so author is non-newcomer.
+      await upsertPullRequestFromGitHub(env, REPO, {
+        number: 51,
+        title: "Prior merged",
+        state: "closed",
+        merged_at: "2026-05-01T00:00:00.000Z",
+        user: { login: AUTHOR },
+        labels: [],
+        body: null,
+      });
+      await upsertPullRequestFile(env, {
+        repoFullName: REPO,
+        pullNumber: PR_NUMBER,
+        path: "src/index.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        previousFilename: null,
+        payload: {},
+      });
+
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        const checkRunResponse = handleCheckRunCalls(url, method, init);
+        if (checkRunResponse) return checkRunResponse;
+        if (url.includes("raw.githubusercontent.com") && url.includes("CODEOWNERS")) return new Response("* @reviewer1\n");
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "GET") return Response.json({ users: [] });
+        // Simulate a GitHub API error when requesting the reviewer.
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "POST") return new Response("unprocessable", { status: 422 });
+        return new Response("not found", { status: 404 });
+      });
+
+      // Should complete without throwing even though the reviewer request failed.
+      await expect(processJob(env, prWebhook())).resolves.not.toThrow();
+    });
+
+    it("skips the reviewer request when no CODEOWNERS file exists", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await setupAutoRequestBase(env);
+      // Prior merged PR so the author is not treated as a newcomer.
+      await upsertPullRequestFromGitHub(env, REPO, {
+        number: 52,
+        title: "Prior merged",
+        state: "closed",
+        merged_at: "2026-05-01T00:00:00.000Z",
+        user: { login: AUTHOR },
+        labels: [],
+        body: null,
+      });
+      await upsertPullRequestFile(env, {
+        repoFullName: REPO,
+        pullNumber: PR_NUMBER,
+        path: "src/index.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        previousFilename: null,
+        payload: {},
+      });
+
+      const reviewerPostRequests: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        const checkRunResponse = handleCheckRunCalls(url, method, init);
+        if (checkRunResponse) return checkRunResponse;
+        // No CODEOWNERS anywhere → fetchCodeownersFile returns null → routing skipped entirely.
+        if (url.includes("raw.githubusercontent.com") && url.includes("CODEOWNERS")) {
+          return new Response("not found", { status: 404 });
+        }
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "POST") {
+          reviewerPostRequests.push(url);
+          return Response.json({ id: PR_NUMBER }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, prWebhook());
+      expect(reviewerPostRequests).toHaveLength(0);
+    });
+
+    it("skips the reviewer request when the only CODEOWNERS owner is the PR author", async () => {
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await setupAutoRequestBase(env);
+      await upsertPullRequestFromGitHub(env, REPO, {
+        number: 53,
+        title: "Prior merged",
+        state: "closed",
+        merged_at: "2026-05-01T00:00:00.000Z",
+        user: { login: AUTHOR },
+        labels: [],
+        body: null,
+      });
+      await upsertPullRequestFile(env, {
+        repoFullName: REPO,
+        pullNumber: PR_NUMBER,
+        path: "src/index.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        previousFilename: null,
+        payload: {},
+      });
+
+      const reviewerPostRequests: string[] = [];
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url === "https://api.gittensor.io/miners") return Response.json([]);
+        if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+        const checkRunResponse = handleCheckRunCalls(url, method, init);
+        if (checkRunResponse) return checkRunResponse;
+        // The author is the sole CODEOWNERS owner → filtering the author out leaves no candidate.
+        if (url.includes("raw.githubusercontent.com") && url.includes("CODEOWNERS")) {
+          return new Response(`* @${AUTHOR}\n`);
+        }
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "GET") {
+          return Response.json({ users: [] });
+        }
+        if (url.includes(`/pulls/${PR_NUMBER}/requested_reviewers`) && method === "POST") {
+          reviewerPostRequests.push(url);
+          return Response.json({ id: PR_NUMBER }, { status: 201 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await processJob(env, prWebhook());
+      expect(reviewerPostRequests).toHaveLength(0);
+    });
+  });
 
 function b64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");

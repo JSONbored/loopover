@@ -395,6 +395,11 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
+/** Reviewer-routing mode (#540/#830). `off` = disabled; `advisory` = surface CODEOWNERS suggestions in
+ *  the PR panel only, no GitHub API side-effects; `auto_request` = also call GitHub's request-reviewers
+ *  API for the top-ranked suggestion (never for a first-time external contributor without explicit opt-in). */
+export type ReviewerRoutingMode = "off" | "advisory" | "auto_request";
+
 /** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: only confirmed
  *  Gittensor contributors are hard-blocked (registry/emissions-aware). `oss-anti-slop` = a general, repo-
  *  agnostic pack: the same deterministic rules (slop/duplicate/linked-issue/readiness/AI-consensus) block
@@ -461,6 +466,11 @@ export type RepositorySettings = {
   requireLinkedIssue: boolean;
   backfillEnabled: boolean;
   privateTrustEnabled: boolean;
+  /** Reviewer-routing mode (#540/#830). `off` = disabled; `advisory` = surface top CODEOWNERS suggestion in
+   *  the PR panel only; `auto_request` = also call GitHub's request-reviewers API (never fires for a
+   *  first-time external contributor — 0 merged PRs here — unless the maintainer has explicitly opted in).
+   *  Default `off`. Optional so existing settings fixtures/callers need not be touched. */
+  reviewerRoutingMode?: ReviewerRoutingMode | undefined;
   /** Opt-in for the public, unauthenticated README status badge (#541). Always populated by the DB layer
    *  (default false); optional so existing settings fixtures/callers need not be touched. */
   badgeEnabled?: boolean | undefined;

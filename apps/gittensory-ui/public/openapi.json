@@ -313,6 +313,46 @@
           "isPrivate"
         ]
       },
+      "PublicRepoStats": {
+        "type": "object",
+        "properties": {
+          "repoFullName": {
+            "type": "string"
+          },
+          "htmlUrl": {
+            "type": "string"
+          },
+          "stargazers_count": {
+            "type": "number"
+          },
+          "forks_count": {
+            "type": "number"
+          },
+          "fetched_at": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github",
+              "cache",
+              "stale_cache"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repoFullName",
+          "htmlUrl",
+          "stargazers_count",
+          "forks_count",
+          "fetched_at",
+          "source",
+          "stale"
+        ]
+      },
       "Advisory": {
         "type": "object",
         "properties": {
@@ -1434,18 +1474,6 @@
               "unknown"
             ]
           },
-          "reasons": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "multiplierTier": {
             "type": "string",
             "enum": [
@@ -1459,6 +1487,18 @@
               "ready",
               "maintainer_wip"
             ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -2362,6 +2402,9 @@
               "accepted": {
                 "type": "number"
               },
+              "rejected": {
+                "type": "number"
+              },
               "ignored": {
                 "type": "number"
               },
@@ -2385,9 +2428,6 @@
               },
               "maintainerLaneTotal": {
                 "type": "number"
-              },
-              "rejected": {
-                "type": "number"
               }
             },
             "required": [
@@ -2402,6 +2442,21 @@
               "positive",
               "negative",
               "maintainerLaneTotal"
+            ]
+          },
+          "sources": {
+            "type": "object",
+            "properties": {
+              "explicit": {
+                "type": "number"
+              },
+              "inferred": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "explicit",
+              "inferred"
             ]
           },
           "states": {
@@ -2436,21 +2491,6 @@
           },
           "privateSummary": {
             "type": "string"
-          },
-          "sources": {
-            "type": "object",
-            "properties": {
-              "explicit": {
-                "type": "number"
-              },
-              "inferred": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "explicit",
-              "inferred"
-            ]
           }
         },
         "required": [
@@ -2504,6 +2544,9 @@
           "accepted": {
             "type": "number"
           },
+          "rejected": {
+            "type": "number"
+          },
           "ignored": {
             "type": "number"
           },
@@ -2540,9 +2583,6 @@
               "mixed",
               "neutral"
             ]
-          },
-          "rejected": {
-            "type": "number"
           }
         },
         "required": [
@@ -4255,13 +4295,13 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
                       "estimatedMergedScore": {
                         "type": "number"
                       },
                       "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
                         "type": "number"
                       }
                     },
@@ -4507,13 +4547,13 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
                       "estimatedMergedScore": {
                         "type": "number"
                       },
                       "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
                         "type": "number"
                       }
                     },
@@ -4759,13 +4799,13 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
                       "estimatedMergedScore": {
                         "type": "number"
                       },
                       "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
                         "type": "number"
                       }
                     },
@@ -5011,13 +5051,13 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
                       "estimatedMergedScore": {
                         "type": "number"
                       },
                       "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
                         "type": "number"
                       }
                     },
@@ -5263,13 +5303,13 @@
                       "openPrMultiplier": {
                         "type": "number"
                       },
+                      "timeDecayMultiplier": {
+                        "type": "number"
+                      },
                       "estimatedMergedScore": {
                         "type": "number"
                       },
                       "pendingSaturationScore": {
-                        "type": "number"
-                      },
-                      "timeDecayMultiplier": {
                         "type": "number"
                       }
                     },
@@ -6086,13 +6126,13 @@
               "openPrMultiplier": {
                 "type": "number"
               },
+              "timeDecayMultiplier": {
+                "type": "number"
+              },
               "estimatedMergedScore": {
                 "type": "number"
               },
               "pendingSaturationScore": {
-                "type": "number"
-              },
-              "timeDecayMultiplier": {
                 "type": "number"
               }
             },
@@ -6411,13 +6451,13 @@
                     "openPrMultiplier": {
                       "type": "number"
                     },
+                    "timeDecayMultiplier": {
+                      "type": "number"
+                    },
                     "estimatedMergedScore": {
                       "type": "number"
                     },
                     "pendingSaturationScore": {
-                      "type": "number"
-                    },
-                    "timeDecayMultiplier": {
                       "type": "number"
                     }
                   },
@@ -7883,6 +7923,83 @@
               "enabled"
             ]
           },
+          "gatePack": {
+            "type": "string",
+            "enum": [
+              "gittensor",
+              "oss-anti-slop"
+            ]
+          },
+          "linkedIssueGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "duplicatePrGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "qualityGateMinScore": {
+            "type": "number",
+            "nullable": true
+          },
+          "slopGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "mergeReadinessGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "manifestPolicyGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
+          },
+          "firstTimeContributorGrace": {
+            "type": "boolean"
+          },
+          "slopGateMinScore": {
+            "type": "number",
+            "nullable": true
+          },
+          "slopAiAdvisory": {
+            "type": "boolean"
+          },
+          "reviewerRoutingMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "auto_request"
+            ]
+          },
           "autoLabelEnabled": {
             "type": "boolean"
           },
@@ -7947,83 +8064,6 @@
             "required": [
               "default",
               "commands"
-            ]
-          },
-          "createdAt": {
-            "type": "string",
-            "nullable": true
-          },
-          "updatedAt": {
-            "type": "string",
-            "nullable": true
-          },
-          "linkedIssueGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "duplicatePrGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "qualityGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "qualityGateMinScore": {
-            "type": "number",
-            "nullable": true
-          },
-          "gatePack": {
-            "type": "string",
-            "enum": [
-              "gittensor",
-              "oss-anti-slop"
-            ]
-          },
-          "slopGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "slopGateMinScore": {
-            "type": "number",
-            "nullable": true
-          },
-          "slopAiAdvisory": {
-            "type": "boolean"
-          },
-          "mergeReadinessGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
-            ]
-          },
-          "firstTimeContributorGrace": {
-            "type": "boolean"
-          },
-          "manifestPolicyGateMode": {
-            "type": "string",
-            "enum": [
-              "off",
-              "advisory",
-              "block"
             ]
           },
           "autonomy": {
@@ -8116,6 +8156,14 @@
           },
           "agentDryRun": {
             "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [
@@ -8135,6 +8183,7 @@
           "manifestPolicyGateMode",
           "firstTimeContributorGrace",
           "slopAiAdvisory",
+          "reviewerRoutingMode",
           "autoLabelEnabled",
           "gittensorLabel",
           "createMissingLabel",
@@ -8604,6 +8653,80 @@
                   "enabled"
                 ]
               },
+              "gatePack": {
+                "type": "string",
+                "enum": [
+                  "gittensor",
+                  "oss-anti-slop"
+                ]
+              },
+              "linkedIssueGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "duplicatePrGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "qualityGateMinScore": {
+                "type": "number",
+                "nullable": true
+              },
+              "slopGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "mergeReadinessGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "manifestPolicyGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
+              },
+              "firstTimeContributorGrace": {
+                "type": "boolean"
+              },
+              "slopGateMinScore": {
+                "type": "number",
+                "nullable": true
+              },
+              "reviewerRoutingMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "auto_request"
+                ]
+              },
               "autoLabelEnabled": {
                 "type": "boolean"
               },
@@ -8666,72 +8789,6 @@
                   "defaultAllowed",
                   "commandOverrides"
                 ]
-              },
-              "linkedIssueGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "duplicatePrGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "qualityGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "qualityGateMinScore": {
-                "type": "number",
-                "nullable": true
-              },
-              "gatePack": {
-                "type": "string",
-                "enum": [
-                  "gittensor",
-                  "oss-anti-slop"
-                ]
-              },
-              "slopGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "slopGateMinScore": {
-                "type": "number",
-                "nullable": true
-              },
-              "mergeReadinessGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
-              },
-              "firstTimeContributorGrace": {
-                "type": "boolean"
-              },
-              "manifestPolicyGateMode": {
-                "type": "string",
-                "enum": [
-                  "off",
-                  "advisory",
-                  "block"
-                ]
               }
             },
             "required": [
@@ -8750,6 +8807,7 @@
               "mergeReadinessGateMode",
               "manifestPolicyGateMode",
               "firstTimeContributorGrace",
+              "reviewerRoutingMode",
               "autoLabelEnabled",
               "gittensorLabel",
               "createMissingLabel",
@@ -12150,46 +12208,6 @@
           "maintainerNextSteps",
           "privateSummary"
         ]
-      },
-      "PublicRepoStats": {
-        "type": "object",
-        "properties": {
-          "repoFullName": {
-            "type": "string"
-          },
-          "htmlUrl": {
-            "type": "string"
-          },
-          "stargazers_count": {
-            "type": "number"
-          },
-          "forks_count": {
-            "type": "number"
-          },
-          "fetched_at": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "github",
-              "cache",
-              "stale_cache"
-            ]
-          },
-          "stale": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "repoFullName",
-          "htmlUrl",
-          "stargazers_count",
-          "forks_count",
-          "fetched_at",
-          "source",
-          "stale"
-        ]
       }
     },
     "parameters": {},
@@ -12236,6 +12254,46 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/public/github/repos/{owner}/{repo}/stats": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicRepoStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or non-allowlisted GitHub repository"
+          },
+          "503": {
+            "description": "GitHub repository stats are unavailable"
           }
         }
       }
@@ -12926,6 +12984,97 @@
         ]
       }
     },
+    "/v1/repos/{owner}/{repo}/focus-manifest": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Repo focus manifest and compiled policy for maintainers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Persist API-backed focus manifest for a repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON request body"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/focus-manifest/refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Refresh the persisted focus manifest cache from the repo file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
     "/v1/app/self-dogfood/registration-pack": {
       "get": {
         "responses": {
@@ -13007,6 +13156,39 @@
           },
           "404": {
             "description": "Repository is not accepted or preview unavailable"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or explicit create without dryRun false"
+          },
+          "403": {
+            "description": "Insufficient role"
           }
         },
         "security": [
@@ -14768,170 +14950,6 @@
           },
           "401": {
             "description": "Invalid internal token"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/public/github/repos/{owner}/{repo}/stats": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "owner",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "repo",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Public GitHub repository stars/forks for the website chrome; only JSONbored/gittensory is accepted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicRepoStats"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid or non-allowlisted GitHub repository"
-          },
-          "503": {
-            "description": "GitHub repository stats are unavailable"
-          }
-        }
-      }
-    },
-    "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request or explicit create without dryRun false"
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/focus-manifest": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Repo focus manifest and compiled policy for maintainers",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      },
-      "put": {
-        "responses": {
-          "200": {
-            "description": "Persist API-backed focus manifest for a repo",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Malformed JSON request body"
-          },
-          "403": {
-            "description": "Insufficient role"
-          }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
-      }
-    },
-    "/v1/repos/{owner}/{repo}/focus-manifest/refresh": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Refresh the persisted focus manifest cache from the repo file",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Insufficient role"
           }
         },
         "security": [

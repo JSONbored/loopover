@@ -144,6 +144,7 @@ import type {
   RepoSyncStateRecord,
   RepositorySettings,
   RepositoryRecord,
+  ReviewerRoutingMode,
   ScorePreviewRecord,
   ScoringModelSnapshotRecord,
   SignalSnapshotRecord,
@@ -429,6 +430,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       requireLinkedIssue: false,
       backfillEnabled: true,
       privateTrustEnabled: true,
+      reviewerRoutingMode: "off",
       badgeEnabled: false,
       agentPaused: false,
       agentDryRun: false,
@@ -468,6 +470,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     requireLinkedIssue: row.requireLinkedIssue,
     backfillEnabled: row.backfillEnabled,
     privateTrustEnabled: row.privateTrustEnabled,
+    reviewerRoutingMode: parseReviewerRoutingMode(row.reviewerRoutingMode),
     badgeEnabled: row.badgeEnabled,
     agentPaused: row.agentPaused,
     agentDryRun: row.agentDryRun,
@@ -511,6 +514,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     requireLinkedIssue: settings.requireLinkedIssue ?? false,
     backfillEnabled: settings.backfillEnabled ?? true,
     privateTrustEnabled: settings.privateTrustEnabled ?? true,
+    reviewerRoutingMode: parseReviewerRoutingMode(settings.reviewerRoutingMode ?? "off"),
     badgeEnabled: settings.badgeEnabled ?? false,
     agentPaused: settings.agentPaused ?? false,
     agentDryRun: settings.agentDryRun ?? false,
@@ -552,6 +556,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       requireLinkedIssue: resolved.requireLinkedIssue,
       backfillEnabled: resolved.backfillEnabled,
       privateTrustEnabled: resolved.privateTrustEnabled,
+      reviewerRoutingMode: resolved.reviewerRoutingMode,
       badgeEnabled: resolved.badgeEnabled,
       agentPaused: resolved.agentPaused,
       agentDryRun: resolved.agentDryRun,
@@ -594,6 +599,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         requireLinkedIssue: resolved.requireLinkedIssue,
         backfillEnabled: resolved.backfillEnabled,
         privateTrustEnabled: resolved.privateTrustEnabled,
+        reviewerRoutingMode: resolved.reviewerRoutingMode,
         badgeEnabled: resolved.badgeEnabled,
         agentPaused: resolved.agentPaused,
         agentDryRun: resolved.agentDryRun,
@@ -5067,6 +5073,11 @@ function normalizeQualityGateMinScore(value: number | null | undefined): number 
 function parsePublicSurface(value: string): RepositorySettings["publicSurface"] {
   if (value === "comment_only" || value === "label_only" || value === "off") return value;
   return "comment_and_label";
+}
+
+function parseReviewerRoutingMode(value: string | null | undefined): ReviewerRoutingMode {
+  if (value === "advisory" || value === "auto_request") return value;
+  return "off";
 }
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {

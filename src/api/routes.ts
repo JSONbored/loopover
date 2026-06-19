@@ -446,6 +446,7 @@ const localBranchScorerSchema = z
     sourceLines: z.number().min(0).optional(),
     testTokenScore: z.number().min(0).optional(),
     nonCodeTokenScore: z.number().min(0).optional(),
+  nonCodeLines: z.number().min(0).optional(),
     warnings: z.array(z.string().max(MAX_LOCAL_SCORER_WARNING_CHARS)).max(MAX_LOCAL_SCORER_WARNING_COUNT).optional(),
   })
   .strict();
@@ -516,6 +517,7 @@ const scorePreviewSchema = z.object({
   sourceLines: z.number().min(0).optional(),
   testTokenScore: z.number().min(0).optional(),
   nonCodeTokenScore: z.number().min(0).optional(),
+  nonCodeLines: z.number().min(0).optional(),
   existingContributorTokenScore: z.number().min(0).optional(),
   prAgeHours: z.number().min(0).optional(),
   openPrCount: z.number().int().min(0).optional(),

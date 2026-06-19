@@ -1231,6 +1231,7 @@ const ScoreGatesSchema = z.object({
   openPrThreshold: z.number(),
   openPrCount: z.number(),
   collateralFraction: z.number(),
+  reviewCollateralMultiplier: z.number(),
   credibilityFloor: z.number(),
   credibilityObserved: z.number(),
 });

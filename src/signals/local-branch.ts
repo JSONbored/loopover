@@ -4,8 +4,10 @@ import type { GittensorContributorSnapshot } from "../gittensor/api";
 import type { BountyRecord, CheckSummaryRecord, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../types";
 import { nowIso } from "../utils/json";
 import {
+  buildCollisionReport,
   buildLaneAdvice,
   buildLocalDiffPreflightResult,
+  buildQueueHealth,
   buildRepoFitRecommendation,
   buildRoleContext,
   type ContributorOutcomeHistory,
@@ -23,6 +25,7 @@ import { isPublicSafeText } from "./redaction";
 import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
+import { simulateOpenPrPressure } from "../services/open-pr-pressure-scenarios";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -366,6 +369,18 @@ export function buildLocalBranchAnalysis(args: {
           classified: [],
         }
       : undefined;
+  // Open-PR pressure strategy options (#348): the scenario summary renderer fills its strategy
+  // `options` (open new work / wait / clean up first) and headline from this simulation. Without
+  // passing it, scenarioSummary.options was always empty and the guidance never reached the miner.
+  const queuePressureSimulation = simulateOpenPrPressure({
+    repoFullName: args.input.repoFullName,
+    generatedAt: nowIso(),
+    queueHealth: buildQueueHealth(args.repo, args.issues, args.pullRequests, buildCollisionReport(args.input.repoFullName, args.issues, args.pullRequests)),
+    roleContext,
+    contributorOpenPrCount: (args.contributorPullRequests ?? args.pullRequests).filter(
+      (pr) => pr.state === "open" && (pr.authorLogin ?? "").toLowerCase() === args.input.login.toLowerCase(),
+    ).length,
+  });
   const scenarioSummary = renderPublicScenarioSummary({
     repoFullName: args.input.repoFullName,
     generatedAt: nowIso(),
@@ -373,6 +388,7 @@ export function buildLocalBranchAnalysis(args: {
     publicBlockers: scorePreview.blockedBy,
     scenarioInput: branchScenarioInput,
     pendingDetection: pendingDetectionForSummary,
+    pressureSimulation: queuePressureSimulation,
   });
   return {
     login: args.input.login,

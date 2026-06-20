@@ -1604,6 +1604,43 @@ describe("local MCP git metadata collection", () => {
     expect(analysis.scenarioSummary.dataClassification.facts).toEqual(expect.arrayContaining(["Contributor", "Repository", "Branch"]));
   });
 
+  it("wires open-PR pressure strategy options into scenarioSummary.options (#348)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      // contributorPullRequests is preferred when present; the authorless PR exercises the null-author
+      // guard in the own-open-PR count and must not be miscounted as this contributor's work.
+      contributorPullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+        { repoFullName: repo.fullName, number: 5, title: "Authorless", state: "open", authorLogin: null, labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    // Before this fix the renderer never received the pressure simulation, so options was always [].
+    const options = analysis.scenarioSummary.options;
+    expect(options.length).toBe(3);
+    expect(options.map((option) => option.rank)).toEqual([1, 2, 3]);
+    expect(options.filter((option) => option.recommended)).toHaveLength(1);
+    expect(options[0]?.recommended).toBe(true);
+    for (const option of options) {
+      expect(option.label.length).toBeGreaterThan(0);
+      expect(option.nextStep.length).toBeGreaterThan(0);
+    }
+  });
+
   it("populates scenarioSummary.dataClassification with contributor and repo facts from branch metadata", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

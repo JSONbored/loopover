@@ -472,6 +472,7 @@ function buildLocalScoreInput(args: {
     testTokenScore: scorer?.testTokenScore ?? testLineCount,
     nonCodeTokenScore: scorer?.nonCodeTokenScore ?? nonCodeLineCount,
     openPrCount: args.outcomeHistory.totals.openPullRequests,
+    openIssueCount: args.repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues,
     credibility: args.repoOutcome?.credibility ?? args.outcomeHistory.totals.credibility,
     metadataOnly: scorer?.mode !== "gittensor_root" && scorer?.mode !== "external_command",
     pendingMergedPrCount: args.input.pendingMergedPrCount,

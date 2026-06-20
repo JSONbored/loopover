@@ -744,6 +744,11 @@ const digestSubscriptionSchema = z
   })
   .strict();
 
+function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
+  const targetRepo = repoFullName.toLowerCase();
+  return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
+}
+
 export function createApp() {
   const app = new Hono<AppBindings>();
   app.use("*", async (c, next) => {
@@ -1591,13 +1596,15 @@ export function createApp() {
       const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
       if (unauthorized) return unauthorized;
     }
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       parsed.data.contributorLogin ? getContributorEvidence(c.env, parsed.data.contributorLogin) : Promise.resolve(null),
+      parsed.data.contributorLogin ? listContributorIssues(c.env, parsed.data.contributorLogin) : Promise.resolve([]),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     const record = makeScorePreviewRecord(input, snapshot, result);
     await persistScorePreview(c.env, record);
@@ -1611,13 +1618,15 @@ export function createApp() {
     if (!parsed.data.contributorLogin) return c.json({ error: "contributor_login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
     if (unauthorized) return unauthorized;
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       getContributorEvidence(c.env, parsed.data.contributorLogin),
+      listContributorIssues(c.env, parsed.data.contributorLogin),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
   });

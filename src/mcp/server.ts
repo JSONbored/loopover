@@ -487,6 +487,11 @@ const agentPlanShape = {
   repoFullName: z.string().min(3).optional(),
 };
 
+function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
+  const targetRepo = repoFullName.toLowerCase();
+  return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
+}
+
 const linkedIssueContextShape = {
   status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
   source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
@@ -2065,13 +2070,15 @@ export class GittensoryMcp {
   private async previewScore(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       input.contributorLogin ? getContributorEvidence(this.env, input.contributorLogin) : Promise.resolve(null),
+      input.contributorLogin ? listContributorIssues(this.env, input.contributorLogin) : Promise.resolve([]),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, input.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const scoreInput = { ...input, openIssueCount, applyTimeDecay: isTimeDecayEnabled(this.env) };
     const result = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     return {
       summary: `Private Gittensory scoring preview for ${input.repoFullName}.`,

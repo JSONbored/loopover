@@ -94,6 +94,34 @@ describe("local branch analysis", () => {
     expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk" })]));
   });
 
+  it("applies the open-issue spam gate from trusted outcome history", () => {
+    const issueHeavyHistory: ContributorOutcomeHistory = {
+      ...outcomeHistory,
+      totals: { ...outcomeHistory.totals, issues: 99, openIssues: 99 },
+      repoOutcomes: [{ ...outcomeHistory.repoOutcomes[0]!, issues: 99, openIssues: 99 }],
+    };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        labels: ["enhancement"],
+        changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory: issueHeavyHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scorePreview.gates.openIssueCount).toBe(99);
+    expect(analysis.scorePreview.scoreEstimate.openIssueMultiplier).toBe(0);
+    expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "open_issue_threshold" })]));
+  });
+
   it("bounds local scorer warnings before adding local findings", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

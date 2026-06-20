@@ -36,6 +36,15 @@ describe("buildSlopAssessment", () => {
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
+  it("raises low-quality-commit-message slop for dot-only commit subjects (#564)", () => {
+    for (const message of [".", "..", "..."]) {
+      expect(buildLowQualityCommitMessageFinding({ commitMessages: [message] })).toMatchObject({
+        code: "low_quality_commit_message",
+        severity: "warning",
+      });
+    }
+  });
+
   it("does not raise commit-message slop for a specific subject or when no commit data is supplied (#564)", () => {
     expect(buildSlopAssessment({ commitMessages: ["feat(api): add cursor pagination to labels endpoint"] }).findings).toEqual([]);
     expect(buildSlopAssessment({ commitMessages: [] }).findings).toEqual([]);

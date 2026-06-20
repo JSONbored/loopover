@@ -1,4 +1,4 @@
-import type { SignalFinding } from "./engine";
+import { GENERIC_COMMIT_PATTERN, type SignalFinding } from "./engine";
 import { isCodeFile, isTestFile } from "./local-branch";
 import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFocusManifestPublicSafe } from "./focus-manifest";
@@ -18,6 +18,11 @@ export type SlopAssessmentInput = {
   testFiles?: string[] | undefined;
   /** PR/branch description. An empty/whitespace description on a code change is a weak-effort signal. */
   description?: string | null | undefined;
+  /** The PR's commit subject line(s). A generic/empty primary subject (wip / fix / update / ".") is a weak-effort signal. */
+  commitMessages?: string[] | undefined;
+  /** True when this PR sits in a high-risk duplicate cluster (2+ open PRs) — the caller computes it from the
+   *  collision report via {@link isPullRequestInDuplicateCluster}. Undefined on surfaces without repo context. */
+  inDuplicateCluster?: boolean | undefined;
 };
 
 export type SlopAssessment = {
@@ -35,6 +40,8 @@ export const SLOP_WEIGHTS = {
   missingTestEvidence: 30,
   nonSubstantivePadding: 30,
   emptyDescription: 15,
+  lowQualityCommitMessage: 15,
+  duplicateClusterMembership: 15,
 } as const;
 
 export const SLOP_RUBRIC_MARKDOWN = [
@@ -50,6 +57,8 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "- missing test evidence",
   "- non-substantive padding (generated / vendored / minified output as source)",
   "- empty pull request description on a code change",
+  "- generic or empty commit message",
+  "- duplicate / overlapping pull request (high-risk collision cluster)",
 ].join("\n");
 
 const MIN_CHURN_LINES = 40;
@@ -64,16 +73,22 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
   const missingTestEvidenceFinding = buildMissingTestEvidenceFinding(input);
   const nonSubstantivePaddingFinding = buildNonSubstantivePaddingFinding(input);
   const emptyDescriptionFinding = buildEmptyDescriptionFinding(input);
+  const lowQualityCommitMessageFinding = buildLowQualityCommitMessageFinding(input);
+  const duplicateClusterFinding = buildDuplicateClusterFinding(input);
   if (trivialChurnFinding) findings.push(trivialChurnFinding);
   if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
   if (nonSubstantivePaddingFinding) findings.push(nonSubstantivePaddingFinding);
   if (emptyDescriptionFinding) findings.push(emptyDescriptionFinding);
+  if (lowQualityCommitMessageFinding) findings.push(lowQualityCommitMessageFinding);
+  if (duplicateClusterFinding) findings.push(duplicateClusterFinding);
 
   const slopRisk = clamp(
     (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0) +
       (missingTestEvidenceFinding ? SLOP_WEIGHTS.missingTestEvidence : 0) +
       (nonSubstantivePaddingFinding ? SLOP_WEIGHTS.nonSubstantivePadding : 0) +
-      (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0),
+      (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0) +
+      (lowQualityCommitMessageFinding ? SLOP_WEIGHTS.lowQualityCommitMessage : 0) +
+      (duplicateClusterFinding ? SLOP_WEIGHTS.duplicateClusterMembership : 0),
     0,
     100,
   );
@@ -151,6 +166,44 @@ export function buildEmptyDescriptionFinding(input: SlopAssessmentInput): Signal
     severity: "warning",
     detail,
     action: "Describe what changed and why so reviewers can evaluate it.",
+    publicText: detail,
+  };
+}
+
+// Fires when commit-message data is supplied and the primary subject is empty/whitespace, or is entirely a
+// generic low-effort word (wip / fix / update / "." …) per the #549 lint tool's shared GENERIC_COMMIT_PATTERN.
+// High-precision: a specific subject — even one that isn't a Conventional Commit — never trips this blocking
+// signal; only a bare generic word that IS the whole subject does. Nothing to assess (undefined / no commit
+// data) returns null. Static, public-safe detail text — no interpolation, like the issue-side findings.
+export function buildLowQualityCommitMessageFinding(input: SlopAssessmentInput): SignalFinding | null {
+  if (input.commitMessages === undefined || input.commitMessages.length === 0) return null;
+  const messages = input.commitMessages.map((message) => message.trim()).filter((message) => message.length > 0);
+  const primary = messages[0];
+  if (primary !== undefined && !GENERIC_COMMIT_PATTERN.test(primary)) return null;
+  const detail = primary === undefined ? "The commit message is empty." : "The commit message is generic (e.g. wip / fix / update) with no specific detail.";
+  return {
+    code: "low_quality_commit_message",
+    title: "Commit message is generic or empty",
+    severity: "warning",
+    detail,
+    action: "Write a specific commit subject that names what changed and why (a Conventional Commit like 'feat(api): add cursor pagination' works well).",
+    publicText: detail,
+  };
+}
+
+// Fires when the PR sits in a HIGH-risk collision cluster that holds 2+ open pull requests — genuine
+// overlapping/duplicate work. The caller determines this via isPullRequestInDuplicateCluster (#563), whose
+// 2+-pull-request bar keeps the blocking signal false-positive-averse (a healthy issue↔its-own-PR pair, also
+// marked high-risk by buildCollisionReport, is excluded). Static, public-safe text.
+export function buildDuplicateClusterFinding(input: SlopAssessmentInput): SignalFinding | null {
+  if (input.inDuplicateCluster !== true) return null;
+  const detail = "This pull request overlaps a high-risk cluster of other open pull requests doing similar work.";
+  return {
+    code: "duplicate_cluster_membership",
+    title: "Pull request duplicates other open work",
+    severity: "warning",
+    detail,
+    action: "Check for an existing pull request or issue covering this change and coordinate or consolidate before continuing.",
     publicText: detail,
   };
 }
@@ -302,8 +355,7 @@ export function buildEmptyIssueBodyFinding(input: IssueSlopAssessmentInput): Sig
 export function buildUnfilledIssueTemplateFinding(input: IssueSlopAssessmentInput): SignalFinding | null {
   const body = (input.body ?? "").trim();
   if (body.length === 0) return null;
-  const substantive = body
-    .replace(/<!--[\s\S]*?-->/g, "") // HTML comment placeholders
+  const substantive = stripHtmlComments(body) // HTML comment placeholders
     .replace(/^#{1,6}\s.*$/gm, "") // markdown heading lines
     .replace(/^\s*[-*]\s*(\[[ xX]\])?\s*$/gm, "") // empty bullets / checkboxes
     .replace(/[\s>#*_`+-]/g, "") // residual markdown punctuation + whitespace
@@ -319,6 +371,30 @@ export function buildUnfilledIssueTemplateFinding(input: IssueSlopAssessmentInpu
     action: "Fill in the template sections with the actual problem details.",
     publicText: detail,
   };
+}
+
+function stripHtmlComments(input: string): string {
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < input.length) {
+    const commentStart = input.indexOf("<!--", cursor);
+    if (commentStart === -1) {
+      output += input.slice(cursor);
+      break;
+    }
+
+    output += input.slice(cursor, commentStart);
+    const commentEnd = input.indexOf("-->", commentStart + 4);
+    if (commentEnd === -1) {
+      output += input.slice(commentStart);
+      break;
+    }
+
+    cursor = commentEnd + 3;
+  }
+
+  return output;
 }
 
 function nonNegative(value: number | undefined): number {

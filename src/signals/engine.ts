@@ -880,6 +880,21 @@ export function buildCollisionReport(
   return report;
 }
 
+/**
+ * True when an open PR sits in a HIGH-risk collision cluster that holds 2+ pull requests — i.e. genuine
+ * overlapping/duplicate work (#563). The 2+-pull-request bar is deliberate: buildCollisionReport also marks a
+ * healthy issue↔its-own-linking-PR pair high-risk, so requiring two pull-request items keeps callers (the
+ * deterministic slop gate) false-positive-averse. Pure.
+ */
+export function isPullRequestInDuplicateCluster(collisions: CollisionReport, pullNumber: number): boolean {
+  return collisions.clusters.some(
+    (cluster) =>
+      cluster.risk === "high" &&
+      cluster.items.filter((item) => item.type === "pull_request").length >= 2 &&
+      cluster.items.some((item) => item.type === "pull_request" && item.number === pullNumber),
+  );
+}
+
 export function buildQueueHealth(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
@@ -3925,6 +3940,7 @@ export function buildPublicPrIntelligenceComment(args: {
   const publicFindings = args.preflight.findings
     .filter((finding) => finding.severity !== "critical")
     .filter((finding) => args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
+    .filter((finding) => !isPrivateBountyLifecycleFinding(finding.code))
     .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
     .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
@@ -4088,9 +4104,9 @@ export function buildPublicPrIntelligenceComment(args: {
           "",
           "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
           "",
-          // Notes are already public-safe (built via toPublicSafe upstream). Escape angle brackets so a
-          // stray tag (e.g. </details> or an HTML comment marker) cannot break the panel structure, while
-          // preserving the markdown bullet/line layout that sanitizePanelText would otherwise flatten.
+          // Notes are already public-safe and markdown-neutralized (built via toPublicSafe upstream). Escape
+          // angle brackets as a final guard so a stray tag (e.g. </details> or an HTML comment marker) cannot
+          // break the panel structure while preserving the section/bullet layout we add ourselves.
           args.aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
           "",
           "</details>",
@@ -4333,7 +4349,9 @@ export type PrTextLintReport = {
   summary: string;
 };
 
-const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
+// Exported so the deterministic slop signal (#564) and the #549 lint tool share ONE definition of a
+// "generic" commit subject — a single low-effort word (wip / fix / update / "." …) that is the whole subject.
+export const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
 // Conventional Commit subject: one of CONTRIBUTING's allowed types, optional `(scope)`, optional `!`,
 // then `: ` and a non-empty summary (e.g. `feat(api): add cursor pagination`). Single source of truth
 // with CONTRIBUTING.md "Commit And PR Titles".
@@ -4524,6 +4542,10 @@ function formatCollisionItemRef(item: CollisionItem): string {
 
 function formatAlertBlock(lines: string[]): string[] {
   return lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+}
+
+function isPrivateBountyLifecycleFinding(code: string): boolean {
+  return code === "linked_issue_bounty_historical" || code === "linked_issue_bounty_unverified";
 }
 
 function containsPrivatePublicTerm(value: string): boolean {

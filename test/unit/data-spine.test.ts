@@ -386,6 +386,12 @@ describe("data spine repositories", () => {
     await updatePullRequestSlopAssessment(env, "owner/sloppr", 5, { slopRisk: 10, slopBand: "low" });
     expect((await getPullRequest(env, "owner/sloppr", 5))?.slopBand).toBe("low");
 
+    // Slop-off processing can clear a previously persisted dashboard assessment.
+    await updatePullRequestSlopAssessment(env, "owner/sloppr", 5, { slopRisk: null, slopBand: null });
+    const cleared = await getPullRequest(env, "owner/sloppr", 5);
+    expect(cleared?.slopRisk).toBeNull();
+    expect(cleared?.slopBand).toBeNull();
+
     // No-op (no throw) when the PR row does not exist yet.
     await expect(updatePullRequestSlopAssessment(env, "owner/sloppr", 999, { slopRisk: 5, slopBand: "low" })).resolves.toBeUndefined();
   });

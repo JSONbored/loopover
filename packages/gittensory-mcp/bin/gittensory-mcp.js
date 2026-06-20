@@ -42,9 +42,13 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear"],
   agent: ["plan", "status", "explain", "packet"],
+  maintain: ["status", "approve", "reject", "pause", "resume", "set-level"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
+// #784 maintain set-level — the autonomy dial's action classes + levels (must mirror src/settings/autonomy.ts).
+const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"];
+const MAINTAIN_AUTONOMY_LEVELS = ["observe", "suggest", "propose", "auto_with_approval", "auto"];
 const AGENT_PROFILES = {
   "miner-planner": {
     id: "miner-planner",
@@ -584,7 +588,7 @@ server.registerTool(
       local: result.local,
       preflight: result.analysis.preflight,
       prPacket: result.analysis.prPacket,
-      workspaceIntelligence: result.analysis.workspaceIntelligence,
+      workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence),
     });
   },
 );
@@ -1307,6 +1311,79 @@ function workspaceRootStatus(roots) {
   };
 }
 
+function printMaintainHelp() {
+  process.stdout.write(
+    [
+      "Usage: gittensory-mcp maintain <subcommand> --repo owner/repo",
+      "",
+      "Maintainer controls for the agent auto-maintain layer (requires maintainer access; run `gittensory-mcp login`).",
+      "",
+      "Subcommands:",
+      "  status                       List the agent approval queue (auto_with_approval actions awaiting a decision).",
+      "  approve <id>                 Approve a staged action -> execute it.",
+      "  reject <id>                  Reject a staged action -> cancel it.",
+      "  pause                        Pause ALL agent actions on the repo (kill-switch).",
+      "  resume                       Resume agent actions on the repo.",
+      "  set-level <action> <level>   Set the autonomy level for one action class.",
+      `                               actions: ${MAINTAIN_ACTION_CLASSES.join(", ")}`,
+      `                               levels:  ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}`,
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+// #784 maintainer CLI controls — thin proxies over the agent approval-queue API (#779) and the maintainer
+// settings kill-switch (#130). The API enforces maintainer authorization; the CLI never decides locally.
+async function maintainCli(args) {
+  const subcommand = args[0];
+  if (!subcommand || subcommand === "--help" || subcommand === "help") return printMaintainHelp();
+  const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+  const options = parseOptions(args.slice(1));
+  const repoFullName = options.repo;
+  if (!repoFullName || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
+  const [owner, repo] = repoFullName.split("/", 2);
+  const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const queueBase = `${repoBase}/agent/pending-actions`;
+  const emit = (payload, line) => {
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(`${line}\n`);
+  };
+  if (subcommand === "status") {
+    const payload = await apiGet(queueBase);
+    const actions = payload.pendingActions ?? [];
+    emit(payload, [`Agent approval queue for ${repoFullName}: ${actions.length} pending.`, ...actions.map((action) => `- ${action.id}  ${action.actionClass} on #${action.pullNumber}  ${action.reason ?? ""}`)].join("\n"));
+    return;
+  }
+  if (subcommand === "approve" || subcommand === "reject") {
+    if (!positional) throw new Error(`Pass the pending-action id: gittensory-mcp maintain ${subcommand} <id> --repo owner/repo.`);
+    // The approval-queue route's decision verb is accept|reject (#779); the CLI exposes approve|reject.
+    const decision = subcommand === "approve" ? "accept" : "reject";
+    const payload = await apiPost(`${queueBase}/${encodeURIComponent(positional)}/${decision}`, {});
+    emit(payload, `${subcommand === "approve" ? "Accepted" : "Rejected"} ${positional}: ${payload.status ?? "ok"}${payload.executionOutcome ? ` (${payload.executionOutcome})` : ""}.`);
+    return;
+  }
+  if (subcommand === "pause" || subcommand === "resume") {
+    const payload = await apiFetch(`${repoBase}/settings`, { method: "PUT", body: JSON.stringify({ agentPaused: subcommand === "pause" }) });
+    emit(payload, `Agent actions ${subcommand === "pause" ? "paused" : "resumed"} for ${repoFullName}.`);
+    return;
+  }
+  if (subcommand === "set-level") {
+    const action = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
+    const level = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
+    if (!action || !level) throw new Error("Usage: gittensory-mcp maintain set-level <action> <level> --repo owner/repo.");
+    if (!MAINTAIN_ACTION_CLASSES.includes(action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
+    if (!MAINTAIN_AUTONOMY_LEVELS.includes(level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
+    // Read-merge-write so one class is updated without clearing the others.
+    const current = await apiGet(`${repoBase}/settings`);
+    const autonomy = { ...(current.autonomy ?? {}), [action]: level };
+    const payload = await apiFetch(`${repoBase}/settings`, { method: "PUT", body: JSON.stringify({ autonomy }) });
+    emit(payload, `Set ${action} autonomy to ${level} for ${repoFullName}.`);
+    return;
+  }
+  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | approve <id> | reject <id> | pause | resume | set-level <action> <level>.`);
+}
+
 async function runCli(args) {
   const command = args[0];
   if (command === "--help" || command === "help") return printHelp();
@@ -1314,6 +1391,7 @@ async function runCli(args) {
   if (command === "completion") return completionCommand(args.slice(1));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
+  if (command === "maintain") return maintainCli(args.slice(1));
   const options = parseOptions(args.slice(1));
   if (command === "login") return login(options);
   if (command === "logout") return logout(options);
@@ -1350,7 +1428,7 @@ async function runCli(args) {
   });
   const payload =
     command === "preflight"
-      ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket, workspaceIntelligence: result.analysis.workspaceIntelligence }
+      ? { local: result.local, preflight: result.analysis.preflight, prPacket: result.analysis.prPacket, workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence) }
       : result;
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -1488,7 +1566,7 @@ function outputAgentPayload(payload, options, summary) {
 
 function writeBranchAnalysisCli(result, command) {
   const analysis = result.analysis;
-  const intelligence = analysis.workspaceIntelligence;
+  const intelligence = command === "preflight" ? publicSafeWorkspaceIntelligence(analysis.workspaceIntelligence) : analysis.workspaceIntelligence;
   process.stdout.write(`${analysis.summary}\n`);
   process.stdout.write(`Top action: ${analysis.nextActions?.[0]?.actionKind ?? "none"}\n`);
   if (analysis.nextActions?.[0]?.whyThisHelps?.length) {
@@ -1535,6 +1613,28 @@ function writeWorkspaceIntelligenceCli(intelligence) {
     for (const hint of intelligence.ciStatusHints.slice(0, 3)) process.stdout.write(`  - ${hint}\n`);
   }
   process.stdout.write(`- Rerun when: ${intelligence.rerunWhen}\n`);
+}
+
+function publicSafeWorkspaceIntelligence(intelligence) {
+  if (!intelligence) return intelligence;
+  return {
+    ...intelligence,
+    blockers: {
+      ...intelligence.blockers,
+      accountState: [],
+    },
+    rerunWhen: publicSafeRerunWhen(intelligence),
+  };
+}
+
+function publicSafeRerunWhen(intelligence) {
+  if (intelligence.baseFreshness?.status === "stale" || intelligence.baseFreshness?.status === "possibly_stale") {
+    return "Run `git fetch origin` and rerun; current diff size may be inflated by stale base state.";
+  }
+  if (intelligence.blockers?.branchQuality?.length) {
+    return "Rerun after fixing branch-quality blockers or adding explicit validation/linked-context evidence.";
+  }
+  return "Rerun after any branch, base, or PR state changes before opening/submitting.";
 }
 
 function requirePublicSafePacketMarkdown(markdown) {

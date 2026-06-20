@@ -18,6 +18,7 @@ import {
   upsertInstallation,
   upsertRepoSyncSegment,
   upsertRepoSyncState,
+  upsertPullRequestFile,
   upsertPullRequestFromGitHub,
   upsertIssueFromGitHub,
   upsertRepositoryFromGitHub,
@@ -32,6 +33,7 @@ import {
   enrichInstallationHealth,
   refreshContributorActivity,
   refreshInstallationHealth,
+  refreshPullRequestDetails,
 } from "../../src/github/backfill";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -1790,6 +1792,164 @@ describe("GitHub backfill", () => {
     expect(await listPullRequestReviews(env, "JSONbored/gittensory", 10)).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "JSONbored/gittensory#10#44", reviewerLogin: "maintainer", state: "APPROVED" }), expect.objectContaining({ id: "JSONbored/gittensory#10#45", state: "UNKNOWN" })]),
     );
+  });
+
+  it("refreshes one pull request's files before gate evaluation and drops stale cached paths", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 12,
+      title: "Refresh files",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "new-head" },
+      labels: [],
+      body: "",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 12,
+      path: "stale/old-secret.txt",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: { filename: "stale/old-secret.txt" },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/pulls/12/files")) return Response.json([{ filename: "src/current.ts", status: "modified", additions: 2, deletions: 1, changes: 3 }]);
+      if (url.includes("/pulls/12/reviews")) return Response.json([]);
+      if (url.includes("/commits/new-head/check-runs")) return Response.json({ check_runs: [] });
+      return Response.json([]);
+    });
+
+    const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 12);
+
+    expect(result).toMatchObject({ status: "complete", pullNumber: 12 });
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 12)).toEqual([expect.objectContaining({ path: "src/current.ts", changes: 3 })]);
+  });
+
+  it("preserves cached pull request files when refresh cannot reload the current file list", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 12,
+      title: "Refresh unavailable",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "new-head" },
+      labels: [],
+      body: "",
+    });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 12,
+      path: "src/cached.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: { filename: "src/cached.ts" },
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("GittensoryPullRequestDetails")) return Response.json({ data: { repository: { pullRequest: null } } });
+      }
+      if (url.includes("/pulls/12/files")) return new Response("files unavailable", { status: 503 });
+      if (url.includes("/pulls/12/reviews")) return Response.json([]);
+      if (url.includes("/commits/new-head/check-runs")) return Response.json({ check_runs: [] });
+      return Response.json([]);
+    });
+
+    const result = await refreshPullRequestDetails(env, "JSONbored/gittensory", 12);
+
+    expect(result).toMatchObject({ status: "partial", pullNumber: 12 });
+    expect(result.warnings).toEqual([expect.stringContaining("File sync failed for #12")]);
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 12)).toEqual([expect.objectContaining({ path: "src/cached.ts", changes: 1 })]);
+  });
+
+  it("paginates PR files, reviews, and check-runs across Link-header pages so large PRs are not truncated", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 20,
+      title: "Large PR",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "bigsha" },
+      labels: [],
+      body: "",
+    });
+    const nextLink = (resource: string) => ({ headers: { link: `<https://api.github.com/repositories/1/${resource}?page=2>; rel="next"` } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/pulls/20/files")) {
+        return url.includes("page=2")
+          ? Response.json([{ filename: "src/b.ts", status: "modified", additions: 2, deletions: 0, changes: 2 }])
+          : Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1 }], nextLink("files"));
+      }
+      if (url.includes("/pulls/20/reviews")) {
+        return url.includes("page=2")
+          ? Response.json([{ id: 91, user: { login: "rev2" }, state: "COMMENTED", submitted_at: "2026-05-25T00:00:00Z" }])
+          : Response.json([{ id: 90, user: { login: "rev1" }, state: "APPROVED", submitted_at: "2026-05-24T00:00:00Z" }], nextLink("reviews"));
+      }
+      if (url.includes("/commits/bigsha/check-runs")) {
+        return url.includes("page=2")
+          ? Response.json({ check_runs: [{ id: 71, name: "lint", status: "completed", conclusion: "success" }] })
+          : Response.json({ check_runs: [{ id: 70, name: "test", status: "completed", conclusion: "success" }] }, nextLink("commits/bigsha/check-runs"));
+      }
+      return Response.json([]);
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+    expect(result).toMatchObject({ status: "complete", processed: 1, warnings: [] });
+
+    // Both pages of each list must be persisted — page 1 alone would silently drop the second page.
+    expect((await listPullRequestFiles(env, "JSONbored/gittensory", 20)).map((file) => file.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    expect((await listPullRequestReviews(env, "JSONbored/gittensory", 20)).map((review) => review.reviewerLogin).sort()).toEqual(["rev1", "rev2"]);
+    expect((await listCheckSummaries(env, "JSONbored/gittensory", 20)).map((check) => check.name).sort()).toEqual(["lint", "test"]);
+  });
+
+  it("keeps the pages already fetched when a later PR-files page fails", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 21,
+      title: "Partial pages",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "psha" },
+      labels: [],
+      body: "",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/pulls/21/files")) {
+        return url.includes("page=2")
+          ? new Response("rate limited", { status: 503 })
+          : Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1 }], {
+              headers: { link: '<https://api.github.com/repositories/1/files?page=2>; rel="next"' },
+            });
+      }
+      if (url.includes("/pulls/21/reviews")) return Response.json([]);
+      if (url.includes("/commits/psha/check-runs")) {
+        // Same partial-page behavior for the check-runs envelope: page 1 ok, page 2 fails.
+        return url.includes("page=2")
+          ? new Response("rate limited", { status: 503 })
+          : Response.json({ check_runs: [{ id: 80, name: "build", status: "completed", conclusion: "success" }] }, {
+              headers: { link: '<https://api.github.com/repositories/1/commits/psha/check-runs?page=2>; rel="next"' },
+            });
+      }
+      return Response.json([]);
+    });
+
+    await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+    // Page 1 succeeded; a page-2 failure must keep it rather than dropping a good first page (files and checks).
+    expect((await listPullRequestFiles(env, "JSONbored/gittensory", 21)).map((file) => file.path)).toEqual(["src/a.ts"]);
+    expect((await listCheckSummaries(env, "JSONbored/gittensory", 21)).map((check) => check.name)).toEqual(["build"]);
   });
 
   it("records partial PR detail state and check summary segment when check-run fetches fail", async () => {

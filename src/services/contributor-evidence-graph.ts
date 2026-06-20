@@ -3,7 +3,7 @@ import type { ContributorOutcomeHistory, ContributorProfile, RoleContext } from 
 import type {
   ContributorRepoStatRecord,
   IssueRecord,
-  PullRequestFileRecord,
+  PullRequestFilePathRecord,
   PullRequestRecord,
   RepositoryRecord,
   RepoSyncStateRecord,
@@ -153,7 +153,7 @@ export type ContributorEvidenceGraphInput = {
   issues?: IssueRecord[] | undefined;
   repoStats?: ContributorRepoStatRecord[] | undefined;
   syncStates?: RepoSyncStateRecord[] | undefined;
-  pullRequestFiles?: PullRequestFileRecord[] | undefined;
+  pullRequestFiles?: PullRequestFilePathRecord[] | undefined;
   gittensorSnapshot?: GittensorContributorSnapshot | null | undefined;
 };
 
@@ -374,7 +374,7 @@ function preferredLabelEdges(buckets: LabelBucket[], generatedAt: string): Contr
     );
 }
 
-function buildPathEdges(login: string, contributorPullRequests: PullRequestRecord[], files: PullRequestFileRecord[], generatedAt: string): ContributorEvidenceGraphPath[] {
+function buildPathEdges(login: string, contributorPullRequests: PullRequestRecord[], files: PullRequestFilePathRecord[], generatedAt: string): ContributorEvidenceGraphPath[] {
   const prByKey = new Map(contributorPullRequests.filter((pr) => sameLogin(pr.authorLogin, login)).map((pr) => [`${pr.repoFullName.toLowerCase()}#${pr.number}`, pr]));
   const buckets = new Map<string, PathBucket>();
   for (const file of files) {

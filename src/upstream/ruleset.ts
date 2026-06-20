@@ -10,7 +10,8 @@ import {
   upsertUpstreamDriftReport,
 } from "../db/repositories";
 import { normalizeRegistryPayload } from "../registry/normalize";
-import { detectActiveModel, parsePythonNumberConstants } from "../scoring/model";
+import { detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
+import { syncUnmodeledScoringConstantDrift } from "./unmodeled-scoring-drift";
 import type {
   JsonValue,
   RegistryDriftSurface,
@@ -201,6 +202,14 @@ export async function refreshUpstreamDrift(env: Env): Promise<{ sources: Upstrea
   const ruleset = await buildUpstreamRulesetSnapshot(env, sources);
   const drift = await buildUpstreamDriftReport(ruleset, (await listLatestUpstreamRulesetSnapshots(env, 2))[1] ?? null);
   if (drift) await upsertUpstreamDriftReport(env, drift);
+  const constantsSource = sources.find((source) => source.sourceKey === "constants");
+  if (constantsSource && constantsSource.status !== "error") {
+    await syncUnmodeledScoringConstantDrift(env, {
+      unmodeledConstants: findUnmodeledConstantKeys(numericRecord(constantsSource.parsed.constants)),
+      currentRulesetId: ruleset.id,
+      source: { repo: ruleset.sourceRepo, ref: ruleset.sourceRef, commitSha: ruleset.commitSha ?? null },
+    });
+  }
   await recordAuditEvent(env, {
     eventType: "upstream.drift_detected",
     outcome: drift ? "completed" : "success",

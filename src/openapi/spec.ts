@@ -412,6 +412,34 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/repos/{owner}/{repo}/agent/audit-feed",
+    responses: {
+      200: {
+        description: "Maintainer-scoped agent audit feed (#784): executed actions + approval-queue decisions, newest first, public-safe action posture only. Supports ?since=ISO-8601&limit=1-200.",
+        content: {
+          "application/json": {
+            schema: z.object({
+              repoFullName: z.string(),
+              events: z.array(
+                z.object({
+                  eventType: z.string(),
+                  pullNumber: z.number().nullable(),
+                  outcome: z.string(),
+                  actor: z.string().nullable(),
+                  detail: z.string().nullable(),
+                  createdAt: z.string(),
+                }),
+              ),
+            }),
+          },
+        },
+      },
+      400: { description: "Malformed since (not ISO-8601) or limit (not an integer in 1-200)" },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/app/self-dogfood/registration-pack",
     responses: {
       200: { description: "Private self-dogfood registration pack for the Gittensory repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },

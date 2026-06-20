@@ -1,8 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createSessionForGitHubUser } from "../../src/auth/security";
-import { upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { createTestEnv } from "../helpers/d1";
+
+vi.mock("../../src/github/app", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/github/app")>()),
+  getRepositoryCollaboratorPermission: vi.fn(),
+}));
+
+const mockedPermission = vi.mocked(getRepositoryCollaboratorPermission);
 
 const FOCUS_MANIFEST_PATH = "/v1/repos/JSONbored/gittensory/focus-manifest";
 const OWNED_REPO_PATH = "/v1/repos/repo-owner/owned-repo/focus-manifest";
@@ -35,6 +43,7 @@ async function seedRegisteredInstalledRepo(env: Env, installationId: number, own
 }
 
 describe("focus-manifest route auth", () => {
+  beforeEach(() => mockedPermission.mockReset());
   it("rejects unauthenticated access", async () => {
     const app = createApp();
     const env = createTestEnv();
@@ -52,10 +61,11 @@ describe("focus-manifest route auth", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "insufficient_role" });
   });
 
-  it("allows same-repo owner sessions to read and update focus manifests", async () => {
+  it("allows same-repo owner sessions with GitHub write permission to read and update focus manifests", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    mockedPermission.mockResolvedValue("write");
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const cookie = `gittensory_session=${token}`;
 
@@ -81,6 +91,37 @@ describe("focus-manifest route auth", () => {
       repoFullName: "repo-owner/owned-repo",
       manifest: { present: true, source: "api_record", wantedPaths: ["src/"] },
     });
+  });
+
+  it("rejects focus-manifest writes from sessions without live GitHub write permission", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", {
+      number: 5,
+      title: "docs tweak",
+      state: "open",
+      user: { login: "reader" },
+      author_association: "COLLABORATOR",
+      head: { sha: "abc123", ref: "docs" },
+      base: { ref: "main" },
+      labels: [],
+    });
+    mockedPermission.mockResolvedValue("read");
+    const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
+
+    const response = await app.request(
+      OWNED_REPO_PATH,
+      {
+        method: "PUT",
+        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { autonomy: { merge: "auto", close: "auto", approve: "auto" } } }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "insufficient_repo_permission" });
   });
 
   it("rejects cross-repo owner sessions with forbidden_repo", async () => {
@@ -113,11 +154,12 @@ describe("focus-manifest route auth", () => {
     expect(ownRepoGet.status).toBe(200);
   });
 
-  it("allows a same-repo owner session to POST focus-manifest refresh", async () => {
+  it("allows a same-repo owner session with GitHub write permission to POST focus-manifest refresh", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     await seedRegisteredInstalledRepo(env, 202, "other-owner", "other-repo");
+    mockedPermission.mockResolvedValue("write");
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
 
@@ -130,6 +172,29 @@ describe("focus-manifest route auth", () => {
     const crossRepo = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
     expect(crossRepo.status).toBe(403);
     await expect(crossRepo.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+  });
+
+  it("rejects focus-manifest refresh from sessions without live GitHub write permission", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
+    await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", {
+      number: 6,
+      title: "manifest docs",
+      state: "open",
+      user: { login: "reader" },
+      author_association: "COLLABORATOR",
+      head: { sha: "def456", ref: "docs" },
+      base: { ref: "main" },
+      labels: [],
+    });
+    mockedPermission.mockResolvedValue("read");
+    const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
+
+    const response = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${token}` } }, env);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: "insufficient_repo_permission" });
   });
 
   it("allows operator sessions to access any repo focus manifest", async () => {

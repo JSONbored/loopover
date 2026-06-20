@@ -951,6 +951,14 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(eff.aiReviewMode).toBe("block");
     expect(eff.aiReviewByok).toBe(true);
   });
+
+  it("promotes requireLinkedIssue to linkedIssueGateMode block when the gate mode is still off (#797)", () => {
+    const eff = resolveEffectiveSettings(
+      { requireLinkedIssue: true, linkedIssueGateMode: "off" } as RepositorySettings,
+      parseFocusManifest(null),
+    );
+    expect(eff.linkedIssueGateMode).toBe("block");
+  });
 });
 
 describe("parseFocusManifest review config", () => {

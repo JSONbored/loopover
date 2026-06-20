@@ -1,24 +1,22 @@
-// First-party reverse proxy for the self-hosted Umami tracker.
+// First-party endpoint for forwarding cookieless analytics events.
 //
 // The browser only ever talks to our own origin (gittensory.aethereal.dev):
-//   GET  /stats/script.js -> https://tasty.aethereal.dev/script.js
-//   POST /stats/api/send  -> https://tasty.aethereal.dev/api/send
+//   POST /stats/api/send -> https://tasty.aethereal.dev/api/send
 //
-// The tracker derives its collect endpoint from its own <script src> directory,
-// so serving it at /stats/script.js makes it POST to /stats/api/send on its own
-// — no data-host-url attribute needed. Keeping the script first-party clears the
-// Subresource-Integrity finding without an SRI hash to re-pin on every Umami
-// upgrade, and it survives ad-blockers that target the analytics subdomain.
+// Do not proxy the remote Umami script through this origin. Serving mutable
+// third-party JavaScript as same-origin code lets a compromised analytics host
+// execute with the app's privileges. The UI uses a tiny local beacon instead and
+// this proxy only relays the resulting collect payload.
 //
 // The allowlist below is load-bearing: this must NOT become an open proxy onto
-// the Umami host, whose admin/auth API lives on the same origin as the tracker.
+// the Umami host, whose admin/auth API lives on the same origin as the collect
+// endpoint.
 
 const UPSTREAM = "https://tasty.aethereal.dev";
 export const ANALYTICS_PREFIX = "/stats";
 
 // First-party path -> methods we forward. Anything else under /stats 404s here.
 const ROUTES: Record<string, ReadonlySet<string>> = {
-  "/stats/script.js": new Set(["GET", "HEAD"]),
   "/stats/api/send": new Set(["POST"]),
 };
 
@@ -54,8 +52,8 @@ const STRIP_RESPONSE_HEADERS = new Set([
 ]);
 
 /**
- * Proxies the allowlisted Umami tracker paths through our own origin.
- * Returns a `Response` for `/stats/script.js` and `/stats/api/send`, or
+ * Proxies the allowlisted Umami collect path through our own origin.
+ * Returns a `Response` for `/stats/api/send`, or
  * `undefined` for any other request so the caller falls through to SSR.
  */
 export async function handleAnalyticsProxy(request: Request): Promise<Response | undefined> {

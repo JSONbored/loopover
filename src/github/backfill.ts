@@ -1989,8 +1989,13 @@ async function syncLabels(
 ): Promise<{ items: GitHubLabelPayload[]; warnings: string[]; segment: RepoSyncSegmentRecord }> {
   const startedAt = nowIso();
   await markSegmentRunning(env, repo, "labels", sourceKind, mode, startedAt);
+  const items: GitHubLabelPayload[] = [];
   try {
-    const items = await githubJson<GitHubLabelPayload[]>(env, repo.fullName, "/labels?per_page=100", token);
+    for (let page = 1; ; page += 1) {
+      const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token);
+      items.push(...result.data);
+      if (!hasNextPage(result.link)) break;
+    }
     const segment = await completeSegment(env, repo, "labels", sourceKind, mode, startedAt, {
       status: "complete",
       fetchedCount: items.length,
@@ -2002,12 +2007,12 @@ async function syncLabels(
     const warning = `Label sync failed: ${errorMessage(error)}`;
     const segment = await completeSegment(env, repo, "labels", sourceKind, mode, startedAt, {
       status: error instanceof GitHubApiError && error.rateLimited ? "rate_limited" : "partial",
-      fetchedCount: 0,
+      fetchedCount: items.length,
       warnings: [warning],
       errorSummary: warning,
       rateLimitResetAt: error instanceof GitHubApiError ? error.rateLimitResetAt : undefined,
     });
-    return { items: [], warnings: [warning], segment };
+    return { items, warnings: [warning], segment };
   }
 }
 

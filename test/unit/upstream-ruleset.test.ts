@@ -837,7 +837,7 @@ describe("upstream ruleset drift tracking", () => {
     await expect(fileUpstreamDriftIssues(updateEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
     expect(updateCalls).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ method: "GET", url: "https://api.github.com/repos/JSONbored/gittensory/issues?state=open&labels=signals&per_page=50" }),
+        expect.objectContaining({ method: "GET", url: "https://api.github.com/repos/JSONbored/gittensory/issues?state=open&labels=signals&per_page=100&page=1" }),
         expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/88" }),
       ]),
     );
@@ -984,6 +984,40 @@ describe("upstream ruleset drift tracking", () => {
     const disabledEnv = createTestEnv();
     delete (disabledEnv as Partial<Env>).GITTENSORY_AUTO_FILE_DRIFT_ISSUES;
     await expect(fileUpstreamDriftIssues(disabledEnv)).resolves.toMatchObject({ status: "disabled" });
+  });
+
+  it("finds the existing drift issue on page 2 when the repo has more than 100 open signals issues", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("page-2-fingerprint"));
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (url.includes("/issues?state=open&labels=signals&per_page=100&page=1")) {
+        return Response.json(
+          Array.from({ length: 100 }, (_, i) => ({
+            number: i + 1,
+            html_url: `https://github.com/JSONbored/gittensory/issues/${i + 1}`,
+            body: `<!-- gittensory-upstream-drift:other-fingerprint-${i} -->`,
+          })),
+          { headers: { link: '<https://api.github.com/repos/JSONbored/gittensory/issues?page=2>; rel="next"' } },
+        );
+      }
+      if (url.includes("/issues?state=open&labels=signals&per_page=100&page=2")) {
+        return Response.json([
+          { number: 201, html_url: "https://github.com/JSONbored/gittensory/issues/201", body: "<!-- gittensory-upstream-drift:page-2-fingerprint -->" },
+        ]);
+      }
+      if (url.match(/\/issues\/201$/) && method === "PATCH") {
+        return Response.json({ number: 201, html_url: "https://github.com/JSONbored/gittensory/issues/201" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
+    expect(calls.some((call) => call.includes("page=2"))).toBe(true);
+    expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/201"))).toBe(true);
+    expect(calls.every((call) => !call.startsWith("POST "))).toBe(true);
   });
 
   it("publishes null report references in upstream status safely", async () => {
@@ -1210,7 +1244,7 @@ function githubIssueFetch(options: {
       method,
       body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null,
     });
-    if (url.endsWith("/issues?state=open&labels=signals&per_page=50")) {
+    if (url.includes("/issues?state=open&labels=signals&per_page=100&page=")) {
       if (options.throwOnList) throw new Error("list failed");
       if (options.listStatus) return new Response("list failed", { status: options.listStatus });
       return Response.json(

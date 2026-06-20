@@ -183,6 +183,32 @@ describe("matchesManifestPath", () => {
   });
 });
 
+// Regression tests for the three compileManifestPathMatcher branches: exact,
+// directory-prefix, and wildcard. Each test exercises one branch in isolation.
+describe("matchesManifestPath — compileManifestPathMatcher branches", () => {
+  it("exact branch: returns true only when normalised path equals normalised pattern", () => {
+    expect(matchesManifestPath("src/index.ts", "src/index.ts")).toBe(true);
+    expect(matchesManifestPath("./src/Index.ts", "src/index.ts")).toBe(true); // normalisation
+    expect(matchesManifestPath("src/other.ts", "src/index.ts")).toBe(false);
+  });
+
+  it("directory-prefix branch: matches descendants but not siblings with shared prefix", () => {
+    expect(matchesManifestPath("src/utils/foo.ts", "src/utils")).toBe(true);
+    expect(matchesManifestPath("src/utils/foo.ts", "src/utils/")).toBe(true);
+    // "src/utilsX" shares the prefix string but must not match "src/utils"
+    expect(matchesManifestPath("src/utilsX/foo.ts", "src/utils")).toBe(false);
+    expect(matchesManifestPath("docs/readme.md", "src/")).toBe(false);
+  });
+
+  it("wildcard branch: * and ** expand to any characters in regex", () => {
+    expect(matchesManifestPath("packages/mcp/lib/x.ts", "packages/*/lib/*.ts")).toBe(true);
+    expect(matchesManifestPath("src/foo.ts", "src/*.ts")).toBe(true);
+    expect(matchesManifestPath("src/foo.go", "src/*.ts")).toBe(false);
+    expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
+    expect(matchesManifestPath("src/a.ts", "**/*.go")).toBe(false);
+  });
+});
+
 describe("buildFocusManifestGuidance", () => {
   const wanted = parseFocusManifest(FULL_MANIFEST);
 

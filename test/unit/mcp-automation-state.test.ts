@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
-import { createPendingAgentActionIfAbsent, listPendingAgentActions, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -174,5 +174,103 @@ describe("MCP gittensory_propose_action (#784)", () => {
     expect(JSON.stringify(result)).toMatch(/write access/i);
     expect(mockedPermission).toHaveBeenCalledWith(env, 5, "owner/repo", "reader");
     expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
+  });
+});
+
+describe("MCP gittensory_list_pending_actions (#784)", () => {
+  it("surfaces the approval queue with action details (default status=pending)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "clean" });
+    await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "label", autonomyLevel: "auto_with_approval", params: { label: "x" }, reason: "tidy" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { repoFullName: string; status: string; pendingActions: Array<{ pullNumber: number; actionClass: string; status: string; reason: string | null; autonomyLevel: string }> };
+    expect(data.repoFullName).toBe("owner/repo");
+    expect(data.status).toBe("pending");
+    expect(data.pendingActions.map((action) => action.pullNumber).sort()).toEqual([7, 8]);
+    expect(data.pendingActions.every((action) => action.status === "pending" && action.autonomyLevel === "auto_with_approval")).toBe(true);
+  });
+
+  it("filters by status and returns an empty queue when none match", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo", status: "accepted" } });
+    const data = result.structuredContent as { status: string; pendingActions: unknown[] };
+    expect(data.status).toBe("accepted");
+    expect(data.pendingActions).toEqual([]);
+  });
+
+  it("forbids a session without live write access", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+  });
+});
+
+describe("MCP gittensory_decide_pending_action (#784)", () => {
+  it("rejects a staged action without executing and is idempotent", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as { status: string }).status).toBe("rejected");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+
+    const second = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    expect((second.structuredContent as { status: string }).status).toBe("already_decided");
+  });
+
+  it("accepts a staged action and honors dry-run mode (no live mutation)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    const data = result.structuredContent as { status: string; executionOutcome: string };
+    expect(data.status).toBe("accepted");
+    expect(data.executionOutcome).toBe("dry_run");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
+  });
+
+  it("is repo-scoped: a guessed id from another repo's queue is not_found and left untouched", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositoryFromGitHub(env, { name: "other", full_name: "owner/other", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/other", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect((result.structuredContent as { status: string }).status).toBe("not_found");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("pending");
+  });
+
+  it("forbids a session without live write access and leaves the action pending", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("pending");
   });
 });

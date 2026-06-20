@@ -136,10 +136,13 @@ jobs:
           done
           echo "::error::npm ci failed after 3 attempts"
           exit 1
+      - name: Prepare test reports dir
+        run: mkdir -p reports/junit
       - name: Test with coverage (shard ${{ matrix.shard }}/2)
         id: coverage
         env:
           COVERAGE_NO_THRESHOLDS: "1"
+          VITEST_JUNIT_PATH: reports/junit/vitest-shard-${{ matrix.shard }}.xml
         run: npm run test:coverage -- --shard=${{ matrix.shard }}/2
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
@@ -153,6 +156,14 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
+          fail_ci_if_error: false
+      - name: Upload Vitest results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./reports/junit/vitest-shard-${{ matrix.shard }}.xml
+          report_type: test_results
           fail_ci_if_error: false
 
   # Worker-pool runtime tests (separate vitest config); split out of `test` so it

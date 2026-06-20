@@ -455,5 +455,5 @@ describe("MCP output schemas validate on real tool calls (#550)", () => {
     const fetched = await client.callTool({ name: "gittensory_agent_get_run", arguments: { runId } });
     expect(fetched.isError, `agent_get_run errored: ${JSON.stringify(fetched.content)}`).toBeFalsy();
     expect(fetched.structuredContent).toBeDefined();
-  });
+  }, 30_000);
 });

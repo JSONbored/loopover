@@ -65,6 +65,43 @@ describe("GitHub PR intelligence comments", () => {
     expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/101"))).toBe(true);
   });
 
+  it("finds the existing bot comment on page 2 and updates it rather than creating a duplicate", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && (init?.method ?? "GET") === "GET") {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        if (page === 1) {
+          // 100 human comments — no bot comment yet
+          return Response.json(
+            Array.from({ length: 100 }, (_, i) => ({ id: i + 1, body: `human comment ${i + 1}`, user: { login: "contributor", type: "User" } })),
+          );
+        }
+        // Bot comment is on page 2
+        return Response.json([{ id: 999, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nold body`, user: { login: "gittensory[bot]", type: "Bot" } }]);
+      }
+      if (url.includes("/issues/comments/999") && init?.method === "PATCH") {
+        return Response.json({ id: 999, html_url: "https://github.com/comment/999" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }),
+      123,
+      "JSONbored/gittensory",
+      12,
+      `${PR_INTELLIGENCE_COMMENT_MARKER}\nnew body`,
+    );
+
+    expect(result?.id).toBe(999);
+    expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/999"))).toBe(true);
+    expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(false);
+  });
+
   it("updates a legacy PR intelligence comment into the unified panel", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];

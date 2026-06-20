@@ -880,6 +880,21 @@ export function buildCollisionReport(
   return report;
 }
 
+/**
+ * True when an open PR sits in a HIGH-risk collision cluster that holds 2+ pull requests — i.e. genuine
+ * overlapping/duplicate work (#563). The 2+-pull-request bar is deliberate: buildCollisionReport also marks a
+ * healthy issue↔its-own-linking-PR pair high-risk, so requiring two pull-request items keeps callers (the
+ * deterministic slop gate) false-positive-averse. Pure.
+ */
+export function isPullRequestInDuplicateCluster(collisions: CollisionReport, pullNumber: number): boolean {
+  return collisions.clusters.some(
+    (cluster) =>
+      cluster.risk === "high" &&
+      cluster.items.filter((item) => item.type === "pull_request").length >= 2 &&
+      cluster.items.some((item) => item.type === "pull_request" && item.number === pullNumber),
+  );
+}
+
 export function buildQueueHealth(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],

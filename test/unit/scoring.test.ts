@@ -762,6 +762,149 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(thrownFallback.activeModel).toBe("unknown");
   });
 
+  describe("issue-discovery scoring constants (#808)", () => {
+    it("TEST_FILE_CONTRIBUTION_WEIGHT weights test tokens at 0.05× when totalTokenScore is derived from components", () => {
+      const snapshotWith808 = { ...snapshot, constants: { ...snapshot.constants, TEST_FILE_CONTRIBUTION_WEIGHT: 0.05 } };
+      const base = buildScorePreview({
+        repo,
+        snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      // With testTokenScore=200, the derived total should be 60 + 0.05*200 = 70 (not 260).
+      const withTest = buildScorePreview({
+        repo,
+        snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, testTokenScore: 200, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      // Contribution bonus ramp is based on totalTokenScore; 70 vs 60 produces a slightly higher bonus.
+      expect(withTest.scoreEstimate.contributionBonus).toBeGreaterThan(base.scoreEstimate.contributionBonus);
+      // But an explicit totalTokenScore overrides the weight completely — caller-supplied value is honoured as-is.
+      const explicit = buildScorePreview({
+        repo,
+        snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, testTokenScore: 200, totalTokenScore: 260, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      // explicit 260 is LARGER than weighted 70; contribution bonus must be greater.
+      expect(explicit.scoreEstimate.contributionBonus).toBeGreaterThan(withTest.scoreEstimate.contributionBonus);
+    });
+
+    it("open-issue spam gate blocks scoring when openIssueCount exceeds the threshold", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: {
+          ...snapshot.constants,
+          OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2,
+          OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300,
+          MAX_OPEN_ISSUE_THRESHOLD: 30,
+        },
+      };
+      const baseInput = { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0 };
+
+      // At the threshold (2) — gate passes.
+      const atThreshold = buildScorePreview({ repo, snapshot: snapshotWith808, input: { ...baseInput, openIssueCount: 2 } });
+      expect(atThreshold.gates.openIssueThreshold).toBe(2);
+      expect(atThreshold.gates.openIssueCount).toBe(2);
+      expect(atThreshold.scoreEstimate.openIssueMultiplier).toBe(1);
+      expect(atThreshold.effectiveEstimatedScore).toBeGreaterThan(0);
+
+      // One over the threshold — gate blocks.
+      const overThreshold = buildScorePreview({ repo, snapshot: snapshotWith808, input: { ...baseInput, openIssueCount: 3 } });
+      expect(overThreshold.scoreEstimate.openIssueMultiplier).toBe(0);
+      expect(overThreshold.effectiveEstimatedScore).toBe(0);
+      expect(overThreshold.blockedBy.some((b) => b.code === "open_issue_threshold")).toBe(true);
+      expect(overThreshold.blockedBy.find((b) => b.code === "open_issue_threshold")?.severity).toBe("blocker");
+    });
+
+    it("open-issue threshold scales with established merged-history token score", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 30 },
+      };
+      // No history: base 2 + floor(0/300) = 2.
+      const noHistory = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0, openIssueCount: 3 },
+      });
+      expect(noHistory.gates.openIssueThreshold).toBe(2);
+      expect(noHistory.scoreEstimate.openIssueMultiplier).toBe(0);
+
+      // With 900 tokens of history: 2 + floor(900/300) = 5.
+      const withHistory = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 900, openIssueCount: 3 },
+      });
+      expect(withHistory.gates.openIssueThreshold).toBe(5);
+      expect(withHistory.scoreEstimate.openIssueMultiplier).toBe(1); // 3 <= 5
+    });
+
+    it("open-issue gate defaults to 0 issues when openIssueCount is not supplied (never blocks)", () => {
+      const preview = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      expect(preview.gates.openIssueCount).toBe(0);
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(1);
+    });
+
+    it("MAX_OPEN_ISSUE_THRESHOLD caps the issue allowance even with a very large token history", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 5 },
+      };
+      // Even with a huge token history, the threshold cannot exceed MAX_OPEN_ISSUE_THRESHOLD (5).
+      const preview = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 90000, openIssueCount: 6 },
+      });
+      expect(preview.gates.openIssueThreshold).toBe(5);
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(0); // 6 > 5
+    });
+
+    it("bestReasonableCase clears the open-issue gate and surfaces an open_issue_threshold gate delta (#808)", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 30 },
+      };
+      // Current state is over the threshold (3 > 2) so the gate blocks the live preview.
+      const preview = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0, openIssueCount: 3 },
+      });
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(0);
+      expect(preview.effectiveEstimatedScore).toBe(0);
+      // The best-reasonable-case scenario projects the open-issue count down to the threshold (2),
+      // clearing the gate so the underlying potential is visible there.
+      const bestReasonable = preview.scenarioPreviews.find((scenario) => scenario.name === "bestReasonableCase");
+      expect(bestReasonable?.gates.openIssueCount).toBe(2);
+      expect(bestReasonable?.gates.openIssueThreshold).toBe(2);
+      expect(bestReasonable?.scoreEstimate.openIssueMultiplier).toBe(1);
+      expect(bestReasonable?.effectiveEstimatedScore).toBeGreaterThan(0);
+      // Because the multiplier differs between current and best-reasonable-case, an open_issue_threshold
+      // gate delta must be emitted — this is the branch previously missing coverage.
+      expect(preview.gateDeltas).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "open_issue_threshold" })]));
+      const issueDelta = preview.gateDeltas.find((delta) => delta.gate === "open_issue_threshold");
+      expect(issueDelta?.current).toContain("multiplier 0");
+      expect(issueDelta?.projected).toContain("multiplier 1");
+    });
+
+    it("all nine issue-discovery constants are modeled and do not surface as upstream drift warnings (#808)", () => {
+      const upstreamSource = [
+        "TEST_FILE_CONTRIBUTION_WEIGHT = 0.05",
+        "MIN_VALID_MERGED_PRS = 3",
+        "MIN_VALID_SOLVED_ISSUES = 3",
+        "MIN_ISSUE_CREDIBILITY = 0.8",
+        "MIN_TOKEN_SCORE_FOR_VALID_ISSUE = 5",
+        "OPEN_ISSUE_SPAM_BASE_THRESHOLD = 2",
+        "OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT = 300",
+        "MAX_OPEN_ISSUE_THRESHOLD = 30",
+        "PR_LOOKBACK_DAYS = 30",
+      ].join("\n");
+      const unmodeled = findUnmodeledUpstreamConstants(upstreamSource);
+      expect(unmodeled).toEqual([]);
+    });
+  });
+
   describe("upstream time-decay (#703)", () => {
     it("calculateTimeDecay matches the upstream sigmoid (grace, 50%-at-midpoint, floor, monotonic)", () => {
       const c = DEFAULT_SCORING_CONSTANTS;

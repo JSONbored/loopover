@@ -1,4 +1,4 @@
-import { GENERIC_COMMIT_PATTERN, type SignalFinding } from "./engine";
+import { GENERIC_COMMIT_PATTERN, hasClearNoIssueRationale, type SignalFinding } from "./engine";
 import { isCodeFile, isTestFile } from "./local-branch";
 import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFocusManifestPublicSafe } from "./focus-manifest";
@@ -23,6 +23,12 @@ export type SlopAssessmentInput = {
   /** True when this PR sits in a high-risk duplicate cluster (2+ open PRs) — the caller computes it from the
    *  collision report via {@link isPullRequestInDuplicateCluster}. Undefined on surfaces without repo context. */
   inDuplicateCluster?: boolean | undefined;
+  /** Whether this PR links at least one issue (caller computes from `linkedIssues.length > 0`). Only an explicit
+   *  `false` can trip the no-linked-issue-without-rationale signal; undefined means the surface has no issue data. */
+  hasLinkedIssue?: boolean | undefined;
+  /** True when the contributor/repo is in the issue-discovery lane, where PRs without a linked issue are expected
+   *  and so the no-linked-issue-without-rationale signal does not apply. */
+  issueDiscoveryLane?: boolean | undefined;
 };
 
 export type SlopAssessment = {
@@ -42,6 +48,7 @@ export const SLOP_WEIGHTS = {
   emptyDescription: 15,
   lowQualityCommitMessage: 15,
   duplicateClusterMembership: 15,
+  noLinkedIssueWithoutRationale: 15,
 } as const;
 
 export const SLOP_RUBRIC_MARKDOWN = [
@@ -59,6 +66,7 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "- empty pull request description on a code change",
   "- generic or empty commit message",
   "- duplicate / overlapping pull request (high-risk collision cluster)",
+  "- no linked issue and no rationale (outside the issue-discovery lane)",
 ].join("\n");
 
 const MIN_CHURN_LINES = 40;
@@ -75,12 +83,14 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
   const emptyDescriptionFinding = buildEmptyDescriptionFinding(input);
   const lowQualityCommitMessageFinding = buildLowQualityCommitMessageFinding(input);
   const duplicateClusterFinding = buildDuplicateClusterFinding(input);
+  const noLinkedIssueRationaleFinding = buildNoLinkedIssueRationaleFinding(input);
   if (trivialChurnFinding) findings.push(trivialChurnFinding);
   if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
   if (nonSubstantivePaddingFinding) findings.push(nonSubstantivePaddingFinding);
   if (emptyDescriptionFinding) findings.push(emptyDescriptionFinding);
   if (lowQualityCommitMessageFinding) findings.push(lowQualityCommitMessageFinding);
   if (duplicateClusterFinding) findings.push(duplicateClusterFinding);
+  if (noLinkedIssueRationaleFinding) findings.push(noLinkedIssueRationaleFinding);
 
   const slopRisk = clamp(
     (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0) +
@@ -88,7 +98,8 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
       (nonSubstantivePaddingFinding ? SLOP_WEIGHTS.nonSubstantivePadding : 0) +
       (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0) +
       (lowQualityCommitMessageFinding ? SLOP_WEIGHTS.lowQualityCommitMessage : 0) +
-      (duplicateClusterFinding ? SLOP_WEIGHTS.duplicateClusterMembership : 0),
+      (duplicateClusterFinding ? SLOP_WEIGHTS.duplicateClusterMembership : 0) +
+      (noLinkedIssueRationaleFinding ? SLOP_WEIGHTS.noLinkedIssueWithoutRationale : 0),
     0,
     100,
   );
@@ -204,6 +215,26 @@ export function buildDuplicateClusterFinding(input: SlopAssessmentInput): Signal
     severity: "warning",
     detail,
     action: "Check for an existing pull request or issue covering this change and coordinate or consolidate before continuing.",
+    publicText: detail,
+  };
+}
+
+// Fires when the caller reports NO linked issue (#562), the PR body carries no clear no-issue rationale, and the
+// repo is not in the issue-discovery lane (where unlinked PRs are expected). High-precision: only an explicit
+// `hasLinkedIssue: false` trips it — absent data (undefined) is not a signal — and any clear rationale
+// (maintenance / docs-only / "no issue: …") clears it. Reuses engine.ts `hasClearNoIssueRationale` so this signal
+// and the public PR-panel traceability check agree on what counts as a rationale. Static, public-safe text.
+export function buildNoLinkedIssueRationaleFinding(input: SlopAssessmentInput): SignalFinding | null {
+  if (input.hasLinkedIssue !== false) return null;
+  if (input.issueDiscoveryLane === true) return null;
+  if (hasClearNoIssueRationale({ title: "", body: input.description ?? "" })) return null;
+  const detail = "This pull request links no issue and gives no rationale for working without one.";
+  return {
+    code: "no_linked_issue_without_rationale",
+    title: "No linked issue and no rationale",
+    severity: "warning",
+    detail,
+    action: "Link the issue this addresses, or explain in the description why no issue applies (e.g. a typo, docs-only, or maintenance change).",
     publicText: detail,
   };
 }

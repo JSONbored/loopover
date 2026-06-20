@@ -4334,7 +4334,9 @@ export type PrTextLintReport = {
   summary: string;
 };
 
-const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
+// Exported so the deterministic slop signal (#564) and the #549 lint tool share ONE definition of a
+// "generic" commit subject — a single low-effort word (wip / fix / update / "." …) that is the whole subject.
+export const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
 // Conventional Commit subject: one of CONTRIBUTING's allowed types, optional `(scope)`, optional `!`,
 // then `: ` and a non-empty summary (e.g. `feat(api): add cursor pagination`). Single source of truth
 // with CONTRIBUTING.md "Commit And PR Titles".

@@ -1,4 +1,4 @@
-import type { SignalFinding } from "./engine";
+import { GENERIC_COMMIT_PATTERN, type SignalFinding } from "./engine";
 import { isCodeFile, isTestFile } from "./local-branch";
 import { hasLocalTestEvidence, isTestPath } from "./test-evidence";
 import { isFocusManifestPublicSafe } from "./focus-manifest";
@@ -18,6 +18,8 @@ export type SlopAssessmentInput = {
   testFiles?: string[] | undefined;
   /** PR/branch description. An empty/whitespace description on a code change is a weak-effort signal. */
   description?: string | null | undefined;
+  /** The PR's commit subject line(s). A generic/empty primary subject (wip / fix / update / ".") is a weak-effort signal. */
+  commitMessages?: string[] | undefined;
 };
 
 export type SlopAssessment = {
@@ -35,6 +37,7 @@ export const SLOP_WEIGHTS = {
   missingTestEvidence: 30,
   nonSubstantivePadding: 30,
   emptyDescription: 15,
+  lowQualityCommitMessage: 15,
 } as const;
 
 export const SLOP_RUBRIC_MARKDOWN = [
@@ -50,6 +53,7 @@ export const SLOP_RUBRIC_MARKDOWN = [
   "- missing test evidence",
   "- non-substantive padding (generated / vendored / minified output as source)",
   "- empty pull request description on a code change",
+  "- generic or empty commit message",
 ].join("\n");
 
 const MIN_CHURN_LINES = 40;
@@ -64,16 +68,19 @@ export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment 
   const missingTestEvidenceFinding = buildMissingTestEvidenceFinding(input);
   const nonSubstantivePaddingFinding = buildNonSubstantivePaddingFinding(input);
   const emptyDescriptionFinding = buildEmptyDescriptionFinding(input);
+  const lowQualityCommitMessageFinding = buildLowQualityCommitMessageFinding(input);
   if (trivialChurnFinding) findings.push(trivialChurnFinding);
   if (missingTestEvidenceFinding) findings.push(missingTestEvidenceFinding);
   if (nonSubstantivePaddingFinding) findings.push(nonSubstantivePaddingFinding);
   if (emptyDescriptionFinding) findings.push(emptyDescriptionFinding);
+  if (lowQualityCommitMessageFinding) findings.push(lowQualityCommitMessageFinding);
 
   const slopRisk = clamp(
     (trivialChurnFinding ? SLOP_WEIGHTS.trivialWhitespaceChurn : 0) +
       (missingTestEvidenceFinding ? SLOP_WEIGHTS.missingTestEvidence : 0) +
       (nonSubstantivePaddingFinding ? SLOP_WEIGHTS.nonSubstantivePadding : 0) +
-      (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0),
+      (emptyDescriptionFinding ? SLOP_WEIGHTS.emptyDescription : 0) +
+      (lowQualityCommitMessageFinding ? SLOP_WEIGHTS.lowQualityCommitMessage : 0),
     0,
     100,
   );
@@ -151,6 +158,27 @@ export function buildEmptyDescriptionFinding(input: SlopAssessmentInput): Signal
     severity: "warning",
     detail,
     action: "Describe what changed and why so reviewers can evaluate it.",
+    publicText: detail,
+  };
+}
+
+// Fires when commit-message data is supplied and the primary subject is empty/whitespace, or is entirely a
+// generic low-effort word (wip / fix / update / "." …) per the #549 lint tool's shared GENERIC_COMMIT_PATTERN.
+// High-precision: a specific subject — even one that isn't a Conventional Commit — never trips this blocking
+// signal; only a bare generic word that IS the whole subject does. Nothing to assess (undefined / no commit
+// data) returns null. Static, public-safe detail text — no interpolation, like the issue-side findings.
+export function buildLowQualityCommitMessageFinding(input: SlopAssessmentInput): SignalFinding | null {
+  if (input.commitMessages === undefined || input.commitMessages.length === 0) return null;
+  const messages = input.commitMessages.map((message) => message.trim()).filter((message) => message.length > 0);
+  const primary = messages[0];
+  if (primary !== undefined && !GENERIC_COMMIT_PATTERN.test(primary)) return null;
+  const detail = primary === undefined ? "The commit message is empty." : "The commit message is generic (e.g. wip / fix / update) with no specific detail.";
+  return {
+    code: "low_quality_commit_message",
+    title: "Commit message is generic or empty",
+    severity: "warning",
+    detail,
+    action: "Write a specific commit subject that names what changed and why (a Conventional Commit like 'feat(api): add cursor pagination' works well).",
     publicText: detail,
   };
 }

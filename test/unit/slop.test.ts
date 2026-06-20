@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildEmptyIssueBodyFinding,
   buildIssueSlopAssessment,
+  buildLowQualityCommitMessageFinding,
   buildMissingTestEvidenceFinding,
   buildNonSubstantivePaddingFinding,
   buildSlopAssessment,
@@ -20,10 +21,33 @@ describe("buildSlopAssessment", () => {
     expect(SLOP_RUBRIC_MARKDOWN).toContain("clean");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("missing test evidence");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("trivial / whitespace-only churn");
+    expect(SLOP_RUBRIC_MARKDOWN).toContain("generic or empty commit message");
 
     const clean = buildSlopAssessment({});
     expect(clean).toEqual({ slopRisk: 0, band: "clean", findings: [] });
     expect(buildSlopAssessment({})).toEqual(clean);
+  });
+
+  it("raises low-quality-commit-message slop for a generic primary commit subject (#564)", () => {
+    const result = buildSlopAssessment({ commitMessages: ["wip"] });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.lowQualityCommitMessage);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "low_quality_commit_message", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise commit-message slop for a specific subject or when no commit data is supplied (#564)", () => {
+    expect(buildSlopAssessment({ commitMessages: ["feat(api): add cursor pagination to labels endpoint"] }).findings).toEqual([]);
+    expect(buildSlopAssessment({ commitMessages: [] }).findings).toEqual([]);
+    expect(buildSlopAssessment({}).findings).toEqual([]);
+  });
+
+  it("flags supplied-but-all-blank commit messages as empty, and uses the first non-blank as the primary subject (#564)", () => {
+    const empty = buildLowQualityCommitMessageFinding({ commitMessages: ["   ", ""] });
+    expect(empty).toMatchObject({ code: "low_quality_commit_message" });
+    expect(empty?.detail).toMatch(/empty/i);
+    // leading blanks are skipped; the first real subject ("update") is what gets judged.
+    expect(buildLowQualityCommitMessageFinding({ commitMessages: ["", "update"] })?.detail).toMatch(/generic/i);
   });
 
   it("raises missing-test-evidence slop for code-only diffs without tests", () => {

@@ -17,9 +17,11 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getInstallation,
   getIssue,
+  getPendingAgentAction,
   getRepository,
   getRepositorySettings,
   getRepoQueueTrendSnapshot,
+  listAgentAuditEvents,
   listCheckSummaries,
   listPendingAgentActions,
   listContributorRepoStats,
@@ -42,9 +44,11 @@ import {
   markNotificationDeliveriesRead,
   recordProductUsageEvent,
 } from "../db/repositories";
+import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { getRepositoryCollaboratorPermission } from "../github/app";
+import { sanitizePublicComment } from "../github/commands";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
@@ -370,6 +374,69 @@ const automationStateOutputSchema = {
   pendingActionCount: z.number().optional(),
 };
 
+// #784 (MCP slice) — surface + decide the approval queue, so an MCP client can do the full loop it can
+// already propose into: list staged actions, then accept (execute) or reject one.
+const listPendingActionsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  status: z.enum(["pending", "accepted", "rejected"]).optional(),
+};
+
+const pendingActionEntrySchema = z.object({
+  id: z.string(),
+  actionClass: z.string(),
+  pullNumber: z.number(),
+  status: z.string(),
+  autonomyLevel: z.string(),
+  reason: z.string().nullable(),
+  decidedBy: z.string().nullable(),
+  decidedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const listPendingActionsOutputSchema = {
+  repoFullName: z.string().optional(),
+  status: z.string().optional(),
+  pendingActions: z.array(pendingActionEntrySchema).optional(),
+};
+
+const decidePendingActionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  id: z.string().min(1),
+  decision: z.enum(["accept", "reject"]),
+};
+
+const decidePendingActionOutputSchema = {
+  status: z.string().optional(),
+  executionOutcome: z.string().optional(),
+  action: pendingActionEntrySchema.optional(),
+};
+
+// #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
+const auditFeedShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  since: z.string().datetime({ offset: true }).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+};
+
+const auditFeedOutputSchema = {
+  repoFullName: z.string().optional(),
+  events: z
+    .array(
+      z.object({
+        eventType: z.string(),
+        pullNumber: z.number().nullable(),
+        outcome: z.string(),
+        actor: z.string().nullable(),
+        detail: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    )
+    .optional(),
+};
+
 const focusManifestInputSchema = z
   .record(z.string(), z.unknown())
   .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
@@ -583,6 +650,7 @@ const checkSlopRiskShape = {
   description: z.string().max(20000).optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
 };
 
 const checkSlopRiskOutputSchema = {
@@ -1254,6 +1322,39 @@ export class GittensoryMcp {
         outputSchema: proposeActionOutputSchema,
       },
       async (input) => this.toolResult(await this.proposeAction(input)),
+    );
+
+    server.registerTool(
+      "gittensory_list_pending_actions",
+      {
+        description:
+          "List the agent actions staged in a repo's approval queue (default status=pending), so a maintainer can review what is awaiting a decision. Maintainer access required.",
+        inputSchema: listPendingActionsShape,
+        outputSchema: listPendingActionsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.listPendingActions(input)),
+    );
+
+    server.registerTool(
+      "gittensory_decide_pending_action",
+      {
+        description:
+          "Accept (execute) or reject a staged approval-queue action by id. Accept runs it through the live executor gates; reject cancels it. Idempotent and scoped to this repo. Maintainer access required.",
+        inputSchema: decidePendingActionShape,
+        outputSchema: decidePendingActionOutputSchema,
+      },
+      async (input) => this.toolResult(await this.decidePendingAction(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_agent_audit_feed",
+      {
+        description:
+          "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
+        inputSchema: auditFeedShape,
+        outputSchema: auditFeedOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getAgentAuditFeed(input)),
     );
 
     server.registerTool(
@@ -2118,6 +2219,89 @@ export class GittensoryMcp {
     return {
       summary: `${created ? "Staged" : "Already staged"} a ${input.actionClass} on ${fullName}#${input.pullNumber} for maintainer approval.`,
       data: { created, action: { id: action.id, actionClass: action.actionClass, pullNumber: action.pullNumber, status: action.status, reason: action.reason } },
+    };
+  }
+
+  // #784 — surface the approval queue an MCP client can already propose into. Maintainer-manage scoped
+  // (the full queue with reasons is more sensitive than the bare count in get_automation_state).
+  private async listPendingActions(input: z.infer<z.ZodObject<typeof listPendingActionsShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const status = input.status ?? "pending";
+    const actions = await listPendingAgentActions(this.env, { repoFullName: fullName, status });
+    return {
+      summary: `${actions.length} ${status} action(s) in the ${fullName} approval queue.`,
+      data: {
+        repoFullName: fullName,
+        status,
+        pendingActions: actions.map((action) => ({
+          id: action.id,
+          actionClass: action.actionClass,
+          pullNumber: action.pullNumber,
+          status: action.status,
+          autonomyLevel: action.autonomyLevel,
+          reason: action.reason,
+          decidedBy: action.decidedBy,
+          decidedAt: action.decidedAt,
+          createdAt: action.createdAt,
+        })),
+      },
+    };
+  }
+
+  // #784 — accept (execute) or reject a staged action. Mirrors the HTTP decision route: maintainer-manage
+  // access, repo-scoped (a guessed id from another repo's queue cannot be decided), idempotent.
+  private async decidePendingAction(input: z.infer<z.ZodObject<typeof decidePendingActionShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const pending = await getPendingAgentAction(this.env, input.id);
+    // Scope to THIS repo so a maintainer cannot decide another repo's queue via a guessed id.
+    if (!pending || pending.repoFullName !== fullName) {
+      return { summary: `No pending action ${input.id} on ${fullName}.`, data: { status: "not_found" } };
+    }
+    const result = await decidePendingAgentAction(this.env, { id: pending.id, decision: input.decision, decidedBy: this.identity.actor });
+    const action = result.action;
+    /* v8 ignore next 2 -- not_found is returned above; accepted/rejected/already_decided always carry the action. */
+    if (!action) return { summary: `Action ${input.id} was already decided.`, data: { status: result.status } };
+    return {
+      summary:
+        result.status === "accepted"
+          ? `Accepted ${pending.actionClass} on ${fullName}#${pending.pullNumber} (execution: ${result.executionOutcome}).`
+          : result.status === "rejected"
+            ? `Rejected ${pending.actionClass} on ${fullName}#${pending.pullNumber}.`
+            : `Action ${input.id} was already decided.`,
+      data: {
+        status: result.status,
+        ...(result.executionOutcome !== undefined ? { executionOutcome: result.executionOutcome } : {}),
+        action: {
+          id: action.id,
+          actionClass: action.actionClass,
+          pullNumber: action.pullNumber,
+          status: action.status,
+          autonomyLevel: action.autonomyLevel,
+          reason: action.reason,
+          decidedBy: action.decidedBy,
+          decidedAt: action.decidedAt,
+          createdAt: action.createdAt,
+        },
+      },
+    };
+  }
+
+  // #784 — the agent audit feed: executed actions + approval decisions for a repo, newest first.
+  // Maintainer-manage scoped; read-only and public-safe (action posture only — no trust/score metadata).
+  private async getAgentAuditFeed(input: z.infer<z.ZodObject<typeof auditFeedShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const events = await listAgentAuditEvents(this.env, {
+      repoFullName: fullName,
+      ...(input.since !== undefined ? { sinceIso: input.since } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+    });
+    return {
+      summary: `${events.length} recent agent audit event(s) for ${fullName}.`,
+      // Defense-in-depth: scrub the only free-form field (`detail`) before it leaves on a public-safe tool result.
+      data: { repoFullName: fullName, events: events.map((event) => ({ ...event, detail: event.detail === null ? null : sanitizePublicComment(event.detail) })) },
     };
   }
 

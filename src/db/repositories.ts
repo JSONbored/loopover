@@ -2032,6 +2032,49 @@ export async function listPrVisibilitySkipAuditEvents(
   return { limit, hasMore: items.length > limit, items: items.slice(0, limit) };
 }
 
+// #784 audit feed: the agent's own action history for a repo — both executed actions (`agent.action.<class>`)
+// and approval-queue decisions (`agent.pending_action.accepted|rejected`). Repo-scoped via the `repo#pr`
+// targetKey prefix range (mirrors listPrVisibilitySkipAuditEvents). Read-only; private trust/score metadata
+// is never selected, only the public-safe action posture.
+export type AgentAuditEvent = {
+  eventType: string;
+  pullNumber: number | null;
+  outcome: string;
+  actor: string | null;
+  detail: string | null;
+  createdAt: string;
+};
+
+export async function listAgentAuditEvents(
+  env: Env,
+  options: { repoFullName: string; sinceIso?: string | undefined; limit?: number | undefined },
+): Promise<AgentAuditEvent[]> {
+  const limit = clampInteger(options.limit ?? 50, 1, 200);
+  // Match exactly `repo#<...>` keys: lower bound `repo#`, upper bound `repo#` + the max code point, which
+  // sorts past any value that can follow the `#` — robust against delimiter-adjacent edge cases.
+  const prefix = `${options.repoFullName.toLowerCase()}#`;
+  const upperBound = `${options.repoFullName.toLowerCase()}#\uffff`;
+  const conditions: SQL[] = [
+    sql`(${auditEvents.eventType} like 'agent.action.%' or ${auditEvents.eventType} like 'agent.pending_action.%')`,
+    sql`lower(${auditEvents.targetKey}) >= ${prefix} and lower(${auditEvents.targetKey}) < ${upperBound}`,
+  ];
+  if (options.sinceIso) conditions.push(gte(auditEvents.createdAt, options.sinceIso));
+  const rows = await getDb(env.DB)
+    .select({ eventType: auditEvents.eventType, targetKey: auditEvents.targetKey, outcome: auditEvents.outcome, actor: auditEvents.actor, detail: auditEvents.detail, createdAt: auditEvents.createdAt })
+    .from(auditEvents)
+    .where(and(...conditions))
+    .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    eventType: row.eventType,
+    pullNumber: parsePullRequestTargetKey(row.targetKey)?.pullNumber ?? null,
+    outcome: row.outcome,
+    actor: row.actor,
+    detail: row.detail,
+    createdAt: row.createdAt,
+  }));
+}
+
 export async function getFreshOfficialMinerDetection(env: Env, login: string, now = nowIso()): Promise<OfficialGittensorMinerDetection | null> {
   const [row] = await getDb(env.DB).select().from(officialMinerDetections).where(and(eq(officialMinerDetections.login, login.toLowerCase()), gte(officialMinerDetections.expiresAt, now))).limit(1);
   return row ? toOfficialMinerDetection(row) : null;

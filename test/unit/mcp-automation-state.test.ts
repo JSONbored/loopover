@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
-import { createPendingAgentActionIfAbsent, listPendingAgentActions, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -174,5 +174,172 @@ describe("MCP gittensory_propose_action (#784)", () => {
     expect(JSON.stringify(result)).toMatch(/write access/i);
     expect(mockedPermission).toHaveBeenCalledWith(env, 5, "owner/repo", "reader");
     expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(0);
+  });
+});
+
+describe("MCP gittensory_list_pending_actions (#784)", () => {
+  it("surfaces the approval queue with action details (default status=pending)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "clean" });
+    await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 8, installationId: 5, actionClass: "label", autonomyLevel: "auto_with_approval", params: { label: "x" }, reason: "tidy" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { repoFullName: string; status: string; pendingActions: Array<{ pullNumber: number; actionClass: string; status: string; reason: string | null; autonomyLevel: string }> };
+    expect(data.repoFullName).toBe("owner/repo");
+    expect(data.status).toBe("pending");
+    expect(data.pendingActions.map((action) => action.pullNumber).sort()).toEqual([7, 8]);
+    expect(data.pendingActions.every((action) => action.status === "pending" && action.autonomyLevel === "auto_with_approval")).toBe(true);
+  });
+
+  it("filters by status and returns an empty queue when none match", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo", status: "accepted" } });
+    const data = result.structuredContent as { status: string; pendingActions: unknown[] };
+    expect(data.status).toBe("accepted");
+    expect(data.pendingActions).toEqual([]);
+  });
+
+  it("forbids a session without live write access", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+  });
+});
+
+describe("MCP gittensory_decide_pending_action (#784)", () => {
+  it("rejects a staged action without executing and is idempotent", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as { status: string }).status).toBe("rejected");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+
+    const second = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    expect((second.structuredContent as { status: string }).status).toBe("already_decided");
+  });
+
+  it("accepts a staged action and honors dry-run mode (no live mutation)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", pull_requests: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash" }, reason: "clean" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "accept" } });
+    const data = result.structuredContent as { status: string; executionOutcome: string };
+    expect(data.status).toBe("accepted");
+    expect(data.executionOutcome).toBe("dry_run");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("accepted");
+  });
+
+  it("is repo-scoped: a guessed id from another repo's queue is not_found and left untouched", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositoryFromGitHub(env, { name: "other", full_name: "owner/other", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/other", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect((result.structuredContent as { status: string }).status).toBe("not_found");
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("pending");
+  });
+
+  it("forbids a session without live write access and leaves the action pending", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_decide_pending_action", arguments: { owner: "owner", repo: "repo", id: action.id, decision: "reject" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("pending");
+  });
+});
+
+describe("MCP gittensory_get_agent_audit_feed (#784)", () => {
+  async function seedAudit(env: Env) {
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.pending_action.rejected", actor: "owner", targetKey: "owner/repo#8", outcome: "completed", detail: "rejected merge", createdAt: "2026-06-18T11:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.pr_visibility_skipped", actor: "x", targetKey: "owner/repo#9", outcome: "completed", createdAt: "2026-06-18T12:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "other/repo#1", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
+  }
+
+  it("surfaces this repo's agent action + decision events newest-first, excluding non-agent and other-repo events", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { repoFullName: string; events: Array<{ eventType: string; pullNumber: number | null; outcome: string }> };
+    expect(data.repoFullName).toBe("owner/repo");
+    expect(data.events.map((event) => event.eventType)).toEqual(["agent.pending_action.rejected", "agent.action.merge"]);
+    expect(data.events[0]).toMatchObject({ pullNumber: 8, outcome: "completed" });
+  });
+
+  it("honors the since filter and the limit", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    const client = await connect(env);
+    const since = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", since: "2026-06-18T10:30:00.000Z" } });
+    expect((since.structuredContent as { events: unknown[] }).events).toHaveLength(1);
+    const limited = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", limit: 1 } });
+    expect((limited.structuredContent as { events: unknown[] }).events).toHaveLength(1);
+  });
+
+  it("forbids a session without live write access", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+  });
+
+  it("rejects a malformed since (non ISO-8601) and an over-cap limit via schema validation", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    const badSince = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", since: "not-a-date" } });
+    expect(badSince.isError).toBe(true);
+    const badLimit = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", limit: 500 } });
+    expect(badLimit.isError).toBe(true);
+  });
+
+  it("scrubs forbidden terms from the free-form detail and preserves a null detail", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "owner/repo#8", outcome: "completed", createdAt: "2026-06-18T09:00:00.000Z" });
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
+    const data = result.structuredContent as { events: Array<{ pullNumber: number | null; detail: string | null }> };
+    const merge = data.events.find((event) => event.pullNumber === 7);
+    const label = data.events.find((event) => event.pullNumber === 8);
+    expect(merge?.detail).not.toMatch(/reward/i);
+    expect(merge?.detail).toContain("private context");
+    expect(label?.detail).toBeNull();
   });
 });

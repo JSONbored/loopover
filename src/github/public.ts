@@ -77,7 +77,15 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
     ]);
     if (!userResponse.ok) throw new Error(`GitHub user lookup failed (${userResponse.status})`);
     const user = (await userResponse.json()) as GitHubUserResponse;
-    const repos = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
+    const repos: GitHubRepoResponse[] = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
+    let linkHeader = reposResponse.ok ? reposResponse.headers.get("link") : null;
+    for (let page = 2; linkHeader?.includes('rel="next"'); page += 1) {
+      const nextResponse = await fetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`, { headers, signal });
+      if (!nextResponse.ok) break;
+      const batch = (await nextResponse.json()) as GitHubRepoResponse[];
+      repos.push(...batch);
+      linkHeader = nextResponse.headers.get("link");
+    }
     const languageCounts = new Map<string, number>();
     for (const repo of repos) {
       if (!repo.language) continue;

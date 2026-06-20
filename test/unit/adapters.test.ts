@@ -124,6 +124,29 @@ describe("small adapters and normalizers", () => {
     await expect(fetchPublicContributorProfile("missing")).resolves.toMatchObject({ login: "missing", source: "unavailable", topLanguages: [] });
   });
 
+  it("paginates past 100 repos so contributors with large portfolios get accurate topLanguages", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/users/prolific")) return Response.json({ login: "prolific", public_repos: 150 });
+      if (url.includes("/prolific/repos?") && !url.includes("page=2")) {
+        // page 1: 100 TypeScript repos with a Link header pointing to page 2
+        return Response.json(
+          Array.from({ length: 100 }, () => ({ language: "TypeScript" })),
+          { headers: { link: '<https://api.github.com/users/prolific/repos?page=2>; rel="next"' } },
+        );
+      }
+      if (url.includes("/prolific/repos?") && url.includes("page=2")) {
+        // page 2: 50 Rust repos — language only visible with pagination
+        return Response.json(Array.from({ length: 50 }, () => ({ language: "Rust" })));
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("prolific");
+    expect(profile.topLanguages).toContain("Rust");
+    expect(profile.topLanguages[0]).toBe("TypeScript");
+  });
+
   it("authenticates public profile requests with GITHUB_PUBLIC_TOKEN to lift the rate ceiling (#790)", async () => {
     const authHeaders: Array<string | null> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

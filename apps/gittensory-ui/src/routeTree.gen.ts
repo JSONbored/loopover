@@ -27,6 +27,7 @@ import { Route as DocsTroubleshootingRouteImport } from './routes/docs.troublesh
 import { Route as DocsScoreabilityRouteImport } from './routes/docs.scoreability'
 import { Route as DocsQuickstartRouteImport } from './routes/docs.quickstart'
 import { Route as DocsPrivacySecurityRouteImport } from './routes/docs.privacy-security'
+import { Route as DocsOwnerChecklistRouteImport } from './routes/docs.owner-checklist'
 import { Route as DocsMinerWorkflowRouteImport } from './routes/docs.miner-workflow'
 import { Route as DocsMinerQuickstartRouteImport } from './routes/docs.miner-quickstart'
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
@@ -138,6 +139,11 @@ const DocsQuickstartRoute = DocsQuickstartRouteImport.update({
 const DocsPrivacySecurityRoute = DocsPrivacySecurityRouteImport.update({
   id: '/privacy-security',
   path: '/privacy-security',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsOwnerChecklistRoute = DocsOwnerChecklistRouteImport.update({
+  id: '/owner-checklist',
+  path: '/owner-checklist',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsMinerWorkflowRoute = DocsMinerWorkflowRouteImport.update({
@@ -285,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
+  '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
@@ -324,6 +331,7 @@ export interface FileRoutesByTo {
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
+  '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
@@ -367,6 +375,7 @@ export interface FileRoutesById {
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
   '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
+  '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
@@ -411,6 +420,7 @@ export interface FileRouteTypes {
     | '/docs/mcp-clients'
     | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
+    | '/docs/owner-checklist'
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
@@ -450,6 +460,7 @@ export interface FileRouteTypes {
     | '/docs/mcp-clients'
     | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
+    | '/docs/owner-checklist'
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
@@ -492,6 +503,7 @@ export interface FileRouteTypes {
     | '/docs/mcp-clients'
     | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
+    | '/docs/owner-checklist'
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
@@ -641,6 +653,13 @@ declare module '@tanstack/react-router' {
       path: '/privacy-security'
       fullPath: '/docs/privacy-security'
       preLoaderRoute: typeof DocsPrivacySecurityRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/owner-checklist': {
+      id: '/docs/owner-checklist'
+      path: '/owner-checklist'
+      fullPath: '/docs/owner-checklist'
+      preLoaderRoute: typeof DocsOwnerChecklistRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/miner-workflow': {
@@ -856,6 +875,7 @@ interface DocsRouteChildren {
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
   DocsMinerQuickstartRoute: typeof DocsMinerQuickstartRoute
   DocsMinerWorkflowRoute: typeof DocsMinerWorkflowRoute
+  DocsOwnerChecklistRoute: typeof DocsOwnerChecklistRoute
   DocsPrivacySecurityRoute: typeof DocsPrivacySecurityRoute
   DocsQuickstartRoute: typeof DocsQuickstartRoute
   DocsScoreabilityRoute: typeof DocsScoreabilityRoute
@@ -874,6 +894,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsMcpClientsRoute: DocsMcpClientsRoute,
   DocsMinerQuickstartRoute: DocsMinerQuickstartRoute,
   DocsMinerWorkflowRoute: DocsMinerWorkflowRoute,
+  DocsOwnerChecklistRoute: DocsOwnerChecklistRoute,
   DocsPrivacySecurityRoute: DocsPrivacySecurityRoute,
   DocsQuickstartRoute: DocsQuickstartRoute,
   DocsScoreabilityRoute: DocsScoreabilityRoute,

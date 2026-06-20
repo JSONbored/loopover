@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Check, Copy, Download, History, Loader2, RefreshCw } from "lucide-react";
 
 import { KeyValueGrid, StatusPill, type Status } from "@/components/site/control-primitives";
+import { ResponsiveDataTable } from "@/components/site/responsive-data-table";
 import { McpVersionBadge } from "@/components/site/mcp-version-badge";
 import { StatCard } from "@/components/site/primitives";
 import { StateBoundary } from "@/components/site/state-views";
@@ -328,47 +329,55 @@ export function MinerPanel() {
                 </div>
               </div>
 
-              <div className="rounded-token border-hairline bg-card p-5">
-                <h2 className="font-display text-token-lg font-semibold">Repo fit</h2>
+              <div
+                className="rounded-token border-hairline bg-card p-5"
+                aria-labelledby="miner-repo-fit-title"
+              >
+                <h2 id="miner-repo-fit-title" className="font-display text-token-lg font-semibold">
+                  Repo fit
+                </h2>
                 <p className="mt-1 text-token-xs text-muted-foreground">
                   Where to spend time, and where not to.
                 </p>
-                <table className="mt-4 w-full text-left text-token-sm">
-                  <thead>
-                    <tr className="border-b-hairline font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                      <th className="py-2 pr-3 font-normal">Repo</th>
-                      <th className="py-2 pr-3 font-normal">Lane</th>
-                      <th className="py-2 font-normal">Why</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.repoFit.map((repo, index) => {
-                      const lane = repo.lane ?? "pursue";
-                      return (
-                        <tr
-                          key={`${repo.repoFullName ?? index}`}
-                          className="border-b-hairline last:border-b-0 transition-colors hover:bg-muted/40"
-                        >
-                          <td className="py-2 pr-3 align-top">
-                            <div className="break-all font-mono text-token-xs text-foreground/90">
-                              {repo.repoFullName ?? "repo pending"}
-                            </div>
-                            <RecommendationChangeInline change={repo.change} />
-                          </td>
-                          <td className="py-2 pr-3 align-top">
-                            <StatusPill status={LANE_TONE[lane] ?? "info"}>{lane}</StatusPill>
-                          </td>
-                          <td className="py-2 align-top text-token-xs text-muted-foreground">
-                            {repo.why ??
-                              repo.rationale ??
-                              repo.recommendation ??
-                              "No rationale recorded."}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <ResponsiveDataTable
+                  className="mt-4"
+                  caption="Repo fit"
+                  rows={data.repoFit}
+                  rowKey={(repo, index) => `${repo.repoFullName ?? index}`}
+                  emptyMessage="No ranked repo fit recommendations yet."
+                  columns={[
+                    {
+                      id: "repo",
+                      header: "Repo",
+                      cell: (repo) => (
+                        <>
+                          <div className="break-all font-mono text-token-xs text-foreground/90">
+                            {repo.repoFullName ?? "repo pending"}
+                          </div>
+                          <RecommendationChangeInline change={repo.change} />
+                        </>
+                      ),
+                    },
+                    {
+                      id: "lane",
+                      header: "Lane",
+                      cell: (repo) => {
+                        const lane = repo.lane ?? "pursue";
+                        return <StatusPill status={LANE_TONE[lane] ?? "info"}>{lane}</StatusPill>;
+                      },
+                    },
+                    {
+                      id: "why",
+                      header: "Why",
+                      cellClassName: "text-token-xs text-muted-foreground",
+                      cell: (repo) =>
+                        repo.why ??
+                        repo.rationale ??
+                        repo.recommendation ??
+                        "No rationale recorded.",
+                    },
+                  ]}
+                />
               </div>
             </section>
           </div>
@@ -433,7 +442,7 @@ function MinerPanelActions({
   onChangelog: () => void;
 }) {
   const buttonClass =
-    "inline-flex items-center gap-2 rounded-token border-hairline bg-card px-3 py-2 text-token-xs font-medium text-foreground transition-colors hover:border-strong disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center gap-2 rounded-token border-hairline bg-card px-3 py-2 text-token-xs font-medium text-foreground transition-colors hover:border-strong focus-ring disabled:cursor-not-allowed disabled:opacity-50";
   return (
     <section
       className="flex flex-wrap items-center justify-between gap-3"

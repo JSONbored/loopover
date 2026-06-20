@@ -7,6 +7,7 @@ import { GittensoryMark } from "./mark";
 import { CommandPalette } from "./command-palette";
 import { GithubStatsChip } from "./github-stats-chip";
 import { KeyboardShortcutsDialog } from "./keyboard-shortcuts";
+import { ThemeToggle } from "./theme-toggle";
 
 const nav = [
   { to: "/miners", label: "Miners" },
@@ -153,6 +154,7 @@ export function SiteHeader() {
 
         <div className="ml-auto flex items-center gap-1.5">
           <CommandPalette />
+          <ThemeToggle />
           <McpVersionBadge className="hidden lg:block" />
           <GithubStatsChip className="hidden sm:inline-flex" />
           <KeyboardShortcutsDialog />

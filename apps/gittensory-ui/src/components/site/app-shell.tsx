@@ -33,6 +33,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { GittensoryMark } from "./mark";
+import { ThemeToggle } from "./theme-toggle";
 import { StatusPill, type Status } from "./control-primitives";
 import { LoadingState } from "./state-views";
 import { cn } from "@/lib/utils";
@@ -295,11 +296,14 @@ export function AppShell() {
               </>
             )}
           </nav>
-          <div className="ml-auto hidden items-center gap-1 font-mono text-token-2xs text-muted-foreground sm:flex">
-            <kbd className="rounded border border-border bg-background/60 px-1 py-0.5">g</kbd>
-            <span>then</span>
-            <kbd className="rounded border border-border bg-background/60 px-1 py-0.5">o w r</kbd>
-            <span>to navigate</span>
+          <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
+            <div className="hidden items-center gap-1 font-mono text-token-2xs text-muted-foreground sm:flex">
+              <kbd className="rounded border border-border bg-background/60 px-1 py-0.5">g</kbd>
+              <span>then</span>
+              <kbd className="rounded border border-border bg-background/60 px-1 py-0.5">o w r</kbd>
+              <span>to navigate</span>
+            </div>
           </div>
         </header>
         <div className="min-w-0 px-4 py-6 sm:px-6 lg:px-8">

@@ -73,23 +73,37 @@ export function OwnerPanel() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-token border-hairline bg-card p-5">
+      <section
+        className="rounded-token border-hairline bg-card p-5"
+        aria-labelledby="owner-registration-workspace-title"
+      >
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="font-display text-token-lg font-semibold">Registration workspace</h2>
+            <h2
+              id="owner-registration-workspace-title"
+              className="font-display text-token-lg font-semibold"
+            >
+              Registration workspace
+            </h2>
             <p className="mt-1 text-token-xs text-muted-foreground">
               Readiness report with lane tradeoffs — not raw Gittensor telemetry.
             </p>
           </div>
           <div className="w-full sm:w-64">
-            <label className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            <label
+              htmlFor="owner-repo-input"
+              className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground"
+            >
               Repository
             </label>
             <Input
+              id="owner-repo-input"
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
-              className="mt-1 font-mono text-token-xs"
+              className="mt-1 font-mono text-token-xs focus-ring"
               placeholder="owner/repo"
+              autoComplete="off"
+              spellCheck={false}
             />
             {invalidRepo ? (
               <p className="mt-1 text-token-2xs text-danger">Use a valid owner/repo slug.</p>

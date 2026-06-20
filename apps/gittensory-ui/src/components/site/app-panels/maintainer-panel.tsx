@@ -20,6 +20,7 @@ import {
 import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
 import { MaintainerSettings } from "@/components/site/app-panels/maintainer-settings";
 import { StatCard } from "@/components/site/primitives";
+import { ResponsiveDataTable } from "@/components/site/responsive-data-table";
 import { EmptyState, LoadingState, StateBoundary } from "@/components/site/state-views";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
@@ -282,59 +283,78 @@ function MaintainerDashboardView() {
             </div>
           </section>
 
-          <section className="rounded-token border-hairline bg-card p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-token-lg font-semibold">Reviewability queue</h2>
+          <section
+            className="rounded-token border-hairline bg-card p-5"
+            aria-labelledby="reviewability-queue-title"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2
+                id="reviewability-queue-title"
+                className="font-display text-token-lg font-semibold"
+              >
+                Reviewability queue
+              </h2>
               <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
                 private
               </span>
             </div>
-            <table className="mt-4 w-full text-left text-token-sm">
-              <thead>
-                <tr className="border-b-hairline font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                  <th className="py-2 pr-3 font-normal">PR</th>
-                  <th className="py-2 pr-3 font-normal">Title</th>
-                  <th className="py-2 pr-3 font-normal">Author</th>
-                  <th className="py-2 pr-3 font-normal">Bucket</th>
-                  <th className="py-2 pr-3 font-normal">Slop</th>
-                  <th className="py-2 font-normal">Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.reviewability.map((row) => (
-                  <tr
-                    key={row.pr}
-                    className="border-b-hairline last:border-b-0 transition-colors hover:bg-muted/40"
-                  >
-                    <td className="py-2 pr-3 font-mono text-token-xs text-foreground/90">
-                      {row.pr}
-                    </td>
-                    <td className="py-2 pr-3">{row.title}</td>
-                    <td className="py-2 pr-3 text-token-xs text-muted-foreground">{row.author}</td>
-                    <td className="py-2 pr-3">
-                      <StatusPill status={BUCKET_TONE[row.bucket] ?? "info"}>
-                        {row.bucket}
+            <ResponsiveDataTable
+              className="mt-4"
+              caption="Reviewability queue"
+              rows={data.reviewability}
+              rowKey={(row) => row.pr}
+              emptyMessage="No open pull requests are queued for reviewability scoring."
+              columns={[
+                {
+                  id: "pr",
+                  header: "PR",
+                  cell: (row) => (
+                    <span className="font-mono text-token-xs text-foreground/90">{row.pr}</span>
+                  ),
+                },
+                {
+                  id: "title",
+                  header: "Title",
+                  cell: (row) => row.title,
+                },
+                {
+                  id: "author",
+                  header: "Author",
+                  cellClassName: "text-token-xs text-muted-foreground",
+                  cell: (row) => row.author,
+                },
+                {
+                  id: "bucket",
+                  header: "Bucket",
+                  cell: (row) => (
+                    <StatusPill status={BUCKET_TONE[row.bucket] ?? "info"}>{row.bucket}</StatusPill>
+                  ),
+                },
+                {
+                  id: "slop",
+                  header: "Slop",
+                  cell: (row) =>
+                    row.slop ? (
+                      <StatusPill status={SLOP_BAND_TONE[row.slop.band] ?? "info"}>
+                        {row.slop.band} {row.slop.risk}
                       </StatusPill>
-                    </td>
-                    <td className="py-2 pr-3">
-                      {row.slop ? (
-                        <StatusPill status={SLOP_BAND_TONE[row.slop.band] ?? "info"}>
-                          {row.slop.band} {row.slop.risk}
-                        </StatusPill>
-                      ) : (
-                        <span
-                          className="text-token-xs text-muted-foreground"
-                          title="Slop detection is off for this repo, or this PR has not been assessed yet."
-                        >
-                          —
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 text-token-xs text-muted-foreground">{row.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    ) : (
+                      <span
+                        className="text-token-xs text-muted-foreground"
+                        title="Slop detection is off for this repo, or this PR has not been assessed yet."
+                      >
+                        —
+                      </span>
+                    ),
+                },
+                {
+                  id: "reason",
+                  header: "Reason",
+                  cellClassName: "text-token-xs text-muted-foreground",
+                  cell: (row) => row.reason,
+                },
+              ]}
+            />
           </section>
 
           <SurfacePreview reviewability={data.reviewability} />
@@ -440,7 +460,7 @@ function SurfacePreview({
             type="button"
             disabled={busy || !repoParts}
             onClick={() => void runPreview()}
-            className="inline-flex items-center gap-2 rounded-token border border-mint/40 bg-mint px-3 py-2 text-token-xs font-medium text-primary-foreground transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-token border border-mint/40 bg-mint px-3 py-2 text-token-xs font-medium text-primary-foreground transition-all hover:brightness-110 focus-ring disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? <RefreshCw className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
             {busy ? "Running" : "Run preview"}
@@ -637,26 +657,31 @@ function PreviewResult({
       )}
 
       {preview.installation?.permissionRemediation.length ? (
-        <div className="overflow-hidden rounded-token border-hairline">
-          <table className="w-full text-left text-token-xs">
-            <thead className="border-b-hairline font-mono uppercase tracking-wider text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-normal">Permission</th>
-                <th className="px-3 py-2 font-normal">Current</th>
-                <th className="px-3 py-2 font-normal">Required</th>
-              </tr>
-            </thead>
-            <tbody>
-              {preview.installation.permissionRemediation.map((row) => (
-                <tr key={row.permission} className="border-b-hairline last:border-b-0">
-                  <td className="px-3 py-2 text-foreground">{row.permission}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{row.currentAccess}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{row.requiredAccess}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ResponsiveDataTable
+          caption="Permission remediation"
+          tableClassName="text-token-xs"
+          rows={preview.installation.permissionRemediation}
+          rowKey={(row) => row.permission}
+          columns={[
+            {
+              id: "permission",
+              header: "Permission",
+              cell: (row) => row.permission,
+            },
+            {
+              id: "current",
+              header: "Current",
+              cellClassName: "text-muted-foreground",
+              cell: (row) => row.currentAccess,
+            },
+            {
+              id: "required",
+              header: "Required",
+              cellClassName: "text-muted-foreground",
+              cell: (row) => row.requiredAccess,
+            },
+          ]}
+        />
       ) : null}
 
       <div>
@@ -666,7 +691,7 @@ function PreviewResult({
           </div>
           <StatusPill status="info">sanitized</StatusPill>
         </div>
-        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-token border border-border bg-[oklch(0.13_0.005_260)] p-3 font-mono text-token-xs leading-token-relaxed text-foreground/90">
+        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-token border border-border bg-surface-2 p-3 font-mono text-token-xs leading-token-relaxed text-foreground/90">
           {preview.previewComment ?? "No public comment would be posted for this scenario."}
         </pre>
       </div>

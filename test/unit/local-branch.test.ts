@@ -1630,6 +1630,31 @@ describe("local MCP git metadata collection", () => {
     expect(options[0]?.obstacles).toEqual([]);
   });
 
+  it("counts same-repo contributor open PRs case-insensitively when ranking pressure options", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "Oktofeesh1",
+        repoFullName: "EnTrius/AllWays-UI",
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const options = analysis.scenarioSummary.options;
+    expect(options[0]).toMatchObject({ label: "Clean up existing work first", recommended: true });
+    expect(options.find((option) => option.label === "Open another PR now")?.obstacles.join(" ")).toMatch(/already have open PR/i);
+  });
+
   it("wires open-PR pressure strategy options into scenarioSummary.options (#348)", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

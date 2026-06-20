@@ -378,7 +378,7 @@ export function buildLocalBranchAnalysis(args: {
     queueHealth: buildQueueHealth(args.repo, args.issues, args.pullRequests, buildCollisionReport(args.input.repoFullName, args.issues, args.pullRequests)),
     roleContext,
     contributorOpenPrCount: (args.contributorPullRequests ?? args.pullRequests).filter(
-      (pr) => pr.repoFullName === args.input.repoFullName && pr.state === "open" && (pr.authorLogin ?? "").toLowerCase() === args.input.login.toLowerCase(),
+      (pr) => sameRepo(pr.repoFullName, args.input.repoFullName) && pr.state === "open" && (pr.authorLogin ?? "").toLowerCase() === args.input.login.toLowerCase(),
     ).length,
   });
   const scenarioSummary = renderPublicScenarioSummary({

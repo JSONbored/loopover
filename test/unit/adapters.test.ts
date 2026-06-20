@@ -124,6 +124,52 @@ describe("small adapters and normalizers", () => {
     await expect(fetchPublicContributorProfile("missing")).resolves.toMatchObject({ login: "missing", source: "unavailable", topLanguages: [] });
   });
 
+  it("paginates past 100 repos so contributors with large portfolios get accurate topLanguages", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/users/prolific")) return Response.json({ login: "prolific", public_repos: 150 });
+      if (url.includes("/prolific/repos?") && !url.includes("page=2")) {
+        // page 1: 100 TypeScript repos with a Link header pointing to page 2
+        return Response.json(
+          Array.from({ length: 100 }, () => ({ language: "TypeScript" })),
+          { headers: { link: '<https://api.github.com/users/prolific/repos?page=2>; rel="next"' } },
+        );
+      }
+      if (url.includes("/prolific/repos?") && url.includes("page=2")) {
+        // page 2: 50 Rust repos only reachable via pagination
+        return Response.json(Array.from({ length: 50 }, () => ({ language: "Rust" })));
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("prolific");
+    expect(profile.topLanguages[0]).toBe("TypeScript");
+    expect(profile.topLanguages).toContain("Rust");
+  });
+
+  it("stops paginating repos when a subsequent page returns a non-ok response", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/users/partialdev")) return Response.json({ login: "partialdev", public_repos: 200 });
+      if (url.includes("/partialdev/repos?") && !url.includes("page=2")) {
+        // page 1: 100 Go repos with a Link header
+        return Response.json(
+          Array.from({ length: 100 }, () => ({ language: "Go" })),
+          { headers: { link: '<https://api.github.com/users/partialdev/repos?page=2>; rel="next"' } },
+        );
+      }
+      if (url.includes("/partialdev/repos?") && url.includes("page=2")) {
+        return new Response("rate limited", { status: 429 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const profile = await fetchPublicContributorProfile("partialdev");
+    // page 1 repos are preserved despite page 2 failing
+    expect(profile.source).toBe("github");
+    expect(profile.topLanguages).toContain("Go");
+  });
+
   it("authenticates public profile requests with GITHUB_PUBLIC_TOKEN to lift the rate ceiling (#790)", async () => {
     const authHeaders: Array<string | null> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

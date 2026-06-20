@@ -30,7 +30,7 @@ describe("GitHub PR labels", () => {
     expect(calls.some((call) => call.includes("/repos/JSONbored/gittensory/labels"))).toBe(false);
   });
 
-  it("applies an existing repository label without creating it", async () => {
+  it("applies an existing repository label without creating it, even when the repo has more than 100 labels", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -38,7 +38,13 @@ describe("GitHub PR labels", () => {
       calls.push(`${method} ${url}`);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/issues/4/labels") && method === "GET") return Response.json([]);
-      if (url.includes("/repos/JSONbored/gittensory/labels") && method === "GET") return Response.json([{ name: "gittensor" }]);
+      if (url.includes("/repos/JSONbored/gittensory/labels") && method === "POST") {
+        // GitHub 422 "already_exists" — label is in the repo (possibly beyond page 100)
+        return Response.json(
+          { message: "Validation Failed", errors: [{ resource: "Label", code: "already_exists", field: "name" }] },
+          { status: 422 },
+        );
+      }
       if (url.includes("/issues/4/labels") && method === "POST") return Response.json([{ name: "gittensor" }]);
       return new Response("unexpected", { status: 500 });
     });
@@ -48,7 +54,28 @@ describe("GitHub PR labels", () => {
     });
 
     expect(result).toEqual({ applied: true, created: false });
-    expect(calls.some((call) => call.startsWith("POST ") && call.endsWith("/repos/JSONbored/gittensory/labels"))).toBe(false);
+  });
+
+  it("propagates a 422 that is not an already_exists duplicate (e.g. invalid label name)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/4/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/repos/JSONbored/gittensory/labels") && method === "POST") {
+        return Response.json(
+          { message: "Validation Failed", errors: [{ resource: "Label", code: "invalid", field: "name" }] },
+          { status: 422 },
+        );
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(
+      ensurePullRequestLabel(createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }), 123, "JSONbored/gittensory", 4, "gittensor", {
+        createMissingLabel: true,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
   });
 
   it("creates a missing repository label when configured", async () => {

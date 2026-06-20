@@ -122,6 +122,7 @@ import {
   buildBurdenForecast,
   buildCollisionEdges,
   buildCollisionReport,
+  isPullRequestInDuplicateCluster,
   buildConfigQuality,
   buildContributorFit,
   buildContributorOutcomeHistory,
@@ -1453,6 +1454,8 @@ async function maybePublishPrPublicSurface(
       const slop = buildSlopAssessment({
         changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
         description: pr.body,
+        // Reuse the collision report already built for this gate run so a duplicate-cluster PR is flagged (#563).
+        inDuplicateCluster: isPullRequestInDuplicateCluster(collisions, pr.number),
       });
       slopRisk = slop.slopRisk;
       advisory.findings.push(...slop.findings);

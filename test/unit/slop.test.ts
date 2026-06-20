@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDuplicateClusterFinding,
   buildEmptyIssueBodyFinding,
   buildIssueSlopAssessment,
   buildLowQualityCommitMessageFinding,
@@ -48,6 +49,32 @@ describe("buildSlopAssessment", () => {
     expect(empty?.detail).toMatch(/empty/i);
     // leading blanks are skipped; the first real subject ("update") is what gets judged.
     expect(buildLowQualityCommitMessageFinding({ commitMessages: ["", "update"] })?.detail).toMatch(/generic/i);
+  });
+
+  it("raises duplicate-cluster slop when the PR is flagged as in a duplicate cluster (#563)", () => {
+    const result = buildSlopAssessment({ inDuplicateCluster: true });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "duplicate_cluster_membership", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise duplicate-cluster slop when not flagged (false or omitted) (#563)", () => {
+    expect(buildDuplicateClusterFinding({})).toBeNull();
+    expect(buildDuplicateClusterFinding({ inDuplicateCluster: false })).toBeNull();
+  });
+
+  it("stacks the duplicate-cluster weight with another signal into the expected band (#563)", () => {
+    const result = buildSlopAssessment({
+      // code file with no test evidence → missing_test_evidence (30); non-empty description suppresses empty_description.
+      changedFiles: [{ path: "src/parser.ts", additions: 10, deletions: 1 }],
+      description: "Refactor the parser.",
+      inDuplicateCluster: true, // → duplicate_cluster_membership (15)
+    });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence + SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("elevated");
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual(["duplicate_cluster_membership", "missing_test_evidence"]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
   it("raises missing-test-evidence slop for code-only diffs without tests", () => {

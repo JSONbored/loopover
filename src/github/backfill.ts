@@ -1,9 +1,11 @@
 import {
   getRepositorySettings,
   getRepository,
+  getPullRequest,
   countOpenIssues,
   countOpenPullRequests,
   countRecentMergedPullRequests,
+  deletePullRequestFiles,
   countRepoLabels,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -45,6 +47,7 @@ import type {
   InstallationHealthRecord,
   InstallationRecord,
   JsonValue,
+  PullRequestDetailSyncStateRecord,
   PullRequestRecord,
   RecentMergedPullRequestRecord,
   RepoGithubTotalsSnapshotRecord,
@@ -558,6 +561,34 @@ export async function backfillOpenPullRequestDetails(
     ...(nextCursor === undefined ? {} : { nextCursor }),
     warnings,
   };
+}
+
+export async function refreshPullRequestDetails(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+): Promise<{ ok: true; repoFullName: string; pullNumber: number; status: PullRequestDetailSyncStateRecord["status"]; warnings: string[] }> {
+  const [repo, pr] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, pullNumber)]);
+  if (!repo || !pr) {
+    return { ok: true, repoFullName, pullNumber, status: "partial", warnings: ["Repository or pull request was not found."] };
+  }
+  const token = await tokenForRepo(env, repo);
+  const warnings: string[] = [];
+  await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
+  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings);
+  const syncedAt = nowIso();
+  const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber,
+    status,
+    filesSyncedAt: syncedAt,
+    reviewsSyncedAt: syncedAt,
+    checksSyncedAt: syncedAt,
+    lastSyncedAt: syncedAt,
+    errorSummary: warnings.at(-1),
+  });
+  return { ok: true, repoFullName, pullNumber, status, warnings };
 }
 
 export async function refreshContributorActivity(
@@ -1698,20 +1729,25 @@ async function fetchAndStorePullRequestDetails(
   token: string | undefined,
   warnings: string[],
 ): Promise<void> {
+  const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
+  const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
 
-  for (const file of files) {
-    await upsertPullRequestFile(env, {
-      repoFullName,
-      pullNumber: pr.number,
-      path: file.filename,
-      status: file.status,
-      additions: file.additions ?? 0,
-      deletions: file.deletions ?? 0,
-      changes: file.changes ?? 0,
-      previousFilename: file.previous_filename,
-      payload: file as unknown as Record<string, JsonValue>,
-    });
+  if (!fileSyncFailed) {
+    await deletePullRequestFiles(env, repoFullName, pr.number);
+    for (const file of files) {
+      await upsertPullRequestFile(env, {
+        repoFullName,
+        pullNumber: pr.number,
+        path: file.filename,
+        status: file.status,
+        additions: file.additions ?? 0,
+        deletions: file.deletions ?? 0,
+        changes: file.changes ?? 0,
+        previousFilename: file.previous_filename,
+        payload: file as unknown as Record<string, JsonValue>,
+      });
+    }
   }
   for (const review of reviews) {
     await upsertPullRequestReview(env, {
@@ -1742,6 +1778,25 @@ async function fetchAndStorePullRequestDetails(
   }
 }
 
+// GitHub caps list endpoints at 100 items/page, so a single `per_page=100` fetch silently truncates a
+// large PR's files/reviews/checks — which then undercounts churn/size and the slop padding detector.
+// Walk the `Link` header instead, bounded so a pathological PR can't spin. A page-1 failure returns
+// undefined (the caller can fall back to GraphQL); a later-page failure keeps the pages already fetched
+// rather than dropping a successful first page.
+const PR_DETAIL_MAX_PAGES = 10;
+
+async function githubPaginatedList<T>(env: Env, repoFullName: string, path: string, token: string | undefined): Promise<T[] | undefined> {
+  const items: T[] = [];
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    // Callers pass query-less resource paths (/pulls/N/files, /pulls/N/reviews), so the page params start the query.
+    const result = await githubJsonWithHeaders<T[]>(env, repoFullName, `${path}?per_page=100&page=${page}`, token).catch(() => undefined);
+    if (!result) return page === 1 ? undefined : items;
+    items.push(...result.data);
+    if (!hasNextPage(result.link)) break;
+  }
+  return items;
+}
+
 async function fetchPullRequestFiles(
   env: Env,
   repoFullName: string,
@@ -1749,7 +1804,7 @@ async function fetchPullRequestFiles(
   token: string | undefined,
   warnings: string[],
 ): Promise<GitHubFilePayload[]> {
-  const files = await githubJson<GitHubFilePayload[]>(env, repoFullName, `/pulls/${pullNumber}/files?per_page=100`, token).catch(() => undefined);
+  const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token);
   if (files) return files;
   const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
   if (fallback) return fallback.files;
@@ -1764,7 +1819,7 @@ async function fetchPullRequestReviews(
   token: string | undefined,
   warnings: string[],
 ): Promise<GitHubReviewPayload[]> {
-  const reviews = await githubJson<GitHubReviewPayload[]>(env, repoFullName, `/pulls/${pullNumber}/reviews?per_page=100`, token).catch(() => undefined);
+  const reviews = await githubPaginatedList<GitHubReviewPayload>(env, repoFullName, `/pulls/${pullNumber}/reviews`, token);
   if (reviews) return reviews;
   const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
   if (fallback) return fallback.reviews;
@@ -1780,10 +1835,26 @@ async function fetchPullRequestChecks(
   warnings: string[],
 ): Promise<{ check_runs?: GitHubCheckRunPayload[] }> {
   if (!pr.headSha) return { check_runs: [] };
-  const checks = await githubJson<{ check_runs?: GitHubCheckRunPayload[] }>(env, repoFullName, `/commits/${pr.headSha}/check-runs?per_page=100`, token).catch(() => undefined);
-  if (checks) return checks;
-  warnings.push(`Check sync failed for #${pr.number}: GitHub REST check-run fetch failed.`);
-  return { check_runs: [] };
+  // Same pagination as files/reviews, but the check-runs endpoint wraps the list in { check_runs }.
+  const checkRuns: GitHubCheckRunPayload[] = [];
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    const result = await githubJsonWithHeaders<{ check_runs?: GitHubCheckRunPayload[] }>(
+      env,
+      repoFullName,
+      `/commits/${pr.headSha}/check-runs?per_page=100&page=${page}`,
+      token,
+    ).catch(() => undefined);
+    if (!result) {
+      if (page === 1) {
+        warnings.push(`Check sync failed for #${pr.number}: GitHub REST check-run fetch failed.`);
+        return { check_runs: [] };
+      }
+      break;
+    }
+    checkRuns.push(...(result.data.check_runs ?? []));
+    if (!hasNextPage(result.link)) break;
+  }
+  return { check_runs: checkRuns };
 }
 
 async function fetchPullRequestDetailsFromGraphQl(

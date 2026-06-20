@@ -58,6 +58,7 @@ const AUDIENCES: Audience[] = [
     primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
       { to: "/docs/quickstart", label: "Quickstart" },
+      { to: "/docs/miner-quickstart", label: "Quickstart by lane" },
       { to: "/docs/miner-workflow", label: "Miner workflow" },
       { to: "/docs/branch-analysis", label: "Branch analysis" },
       { to: "/docs/scoreability", label: "Scoreability" },
@@ -82,6 +83,7 @@ const AUDIENCES: Audience[] = [
     description: "Registration readiness, label policy, repo settings preview.",
     primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
+      { to: "/docs/owner-checklist", label: "Onboarding checklist" },
       { to: "/app/owner", label: "Owner console" },
       { to: "/docs/privacy-security", label: "Privacy & security" },
       { to: "/docs/troubleshooting", label: "Troubleshooting" },

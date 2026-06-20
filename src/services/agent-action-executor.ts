@@ -1,7 +1,7 @@
 import { createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, recordAuditEvent } from "../db/repositories";
 import { ensurePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest } from "../github/pr-actions";
-import { resolveAutonomy } from "../settings/autonomy";
+import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
@@ -35,7 +35,7 @@ export type AgentActionOutcome = {
 /**
  * Execute (or dry-run, or stage for approval) a planned auto-maintain action set on one PR. Each action runs
  * through the SAME deny-toward-safety gate stack before any GitHub call:
- *   pause (#776 kill-switch) → approval (auto_with_approval → #779 queue) → write-permission (#775) → mode.
+ *   pause (#776 kill-switch) → current autonomy → approval (auto_with_approval → #779 queue) → write-permission (#775) → mode.
  * Only `live` mode performs a real mutation; `dry_run` records what it WOULD do. Every path writes one
  * `agent.action.<class>` audit record (#776). A failed mutation is recorded as `error`, never swallowed.
  */
@@ -60,24 +60,30 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       await audit("denied", "agent actions paused");
       continue;
     }
-    // 2) auto_with_approval stages the action in the approval queue (#779) for a one-tap maintainer decision
+    // 2) Current per-action autonomy must still permit this action. Pending approvals are durable, so re-check
+    //    the live repo policy before staging or executing a previously planned action.
+    if (!isActingAutonomyLevel(autonomyLevel)) {
+      await audit("denied", `autonomy for ${action.actionClass} is ${autonomyLevel} — action not currently enabled`);
+      continue;
+    }
+    // 3) auto_with_approval stages the action in the approval queue (#779) for a one-tap maintainer decision
     //    instead of executing it now.
     if (action.requiresApproval) {
       await stageForApproval(env, ctx, action, autonomyLevel);
       await audit("queued", `awaiting maintainer approval — ${action.reason}`);
       continue;
     }
-    // 3) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
+    // 4) Write-permission readiness: a PR-write action needs `pull_requests: write` granted.
     if (PR_WRITE_CLASSES.has(action.actionClass) && resolveAgentPermissionReadiness({ autonomy: ctx.autonomy, installationPermissions: ctx.installationPermissions }) !== "ready") {
       await audit("denied", "pull_requests: write not granted — maintainer must re-consent");
       continue;
     }
-    // 4) dry-run records the intent without touching GitHub.
+    // 5) dry-run records the intent without touching GitHub.
     if (mode === "dry_run") {
       await audit("dry_run", `dry-run: would ${action.actionClass} — ${action.reason}`);
       continue;
     }
-    // 5) live — perform the real mutation, recording success or the error.
+    // 6) live — perform the real mutation, recording success or the error.
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);

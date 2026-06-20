@@ -82,6 +82,15 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect((await auditFor(env, "merge"))?.outcome).toBe("queued");
   });
 
+  it("denies planned actions when current per-action autonomy is no longer acting", async () => {
+    const env = createTestEnv({});
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ autonomy: { approve: "auto" } }), [label, merge]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["denied", "denied"]);
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(JSON.parse((await auditFor(env, "merge"))?.metadata_json ?? "{}")).toMatchObject({ autonomyLevel: "observe" });
+  });
+
   it("PR-write without pull_requests:write → denied (re-consent), but label still runs (issues:write)", async () => {
     const env = createTestEnv({});
     const outcomes = await executeAgentMaintenanceActions(env, ctx({ installationPermissions: { pull_requests: "read", issues: "write" } }), [label, merge]);

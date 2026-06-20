@@ -23,7 +23,12 @@ const CHANGELOG = "# Changelog\n\n## mcp-v0.4.0 - 2026-06-02\n\n### Features\n- 
 const TOKENLESS_WORKFLOW = [
   "permissions:",
   "  contents: read",
-  "  id-token: write",
+  "jobs:",
+  "  publish:",
+  "    permissions:",
+  "      contents: read",
+  "      id-token: write",
+  "    steps:",
   "      - name: Publish with npm trusted publishing",
   "        run: npx -y npm@11.15.0 publish --workspace @jsonbored/gittensory-mcp --access public --provenance",
 ].join("\n");
@@ -106,8 +111,25 @@ describe("checkTokenlessPublish", () => {
   });
 
   it("fails when id-token or provenance is missing", () => {
-    expect(checkTokenlessPublish("permissions:\n  contents: read\n  run: npm publish --provenance").issues.join(" ")).toMatch(/id-token/);
-    expect(checkTokenlessPublish("permissions:\n  id-token: write\n  run: npm publish").issues.join(" ")).toMatch(/provenance/);
+    expect(checkTokenlessPublish("jobs:\n  publish:\n    steps:\n      - run: npm publish --provenance").issues.join(" ")).toMatch(/id-token/);
+    expect(checkTokenlessPublish("permissions:\n  id-token: write\njobs:\n  publish:\n    steps:\n      - run: npm publish").issues.join(" ")).toMatch(/provenance/);
+  });
+
+  it("ignores commented tokenless signals and disabled provenance flags", () => {
+    const invalid = [
+      "permissions:",
+      "  contents: read",
+      "  # id-token: write",
+      "jobs:",
+      "  publish:",
+      "    steps:",
+      "      # npm publish --provenance",
+      "      - run: npm publish --provenance=false",
+    ].join("\n");
+    const result = checkTokenlessPublish(invalid);
+    expect(result.ok).toBe(false);
+    expect(result.issues.join(" ")).toMatch(/id-token/);
+    expect(result.issues.join(" ")).toMatch(/provenance/);
   });
 });
 

@@ -68,4 +68,20 @@ describe("MCP plan DAG tools (#783)", () => {
     expect(second.plan.steps[0]).toMatchObject({ status: "failed", attempts: 2 });
     expect(second.progress.status).toBe("failed");
   });
+  it("record_step_result preserves terminal step status", async () => {
+    const client = await connect();
+    const plan = {
+      steps: [
+        { id: "a", title: "A", dependsOn: [], status: "failed", attempts: 1, maxAttempts: 1, lastError: "boom" },
+        { id: "b", title: "B", dependsOn: ["a"], status: "pending", attempts: 0, maxAttempts: 1 },
+      ],
+    };
+
+    const result = (await client.callTool({ name: "gittensory_record_step_result", arguments: { plan, stepId: "a", outcome: "completed" } })).structuredContent as PlanView;
+
+    expect(result.plan.steps[0]).toMatchObject({ status: "failed", attempts: 1 });
+    expect(result.progress.status).toBe("failed");
+    expect(result.readySteps).toEqual([]);
+  });
+
 });

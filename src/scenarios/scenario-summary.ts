@@ -78,6 +78,7 @@ const OPTION_NEXT_STEPS: Record<OpenPrStrategyOption, string> = {
 const PUBLIC_BLOCKER_TEXT: Partial<Record<ScoreGateBlocker["code"], string>> = {
   base_token_gate: "The change size may be too small to meet the contribution threshold.",
   open_pr_threshold: "Too many concurrent open PRs exist; landing or closing some would help.",
+  open_issue_threshold: "Too many open issues exist; closing excess issues would help.",
   credibility_floor: "Contributor credibility evidence is below the expected floor.",
   review_penalty: "Review churn history may reduce the contribution quality signal.",
   metadata_only: "Only metadata signals are available; detailed analysis requires full context.",

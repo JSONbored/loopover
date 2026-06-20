@@ -1,5 +1,7 @@
 import { defineConfig } from "vitest/config";
 
+const junitPath = process.env.VITEST_JUNIT_PATH;
+
 export default defineConfig({
   ssr: {
     noExternal: ["agents", "partyserver"],
@@ -16,6 +18,8 @@ export default defineConfig({
     testTimeout: 15000,
     include: ["test/**/*.test.ts"],
     exclude: ["test/workers/**/*.test.ts"],
+    reporters: junitPath ? ["default", "junit"] : ["default"],
+    ...(junitPath ? { outputFile: { junit: junitPath } } : {}),
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],

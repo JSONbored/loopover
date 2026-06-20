@@ -103,6 +103,7 @@ export function routeClassForPath(path: string): RateLimitClass {
     path.includes("/v1/agent/") ||
     path.includes("/scoring/preview") ||
     path.includes("/decision-pack") ||
+    path.includes("/miner-dashboard/refresh") ||
     path.includes("/open-pr-monitor") ||
     // Maintainer BYOK config: POST /ai-key runs PBKDF2 (100k iters) + an encrypted D1 upsert per request.
     /\/ai-(?:key|review)$/.test(path) ||

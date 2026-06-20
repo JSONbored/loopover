@@ -56,10 +56,32 @@ export async function loadRepoFocusManifest(
   repoFullName: string,
   options: { fetcher?: RepoFocusManifestFetcher; maxAgeMs?: number; refresh?: boolean } = {},
 ): Promise<FocusManifest> {
+  return loadRepoFocusManifestWithCachePolicy(env, repoFullName, options);
+}
+
+/**
+ * Load only the repo-published focus manifest. This intentionally ignores maintainer/API-backed
+ * records so contributor-facing previews cannot infer private gate policy while still benefiting
+ * from fresh public repo-file cache entries.
+ */
+export async function loadPublicRepoFocusManifest(
+  env: Env,
+  repoFullName: string,
+  options: { fetcher?: RepoFocusManifestFetcher; maxAgeMs?: number; refresh?: boolean } = {},
+): Promise<FocusManifest> {
+  return loadRepoFocusManifestWithCachePolicy(env, repoFullName, options, { publicOnly: true });
+}
+
+async function loadRepoFocusManifestWithCachePolicy(
+  env: Env,
+  repoFullName: string,
+  options: { fetcher?: RepoFocusManifestFetcher; maxAgeMs?: number; refresh?: boolean } = {},
+  cachePolicy: { publicOnly?: boolean } = {},
+): Promise<FocusManifest> {
   const fetcher = options.fetcher ?? fetchRepoFocusManifestFile;
   const maxAgeMs = options.maxAgeMs ?? REPO_FOCUS_MANIFEST_MAX_AGE_MS;
   if (!options.refresh) {
-    const cached = await readCachedManifest(env, repoFullName, maxAgeMs);
+    const cached = await readCachedManifest(env, repoFullName, maxAgeMs, cachePolicy);
     if (cached) return cached;
   }
   let manifest: FocusManifest;
@@ -72,10 +94,12 @@ export async function loadRepoFocusManifest(
   } catch {
     manifest = parseFocusManifest(null);
   }
-  // Persist even an ABSENT manifest (negative cache): effective settings are resolved from
-  // `.gittensory.yml` on every webhook, so a repo without one must not re-fetch the raw file each time.
-  // The TTL still refreshes it, so a newly-added manifest is picked up on the next window.
-  await persistRepoFocusManifest(env, repoFullName, manifest);
+  if (!cachePolicy.publicOnly) {
+    // Persist even an ABSENT manifest (negative cache): effective settings are resolved from
+    // `.gittensory.yml` on every webhook, so a repo without one must not re-fetch the raw file each time.
+    // The TTL still refreshes it, so a newly-added manifest is picked up on the next window.
+    await persistRepoFocusManifest(env, repoFullName, manifest);
+  }
   return manifest;
 }
 
@@ -145,7 +169,7 @@ export async function upsertRepoFocusManifest(env: Env, repoFullName: string, ra
   return manifest;
 }
 
-async function readCachedManifest(env: Env, repoFullName: string, maxAgeMs: number): Promise<FocusManifest | null> {
+async function readCachedManifest(env: Env, repoFullName: string, maxAgeMs: number, options: { publicOnly?: boolean } = {}): Promise<FocusManifest | null> {
   const [latest] = await listSignalSnapshots(env, REPO_FOCUS_MANIFEST_SIGNAL, repoFullName);
   if (!latest) return null;
   const manifest = parseFocusManifest(latest.payload);
@@ -153,6 +177,7 @@ async function readCachedManifest(env: Env, repoFullName: string, maxAgeMs: numb
     latest.payload !== null && typeof latest.payload === "object" && !Array.isArray(latest.payload)
       ? (latest.payload as Record<string, JsonValue>).source
       : undefined;
+  if (options.publicOnly && explicitSource !== "repo_file") return null;
   if (explicitSource === "api_record") return manifest;
   if (snapshotAgeMs(latest.generatedAt) > maxAgeMs) return null;
   return manifest;

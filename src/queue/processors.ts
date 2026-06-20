@@ -6,6 +6,7 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getFreshOfficialMinerDetection,
   getPullRequest,
+  getRepoAuthorPullRequestHistory,
   getRepository,
   getDecryptedRepositoryAiKey,
   getRepositorySettings,
@@ -29,7 +30,7 @@ import {
   listRecentMergedPullRequests,
   updatePullRequestSlopAssessment,
   listRepoLabels,
-  listRepoPullRequestFiles,
+  listRepoPullRequestFilePaths,
   listRepoSyncStates,
   listRepoSyncSegments,
   listRepositories,
@@ -64,6 +65,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   refreshContributorActivity,
   refreshInstallationHealth,
+  refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
 import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
@@ -120,6 +122,7 @@ import {
   buildBurdenForecast,
   buildCollisionEdges,
   buildCollisionReport,
+  isPullRequestInDuplicateCluster,
   buildConfigQuality,
   buildContributorFit,
   buildContributorOutcomeHistory,
@@ -139,15 +142,17 @@ import {
   detectGittensorContributor,
   PR_PANEL_RETRIGGER_MARKER,
   unionScopedOverlapClusters,
+  type ContributorProfile,
 } from "../signals/engine";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
+import { buildFocusManifestGuidance } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildFocusManifestGuidance, resolveEffectiveSettings } from "../signals/focus-manifest";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
-import type { AdvisoryFinding, ContributorEvidenceRecord, DetectedNotificationEvent, GitHubWebhookPayload, JobMessage, JsonValue, PullRequestRecord, RepositorySettings } from "../types";
+import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -418,8 +423,8 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
 
 /**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
- * (an acting autonomy level), recompute the CANONICAL verdict (same inputs the gate published — confirmed-
- * contributor status + the persisted slop score), plan the GitHub state actions, and run them through the
+ * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
+ * GitHub state actions, and run them through the
  * executor's deny-toward-safety gate stack (pause → approval → write-permission → mode). Decoupled and
  * best-effort: a failure here never affects the gate or the public surface. gittensory never acts on a
  * non-confirmed contributor's PR — the same rule the gate uses to never block one.
@@ -434,23 +439,17 @@ async function maybeRunAgentMaintenance(
     settings: RepositorySettings;
     otherOpenPullRequests: PullRequestRecord[];
     deliveryId: string;
+    gate: ReturnType<typeof evaluateGateCheck> | undefined;
   },
 ): Promise<void> {
-  const { installationId, repoFullName, repo, settings, otherOpenPullRequests, deliveryId } = args;
+  const { installationId, repoFullName, settings, otherOpenPullRequests, gate } = args;
   if (!isAgentConfigured(settings.autonomy)) return;
   // Re-read the stored PR so we act on the persisted slop score the gate just wrote, not the pre-gate payload.
   const pr = await getPullRequest(env, repoFullName, args.pr.number);
   /* v8 ignore next -- defensive: the PR was upserted earlier in this same webhook, so it is always present. */
   if (!pr) return;
   if (pr.state !== "open") return;
-  // gittensory never acts on a non-confirmed contributor's PR — the same rule the gate uses to never block one.
-  const confirmedContributor = pr.authorLogin
-    ? (await getCachedOfficialMinerDetection(env, pr.authorLogin, { targetKey: `${repoFullName}#${pr.number}`, deliveryId })).status === "confirmed"
-    : false;
-
-  const requireLinkedIssue = settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off";
-  const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests, requireLinkedIssue });
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, confirmedContributor, pr.slopRisk));
+  if (!gate) return;
 
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
@@ -550,6 +549,41 @@ async function discoverContributorLogins(env: Env): Promise<string[]> {
   return [...new Set([...pullRequests, ...issues].flatMap((record) => (record.authorLogin ? [record.authorLogin] : [])))].slice(0, 200);
 }
 
+const CONTRIBUTOR_EVIDENCE_MAX_PR_FILE_PATHS = 2000;
+const CONTRIBUTOR_EVIDENCE_PR_FILE_PATHS_PER_REPO = 200;
+
+async function loadContributorPullRequestFilePaths(
+  env: Env,
+  args: {
+    login: string;
+    profile: ContributorProfile;
+    pullRequests: PullRequestRecord[];
+    issues: IssueRecord[];
+    repoStats: ContributorRepoStatRecord[];
+    repositories: RepositoryRecord[];
+  },
+): Promise<PullRequestFilePathRecord[]> {
+  const pullNumbersByRepo = new Map<string, Set<number>>();
+  for (const pr of args.pullRequests) {
+    if (pr.authorLogin?.toLowerCase() !== args.login.toLowerCase()) continue;
+    const key = pr.repoFullName.toLowerCase();
+    const current = pullNumbersByRepo.get(key) ?? new Set<number>();
+    current.add(pr.number);
+    pullNumbersByRepo.set(key, current);
+  }
+  const files: PullRequestFilePathRecord[] = [];
+  for (const repoFullName of evidenceGraphTouchedRepoFullNames(args)) {
+    if (files.length >= CONTRIBUTOR_EVIDENCE_MAX_PR_FILE_PATHS) break;
+    const remaining = CONTRIBUTOR_EVIDENCE_MAX_PR_FILE_PATHS - files.length;
+    const repoFiles = await listRepoPullRequestFilePaths(env, repoFullName, {
+      pullNumbers: [...(pullNumbersByRepo.get(repoFullName.toLowerCase()) ?? [])],
+      limit: Math.min(CONTRIBUTOR_EVIDENCE_PR_FILE_PATHS_PER_REPO, remaining),
+    });
+    files.push(...repoFiles);
+  }
+  return files;
+}
+
 async function buildContributorEvidence(env: Env, login?: string): Promise<void> {
   const [allPullRequests, allIssues, repositories, syncStates, allBounties, snapshot] = await Promise.all([
     listAllPullRequests(env),
@@ -574,18 +608,14 @@ async function buildContributorEvidence(env: Env, login?: string): Promise<void>
     ]);
     const repoStats = authoritativeContributorRepoStats(gittensorSnapshot, cachedRepoStats);
     const profile = buildContributorProfile(contributorLogin, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
-    const pullRequestFiles = (
-      await Promise.all(
-        evidenceGraphTouchedRepoFullNames({
-          login: contributorLogin,
-          profile,
-          pullRequests: contributorPullRequests,
-          issues: contributorIssues,
-          repoStats,
-          repositories,
-        }).map((repoFullName) => listRepoPullRequestFiles(env, repoFullName)),
-      )
-    ).flat();
+    const pullRequestFiles = await loadContributorPullRequestFilePaths(env, {
+      login: contributorLogin,
+      profile,
+      pullRequests: contributorPullRequests,
+      issues: contributorIssues,
+      repoStats,
+      repositories,
+    });
     const fit = buildContributorFit(profile, repositories, allIssues, allPullRequests, syncStates, repoStats, allBounties, issueQualityByRepo);
     const scoringProfile = buildContributorScoringProfile({ login: contributorLogin, fit, scoringSnapshot: snapshot });
     const outcomeHistory = buildContributorOutcomeHistory({ login: contributorLogin, profile, repositories, pullRequests: allPullRequests, issues: allIssues, repoStats, cachedRepoStats });
@@ -924,11 +954,14 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       ]);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
-        requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+        requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
-        await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
+        if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
+          await refreshPullRequestDetails(env, repoFullName, pr.number);
+        }
+        const gate = await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
           deliveryId,
           authorType: payload.pull_request.user?.type,
           action: payload.action,
@@ -943,11 +976,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
               error: errorMessage(error),
             }),
           );
+          return undefined;
         });
         // #778 maintainer auto-maintain: act on the PR's state (label/review/merge/close) per the repo's
         // autonomy config, after the gate has run. The function self-guards on agent config; best-effort here
         // so it never blocks the gate or public surface.
-        await maybeRunAgentMaintenance(env, { installationId, repoFullName, repo, pr, settings, otherOpenPullRequests, deliveryId }).catch((error) => {
+        await maybeRunAgentMaintenance(env, { installationId, repoFullName, repo, pr, settings, otherOpenPullRequests, deliveryId, gate }).catch((error) => {
           /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
           console.error(JSON.stringify({ level: "warn", event: "agent_maintenance_failed", deliveryId, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
         });
@@ -971,7 +1005,8 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       if (payload.action === "opened") issueWatchEvents = await detectIssueWatchEvents(env, payload.repository.full_name, issue);
     }
 
-    for (const notificationEvent of [...detectNotificationEvents(eventName, payload), ...issueWatchEvents]) {
+    const trustedReviewEvents = await filterTrustedReviewNotificationEvents(env, payload.installation?.id, detectNotificationEvents(eventName, payload));
+    for (const notificationEvent of [...trustedReviewEvents, ...issueWatchEvents]) {
       await recordAuditEvent(env, {
         eventType: "notification.event_detected",
         actor: notificationEvent.actorLogin,
@@ -1018,6 +1053,22 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
 type PublicSurfaceOutput = "comment" | "label" | "check_run";
 type PublicSurfaceOutputFailure = { output: PublicSurfaceOutput; error: string };
 
+function mergeReadinessGateEnabled(settings: Pick<RepositorySettings, "mergeReadinessGateMode">): boolean {
+  return settings.mergeReadinessGateMode !== "off";
+}
+
+export function shouldCollectLinkedIssueEvidence(settings: Pick<RepositorySettings, "requireLinkedIssue" | "linkedIssueGateMode" | "mergeReadinessGateMode">): boolean {
+  return settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || mergeReadinessGateEnabled(settings);
+}
+
+export function shouldCollectSlopEvidence(settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">): boolean {
+  return settings.slopGateMode !== "off" || mergeReadinessGateEnabled(settings);
+}
+
+export function shouldRunSlopAiAdvisory(settings: Pick<RepositorySettings, "slopAiAdvisory" | "slopGateMode">): boolean {
+  return settings.slopAiAdvisory && settings.slopGateMode !== "off";
+}
+
 function shouldProcessPullRequestPublicSurface(action: string | undefined): boolean {
   return PR_PUBLIC_SURFACE_ACTIONS.has(action ?? "") || PR_GATE_CLOSED_ACTIONS.has(action ?? "");
 }
@@ -1054,14 +1105,15 @@ export function gateCheckPolicy(
   };
 }
 
-/**
- * Effective repository settings for webhook handling: the DB-backed settings overlaid with the repo's
- * `.gittensory.yml` (config-as-code). This single resolver is why EVERYTHING — gate on/off, all blocker
- * modes, comments, labels, surface, audience — is controllable from the repo's config file.
- */
-async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
-  const [dbSettings, manifest] = await Promise.all([getRepositorySettings(env, repoFullName), loadRepoFocusManifest(env, repoFullName)]);
-  return resolveEffectiveSettings(dbSettings, manifest);
+async function loadGateAuthorHistory(env: Env, repoFullName: string, author: string | null, pullNumber: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  if (!author) return { mergedPrCount: 1, closedUnmergedPrCount: 3 };
+  try {
+    return await getRepoAuthorPullRequestHistory(env, repoFullName, author, pullNumber);
+  } catch {
+    // Fail closed for firstTimeContributorGrace: if complete author history cannot be determined,
+    // make the author ineligible for grace rather than publishing a would-be blocking gate as neutral.
+    return { mergedPrCount: 1, closedUnmergedPrCount: 3 };
+  }
 }
 
 /** Build a bounded unified-diff string from cached PR files for the AI reviewer. Caps total size so a
@@ -1088,9 +1140,11 @@ export function buildAiReviewDiff(files: Awaited<ReturnType<typeof listPullReque
 /**
  * Run the opt-in AI maintainer review and fold it into the gate + panel. Mutates `advisory.findings`
  * with a dual-model consensus defect (when `aiReviewMode: block` and the free Workers-AI pair agrees with
- * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs — still confirmed-
- * contributor gated. Returns the advisory notes for the public panel. Fully fail-safe: disabled / not a
- * confirmed contributor / no head SHA / non-ok AI / any thrown error → no finding and no notes.
+ * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs. The default `gittensor`
+ * pack keeps AI spend confirmed-contributor gated; `oss-anti-slop` may run the blocking review for any
+ * author because that pack is explicitly author-agnostic. Returns the advisory notes for the public panel.
+ * Fully fail-safe: disabled / ineligible author / no head SHA / non-ok AI / any thrown error → no finding
+ * and no notes.
  */
 export async function runAiReviewForAdvisory(
   env: Env,
@@ -1103,13 +1157,14 @@ export async function runAiReviewForAdvisory(
     confirmedContributor: boolean;
   },
 ): Promise<{ notes: string } | undefined> {
-  if (args.settings.aiReviewMode === "off" || !args.confirmedContributor || !args.advisory.headSha) return undefined;
+  const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
+  if (args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha) return undefined;
   try {
-    // BYOK: decrypt the maintainer's provider key only when opted in. Falls back to free Workers AI when
+    // BYOK: decrypt the maintainer's provider key only for confirmed contributors when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
     // Apply config-as-code provider/model: a declared provider must match the stored key's provider (else
     // skip BYOK → Workers-AI fallback); a declared model overrides the stored/default model.
-    const storedKey = args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
+    const storedKey = args.confirmedContributor && args.settings.aiReviewByok ? await getDecryptedRepositoryAiKey(env, args.repoFullName) : null;
     const providerKey =
       storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
         ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
@@ -1250,7 +1305,7 @@ async function maybePublishPrPublicSurface(
   settings: Awaited<ReturnType<typeof getRepositorySettings>>,
   advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>,
   webhook: { deliveryId: string; authorType?: string | undefined; action?: string | undefined },
-): Promise<void> {
+): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
   // `settings` is the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved by the caller via
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
@@ -1273,8 +1328,8 @@ async function maybePublishPrPublicSurface(
     !publicSurfaceSkipped &&
     settings.commentMode === "detected_contributors_only" &&
     (settings.publicSurface === "comment_and_label" || settings.publicSurface === "comment_only");
-  if (!gateEnabled && (publicSurfaceSkipped || (prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment))) return;
-  if (!author && !gateEnabled) return;
+  if (!gateEnabled && (publicSurfaceSkipped || (prelim.actions.length === 1 && prelim.actions[0] === "none" && !needsMinerCheckForDetectedComment))) return undefined;
+  if (!author && !gateEnabled) return undefined;
 
   if (gateEnabled && (pr.state !== "open" || webhook.action === "closed")) {
     const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.");
@@ -1289,7 +1344,7 @@ async function maybePublishPrPublicSurface(
       buildClosedPrPanelUpdate(repoFullName, pr.number),
       { createIfMissing: false },
     ).catch(() => undefined);
-    return;
+    return undefined;
   }
   const prelimHasPublicOutput =
     !publicSurfaceSkipped && (needsMinerCheckForDetectedComment || prelim.actions.some((action) => action === "comment" || action === "label" || action === "check_run"));
@@ -1303,12 +1358,11 @@ async function maybePublishPrPublicSurface(
     });
     if (requireOfficialMiner && official.status === "unavailable") {
       await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "miner_detection_unavailable", webhook.deliveryId);
-      if (!gateEnabled) return;
+      if (!gateEnabled) return undefined;
       publicSurfaceSkipped = true;
-    }
-    if (requireOfficialMiner && official.status !== "confirmed") {
+    } else if (requireOfficialMiner && official.status !== "confirmed") {
       await auditPrVisibilitySkip(env, repoFullName, pr.number, author, "not_official_gittensor_miner", webhook.deliveryId);
-      if (!gateEnabled) return;
+      if (!gateEnabled) return undefined;
       publicSurfaceSkipped = true;
     }
     decision = decidePublicSurface({
@@ -1319,7 +1373,7 @@ async function maybePublishPrPublicSurface(
       minerStatus: official.status,
     });
 
-    if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return;
+    if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return undefined;
   }
 
   let pendingGateCheckRunId: number | undefined;
@@ -1392,23 +1446,27 @@ async function maybePublishPrPublicSurface(
     // Slop (#530) and focus-manifest-policy (#555) gates both need the PR's changed files. Load ONCE and
     // share so two opted-in gates don't double-fetch; the load is lazy so a repo with both off pays nothing.
     let gateFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null = null;
-    if (settings.slopGateMode !== "off" || settings.manifestPolicyGateMode !== "off") {
+    if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
       gateFiles = await listPullRequestFiles(env, repoFullName, pr.number);
     }
-    if (settings.slopGateMode !== "off") {
+    if (shouldCollectSlopEvidence(settings)) {
       const slopFiles = gateFiles ?? [];
       const slop = buildSlopAssessment({
         changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
         description: pr.body,
+        // Reuse the collision report already built for this gate run so a duplicate-cluster PR is flagged (#563).
+        inDuplicateCluster: isPullRequestInDuplicateCluster(collisions, pr.number),
       });
       slopRisk = slop.slopRisk;
       advisory.findings.push(...slop.findings);
-      // Persist the assessment so the maintainer dashboard can show a per-PR slop score row without
-      // re-fetching changed files. Best-effort: a write hiccup must not abort gate evaluation.
-      await updatePullRequestSlopAssessment(env, repoFullName, pr.number, { slopRisk: slop.slopRisk, slopBand: slop.band }).catch(() => undefined);
+      // Persist dashboard-visible slop only when the repo opted into the slop gate. Merge-readiness may
+      // still use the live score above, but disabling slop should clear any previously cached dashboard row.
+      // Best-effort: a write hiccup must not abort gate evaluation.
+      const persistedSlop = settings.slopGateMode === "off" ? { slopRisk: null, slopBand: null } : { slopRisk: slop.slopRisk, slopBand: slop.band };
+      await updatePullRequestSlopAssessment(env, repoFullName, pr.number, persistedSlop).catch(() => undefined);
       // AI-assisted slop advisory (#533, opt-in). Reuses the already-fetched files; appends at most one
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
-      if (settings.slopAiAdvisory) {
+      if (shouldRunSlopAiAdvisory(settings)) {
         await runAiSlopForAdvisory(env, { settings, advisory, repoFullName, pr, author, files: slopFiles, deterministicBand: slop.band, confirmedContributor });
       }
     }
@@ -1445,14 +1503,10 @@ async function maybePublishPrPublicSurface(
     // failure is caught and the gate is still finalized (never left in_progress).
     aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
 
-    // First-time-contributor grace (#552): the author's per-repo PR history (excluding this PR). Newcomer =
-    // 0 merged here; repeat offender = >= 3 closed-unmerged here. Cheap (in-memory over the already-loaded
-    // repo PRs) and only consulted by evaluateGateCheck when firstTimeContributorGrace is on.
-    const authorPrs = author ? repoPullRequests.filter((candidate) => candidate.authorLogin === author && candidate.number !== pr.number) : [];
-    const authorHistory = {
-      mergedPrCount: authorPrs.filter((candidate) => candidate.mergedAt || candidate.state === "merged").length,
-      closedUnmergedPrCount: authorPrs.filter((candidate) => candidate.state === "closed" && !candidate.mergedAt).length,
-    };
+    // First-time-contributor grace (#552): compute the author's complete per-repo PR history
+    // (excluding this PR) with an aggregate DB query. Do not derive policy-enforcement history from
+    // the bounded repoPullRequests sample; missing or case-mismatched history could soften a block.
+    const authorHistory = await loadGateAuthorHistory(env, repoFullName, author, pr.number);
 
     const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;
@@ -1513,8 +1567,8 @@ async function maybePublishPrPublicSurface(
     throw error;
   }
 
-  if (!prelimHasPublicOutput) return;
-  if (publicSurfaceSkipped || !official || !author) return;
+  if (!prelimHasPublicOutput) return gateEvaluation;
+  if (publicSurfaceSkipped || !official || !author) return gateEvaluation;
 
   const [github] = await Promise.all([fetchPublicContributorProfile(author, env)]);
   const contributorPullRequests: Awaited<ReturnType<typeof listContributorPullRequests>> = [];
@@ -1595,7 +1649,7 @@ async function maybePublishPrPublicSurface(
         metadata: { deliveryId: webhook.deliveryId, repoFullName, failedOutputs },
       });
     }
-    return;
+    return gateEvaluation;
   }
   await recordAuditEvent(env, {
     eventType: "github_app.pr_public_surface_published",
@@ -1628,6 +1682,7 @@ async function maybePublishPrPublicSurface(
       failedOutputs,
     },
   });
+  return gateEvaluation;
 }
 
 async function recordPublicSurfaceOutputFailure(
@@ -1689,8 +1744,12 @@ async function maybeProcessGateOverrideCommand(env: Env, deliveryId: string, pay
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
   const installationId = getInstallationId(payload);
-  const actor = comment?.user?.login ?? payload.sender?.login ?? null;
+  const actor = payload.sender?.login ?? comment?.user?.login ?? null;
   const targetKey = repoFullName && issue ? `${repoFullName}#${issue.number}` : repoFullName;
+  if (payload.action !== "created") {
+    await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "unsupported_comment_action");
+    return true;
+  }
   if (comment?.user?.type === "Bot" || payload.sender?.type === "Bot" || /\[bot\]$/i.test(actor ?? "")) {
     await recordGateOverrideSkip(env, deliveryId, repoFullName, targetKey, actor, "bot_author");
     return true;
@@ -1857,6 +1916,12 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     outcome: "completed",
     metadata: { deliveryId, repoFullName, commentId: comment.id },
   });
+  // A manual re-run is a re-evaluation surface — the user clicks it AFTER the PR changed — so the slop and
+  // manifest-policy gates must see the PR's current files, not whatever is cached. Mirror the webhook path
+  // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set.
+  if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
+    await refreshPullRequestDetails(env, repoFullName, pr.number);
+  }
   await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
     deliveryId,
     action: "manual_retrigger",
@@ -1877,6 +1942,24 @@ async function resolveRealRepoPermissionAssociation(env: Env, installationId: nu
   if (permission === "admin" || permission === "maintain") return "MEMBER";
   if (permission === "write") return "COLLABORATOR";
   return null;
+}
+
+async function filterTrustedReviewNotificationEvents(
+  env: Env,
+  installationId: number | undefined,
+  events: DetectedNotificationEvent[],
+): Promise<DetectedNotificationEvent[]> {
+  const trustedEvents: DetectedNotificationEvent[] = [];
+  for (const event of events) {
+    if (event.eventType !== "pull_request_changes_requested") {
+      trustedEvents.push(event);
+      continue;
+    }
+    if (!installationId || event.actorLogin === "unknown") continue;
+    const permission = await getRepositoryCollaboratorPermission(env, installationId, event.repoFullName, event.actorLogin).catch(() => null);
+    if (permission === "admin" || permission === "maintain" || permission === "write") trustedEvents.push(event);
+  }
+  return trustedEvents;
 }
 
 // #824 the SINGLE real-permission authorization gate for @gittensory action commands (gate-override, the
@@ -1933,7 +2016,7 @@ async function buildAuthorizedPrActionAdvisory(
   const [repo, otherOpenPullRequests] = await Promise.all([getRepository(env, repoFullName), listOtherOpenPullRequests(env, repoFullName, pr.number)]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
-    requireLinkedIssue: settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off",
+    requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
   });
   return { repo, advisory };
 }

@@ -7,10 +7,10 @@ import type { LocalBranchAnalysis } from "../signals/local-branch";
  * Drafts a public-safe, copy/paste PR body from local branch metadata.
  *
  * The draft is built ONLY from already-public-safe slices of {@link LocalBranchAnalysis}
- * (the prepared packet, base freshness, linked-issue and overlap metadata). Private
- * scoreability, reward/risk, raw trust, and reviewability context are excluded by
- * construction — their field names are listed in {@link EXCLUDED_PRIVATE_PR_BODY_FIELDS}
- * — and every emitted line additionally passes through {@link sanitizePublicComment} and a
+ * (the prepared packet, base freshness, linked-issue and overlap metadata). Internal
+ * analysis context is excluded by construction — those categories are listed in
+ * {@link EXCLUDED_PRIVATE_PR_BODY_FIELDS} using public-safe labels — and every emitted
+ * line additionally passes through {@link sanitizePublicComment} and a
  * forbidden-language filter, so no private/financial language reaches GitHub.
  *
  * Input is metadata only; source contents are never read or uploaded.
@@ -36,24 +36,24 @@ export type PrBodyDraftSource = Pick<LocalBranchAnalysis, "repoFullName" | "prPa
 };
 
 /**
- * Categories of private analysis context that must never appear in a public PR body draft.
- * Phrased as public-safe labels (no private/financial terms) so the list itself stays
- * safe to surface; it documents that private scoreability/risk context is excluded.
+ * Categories of internal analysis context that must never appear in a public PR body draft.
+ * Labels intentionally avoid private/financial taxonomy because MCP clients may display
+ * the structured draft alongside the markdown.
  */
 export const EXCLUDED_PRIVATE_PR_BODY_FIELDS = [
-  "private score preview",
-  "private scenario projections",
-  "private risk signals",
-  "private score-gate blockers",
-  "branch eligibility gate",
-  "private ranked next actions",
+  "omitted analysis details",
+  "omitted forecast details",
+  "omitted signal details",
+  "omitted blocker details",
+  "omitted readiness details",
+  "omitted follow-up details",
 ] as const;
 
 // Residual private/financial terms that sanitizePublicComment does not rewrite on its own
 // (e.g. a bare "reward"/"score"/"ranking"); scrubbed to a neutral phrase as defense-in-depth.
 // The term vocabulary is the canonical PUBLIC_UNSAFE_TERMS (#542) so this surface cannot drift it.
 const RESIDUAL_PRIVATE_TERMS = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
-const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![:/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
+const LOCAL_PATH_SOURCE = String.raw`(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s"';)]+|\\\\[^\s"';\\]+\\[^\s"';]+|(?<![/\\A-Za-z0-9._-])/[A-Za-z0-9._-]+(?:/[^\s"';)]+)*)`;
 const LOCAL_PATH_PATTERN = new RegExp(LOCAL_PATH_SOURCE, "g");
 // Final guard used to drop anything that still looks unsafe after scrubbing. Same canonical terms, plus this
 // surface's richer local-path matcher.

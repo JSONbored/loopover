@@ -12,8 +12,8 @@ export type ApprovalDecisionResult = {
 };
 
 /**
- * Decide a staged approval-queue action (#779). Accept → run the action live (the maintainer's accept IS the
- * approval, so the executor's approval gate is bypassed; the kill-switch is still honored). Reject → cancel.
+ * Decide a staged approval-queue action (#779). Accept → run the action through the current executor gates
+ * (the maintainer's accept IS the approval, so only the approval queue gate is bypassed). Reject → cancel.
  * Either decision marks the row decided (idempotent: a second decision is a no-op) and records an audit event
  * that feeds the trust loop.
  */
@@ -45,7 +45,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       headSha: pr?.headSha,
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
-      agentDryRun: false, // an explicit accept always runs live (the kill-switch still wins inside the executor)
+      agentDryRun: settings.agentDryRun,
       installationPermissions: installation ? installation.permissions : null,
     },
     [pendingActionToPlanned({ actionClass: pending.actionClass, params: pending.params, reason: pending.reason })],

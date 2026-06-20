@@ -259,7 +259,7 @@ async function createOrUpdateNamedCheckRun(
         /* v8 ignore next 2 -- Exported check helpers always provide status/conclusion for known-id finalization. */
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-        output: check.output,
+        output: outputForCheckRunUpdate(check.output),
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -282,7 +282,7 @@ async function createOrUpdateNamedCheckRun(
         name: check.name,
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-        output: check.output,
+        output: outputForCheckRunUpdate(check.output),
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -308,6 +308,12 @@ async function createOrUpdateNamedCheckRun(
     }
     throw error;
   }
+}
+
+function outputForCheckRunUpdate(output: CheckRunOutput): CheckRunOutput {
+  if (!output.annotations || output.annotations.length === 0) return output;
+  const { annotations: _annotations, ...safeOutput } = output;
+  return safeOutput;
 }
 
 function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {

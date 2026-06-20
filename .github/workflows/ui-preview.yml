@@ -48,6 +48,11 @@ jobs:
       - name: Build UI
         env:
           VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
+          # Preview-only: enables the synthetic demo session (useSession().signInPreview) so reviewbot can
+          # screenshot the authenticated /app/* dashboard via ?preview=1 instead of the sign-in wall. The
+          # production build (ui-deploy.yml) does NOT set this, so the escape hatch is dead-code-eliminated
+          # from prod. (#authed-route-preview)
+          VITE_PREVIEW: "1"
         run: npm run ui:build
 
       # The trusted deploy workflow downloads this by name + run-id. It contains only the built bundle

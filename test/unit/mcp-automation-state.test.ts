@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
-import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -329,5 +329,74 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toMatch(/write access/i);
     expect((await getPendingAgentAction(env, action.id))?.status).toBe("pending");
+  });
+});
+
+describe("MCP gittensory_get_agent_audit_feed (#784)", () => {
+  async function seedAudit(env: Env) {
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.pending_action.rejected", actor: "owner", targetKey: "owner/repo#8", outcome: "completed", detail: "rejected merge", createdAt: "2026-06-18T11:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.pr_visibility_skipped", actor: "x", targetKey: "owner/repo#9", outcome: "completed", createdAt: "2026-06-18T12:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "other/repo#1", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
+  }
+
+  it("surfaces this repo's agent action + decision events newest-first, excluding non-agent and other-repo events", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { repoFullName: string; events: Array<{ eventType: string; pullNumber: number | null; outcome: string }> };
+    expect(data.repoFullName).toBe("owner/repo");
+    expect(data.events.map((event) => event.eventType)).toEqual(["agent.pending_action.rejected", "agent.action.merge"]);
+    expect(data.events[0]).toMatchObject({ pullNumber: 8, outcome: "completed" });
+  });
+
+  it("honors the since filter and the limit", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    const client = await connect(env);
+    const since = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", since: "2026-06-18T10:30:00.000Z" } });
+    expect((since.structuredContent as { events: unknown[] }).events).toHaveLength(1);
+    const limited = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", limit: 1 } });
+    expect((limited.structuredContent as { events: unknown[] }).events).toHaveLength(1);
+  });
+
+  it("forbids a session without live write access", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+  });
+
+  it("rejects a malformed since (non ISO-8601) and an over-cap limit via schema validation", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    const badSince = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", since: "not-a-date" } });
+    expect(badSince.isError).toBe(true);
+    const badLimit = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo", limit: 500 } });
+    expect(badLimit.isError).toBe(true);
+  });
+
+  it("scrubs forbidden terms from the free-form detail and preserves a null detail", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "owner/repo#8", outcome: "completed", createdAt: "2026-06-18T09:00:00.000Z" });
+    const client = await connect(env);
+    const result = await client.callTool({ name: "gittensory_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
+    const data = result.structuredContent as { events: Array<{ pullNumber: number | null; detail: string | null }> };
+    const merge = data.events.find((event) => event.pullNumber === 7);
+    const label = data.events.find((event) => event.pullNumber === 8);
+    expect(merge?.detail).not.toMatch(/reward/i);
+    expect(merge?.detail).toContain("private context");
+    expect(label?.detail).toBeNull();
   });
 });

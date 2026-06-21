@@ -42,6 +42,7 @@ import {
   getRepoQueueTrendSnapshot,
   getRepositorySettings,
   getPendingAgentAction,
+  listAgentAuditEvents,
   listPendingAgentActions,
   recordAuditEvent,
   getContributorEvidence,
@@ -412,6 +413,9 @@ const slopRiskSchema = z.object({
   description: z.string().max(20000).optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 });
 const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
@@ -2062,6 +2066,31 @@ export function createApp() {
     const result = await decidePendingAgentAction(c.env, { id: pending.id, decision, decidedBy });
     if (result.status === "already_decided") return c.json({ error: "already_decided", action: result.action }, 409);
     return c.json(result);
+  });
+
+  // #784 audit feed: the agent's executed actions + approval-queue decisions for this repo. Maintainer-scoped,
+  // read-only, public-safe (action posture only — no trust/score metadata). `?since=ISO&limit=N` (max 200).
+  app.get("/v1/repos/:owner/:repo/agent/audit-feed", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    /* v8 ignore next -- unauthorized requests are rejected by the auth middleware before reaching the handler. */
+    if (gate instanceof Response) return gate;
+    const since = c.req.query("since");
+    if (since !== undefined && Number.isNaN(Date.parse(since))) return c.json({ error: "invalid_since", detail: "since must be an ISO-8601 timestamp" }, 400);
+    const limitParam = c.req.query("limit");
+    let limit: number | undefined;
+    if (limitParam !== undefined) {
+      const parsed = Number(limitParam);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 200) return c.json({ error: "invalid_limit", detail: "limit must be an integer between 1 and 200" }, 400);
+      limit = parsed;
+    }
+    const events = await listAgentAuditEvents(c.env, {
+      repoFullName: fullName,
+      ...(since !== undefined ? { sinceIso: since } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
+    // Defense-in-depth: the free-form `detail` is the only unbounded string — scrub it before it leaves on a public surface.
+    return c.json({ repoFullName: fullName, events: events.map((event) => ({ ...event, detail: event.detail === null ? null : sanitizePublicComment(event.detail) })) });
   });
 
   // Maintainer activation demo (#701): a repo-specific "here's what Gittensory would have surfaced" preview
@@ -4454,6 +4483,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoValidateLinkedIssuePath(path)) return true;
+  if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
@@ -4497,6 +4527,10 @@ function isRepoCheckBeforeStartPath(path: string): boolean {
 
 function isRepoValidateLinkedIssuePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/validate-linked-issue$/.test(path);
+}
+
+function isRepoAgentAuditFeedPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/agent\/audit-feed$/.test(path);
 }
 
 function isIssueQualityPath(path: string): boolean {

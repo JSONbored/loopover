@@ -21,6 +21,7 @@ import {
   getRepository,
   getRepositorySettings,
   getRepoQueueTrendSnapshot,
+  listAgentAuditEvents,
   listCheckSummaries,
   listPendingAgentActions,
   listContributorRepoStats,
@@ -47,6 +48,7 @@ import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { getRepositoryCollaboratorPermission } from "../github/app";
+import { sanitizePublicComment } from "../github/commands";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
@@ -411,6 +413,30 @@ const decidePendingActionOutputSchema = {
   action: pendingActionEntrySchema.optional(),
 };
 
+// #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
+const auditFeedShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  since: z.string().datetime({ offset: true }).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+};
+
+const auditFeedOutputSchema = {
+  repoFullName: z.string().optional(),
+  events: z
+    .array(
+      z.object({
+        eventType: z.string(),
+        pullNumber: z.number().nullable(),
+        outcome: z.string(),
+        actor: z.string().nullable(),
+        detail: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    )
+    .optional(),
+};
+
 const focusManifestInputSchema = z
   .record(z.string(), z.unknown())
   .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
@@ -624,6 +650,9 @@ const checkSlopRiskShape = {
   description: z.string().max(20000).optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 };
 
 const checkSlopRiskOutputSchema = {
@@ -1317,6 +1346,17 @@ export class GittensoryMcp {
         outputSchema: decidePendingActionOutputSchema,
       },
       async (input) => this.toolResult(await this.decidePendingAction(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_agent_audit_feed",
+      {
+        description:
+          "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
+        inputSchema: auditFeedShape,
+        outputSchema: auditFeedOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getAgentAuditFeed(input)),
     );
 
     server.registerTool(
@@ -2275,6 +2315,23 @@ export class GittensoryMcp {
           createdAt: action.createdAt,
         },
       },
+    };
+  }
+
+  // #784 — the agent audit feed: executed actions + approval decisions for a repo, newest first.
+  // Maintainer-manage scoped; read-only and public-safe (action posture only — no trust/score metadata).
+  private async getAgentAuditFeed(input: z.infer<z.ZodObject<typeof auditFeedShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const events = await listAgentAuditEvents(this.env, {
+      repoFullName: fullName,
+      ...(input.since !== undefined ? { sinceIso: input.since } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+    });
+    return {
+      summary: `${events.length} recent agent audit event(s) for ${fullName}.`,
+      // Defense-in-depth: scrub the only free-form field (`detail`) before it leaves on a public-safe tool result.
+      data: { repoFullName: fullName, events: events.map((event) => ({ ...event, detail: event.detail === null ? null : sanitizePublicComment(event.detail) })) },
     };
   }
 

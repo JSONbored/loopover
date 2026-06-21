@@ -944,21 +944,16 @@ export async function listRepoGithubTotalsSnapshotHistory(
 
 export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<RepoGithubTotalsSnapshotRecord[]> {
   const db = getDb(env.DB);
-  const latestRows = await db
-    .select({
-      repoFullName: repoGithubTotalsSnapshots.repoFullName,
-      fetchedAt: sql<string>`max(${repoGithubTotalsSnapshots.fetchedAt})`,
-    })
-    .from(repoGithubTotalsSnapshots)
-    .groupBy(repoGithubTotalsSnapshots.repoFullName);
-  if (latestRows.length === 0) return [];
-  const conditions = latestRows.map((latest) =>
-    and(eq(repoGithubTotalsSnapshots.repoFullName, latest.repoFullName), eq(repoGithubTotalsSnapshots.fetchedAt, latest.fetchedAt)),
-  );
   const rows = await db
     .select()
     .from(repoGithubTotalsSnapshots)
-    .where(or(...conditions));
+    .where(
+      sql`${repoGithubTotalsSnapshots.fetchedAt} = (
+        select max(latest.fetched_at)
+        from repo_github_totals_snapshots latest
+        where latest.repo_full_name = ${repoGithubTotalsSnapshots.repoFullName}
+      )`,
+    );
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
 }
 

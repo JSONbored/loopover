@@ -206,7 +206,7 @@ export function buildScorePreview(args: {
   const effectiveEstimatedScore = current.scoreEstimate.estimatedMergedScore;
   const underlyingPotentialScore = current.scoreEstimate.pendingSaturationScore;
   const scoreabilityStatus = statusFor(args.repo, blockedBy, effectiveEstimatedScore, scenarioPreviews);
-  const warnings = warningsFor(args.input, args.repo, current, branchEligibility);
+  const warnings = [...args.snapshot.warnings, ...warningsFor(args.input, args.repo, current, branchEligibility)];
   const actions = [
     ...(!current.gates.baseTokenGatePassed ? ["Increase meaningful source change size or scope clarity before relying on this preview."] : []),
     ...(current.scoreEstimate.openPrMultiplier === 0 ? ["Land or close existing open PRs before opening more concurrent work."] : []),

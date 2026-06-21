@@ -247,6 +247,20 @@ describe("buildSlopAssessment", () => {
   });
 });
 
+describe("buildMissingTestEvidenceFinding — single-pass changed-path collection", () => {
+  it("excludes empty-path entries when collecting changed code paths", () => {
+    // blank path entries must not count as code files
+    expect(buildMissingTestEvidenceFinding({ changedFiles: [{ path: "" }, { path: "" }] })).toBeNull();
+  });
+
+  it("fires for a real code change (ignoring empty-path entries) when no test evidence is present", () => {
+    const finding = buildMissingTestEvidenceFinding({ changedFiles: [{ path: "" }, { path: "src/service.ts" }] });
+    expect(finding).toMatchObject({ code: "missing_test_evidence", severity: "warning" });
+    expect(finding?.detail).toContain("1 code file(s)");
+    expect(JSON.stringify(finding)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+});
+
 describe("buildMissingTestEvidenceFinding", () => {
   it("keeps public reason strings sanitized", () => {
     const finding = buildMissingTestEvidenceFinding({

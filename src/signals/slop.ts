@@ -240,8 +240,12 @@ export function buildNoLinkedIssueRationaleFinding(input: SlopAssessmentInput): 
 }
 
 export function buildMissingTestEvidenceFinding(input: SlopAssessmentInput): SignalFinding | null {
-  const changedFiles = input.changedFiles ?? [];
-  const changedPaths = changedFiles.map((file) => file.path).filter(Boolean);
+  // Single pass collecting non-empty changed paths instead of map().filter(Boolean) building an
+  // intermediate array; changedPaths is reused below for both the code-file and test-evidence checks.
+  const changedPaths: string[] = [];
+  for (const file of input.changedFiles ?? []) {
+    if (file.path) changedPaths.push(file.path);
+  }
   const codePaths = changedPaths.filter(isCodeFile);
   if (codePaths.length === 0) return null;
 

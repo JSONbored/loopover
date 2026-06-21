@@ -58,6 +58,9 @@ const repoStatsCache = new Map<string, RepoStatsCacheEntry>();
 // Bound the api.github.com round trips so a hung response can't stall the 500-login evidence loop
 // indefinitely (mirrors GITHUB_FETCH_TIMEOUT_MS in src/github/app.ts) (#790).
 const GITHUB_PUBLIC_FETCH_TIMEOUT_MS = 12_000;
+// Cap repo pagination at 500 repos (5 pages × 100) to prevent excessive API usage for users
+// with very large public repo counts.
+const MAX_REPO_PAGES = 5;
 
 export async function fetchPublicContributorProfile(login: string, env?: Pick<Env, "GITHUB_PUBLIC_TOKEN">): Promise<PublicContributorProfile> {
   const safeLogin = encodeURIComponent(login);
@@ -77,7 +80,15 @@ export async function fetchPublicContributorProfile(login: string, env?: Pick<En
     ]);
     if (!userResponse.ok) throw new Error(`GitHub user lookup failed (${userResponse.status})`);
     const user = (await userResponse.json()) as GitHubUserResponse;
-    const repos = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
+    const repos: GitHubRepoResponse[] = reposResponse.ok ? ((await reposResponse.json()) as GitHubRepoResponse[]) : [];
+    let linkHeader = reposResponse.ok ? reposResponse.headers.get("link") : null;
+    for (let page = 2; page <= MAX_REPO_PAGES && linkHeader?.includes('rel="next"'); page += 1) {
+      const nextResponse = await fetch(`https://api.github.com/users/${safeLogin}/repos?per_page=100&sort=updated&page=${page}`, { headers, signal });
+      if (!nextResponse.ok) break;
+      const batch = (await nextResponse.json()) as GitHubRepoResponse[];
+      repos.push(...batch);
+      linkHeader = nextResponse.headers.get("link");
+    }
     const languageCounts = new Map<string, number>();
     for (const repo of repos) {
       if (!repo.language) continue;

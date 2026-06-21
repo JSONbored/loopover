@@ -880,6 +880,21 @@ export function buildCollisionReport(
   return report;
 }
 
+/**
+ * True when an open PR sits in a HIGH-risk collision cluster that holds 2+ pull requests — i.e. genuine
+ * overlapping/duplicate work (#563). The 2+-pull-request bar is deliberate: buildCollisionReport also marks a
+ * healthy issue↔its-own-linking-PR pair high-risk, so requiring two pull-request items keeps callers (the
+ * deterministic slop gate) false-positive-averse. Pure.
+ */
+export function isPullRequestInDuplicateCluster(collisions: CollisionReport, pullNumber: number): boolean {
+  return collisions.clusters.some(
+    (cluster) =>
+      cluster.risk === "high" &&
+      cluster.items.filter((item) => item.type === "pull_request").length >= 2 &&
+      cluster.items.some((item) => item.type === "pull_request" && item.number === pullNumber),
+  );
+}
+
 export function buildQueueHealth(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
@@ -4336,7 +4351,7 @@ export type PrTextLintReport = {
 
 // Exported so the deterministic slop signal (#564) and the #549 lint tool share ONE definition of a
 // "generic" commit subject — a single low-effort word (wip / fix / update / "." …) that is the whole subject.
-export const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
+export const GENERIC_COMMIT_PATTERN = /^(?:(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+)\b|\.+)[\s.!]*$/i;
 // Conventional Commit subject: one of CONTRIBUTING's allowed types, optional `(scope)`, optional `!`,
 // then `: ` and a non-empty summary (e.g. `feat(api): add cursor pagination`). Single source of truth
 // with CONTRIBUTING.md "Commit And PR Titles".
@@ -4455,7 +4470,9 @@ export function buildPrTextLint(input: PrTextLintInput): PrTextLintReport {
   };
 }
 
-function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
+// Exported so the deterministic no-linked-issue slop signal (#562) and the public PR-panel traceability check
+// share ONE definition of a "clear no-issue rationale" (maintenance / docs-only / "no issue: …" in the PR text).
+export function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
   return /\b(no issue\s*(?:because|:)|no linked issue\s*(?:because|:)|no ticket\s*(?:because|:)|maintenance|docs? only|typo|chore|cleanup)\b/i.test([pr.title, pr.body ?? ""].join(" "));
 }
 

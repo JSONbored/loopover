@@ -378,7 +378,7 @@ export function buildLocalBranchAnalysis(args: {
     queueHealth: buildQueueHealth(args.repo, args.issues, args.pullRequests, buildCollisionReport(args.input.repoFullName, args.issues, args.pullRequests)),
     roleContext,
     contributorOpenPrCount: (args.contributorPullRequests ?? args.pullRequests).filter(
-      (pr) => pr.repoFullName === args.input.repoFullName && pr.state === "open" && (pr.authorLogin ?? "").toLowerCase() === args.input.login.toLowerCase(),
+      (pr) => sameRepo(pr.repoFullName, args.input.repoFullName) && pr.state === "open" && (pr.authorLogin ?? "").toLowerCase() === args.input.login.toLowerCase(),
     ).length,
   });
   const scenarioSummary = renderPublicScenarioSummary({
@@ -472,6 +472,7 @@ function buildLocalScoreInput(args: {
     testTokenScore: scorer?.testTokenScore ?? testLineCount,
     nonCodeTokenScore: scorer?.nonCodeTokenScore ?? nonCodeLineCount,
     openPrCount: args.outcomeHistory.totals.openPullRequests,
+    openIssueCount: args.repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues,
     credibility: args.repoOutcome?.credibility ?? args.outcomeHistory.totals.credibility,
     metadataOnly: scorer?.mode !== "gittensor_root" && scorer?.mode !== "external_command",
     pendingMergedPrCount: args.input.pendingMergedPrCount,

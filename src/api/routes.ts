@@ -414,6 +414,8 @@ const slopRiskSchema = z.object({
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
   commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 });
 const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
@@ -745,6 +747,11 @@ const digestSubscriptionSchema = z
     email: z.string().email().max(320),
   })
   .strict();
+
+function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
+  const targetRepo = repoFullName.toLowerCase();
+  return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
+}
 
 export function createApp() {
   const app = new Hono<AppBindings>();
@@ -1593,13 +1600,15 @@ export function createApp() {
       const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
       if (unauthorized) return unauthorized;
     }
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       parsed.data.contributorLogin ? getContributorEvidence(c.env, parsed.data.contributorLogin) : Promise.resolve(null),
+      parsed.data.contributorLogin ? listContributorIssues(c.env, parsed.data.contributorLogin) : Promise.resolve([]),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     const record = makeScorePreviewRecord(input, snapshot, result);
     await persistScorePreview(c.env, record);
@@ -1613,13 +1622,15 @@ export function createApp() {
     if (!parsed.data.contributorLogin) return c.json({ error: "contributor_login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
     if (unauthorized) return unauthorized;
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       getContributorEvidence(c.env, parsed.data.contributorLogin),
+      listContributorIssues(c.env, parsed.data.contributorLogin),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
   });
@@ -4481,6 +4492,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoValidateLinkedIssuePath(path)) return true;
+  if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
@@ -4524,6 +4536,10 @@ function isRepoCheckBeforeStartPath(path: string): boolean {
 
 function isRepoValidateLinkedIssuePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/validate-linked-issue$/.test(path);
+}
+
+function isRepoAgentAuditFeedPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/agent\/audit-feed$/.test(path);
 }
 
 function isIssueQualityPath(path: string): boolean {

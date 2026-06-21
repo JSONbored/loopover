@@ -13,7 +13,7 @@ vi.mock("../../src/github/labels", () => ({
 import { mergePullRequest } from "../../src/github/pr-actions";
 import { createSessionForGitHubUser } from "../../src/auth/security";
 import { createApp } from "../../src/api/routes";
-import { createPendingAgentActionIfAbsent, getPendingAgentAction, recordAuditEvent, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, recordAuditEvent, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 const app = createApp();
@@ -151,6 +151,38 @@ describe("agent audit-feed route (#784)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "rando", id: 555 });
     const forbidden = await app.request("/v1/repos/owner/repo/agent/audit-feed", { headers: { authorization: `Bearer ${token}` } }, env);
     expect([401, 403]).toContain(forbidden.status);
+  });
+
+  it("allows a repository owner session to read the audit feed", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read" }, events: ["pull_request"] },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 1 });
+
+    const res = await app.request("/v1/repos/owner/repo/agent/audit-feed", { headers: { authorization: `Bearer ${token}` } }, env);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ repoFullName: "owner/repo", events: [{ eventType: "agent.pending_action.rejected" }, { eventType: "agent.action.merge" }] });
+  });
+
+  it("forbids a contributor (non-maintainer) session even though the coarse allowlist permits the path (#943)", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read" }, events: ["pull_request"] },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await seedAudit(env);
+    // A plain contributor — not the repo owner/maintainer/operator. The audit-feed path now clears the
+    // coarse session allowlist (#943), so the repo is fully seeded and the ONLY thing that can block is the
+    // route's requireRepoMaintainer guard — which must still 403 them, proving the feed is never exposed.
+    const { token } = await createSessionForGitHubUser(env, { login: "contributor", id: 999 });
+
+    const res = await app.request("/v1/repos/owner/repo/agent/audit-feed", { headers: { authorization: `Bearer ${token}` } }, env);
+
+    expect([401, 403]).toContain(res.status);
   });
 
   it("reports a null pullNumber for an agent event whose targetKey has no numeric PR", async () => {

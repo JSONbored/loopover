@@ -112,6 +112,35 @@ describe("control panel role summaries", () => {
     });
   });
 
+  it("revokes owner-match control-panel scope for a repo under a suspended account installation (#953)", () => {
+    const scope = buildControlPanelAccessScope({
+      login: "repo-owner",
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      confirmedMiner: false,
+      operator: false,
+      repositories: [repo("repo-owner/owned-repo", "repo-owner", 21)],
+      installations: [{ ...installation(21, "repo-owner"), suspendedAt: "2026-06-10T00:00:00.000Z" }],
+      pullRequests: [],
+    });
+
+    expect(scope).toMatchObject({ operator: false, repositoryFullNames: [], installationIds: [], accountLogins: [] });
+  });
+
+  it("drops owner and maintainer roles when the owner's installation is suspended (#953)", () => {
+    const summary = buildControlPanelRoleSummary({
+      login: "repo-owner",
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      confirmedMiner: false,
+      operator: false,
+      repositories: [repo("repo-owner/owned-repo", "repo-owner", 21)],
+      installations: [{ ...installation(21, "repo-owner"), suspendedAt: "2026-06-10T00:00:00.000Z" }],
+      pullRequests: [],
+    });
+
+    expect(summary.roles).toEqual([]);
+    expect(summary.evidence).toMatchObject({ ownedInstalledRepos: 0, accountInstallations: 0 });
+  });
+
   it("includes installed maintainer repositories from cached PR evidence", () => {
     const scope = buildControlPanelAccessScope({
       login: "maintainer",

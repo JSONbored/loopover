@@ -951,15 +951,14 @@ export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<Rep
     })
     .from(repoGithubTotalsSnapshots)
     .groupBy(repoGithubTotalsSnapshots.repoFullName);
-  const rows = [];
-  for (const latest of latestRows) {
-    const [row] = await db
-      .select()
-      .from(repoGithubTotalsSnapshots)
-      .where(and(eq(repoGithubTotalsSnapshots.repoFullName, latest.repoFullName), eq(repoGithubTotalsSnapshots.fetchedAt, latest.fetchedAt)))
-      .limit(1);
-    if (row) rows.push(row);
-  }
+  if (latestRows.length === 0) return [];
+  const conditions = latestRows.map((latest) =>
+    and(eq(repoGithubTotalsSnapshots.repoFullName, latest.repoFullName), eq(repoGithubTotalsSnapshots.fetchedAt, latest.fetchedAt)),
+  );
+  const rows = await db
+    .select()
+    .from(repoGithubTotalsSnapshots)
+    .where(or(...conditions));
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
 }
 
@@ -1394,10 +1393,8 @@ export async function listIssueWatchSubscriptionsForLogin(env: Env, login: strin
 export async function deleteIssueWatchSubscription(env: Env, login: string, repoFullName: string): Promise<boolean> {
   const db = getDb(env.DB);
   const where = and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName.toLowerCase()));
-  const existing = await db.select({ id: issueWatchSubscriptions.id }).from(issueWatchSubscriptions).where(where);
-  if (existing.length === 0) return false;
-  await db.delete(issueWatchSubscriptions).where(where);
-  return true;
+  const deleted = await db.delete(issueWatchSubscriptions).where(where).returning({ id: issueWatchSubscriptions.id });
+  return deleted.length > 0;
 }
 
 /** All miners watching a repo — the candidate recipients when a new grabbable issue opens there. */

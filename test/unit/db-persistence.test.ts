@@ -131,6 +131,22 @@ describe("database persistence helpers", () => {
     ]);
   });
 
+  it("loads latest totals for many repos without building an oversized OR predicate", async () => {
+    const env = createTestEnv();
+    const repoCount = 1200;
+    for (let index = 0; index < repoCount; index += 1) {
+      const repoFullName = `owner/repo-${String(index).padStart(4, "0")}`;
+      await persistRepoGithubTotalsSnapshot(env, totalsSnapshot(`totals-${index}-old`, repoFullName, "2026-05-29T00:00:00.000Z", 1));
+      await persistRepoGithubTotalsSnapshot(env, totalsSnapshot(`totals-${index}-new`, repoFullName, "2026-05-30T00:00:00.000Z", index));
+    }
+
+    const snapshots = await listLatestRepoGithubTotalsSnapshots(env);
+
+    expect(snapshots).toHaveLength(repoCount);
+    expect(snapshots[0]).toMatchObject({ repoFullName: "owner/repo-0000", openIssuesTotal: 0 });
+    expect(snapshots.at(-1)).toMatchObject({ repoFullName: "owner/repo-1199", openIssuesTotal: 1199 });
+  });
+
   it("caps contributor-graph file-path loading and still builds path edges from the capped set", async () => {
     const env = createTestEnv();
     const repoFullName = "owner/big-repo";

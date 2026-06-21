@@ -75,6 +75,9 @@ describe("buildSlopAssessment", () => {
   it("does not raise no-linked-issue slop when an issue is linked, a rationale is present, the lane is issue-discovery, or no data is supplied (#562)", () => {
     expect(buildSlopAssessment({ hasLinkedIssue: true }).findings).toEqual([]);
     expect(buildSlopAssessment({ hasLinkedIssue: false, description: "Docs only: fix a typo in the README." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "No issue: refactor the parser." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "No linked issue: internal maintenance." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "No ticket: docs cleanup." }).findings).toEqual([]);
     expect(buildSlopAssessment({ hasLinkedIssue: false, issueDiscoveryLane: true }).findings).toEqual([]);
     expect(buildSlopAssessment({}).findings).toEqual([]);
   });

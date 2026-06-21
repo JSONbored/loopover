@@ -97,6 +97,11 @@ describe("database persistence helpers", () => {
     await expect(env.DB.prepare("select count(*) as count from bounty_lifecycle_events").first<{ count: number }>()).resolves.toMatchObject({ count: 1 });
   });
 
+  it("returns an empty array when no totals snapshots exist", async () => {
+    const env = createTestEnv();
+    expect(await listLatestRepoGithubTotalsSnapshots(env)).toEqual([]);
+  });
+
   it("returns latest totals per repo and merges duplicate contributor stats case-insensitively", async () => {
     const env = createTestEnv();
     await persistRepoGithubTotalsSnapshot(env, totalsSnapshot("totals-old", "owner/b", "2026-05-29T00:00:00.000Z", 1));

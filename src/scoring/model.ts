@@ -133,8 +133,21 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
   return snapshot;
 }
 
+// Mirror Pipeline B's UPSTREAM_STALE_MS (upstream/ruleset.ts): a served scoring snapshot older than this
+// window means the last upstream refresh failed or has not run, so previews are quietly using last-good (or
+// DEFAULT) constants with no other staleness signal on the scoring side (#810).
+export const SCORING_SNAPSHOT_STALE_MS = 2 * 60 * 60 * 1000;
+
+export function scoringSnapshotStalenessWarning(snapshot: Pick<ScoringModelSnapshotRecord, "fetchedAt">, now: number = Date.now()): string | null {
+  if (Date.parse(snapshot.fetchedAt) + SCORING_SNAPSHOT_STALE_MS >= now) return null;
+  return "Scoring constants snapshot is stale: the last upstream refresh is older than the freshness window, so scoring may be using last-good or default constants and be behind upstream.";
+}
+
 export async function getOrCreateScoringModelSnapshot(env: Env): Promise<ScoringModelSnapshotRecord> {
-  return (await getLatestScoringModelSnapshot(env)) ?? refreshScoringModelSnapshot(env);
+  const snapshot = (await getLatestScoringModelSnapshot(env)) ?? (await refreshScoringModelSnapshot(env));
+  // Surface staleness so previews do not silently use last-good/DEFAULT constants after a failed/old refresh (#810).
+  const stalenessWarning = scoringSnapshotStalenessWarning(snapshot);
+  return stalenessWarning ? { ...snapshot, warnings: [...snapshot.warnings, stalenessWarning] } : snapshot;
 }
 
 export function parsePythonNumberConstants(source: string, options: { knownOnly?: boolean } = { knownOnly: true }): Record<string, number> {

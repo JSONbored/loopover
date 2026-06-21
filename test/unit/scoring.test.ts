@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLatestScoringModelSnapshot, listUpstreamDriftReports } from "../../src/db/repositories";
-import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
+import { getLatestScoringModelSnapshot, listUpstreamDriftReports, persistScoringModelSnapshot } from "../../src/db/repositories";
+import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, getOrCreateScoringModelSnapshot, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot, SCORING_SNAPSHOT_STALE_MS, scoringSnapshotStalenessWarning } from "../../src/scoring/model";
 import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
 import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
@@ -84,6 +84,34 @@ OSS_EMISSION_SHARE = 0.90
     expect(parsed.SRC_TOK_SATURATION_SCALE).toBe(58);
     expect(parsed.MERGED_PR_BASE_SCORE).toBe(1e-9);
     expect(parsed.OSS_EMISSION_SHARE).toBe(0.9);
+  });
+
+  it("flags only scoring snapshots older than the freshness window as stale (#810)", () => {
+    const now = Date.parse("2026-06-21T12:00:00.000Z");
+    const justFresh = new Date(now - SCORING_SNAPSHOT_STALE_MS + 60_000).toISOString();
+    const clearlyStale = new Date(now - SCORING_SNAPSHOT_STALE_MS - 60_000).toISOString();
+    expect(scoringSnapshotStalenessWarning({ fetchedAt: justFresh }, now)).toBeNull();
+    expect(scoringSnapshotStalenessWarning({ fetchedAt: clearlyStale }, now)).toMatch(/stale/i);
+  });
+
+  it("appends a staleness warning when getOrCreateScoringModelSnapshot serves an old snapshot (#810)", async () => {
+    const env = createTestEnv();
+    await persistScoringModelSnapshot(env, snapshot);
+    const served = await getOrCreateScoringModelSnapshot(env);
+    expect(served.id).toBe(snapshot.id);
+    expect(served.warnings.some((warning) => /stale/i.test(warning))).toBe(true);
+  });
+
+  it("does not add a staleness warning when getOrCreate refreshes a fresh snapshot (#810)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+    const served = await getOrCreateScoringModelSnapshot(env);
+    expect(served.warnings.some((warning) => /stale/i.test(warning))).toBe(false);
   });
 
   it("prefers exponential saturation when mixed upstream constants are present", () => {

@@ -72,6 +72,20 @@ IGNORED = "not numeric"
     expect(detectActiveModel({})).toBe("unknown");
   });
 
+  it("parses underscore separators, floats, and scientific notation without truncating (#810)", () => {
+    const parsed = parsePythonNumberConstants(`
+CONTRIBUTION_SCORE_FOR_FULL_BONUS = 1_500_000
+SRC_TOK_SATURATION_SCALE = 5.8e1
+MERGED_PR_BASE_SCORE = 1e-9
+OSS_EMISSION_SHARE = 0.90
+`);
+    // The previous /[-+]?\d+(?:\.\d+)?/ regex stopped at `_`/`e`: 1_500_000 -> 1, 5.8e1 -> 5.8, 1e-9 -> 1.
+    expect(parsed.CONTRIBUTION_SCORE_FOR_FULL_BONUS).toBe(1500000);
+    expect(parsed.SRC_TOK_SATURATION_SCALE).toBe(58);
+    expect(parsed.MERGED_PR_BASE_SCORE).toBe(1e-9);
+    expect(parsed.OSS_EMISSION_SHARE).toBe(0.9);
+  });
+
   it("prefers exponential saturation when mixed upstream constants are present", () => {
     const parsed = parsePythonNumberConstants(`
 MERGED_PR_BASE_SCORE = 25

@@ -42,6 +42,7 @@ import {
   getRepoQueueTrendSnapshot,
   getRepositorySettings,
   getPendingAgentAction,
+  listAgentAuditEvents,
   listPendingAgentActions,
   recordAuditEvent,
   getContributorEvidence,
@@ -222,6 +223,7 @@ import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
@@ -411,6 +413,9 @@ const slopRiskSchema = z.object({
   description: z.string().max(20000).optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 });
 const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
@@ -742,6 +747,11 @@ const digestSubscriptionSchema = z
     email: z.string().email().max(320),
   })
   .strict();
+
+function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
+  const targetRepo = repoFullName.toLowerCase();
+  return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
+}
 
 export function createApp() {
   const app = new Hono<AppBindings>();
@@ -1590,13 +1600,15 @@ export function createApp() {
       const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
       if (unauthorized) return unauthorized;
     }
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       parsed.data.contributorLogin ? getContributorEvidence(c.env, parsed.data.contributorLogin) : Promise.resolve(null),
+      parsed.data.contributorLogin ? listContributorIssues(c.env, parsed.data.contributorLogin) : Promise.resolve([]),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const result = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     const record = makeScorePreviewRecord(input, snapshot, result);
     await persistScorePreview(c.env, record);
@@ -1610,13 +1622,15 @@ export function createApp() {
     if (!parsed.data.contributorLogin) return c.json({ error: "contributor_login_required" }, 400);
     const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
     if (unauthorized) return unauthorized;
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(c.env, parsed.data.repoFullName),
       getOrCreateScoringModelSnapshot(c.env),
       getContributorEvidence(c.env, parsed.data.contributorLogin),
+      listContributorIssues(c.env, parsed.data.contributorLogin),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const input = { ...parsed.data, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
   });
@@ -2063,6 +2077,31 @@ export function createApp() {
     return c.json(result);
   });
 
+  // #784 audit feed: the agent's executed actions + approval-queue decisions for this repo. Maintainer-scoped,
+  // read-only, public-safe (action posture only — no trust/score metadata). `?since=ISO&limit=N` (max 200).
+  app.get("/v1/repos/:owner/:repo/agent/audit-feed", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    /* v8 ignore next -- unauthorized requests are rejected by the auth middleware before reaching the handler. */
+    if (gate instanceof Response) return gate;
+    const since = c.req.query("since");
+    if (since !== undefined && Number.isNaN(Date.parse(since))) return c.json({ error: "invalid_since", detail: "since must be an ISO-8601 timestamp" }, 400);
+    const limitParam = c.req.query("limit");
+    let limit: number | undefined;
+    if (limitParam !== undefined) {
+      const parsed = Number(limitParam);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 200) return c.json({ error: "invalid_limit", detail: "limit must be an integer between 1 and 200" }, 400);
+      limit = parsed;
+    }
+    const events = await listAgentAuditEvents(c.env, {
+      repoFullName: fullName,
+      ...(since !== undefined ? { sinceIso: since } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
+    // Defense-in-depth: the free-form `detail` is the only unbounded string — scrub it before it leaves on a public surface.
+    return c.json({ repoFullName: fullName, events: events.map((event) => ({ ...event, detail: event.detail === null ? null : sanitizePublicComment(event.detail) })) });
+  });
+
   // Maintainer activation demo (#701): a repo-specific "here's what Gittensory would have surfaced" preview
   // over recent PRs, plus a one-click advisory ramp. Maintainer-scoped + per-repo. Deterministic (no AI run).
   app.get("/v1/repos/:owner/:repo/activation-preview", async (c) => {
@@ -2195,7 +2234,7 @@ export function createApp() {
       if (unauthorized) return unauthorized;
     }
     const [settings, issues, pullRequests] = await Promise.all([
-      getRepositorySettings(c.env, fullName),
+      resolveRepositorySettings(c.env, fullName),
       listIssues(c.env, fullName),
       listPullRequests(c.env, fullName),
     ]);
@@ -4453,6 +4492,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoValidateLinkedIssuePath(path)) return true;
+  if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
@@ -4496,6 +4536,10 @@ function isRepoCheckBeforeStartPath(path: string): boolean {
 
 function isRepoValidateLinkedIssuePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/validate-linked-issue$/.test(path);
+}
+
+function isRepoAgentAuditFeedPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/agent\/audit-feed$/.test(path);
 }
 
 function isIssueQualityPath(path: string): boolean {

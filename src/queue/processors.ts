@@ -122,6 +122,7 @@ import {
   buildBurdenForecast,
   buildCollisionEdges,
   buildCollisionReport,
+  isPullRequestInDuplicateCluster,
   buildConfigQuality,
   buildContributorFit,
   buildContributorOutcomeHistory,
@@ -146,8 +147,9 @@ import {
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
+import { buildFocusManifestGuidance } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildFocusManifestGuidance, resolveEffectiveSettings } from "../signals/focus-manifest";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
@@ -1114,16 +1116,6 @@ async function loadGateAuthorHistory(env: Env, repoFullName: string, author: str
   }
 }
 
-/**
- * Effective repository settings for webhook handling: the DB-backed settings overlaid with the repo's
- * `.gittensory.yml` (config-as-code). This single resolver is why EVERYTHING — gate on/off, all blocker
- * modes, comments, labels, surface, audience — is controllable from the repo's config file.
- */
-async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
-  const [dbSettings, manifest] = await Promise.all([getRepositorySettings(env, repoFullName), loadRepoFocusManifest(env, repoFullName)]);
-  return resolveEffectiveSettings(dbSettings, manifest);
-}
-
 /** Build a bounded unified-diff string from cached PR files for the AI reviewer. Caps total size so a
  *  huge PR cannot blow the model context or the neuron budget; each file's patch is taken from the raw
  *  GitHub file payload when present. */
@@ -1462,6 +1454,8 @@ async function maybePublishPrPublicSurface(
       const slop = buildSlopAssessment({
         changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
         description: pr.body,
+        // Reuse the collision report already built for this gate run so a duplicate-cluster PR is flagged (#563).
+        inDuplicateCluster: isPullRequestInDuplicateCluster(collisions, pr.number),
       });
       slopRisk = slop.slopRisk;
       advisory.findings.push(...slop.findings);
@@ -1922,6 +1916,12 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
     outcome: "completed",
     metadata: { deliveryId, repoFullName, commentId: comment.id },
   });
+  // A manual re-run is a re-evaluation surface — the user clicks it AFTER the PR changed — so the slop and
+  // manifest-policy gates must see the PR's current files, not whatever is cached. Mirror the webhook path
+  // (#866/#925): refresh before publishing so the re-published Gate check reflects the latest file set.
+  if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
+    await refreshPullRequestDetails(env, repoFullName, pr.number);
+  }
   await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
     deliveryId,
     action: "manual_retrigger",

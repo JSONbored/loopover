@@ -951,15 +951,14 @@ export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<Rep
     })
     .from(repoGithubTotalsSnapshots)
     .groupBy(repoGithubTotalsSnapshots.repoFullName);
-  const rows = [];
-  for (const latest of latestRows) {
-    const [row] = await db
-      .select()
-      .from(repoGithubTotalsSnapshots)
-      .where(and(eq(repoGithubTotalsSnapshots.repoFullName, latest.repoFullName), eq(repoGithubTotalsSnapshots.fetchedAt, latest.fetchedAt)))
-      .limit(1);
-    if (row) rows.push(row);
-  }
+  if (latestRows.length === 0) return [];
+  const conditions = latestRows.map((latest) =>
+    and(eq(repoGithubTotalsSnapshots.repoFullName, latest.repoFullName), eq(repoGithubTotalsSnapshots.fetchedAt, latest.fetchedAt)),
+  );
+  const rows = await db
+    .select()
+    .from(repoGithubTotalsSnapshots)
+    .where(or(...conditions));
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
 }
 
@@ -1394,10 +1393,8 @@ export async function listIssueWatchSubscriptionsForLogin(env: Env, login: strin
 export async function deleteIssueWatchSubscription(env: Env, login: string, repoFullName: string): Promise<boolean> {
   const db = getDb(env.DB);
   const where = and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName.toLowerCase()));
-  const existing = await db.select({ id: issueWatchSubscriptions.id }).from(issueWatchSubscriptions).where(where);
-  if (existing.length === 0) return false;
-  await db.delete(issueWatchSubscriptions).where(where);
-  return true;
+  const deleted = await db.delete(issueWatchSubscriptions).where(where).returning({ id: issueWatchSubscriptions.id });
+  return deleted.length > 0;
 }
 
 /** All miners watching a repo — the candidate recipients when a new grabbable issue opens there. */
@@ -2030,6 +2027,49 @@ export async function listPrVisibilitySkipAuditEvents(
     ];
   });
   return { limit, hasMore: items.length > limit, items: items.slice(0, limit) };
+}
+
+// #784 audit feed: the agent's own action history for a repo — both executed actions (`agent.action.<class>`)
+// and approval-queue decisions (`agent.pending_action.accepted|rejected`). Repo-scoped via the `repo#pr`
+// targetKey prefix range (mirrors listPrVisibilitySkipAuditEvents). Read-only; private trust/score metadata
+// is never selected, only the public-safe action posture.
+export type AgentAuditEvent = {
+  eventType: string;
+  pullNumber: number | null;
+  outcome: string;
+  actor: string | null;
+  detail: string | null;
+  createdAt: string;
+};
+
+export async function listAgentAuditEvents(
+  env: Env,
+  options: { repoFullName: string; sinceIso?: string | undefined; limit?: number | undefined },
+): Promise<AgentAuditEvent[]> {
+  const limit = clampInteger(options.limit ?? 50, 1, 200);
+  // Match exactly `repo#<...>` keys: lower bound `repo#`, upper bound `repo#` + the max code point, which
+  // sorts past any value that can follow the `#` — robust against delimiter-adjacent edge cases.
+  const prefix = `${options.repoFullName.toLowerCase()}#`;
+  const upperBound = `${options.repoFullName.toLowerCase()}#\uffff`;
+  const conditions: SQL[] = [
+    sql`(${auditEvents.eventType} like 'agent.action.%' or ${auditEvents.eventType} like 'agent.pending_action.%')`,
+    sql`lower(${auditEvents.targetKey}) >= ${prefix} and lower(${auditEvents.targetKey}) < ${upperBound}`,
+  ];
+  if (options.sinceIso) conditions.push(gte(auditEvents.createdAt, options.sinceIso));
+  const rows = await getDb(env.DB)
+    .select({ eventType: auditEvents.eventType, targetKey: auditEvents.targetKey, outcome: auditEvents.outcome, actor: auditEvents.actor, detail: auditEvents.detail, createdAt: auditEvents.createdAt })
+    .from(auditEvents)
+    .where(and(...conditions))
+    .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    eventType: row.eventType,
+    pullNumber: parsePullRequestTargetKey(row.targetKey)?.pullNumber ?? null,
+    outcome: row.outcome,
+    actor: row.actor,
+    detail: row.detail,
+    createdAt: row.createdAt,
+  }));
 }
 
 export async function getFreshOfficialMinerDetection(env: Env, login: string, now = nowIso()): Promise<OfficialGittensorMinerDetection | null> {

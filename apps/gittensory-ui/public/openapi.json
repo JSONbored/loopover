@@ -14943,6 +14943,82 @@
           }
         ]
       }
+    },
+    "/v1/repos/{owner}/{repo}/agent/audit-feed": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Maintainer-scoped agent audit feed (#784): executed actions + approval-queue decisions, newest first, public-safe action posture only. Supports ?since=ISO-8601&limit=1-200.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repoFullName": {
+                      "type": "string"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "eventType": {
+                            "type": "string"
+                          },
+                          "pullNumber": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "actor": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "eventType",
+                          "pullNumber",
+                          "outcome",
+                          "actor",
+                          "detail",
+                          "createdAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repoFullName",
+                    "events"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed since (not ISO-8601) or limit (not an integer in 1-200)"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

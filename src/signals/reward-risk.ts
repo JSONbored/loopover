@@ -182,6 +182,7 @@ export function buildRepoRewardRisk(args: {
 
   const labels = bestFitLabels(args.repo);
   const currentOpenPrCount = nonNegative(args.outcomeHistory.totals.openPullRequests);
+  const currentOpenIssueCount = nonNegative(repoOutcome?.openIssues ?? args.outcomeHistory.totals.openIssues);
   /* v8 ignore next -- Credibility fallback order protects sparse private snapshots; behavior is covered through scoring profile tests. */
   const credibility = repoOutcome?.credibility && repoOutcome.credibility > 0 ? repoOutcome.credibility : args.scoringProfile?.evidence.credibilityAssumption ?? args.outcomeHistory.totals.credibility ?? 0.8;
   const commonPreviewInput = {
@@ -198,6 +199,7 @@ export function buildRepoRewardRisk(args: {
     credibility,
     metadataOnly: true,
     duplicateRiskCount: collisions.summary.highRiskCount,
+    openIssueCount: currentOpenIssueCount,
   };
   const currentPreview = buildScorePreview({
     input: { ...commonPreviewInput, openPrCount: currentOpenPrCount },

@@ -152,12 +152,16 @@ export async function getOrCreateScoringModelSnapshot(env: Env): Promise<Scoring
 export function parsePythonNumberConstants(source: string, options: { knownOnly?: boolean } = { knownOnly: true }): Record<string, number> {
   const constants: Record<string, number> = {};
   for (const line of source.split("\n")) {
-    const match = line.match(/^([A-Z][A-Z0-9_]+)\s*=\s*([-+]?\d+(?:\.\d+)?)/);
+    // Match Python numeric literals including underscore separators (1_000_000), floats, and exponents
+    // (1e-9, 5.8e1). The previous /[-+]?\d+(?:\.\d+)?/ stopped at `_`/`e`, truncating 1_000_000 -> 1 and
+    // 1e-9 -> 1, which silently misparsed any such upstream constant and polluted the unmodeled list (#810).
+    const match = line.match(/^([A-Z][A-Z0-9_]+)\s*=\s*([-+]?(?:\d[\d_]*\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/);
     if (!match) continue;
     const name = match[1]!;
     const raw = match[2]!;
     if (options.knownOnly !== false && !SCORING_CONSTANT_NAMES.has(name)) continue;
-    constants[name] = Number(raw);
+    // Number() rejects underscore separators, so strip them before parsing.
+    constants[name] = Number(raw.replace(/_/g, ""));
   }
   return constants;
 }

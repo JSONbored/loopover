@@ -72,7 +72,7 @@ describe("buildMaintainerActivationPreview", () => {
     const preview = buildMaintainerActivationPreview({
       repoFullName: repo.fullName,
       repo,
-      settings: settings(),
+      settings: settings({ requireLinkedIssue: true }),
       pullRequests: [pr(1, { linkedIssues: [] }), pr(2, { linkedIssues: [5] })],
       generatedAt: "2026-06-14T00:00:00.000Z",
     });

@@ -94,6 +94,34 @@ describe("local branch analysis", () => {
     expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk" })]));
   });
 
+  it("applies the open-issue spam gate from trusted outcome history", () => {
+    const issueHeavyHistory: ContributorOutcomeHistory = {
+      ...outcomeHistory,
+      totals: { ...outcomeHistory.totals, issues: 99, openIssues: 99 },
+      repoOutcomes: [{ ...outcomeHistory.repoOutcomes[0]!, issues: 99, openIssues: 99 }],
+    };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        labels: ["enhancement"],
+        changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory: issueHeavyHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scorePreview.gates.openIssueCount).toBe(99);
+    expect(analysis.scorePreview.scoreEstimate.openIssueMultiplier).toBe(0);
+    expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "open_issue_threshold" })]));
+  });
+
   it("bounds local scorer warnings before adding local findings", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
@@ -1602,6 +1630,57 @@ describe("local MCP git metadata collection", () => {
 
     expect(analysis.scenarioSummary.repoFullName).toBe("wallet-tools/api");
     expect(analysis.scenarioSummary.dataClassification.facts).toEqual(expect.arrayContaining(["Contributor", "Repository", "Branch"]));
+  });
+
+  it("ignores contributor open PRs from other repos when ranking pressure options", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        { repoFullName: "someone-else/other-repo", number: 4, title: "Cross-repo WIP", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const options = analysis.scenarioSummary.options;
+    expect(options[0]).toMatchObject({ label: "Open another PR now", recommended: true });
+    expect(options[0]?.rationale).toContain("Repo queue pressure is low.");
+    expect(options[0]?.obstacles).toEqual([]);
+  });
+
+  it("counts same-repo contributor open PRs case-insensitively when ranking pressure options", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "Oktofeesh1",
+        repoFullName: "EnTrius/AllWays-UI",
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const options = analysis.scenarioSummary.options;
+    expect(options[0]).toMatchObject({ label: "Clean up existing work first", recommended: true });
+    expect(options.find((option) => option.label === "Open another PR now")?.obstacles.join(" ")).toMatch(/already have open PR/i);
   });
 
   it("wires open-PR pressure strategy options into scenarioSummary.options (#348)", () => {

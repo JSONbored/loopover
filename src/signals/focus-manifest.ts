@@ -527,6 +527,11 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
+  // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
+  // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).
+  if (effective.requireLinkedIssue && effective.linkedIssueGateMode === "off") {
+    effective.linkedIssueGateMode = "block";
+  }
   return effective;
 }
 
@@ -609,24 +614,41 @@ function normalizePathForMatch(path: string): string {
 }
 
 /**
+ * Compile a manifest path pattern into a predicate over an ALREADY-normalized path. Supports exact paths,
+ * directory prefixes (`src/` or `src`), and `*` wildcards (`**` collapses to `*`). Compiling once (the
+ * wildcard regex in particular) lets a caller test many paths against one pattern without recompiling per
+ * path — see {@link matchedPatterns}. An empty/blank pattern never matches.
+ */
+function compileManifestPathMatcher(pattern: string): (normalizedPath: string) => boolean {
+  const normalizedPattern = normalizePathForMatch(pattern);
+  if (!normalizedPattern) return () => false;
+  if (normalizedPattern.includes("*")) {
+    const escaped = normalizedPattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*+/g, ".*");
+    const regex = new RegExp(`^${escaped}$`);
+    return (normalizedPath) => regex.test(normalizedPath);
+  }
+  const dirPattern = normalizedPattern.endsWith("/") ? normalizedPattern : `${normalizedPattern}/`;
+  return (normalizedPath) => normalizedPath === normalizedPattern || normalizedPath.startsWith(dirPattern);
+}
+
+/**
  * Match a changed path against a manifest path pattern. Supports exact paths, directory
  * prefixes (`src/` or `src`), and `*` wildcards (`**` collapses to `*`).
  */
 export function matchesManifestPath(path: string, pattern: string): boolean {
   const normalizedPath = normalizePathForMatch(path);
-  const normalizedPattern = normalizePathForMatch(pattern);
-  if (!normalizedPath || !normalizedPattern) return false;
-  if (normalizedPattern.includes("*")) {
-    const escaped = normalizedPattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*+/g, ".*");
-    return new RegExp(`^${escaped}$`).test(normalizedPath);
-  }
-  if (normalizedPath === normalizedPattern) return true;
-  const dirPattern = normalizedPattern.endsWith("/") ? normalizedPattern : `${normalizedPattern}/`;
-  return normalizedPath.startsWith(dirPattern);
+  if (!normalizedPath) return false;
+  return compileManifestPathMatcher(pattern)(normalizedPath);
 }
 
 function matchedPatterns(paths: string[], patterns: string[]): string[] {
-  return patterns.filter((pattern) => paths.some((path) => matchesManifestPath(path, pattern)));
+  // Normalize each path once and compile each pattern once, instead of redoing both for every (path,
+  // pattern) pair — the wildcard regex was previously recompiled per path.
+  const normalizedPaths = paths.map(normalizePathForMatch).filter(Boolean);
+  return patterns.filter((pattern) => {
+    const matches = compileManifestPathMatcher(pattern);
+    return normalizedPaths.some((normalizedPath) => matches(normalizedPath));
+  });
 }
 
 /**

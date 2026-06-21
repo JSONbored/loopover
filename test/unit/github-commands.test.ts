@@ -156,6 +156,11 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("public score estimate private scoreability context score preview")).not.toMatch(/public score estimate|scoreability|score preview/i);
     expect(sanitizePublicComment("projected score changes 12.3 -> 45.6")).not.toMatch(/projected score changes|12\.3|45\.6/i);
     expect(sanitizePublicComment("effective score 0 -> 42")).not.toMatch(/effective score|0|42/i);
+    // The score engine (buildGateDeltas) emits the "estimated score N -> M" wording — the raw numbers must
+    // be redacted too, not just the words (the catch-all also clears residual numbers from other phrases).
+    expect(sanitizePublicComment("Open PR pressure changes estimated score 32.5 -> 41.2.")).not.toMatch(/estimated score|32\.5|41\.2/i);
+    expect(sanitizePublicComment("Linked issue/no-issue context changes estimated score 18 -> 27.")).not.toMatch(/estimated score|18|27/i);
+    expect(sanitizePublicComment("score estimate 5 → 9")).not.toMatch(/score estimate|\b5\b|\b9\b/i);
     expect(sanitizePublicComment("Open PR count 7 exceeds threshold 3.")).not.toMatch(/open PR count|7|threshold|3/i);
     expect(sanitizePublicComment("Credibility 0.12 is below floor 0.4.")).not.toMatch(/credibility|0\.12|floor|0\.4/i);
     expect(sanitizePublicComment("open_pr_pressure closed_pr_credibility low_credibility credibility updates")).not.toMatch(/open_pr_pressure|closed_pr_credibility|low_credibility|credibility/i);

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDuplicateClusterFinding,
   buildEmptyIssueBodyFinding,
   buildIssueSlopAssessment,
   buildLowQualityCommitMessageFinding,
   buildMissingTestEvidenceFinding,
+  buildNoLinkedIssueRationaleFinding,
   buildNonSubstantivePaddingFinding,
   buildSlopAssessment,
   buildTrivialWhitespaceChurnFinding,
@@ -22,6 +24,7 @@ describe("buildSlopAssessment", () => {
     expect(SLOP_RUBRIC_MARKDOWN).toContain("missing test evidence");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("trivial / whitespace-only churn");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("generic or empty commit message");
+    expect(SLOP_RUBRIC_MARKDOWN).toContain("no linked issue and no rationale");
 
     const clean = buildSlopAssessment({});
     expect(clean).toEqual({ slopRisk: 0, band: "clean", findings: [] });
@@ -36,6 +39,15 @@ describe("buildSlopAssessment", () => {
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
+  it("raises low-quality-commit-message slop for dot-only commit subjects (#564)", () => {
+    for (const message of [".", "..", "..."]) {
+      expect(buildLowQualityCommitMessageFinding({ commitMessages: [message] })).toMatchObject({
+        code: "low_quality_commit_message",
+        severity: "warning",
+      });
+    }
+  });
+
   it("does not raise commit-message slop for a specific subject or when no commit data is supplied (#564)", () => {
     expect(buildSlopAssessment({ commitMessages: ["feat(api): add cursor pagination to labels endpoint"] }).findings).toEqual([]);
     expect(buildSlopAssessment({ commitMessages: [] }).findings).toEqual([]);
@@ -48,6 +60,54 @@ describe("buildSlopAssessment", () => {
     expect(empty?.detail).toMatch(/empty/i);
     // leading blanks are skipped; the first real subject ("update") is what gets judged.
     expect(buildLowQualityCommitMessageFinding({ commitMessages: ["", "update"] })?.detail).toMatch(/generic/i);
+  });
+
+  it("raises no-linked-issue-without-rationale slop when there is no issue and no rationale (#562)", () => {
+    const result = buildSlopAssessment({ hasLinkedIssue: false });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.noLinkedIssueWithoutRationale);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "no_linked_issue_without_rationale", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise no-linked-issue slop when an issue is linked, a rationale is present, the lane is issue-discovery, or no data is supplied (#562)", () => {
+    expect(buildSlopAssessment({ hasLinkedIssue: true }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "Docs only: fix a typo in the README." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, issueDiscoveryLane: true }).findings).toEqual([]);
+    expect(buildSlopAssessment({}).findings).toEqual([]);
+  });
+
+  it("reuses the shared no-issue rationale helper and treats absent linked-issue data as no signal (#562)", () => {
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: undefined })).toBeNull();
+    // a maintenance/cleanup rationale in the body clears the signal even with no linked issue
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: false, description: "Routine maintenance; no issue needed." })).toBeNull();
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: false, description: "" })).toMatchObject({ code: "no_linked_issue_without_rationale" });
+  });
+
+  it("raises duplicate-cluster slop when the PR is flagged as in a duplicate cluster (#563)", () => {
+    const result = buildSlopAssessment({ inDuplicateCluster: true });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "duplicate_cluster_membership", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise duplicate-cluster slop when not flagged (false or omitted) (#563)", () => {
+    expect(buildDuplicateClusterFinding({})).toBeNull();
+    expect(buildDuplicateClusterFinding({ inDuplicateCluster: false })).toBeNull();
+  });
+
+  it("stacks the duplicate-cluster weight with another signal into the expected band (#563)", () => {
+    const result = buildSlopAssessment({
+      // code file with no test evidence → missing_test_evidence (30); non-empty description suppresses empty_description.
+      changedFiles: [{ path: "src/parser.ts", additions: 10, deletions: 1 }],
+      description: "Refactor the parser.",
+      inDuplicateCluster: true, // → duplicate_cluster_membership (15)
+    });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence + SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("elevated");
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual(["duplicate_cluster_membership", "missing_test_evidence"]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
   it("raises missing-test-evidence slop for code-only diffs without tests", () => {

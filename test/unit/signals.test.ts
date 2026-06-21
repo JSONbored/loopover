@@ -28,7 +28,9 @@ import {
   buildRegistryChangeReport,
   buildRepoFitRecommendation,
   detectGittensorContributor,
+  isPullRequestInDuplicateCluster,
   shouldPublishPrIntelligenceComment,
+  type CollisionReport,
 } from "../../src/signals/engine";
 import { GITTENSOR_HOME_URL } from "../../src/github/footer";
 import type {
@@ -1334,3 +1336,27 @@ function registrySnapshot(id: string, repositories: RegistrySnapshot["repositori
     repositories,
   };
 }
+
+describe("isPullRequestInDuplicateCluster (#563)", () => {
+  // Typed fixtures: the CollisionReport shape is compile-checked, so it cannot drift from the real type.
+  const report = (clusters: CollisionReport["clusters"]): CollisionReport => ({
+    repoFullName: "owner/repo",
+    generatedAt: "2026-06-18T00:00:00.000Z",
+    summary: { clusterCount: clusters.length, highRiskCount: clusters.filter((cluster) => cluster.risk === "high").length, itemsReviewed: clusters.reduce((total, cluster) => total + cluster.items.length, 0) },
+    clusters,
+  });
+  type Item = CollisionReport["clusters"][number]["items"][number];
+  const prItem = (number: number): Item => ({ type: "pull_request", number, title: `PR ${number}` });
+  const issueItem = (number: number): Item => ({ type: "issue", number, title: `issue ${number}` });
+
+  it("is true only for a high-risk cluster with 2+ pull requests that includes the PR", () => {
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "high", reason: "overlap", items: [prItem(7), prItem(8), issueItem(3)] }]), 7)).toBe(true);
+  });
+
+  it("is false for missing, insufficient, or non-matching clusters", () => {
+    expect(isPullRequestInDuplicateCluster(report([]), 7)).toBe(false); // no clusters
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "high", reason: "r", items: [prItem(7), issueItem(3)] }]), 7)).toBe(false); // only 1 PR (healthy issue↔PR pair)
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "medium", reason: "r", items: [prItem(7), prItem(8)] }]), 7)).toBe(false); // not high-risk
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "high", reason: "r", items: [prItem(8), prItem(9)] }]), 7)).toBe(false); // PR not a member
+  });
+});

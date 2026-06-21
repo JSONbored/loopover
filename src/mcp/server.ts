@@ -656,6 +656,8 @@ const checkSlopRiskShape = {
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
   commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 };
 
 const checkSlopRiskOutputSchema = {
@@ -1669,6 +1671,34 @@ export class GittensoryMcp {
     throw new Error("Forbidden: write access is required to propose an action on this repository.");
   }
 
+  // Approval-queue list/decide mirrors the HTTP requireRepoWriteAccess gate:
+  // first require repo-scoped Gittensory maintainer/owner/operator authority, then verify live GitHub write.
+  private async requireRepoApprovalQueueAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind !== "session") return;
+    const scope = await this.loadSessionAccessScope();
+    if (scope.operator) return;
+
+    const repo = await getRepository(this.env, repoFullName);
+    const requestedRepo = repoFullName.toLowerCase();
+    const repoScoped = scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo);
+    const accountScoped = Boolean(repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase()));
+    if (!repoScoped && !accountScoped) {
+      throw new Error("Forbidden: maintainer access is required for this repository.");
+    }
+
+    const installationId = repo?.installationId ?? null;
+    let permission: string | null = null;
+    if (installationId !== null) {
+      try {
+        permission = await getRepositoryCollaboratorPermission(this.env, installationId, repoFullName, this.identity.actor);
+      } catch {
+        permission = null;
+      }
+    }
+    if (permission && REPO_WRITE_PERMISSIONS.has(permission)) return;
+    throw new Error("Forbidden: write access is required to manage this repository's approval queue.");
+  }
+
   // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC
   // repo (the miner use case) or a PRIVATE repo they can access — never an arbitrary/private repo they cannot,
   // so private-repo issues never fan out to them. Non-session (private-token) identities are trusted.
@@ -2233,7 +2263,7 @@ export class GittensoryMcp {
   // (the full queue with reasons is more sensitive than the bare count in get_automation_state).
   private async listPendingActions(input: z.infer<z.ZodObject<typeof listPendingActionsShape>>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    await this.requireRepoManageAccess(fullName);
+    await this.requireRepoApprovalQueueAccess(fullName);
     const status = input.status ?? "pending";
     const actions = await listPendingAgentActions(this.env, { repoFullName: fullName, status });
     return {
@@ -2260,7 +2290,7 @@ export class GittensoryMcp {
   // access, repo-scoped (a guessed id from another repo's queue cannot be decided), idempotent.
   private async decidePendingAction(input: z.infer<z.ZodObject<typeof decidePendingActionShape>>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    await this.requireRepoManageAccess(fullName);
+    await this.requireRepoApprovalQueueAccess(fullName);
     const pending = await getPendingAgentAction(this.env, input.id);
     // Scope to THIS repo so a maintainer cannot decide another repo's queue via a guessed id.
     if (!pending || pending.repoFullName !== fullName) {

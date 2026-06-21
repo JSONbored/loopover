@@ -151,6 +151,37 @@ describe("GitHub backfill", () => {
     expect(authHeaders).toContain("Bearer public-token");
   });
 
+  it("paginates past the first 100 labels in the monolithic backfill path", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 150 });
+      if (url.endsWith("/repos/JSONbored/gittensory")) {
+        return Response.json({ name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } });
+      }
+      if (url.includes("/labels?")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        if (page === 1) {
+          return Response.json(
+            Array.from({ length: 100 }, (_, i) => ({ name: `label-p1-${i}`, color: "aaaaaa" })),
+            { headers: { link: '<https://api.github.com/repositories/1/labels?page=2>; rel="next"' } },
+          );
+        }
+        return Response.json(Array.from({ length: 50 }, (_, i) => ({ name: `label-p2-${i}`, color: "bbbbbb" })));
+      }
+      return Response.json([]);
+    });
+
+    await backfillRegisteredRepositories(env);
+
+    const stored = await listRepoLabels(env, "JSONbored/gittensory");
+    // 150 labels from GitHub (100 page-1 + 50 page-2) plus configured labels not present on GitHub
+    expect(stored.length).toBeGreaterThanOrEqual(150);
+    expect(stored.some((l) => l.name === "label-p1-0")).toBe(true);
+    expect(stored.some((l) => l.name === "label-p2-0")).toBe(true);
+  });
+
   it("refreshes contributor activity from GitHub search counts for registered repos", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

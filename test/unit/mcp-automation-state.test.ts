@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
-import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -207,11 +207,67 @@ describe("MCP gittensory_list_pending_actions (#784)", () => {
   it("forbids a session without live write access", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 1, title: "x", state: "open", user: { login: "rando" }, author_association: "OWNER", head: { sha: "sha" } });
     mockedPermission.mockResolvedValue("read");
     const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
     const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toMatch(/write access/i);
+  });
+
+  it("forbids a miner-only session even when live GitHub write access exists", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertOfficialMinerDetection(
+      env,
+      "miner",
+      {
+        status: "confirmed",
+        snapshot: {
+          source: "gittensor_api",
+          githubId: "123",
+          githubUsername: "miner",
+          uid: 7,
+          hotkey: "hotkey",
+          failedReason: null,
+          evaluatedAt: "2026-06-20T00:00:00.000Z",
+          updatedAt: "2026-06-20T00:00:00.000Z",
+          isEligible: true,
+          credibility: 1,
+          eligibleRepoCount: 1,
+          issueDiscoveryScore: 0,
+          issueTokenScore: 0,
+          issueCredibility: 0,
+          isIssueEligible: false,
+          issueEligibleRepoCount: 0,
+          alphaPerDay: 0,
+          taoPerDay: 0,
+          usdPerDay: 0,
+          totals: {
+            pullRequests: 0,
+            mergedPullRequests: 0,
+            openPullRequests: 0,
+            closedPullRequests: 0,
+            openIssues: 0,
+            closedIssues: 0,
+            solvedIssues: 0,
+            validSolvedIssues: 0,
+          },
+          repositories: [],
+          pullRequests: [],
+          issueLabels: [],
+        },
+      },
+      60_000,
+    );
+    await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "sensitive" });
+    mockedPermission.mockResolvedValue("write");
+
+    const client = await connect(env, { kind: "session", actor: "miner" } as AuthIdentity);
+    const result = await client.callTool({ name: "gittensory_list_pending_actions", arguments: { owner: "owner", repo: "repo" } });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/maintainer access/i);
   });
 });
 
@@ -265,6 +321,7 @@ describe("MCP gittensory_decide_pending_action (#784)", () => {
   it("forbids a session without live write access and leaves the action pending", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 1, title: "x", state: "open", user: { login: "rando" }, author_association: "OWNER", head: { sha: "sha" } });
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: {}, reason: "x" });
     mockedPermission.mockResolvedValue("read");
     const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);

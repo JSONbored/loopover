@@ -414,6 +414,8 @@ const slopRiskSchema = z.object({
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
   commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 });
 const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
@@ -4490,6 +4492,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAiConfigPath(path)) return true;
   if (isRepoCheckBeforeStartPath(path)) return true;
   if (isRepoValidateLinkedIssuePath(path)) return true;
+  if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === LINT_PR_TEXT_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
@@ -4533,6 +4536,10 @@ function isRepoCheckBeforeStartPath(path: string): boolean {
 
 function isRepoValidateLinkedIssuePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/validate-linked-issue$/.test(path);
+}
+
+function isRepoAgentAuditFeedPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/agent\/audit-feed$/.test(path);
 }
 
 function isIssueQualityPath(path: string): boolean {

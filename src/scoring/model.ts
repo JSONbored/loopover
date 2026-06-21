@@ -174,9 +174,26 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
  * staleness visible: if upstream adds a scoring dimension, an operator sees it instead of the gate
  * silently drifting behind. Detection only — it does not change any score.
  */
+// Upstream operational/infrastructure constants (time-unit helpers, HTTP/parse timeouts, retry budgets,
+// byte-size limits, UID sentinels) are not scoring-model parameters the scorer consumes, so reporting them
+// as "unmodeled scoring drift" is a false positive. Excluding them keeps the drift signal accurate (#809).
+const NON_SCORING_UPSTREAM_CONSTANT_NAMES: ReadonlySet<string> = new Set([
+  "SECONDS_PER_DAY",
+  "SECONDS_PER_HOUR",
+  "GITHUB_HTTP_TIMEOUT_SECONDS",
+  "MIRROR_HTTP_TIMEOUT_SECONDS",
+  "MIRROR_MAX_ATTEMPTS",
+  "TREE_SITTER_PARSE_TIMEOUT_MICROS",
+  "SCORING_SUBPROCESS_BUDGET_S",
+  "MAX_FILE_SIZE_BYTES",
+  "RECYCLE_UID",
+  "ISSUES_TREASURY_UID",
+  "MAX_ISSUE_ID",
+]);
+
 export function findUnmodeledConstantKeys(allConstants: Record<string, number>): string[] {
   return Object.keys(allConstants)
-    .filter((name) => !SCORING_CONSTANT_NAMES.has(name))
+    .filter((name) => !SCORING_CONSTANT_NAMES.has(name) && !NON_SCORING_UPSTREAM_CONSTANT_NAMES.has(name))
     .sort();
 }
 

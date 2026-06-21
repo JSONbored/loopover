@@ -191,6 +191,15 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(unmodeled).not.toContain("TIME_DECAY_GRACE_PERIOD_HOURS"); // modeled as of #703
   });
 
+  it("does not report upstream operational/infrastructure constants as unmodeled scoring drift (#809)", () => {
+    expect(
+      findUnmodeledUpstreamConstants(
+        "SECONDS_PER_DAY = 86400\nGITHUB_HTTP_TIMEOUT_SECONDS = 15\nMAX_FILE_SIZE_BYTES = 1_000_000\nRECYCLE_UID = 0\nTREE_SITTER_PARSE_TIMEOUT_MICROS = 2_000_000\n",
+      ),
+    ).toEqual([]);
+    expect(findUnmodeledUpstreamConstants("SECONDS_PER_DAY = 86400\nNOVELTY_BONUS_SCALAR = 3\n")).toEqual(["NOVELTY_BONUS_SCALAR"]);
+  });
+
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
     const env = createTestEnv({
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",

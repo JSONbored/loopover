@@ -4470,7 +4470,9 @@ export function buildPrTextLint(input: PrTextLintInput): PrTextLintReport {
   };
 }
 
-function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
+// Exported so the deterministic no-linked-issue slop signal (#562) and the public PR-panel traceability check
+// share ONE definition of a "clear no-issue rationale" (maintenance / docs-only / "no issue: …" in the PR text).
+export function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
   return /\b(no issue\s*(?:because|:)|no linked issue\s*(?:because|:)|no ticket\s*(?:because|:)|maintenance|docs? only|typo|chore|cleanup)\b/i.test([pr.title, pr.body ?? ""].join(" "));
 }
 

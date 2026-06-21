@@ -5,6 +5,7 @@ import {
   buildIssueSlopAssessment,
   buildLowQualityCommitMessageFinding,
   buildMissingTestEvidenceFinding,
+  buildNoLinkedIssueRationaleFinding,
   buildNonSubstantivePaddingFinding,
   buildSlopAssessment,
   buildTrivialWhitespaceChurnFinding,
@@ -23,6 +24,7 @@ describe("buildSlopAssessment", () => {
     expect(SLOP_RUBRIC_MARKDOWN).toContain("missing test evidence");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("trivial / whitespace-only churn");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("generic or empty commit message");
+    expect(SLOP_RUBRIC_MARKDOWN).toContain("no linked issue and no rationale");
 
     const clean = buildSlopAssessment({});
     expect(clean).toEqual({ slopRisk: 0, band: "clean", findings: [] });
@@ -58,6 +60,28 @@ describe("buildSlopAssessment", () => {
     expect(empty?.detail).toMatch(/empty/i);
     // leading blanks are skipped; the first real subject ("update") is what gets judged.
     expect(buildLowQualityCommitMessageFinding({ commitMessages: ["", "update"] })?.detail).toMatch(/generic/i);
+  });
+
+  it("raises no-linked-issue-without-rationale slop when there is no issue and no rationale (#562)", () => {
+    const result = buildSlopAssessment({ hasLinkedIssue: false });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.noLinkedIssueWithoutRationale);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "no_linked_issue_without_rationale", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise no-linked-issue slop when an issue is linked, a rationale is present, the lane is issue-discovery, or no data is supplied (#562)", () => {
+    expect(buildSlopAssessment({ hasLinkedIssue: true }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "Docs only: fix a typo in the README." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, issueDiscoveryLane: true }).findings).toEqual([]);
+    expect(buildSlopAssessment({}).findings).toEqual([]);
+  });
+
+  it("reuses the shared no-issue rationale helper and treats absent linked-issue data as no signal (#562)", () => {
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: undefined })).toBeNull();
+    // a maintenance/cleanup rationale in the body clears the signal even with no linked issue
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: false, description: "Routine maintenance; no issue needed." })).toBeNull();
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: false, description: "" })).toMatchObject({ code: "no_linked_issue_without_rationale" });
   });
 
   it("raises duplicate-cluster slop when the PR is flagged as in a duplicate cluster (#563)", () => {

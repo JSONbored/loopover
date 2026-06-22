@@ -65,6 +65,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
   fetchLiveCiAggregate,
+  fetchLivePullRequestMergeState,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -605,10 +606,13 @@ async function maybeRunAgentMaintenance(
   // planner uses this to NEVER approve/merge a PR whose CI isn't green, to CLOSE a red-CI non-owner PR (citing
   // the failing checks) / HOLD the owner's, and to DEFER entirely while CI is still pending.
   const ciToken = await createInstallationToken(env, installationId).catch(() => undefined);
-  const [changedFiles, hardGuardrailGlobs, ciAggregate] = await Promise.all([
+  const [changedFiles, hardGuardrailGlobs, ciAggregate, liveMergeState] = await Promise.all([
     resolvePullRequestFilesForReview(env, { installationId, repoFullName, pullNumber: pr.number }),
     loadHardGuardrailGlobs(env, repoFullName),
     fetchLiveCiAggregate(env, repoFullName, pr.headSha, ciToken ?? env.GITHUB_PUBLIC_TOKEN),
+    // Live mergeable_state — the stored one lags GitHub's async recompute after the bot's own approve, which
+    // otherwise leaves a green+approved PR stuck OPEN at mergeState=CLEAN (never auto-merged).
+    fetchLivePullRequestMergeState(env, repoFullName, pr.number, ciToken ?? env.GITHUB_PUBLIC_TOKEN),
   ]);
   const changedPaths = changedFiles.map((file) => file.path).filter((path) => path.length > 0);
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
@@ -629,7 +633,7 @@ async function maybeRunAgentMaintenance(
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     pr: {
-      mergeableState: pr.mergeableState,
+      mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: pr.reviewDecision,
       slopRisk: pr.slopRisk,
       labels: pr.labels,

@@ -1980,6 +1980,19 @@ export async function fetchLiveCiAggregate(env: Env, repoFullName: string, headS
   return { ciState, failingDetails };
 }
 
+/**
+ * Fetch a PR's LIVE `mergeable_state` (clean / dirty / blocked / unstable / behind / has_hooks / unknown). The
+ * STORED value lags GitHub's async recompute — e.g. right after gittensory[bot]'s own APPROVE flips a `blocked`
+ * PR to `clean`, the stored row is still `blocked`, which stops an otherwise-eligible PR from auto-merging
+ * (observed: green+approved PRs stuck OPEN at `mergeState=CLEAN`). The auto-maintain planner uses this so the
+ * merge decision sees the CURRENT state. `unknown` (GitHub still computing) ⇒ caller treats as not-yet-clean and
+ * a later trigger / the sweep retries. Best-effort: a fetch error returns undefined (caller falls back to stored).
+ */
+export async function fetchLivePullRequestMergeState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+  return result?.data.mergeable_state ?? undefined;
+}
+
 async function fetchPullRequestDetailsFromGraphQl(
   env: Env,
   repoFullName: string,

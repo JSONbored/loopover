@@ -35,6 +35,10 @@ import {
 } from "../../src/signals/reward-risk";
 import type { ContributorRepoStatRecord, IssueRecord, PullRequestRecord, RecentMergedPullRequestRecord, RegistrySnapshot, RepoLabelRecord, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
+// Shared-fixture timestamps are relative to "now" so age-bucket / reviewability windows (e.g. the
+// `< 30 days` likely-reviewable cutoff) never drift past their boundary as real time advances (no time-bomb).
+const isoDaysAgo = (days: number): string => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
 const repo: RepositoryRecord = {
   fullName: "JSONbored/gittensory",
   owner: "JSONbored",
@@ -78,7 +82,7 @@ const pullRequests: PullRequestRecord[] = [
     labels: ["bug"],
     linkedIssues: [1],
     body: "Fixes #1",
-    updatedAt: "2026-05-23T00:00:00.000Z",
+    updatedAt: isoDaysAgo(20), // recent + linked → counts as likely-reviewable (< 30 days) and stale (>= 14 days)
   },
   {
     repoFullName: repo.fullName,
@@ -90,7 +94,7 @@ const pullRequests: PullRequestRecord[] = [
     labels: ["bug"],
     linkedIssues: [1],
     body: "Fixes #1",
-    updatedAt: "2026-04-01T00:00:00.000Z",
+    updatedAt: isoDaysAgo(82), // old → counts in the over-30-days age bucket
   },
 ];
 

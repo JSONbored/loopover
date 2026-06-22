@@ -204,6 +204,70 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
     expect(row?.n).toBe(0);
   });
+
+  it("FLAG-OFF (default): a closed+merged PR webhook records NOTHING — the call site takes the `: undefined` branch (no reputation read)", async () => {
+    const { processJob } = await import("../../src/queue/processors");
+    // Flag unset → `isReputationEnabled(env) ? … : undefined` is undefined → the `if (reputationOutcome)`
+    // body never runs → submitter_stats stays empty (byte-identical to today).
+    const env = createTestEnv(); // REVIEWBOT_REPUTATION unset → OFF
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "rep-terminal-merged-flagoff",
+        eventName: "pull_request",
+        payload: {
+          action: "closed",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+          pull_request: { number: 4244, title: "Terminal merged, flag OFF", state: "closed", merged_at: "2026-06-20T00:00:00.000Z", user: { login: "repterminal" }, head: { sha: "f00dface" }, labels: [], body: "Resolves it." },
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
+
+  it("FLAG-ON, OPEN PR with a PASSING gate: no terminal/manual outcome → `reputationOutcome` is undefined → the `if (reputationOutcome)` body is skipped (no record)", async () => {
+    const { processJob } = await import("../../src/queue/processors");
+    const { upsertRepositorySettings } = await import("../../src/db/repositories");
+    // Reputation ON, but the PR is still OPEN and the gate does not route it to manual → undefined outcome.
+    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true" });
+    // Gate OFF for this repo so the open PR's gate is `undefined` (not failure/action_required) → no "manual".
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", publicSurface: "off", commentMode: "off" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "rep-open-passing",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+          pull_request: { number: 4245, title: "Open, passing", state: "open", merged_at: null, user: { login: "repopen" }, head: { sha: "0pen5ha0" }, labels: [], body: "Resolves #1." },
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // isReputationEnabled was true (the ternary ran), but reputationOutcomeFromTerminalState returned undefined
+    // for an open + non-flagged PR → the `if (reputationOutcome)` guard short-circuits → nothing recorded.
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
 });
 
 describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {

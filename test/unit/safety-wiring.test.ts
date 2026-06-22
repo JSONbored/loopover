@@ -128,6 +128,27 @@ describe("secret-leak finding in the advisory build", () => {
     expect(adv.findings).toEqual([]);
   });
 
+  it("FLAG-ON + files=null: lazily loads the changed files from D1 and still finds the leaked secret", async () => {
+    const env = createTestEnv({ REVIEWBOT_SAFETY: "true" });
+    // Seed a changed-file row so the lazy `listPullRequestFiles` load (args.files ?? …) returns a real diff.
+    await env.DB.prepare(
+      "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind("acme/widgets", 7, "src/config.ts", "modified", 1, 0, 1, JSON.stringify({ patch: '@@\n+const token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";' }))
+      .run();
+    const adv = advisory();
+    await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 7, files: null });
+    expect(adv.findings.find((f) => f.code === "secret_leak")).toBeDefined();
+  });
+
+  it("FLAG-ON + files=null with no changed files: lazy load yields a clean diff, no finding", async () => {
+    const env = createTestEnv({ REVIEWBOT_SAFETY: "true" });
+    const adv = advisory();
+    // No seeded rows → listPullRequestFiles returns [] → buildAiReviewDiff('') → secretLeakFinding null
+    await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 999, files: null });
+    expect(adv.findings).toEqual([]);
+  });
+
   it("secretLeakFinding returns null on a clean diff", () => {
     expect(secretLeakFinding("nothing to see here")).toBeNull();
   });

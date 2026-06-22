@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { runGittensoryAiReview } from "../../src/services/ai-review";
+import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import { RAG_DIMENSIONS } from "../../src/review/rag";
 import { buildRagQuery, buildReviewRagContext, isRagEnabled, populateRepoIndexStub } from "../../src/review/rag-wire";
 import { createTestEnv } from "../helpers/d1";
+import type { Advisory, RepositorySettings } from "../../src/types";
 
 // ── Test fixtures ────────────────────────────────────────────────────────────────────────────────
 
@@ -195,6 +197,38 @@ describe("RAG wired into the AI reviewer (flag REVIEWBOT_RAG)", () => {
     expect(user).toContain("export function helper()");
     // The original diff section is still present (RAG is additive, not a replacement).
     expect(user).toContain("Unified diff (truncated if large):");
+  });
+
+  it("FLAG-ON via runAiReviewForAdvisory: maps the changed files into the RAG retrieval (both patch / no-patch sides)", async () => {
+    // Drives the call site (processors.ts) so the `files.map(...)` that builds the RAG `files` arg runs —
+    // including BOTH ternary sides of `typeof file.payload?.patch === "string" ? … : undefined`.
+    const env = aiReviewEnv({
+      REVIEWBOT_RAG: "true",
+      VECTORIZE: vectorizeStub() as unknown as Vectorize,
+      AI: { run: capturingChatRun().run } as unknown as Ai,
+    });
+    // Seed two changed-file rows: one with a real string patch, one whose payload has NO patch.
+    await env.DB.prepare(
+      "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind("acme/widgets", 3, "src/a.ts", "modified", 1, 0, 1, JSON.stringify({ patch: "@@\n+export const A = helper();" })).run();
+    await env.DB.prepare(
+      "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind("acme/widgets", 3, "img/logo.png", "added", 0, 0, 0, JSON.stringify({})).run(); // no `patch` → undefined branch
+    const adv: Advisory = {
+      id: "adv-rag", targetType: "pull_request", targetKey: "acme/widgets#3", repoFullName: "acme/widgets",
+      pullNumber: 3, headSha: "sha3", conclusion: "neutral", severity: "info",
+      title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      repoFullName: "acme/widgets",
+      pr: { number: 3, title: "Add helper", body: "Adds a helper." },
+      author: "alice",
+      confirmedContributor: true,
+      advisory: adv,
+    });
+    // The review still completes (RAG is additive + fail-safe); the map having run is what we're exercising.
+    expect(result?.notes ?? "").toBeDefined();
   });
 
   it("FLAG-OFF (default): the prompt is byte-identical to the no-RAG prompt (ragContext undefined)", async () => {

@@ -129,6 +129,83 @@ describe("shouldSkipAiForReputation (helper)", () => {
   });
 });
 
+describe("processGitHubWebhook records the reputation outcome on a terminal PR (flag-ON call site)", () => {
+  it("FLAG-ON: a closed+merged PR webhook records a 'merged' outcome for the submitter", async () => {
+    const { processJob } = await import("../../src/queue/processors");
+    const { upsertRepositorySettings } = await import("../../src/db/repositories");
+    // UNIFIED_REVIEW_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
+    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true", UNIFIED_REVIEW_COMMENT: "true" });
+    // Gate enabled so the closing-PR public-surface path (skipped-gate + unified closed comment) executes.
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "enabled" });
+    // External calls (token/miner/github) are best-effort + caught; stub them so nothing throws.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "rep-terminal-merged",
+        eventName: "pull_request",
+        payload: {
+          action: "closed",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 4242,
+            title: "Terminal merged PR",
+            state: "closed",
+            merged_at: "2026-06-20T00:00:00.000Z",
+            user: { login: "repterminal" },
+            head: { sha: "deadbeef" },
+            labels: [],
+            body: "Resolves the thing.",
+          },
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // The flag-ON call site recorded the merged outcome (a no read in flag-OFF would leave this empty).
+    const stats = await getSubmitterReputation(env, "JSONbored/gittensory", "repterminal");
+    expect(stats.submissions).toBe(1);
+    expect(stats.merged).toBe(1);
+  });
+
+  it("FLAG-ON: a closed PR with no author login records against a null submitter (authorLogin ?? null)", async () => {
+    const { processJob } = await import("../../src/queue/processors");
+    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "rep-terminal-closed-noauthor",
+        eventName: "pull_request",
+        payload: {
+          action: "closed",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } },
+          // no `user` → authorLogin resolves to null at the call site
+          pull_request: { number: 4243, title: "Closed, no author", state: "closed", merged_at: null, head: { sha: "cafef00d" }, labels: [], body: "x" },
+        },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // The `submitter: pr.authorLogin ?? null` branch ran; recordSubmissionOutcome no-ops on a null submitter,
+    // so nothing is written (and nothing throws) — exercising the null side of the coalesce safely.
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
+});
+
 describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
   it("FLAG-OFF (default): records NOTHING — the table stays empty", async () => {
     const env = createTestEnv({ REVIEWBOT_REPUTATION: "false" });

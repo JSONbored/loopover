@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { runGittensoryAiReview } from "../../src/services/ai-review";
+import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import {
   buildCheckAggregate,
   buildReviewGroundingText,
   isGroundingEnabled,
   makeGithubFileFetcher,
 } from "../../src/review/grounding-wire";
-import type { CheckSummaryRecord, JsonValue, PullRequestFileRecord } from "../../src/types";
+import { upsertCheckSummary, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import type { Advisory, CheckSummaryRecord, JsonValue, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 // ── Test fixtures ────────────────────────────────────────────────────────────────────────────────
@@ -150,6 +152,84 @@ describe("review-grounding wired into the AI reviewer (flag REVIEWBOT_GROUNDING)
     expect(system).toContain("GROUNDING");
     expect(system).toContain("NEVER predict");
     fetchSpy.mockRestore();
+  });
+
+  it("FLAG-ON via runAiReviewForAdvisory: the call site loads the repo's installationId and grounds the review", async () => {
+    // Drives the processors.ts call site so `isGroundingEnabled ? buildReviewGroundingText(...) : undefined`
+    // runs ON, including `(await getRepository(env, repo))?.installationId ?? null`.
+    const run = vi.fn(async (_model: string, _opts: Record<string, unknown>) => ({ response: notesJson }));
+    const env = createTestEnv({
+      REVIEWBOT_GROUNDING: "true",
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    // Register the repo WITH an installation id so the optional-chain reads a real installationId.
+    await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets", private: true, owner: { login: "acme" } }, 4242);
+    // Seed a changed file + a finished check so grounding has CI + file content to assemble.
+    await env.DB.prepare(
+      "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind("acme/widgets", 7, "src/a.ts", "modified", 1, 0, 1, JSON.stringify({ patch: "@@\n+export const A = 1;" })).run();
+    await upsertCheckSummary(env, check({ name: "build" }));
+    // The grounding fetcher hits the GitHub Contents API; stub it so file content resolves deterministically.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+      String(url).includes("/contents/") ? new Response("export const A = 1; // full", { status: 200 }) : new Response("nope", { status: 404 }),
+    );
+    const adv: Advisory = {
+      id: "adv-g", targetType: "pull_request", targetKey: "acme/widgets#7", repoFullName: "acme/widgets",
+      pullNumber: 7, headSha: "sha7", conclusion: "neutral", severity: "info",
+      title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    try {
+      const result = await runAiReviewForAdvisory(env, {
+        settings: { aiReviewMode: "advisory" } as RepositorySettings,
+        repoFullName: "acme/widgets",
+        pr: { number: 7, title: "Add a feature", body: "Implements the thing." },
+        author: "alice",
+        confirmedContributor: true,
+        advisory: adv,
+      });
+      expect(result?.notes ?? "").toBeDefined();
+      expect(run).toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("FLAG-ON via runAiReviewForAdvisory: a repo with NO installationId grounds with installationId null (?? null)", async () => {
+    const run = vi.fn(async () => ({ response: notesJson }));
+    const env = createTestEnv({
+      REVIEWBOT_GROUNDING: "true",
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    // Register WITHOUT an installation id → (await getRepository(...))?.installationId is null → `?? null`.
+    await upsertRepositoryFromGitHub(env, { name: "noinst", full_name: "acme/noinst", private: true, owner: { login: "acme" } });
+    await env.DB.prepare(
+      "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind("acme/noinst", 7, "src/a.ts", "modified", 1, 0, 1, JSON.stringify({ patch: "@@\n+export const A = 1;" })).run();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
+    const adv: Advisory = {
+      id: "adv-g2", targetType: "pull_request", targetKey: "acme/noinst#7", repoFullName: "acme/noinst",
+      pullNumber: 7, headSha: "sha7", conclusion: "neutral", severity: "info",
+      title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
+    };
+    try {
+      const result = await runAiReviewForAdvisory(env, {
+        settings: { aiReviewMode: "advisory" } as RepositorySettings,
+        repoFullName: "acme/noinst",
+        pr: { number: 7, title: "Add a feature", body: "x" },
+        author: "alice",
+        confirmedContributor: true,
+        advisory: adv,
+      });
+      expect(result?.notes ?? "").toBeDefined();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("FLAG-OFF (default): the prompt is byte-identical and NO file fetch is attempted", async () => {

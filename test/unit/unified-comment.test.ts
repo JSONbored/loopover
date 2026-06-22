@@ -198,6 +198,34 @@ describe("renderUnifiedReviewComment", () => {
     const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, { extraCollapsibles: [{ title: "Empty section", body: "   " }] });
     expect(md).not.toContain("Empty section");
   });
+
+  it("escapes angle brackets from public renderer fields while preserving details wrappers", () => {
+    const md = renderUnifiedReviewComment(
+      {
+        ...base,
+        decision: "manual",
+        summary: "Safe summary </details><!-- hidden -->",
+        blockers: ["Blocker <script>alert(1)</script>"],
+        nits: ["Nit closes </details>"],
+        verdictReason: "needs <maintainer> review",
+      },
+      {
+        signals: [{ label: "Gate <row>", state: "fail", result: "Bad <tag>", evidence: "Evidence </td>" }],
+        extraCollapsibles: [{ title: "Extra <title>", body: "Body <!-- comment -->" }],
+      },
+    );
+
+    expect(md).toContain("Safe summary &lt;/details&gt;&lt;!-- hidden --&gt;");
+    expect(md).toContain("- Blocker &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(md).toContain("- Nit closes &lt;/details&gt;");
+    expect(md).toContain("needs &lt;maintainer&gt; review");
+    expect(md).toContain("| Gate &lt;row&gt; | ❌ Bad &lt;tag&gt; | Evidence &lt;/td&gt; |");
+    expect(md).toContain("<details><summary><b>Extra &lt;title&gt;</b></summary>");
+    expect(md).toContain("Body &lt;!-- comment --&gt;");
+    expect(md).toContain("<details><summary><b>Nits</b> — 1 non-blocking</summary>");
+    expect(md).not.toContain("Safe summary </details>");
+    expect(md).not.toContain("Body <!-- comment -->");
+  });
 });
 
 function reviewNote(rec: ReviewRecommendation, extra: Partial<ReviewNotes> = {}): DualReviewNote {

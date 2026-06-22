@@ -371,6 +371,38 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(preview.scoreEstimate.labelMultiplier).toBe(1);
   });
 
+  it("applies penalty label multipliers instead of flooring them to 1 (#994)", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    const penaltyOnly = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["refactor"] } });
+    const unmatched = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["unmatched"] } });
+    const bonusAndPenalty = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["bug", "refactor"] } });
+    const bonusOnly = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["bug"] } });
+    const customFallback = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier: 1.05, labelMultipliers: { bug: 1.2 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["unmatched"] },
+    });
+
+    expect(penaltyOnly.scoreEstimate.labelMultiplier).toBe(0.5);
+    expect(unmatched.scoreEstimate.labelMultiplier).toBe(1);
+    expect(bonusAndPenalty.scoreEstimate.labelMultiplier).toBe(1.2);
+    expect(bonusOnly.scoreEstimate.labelMultiplier).toBe(1.2);
+    expect(customFallback.scoreEstimate.labelMultiplier).toBe(1.05);
+    expect(penaltyOnly.scoreEstimate.estimatedMergedScore).toBeLessThan(bonusOnly.scoreEstimate.estimatedMergedScore);
+    expect(penaltyOnly.scoreEstimate.estimatedMergedScore).toBeCloseTo(
+      bonusOnly.scoreEstimate.estimatedMergedScore * (0.5 / 1.2),
+      5,
+    );
+  });
+
   it("gates linked-issue assumptions with branch eligibility evidence", () => {
     const baseInput = {
       repoFullName: repo.fullName,

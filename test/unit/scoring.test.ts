@@ -86,6 +86,22 @@ OSS_EMISSION_SHARE = 0.90
     expect(parsed.OSS_EMISSION_SHARE).toBe(0.9);
   });
 
+  it("parses underscore separators in the fractional part of upstream constants (#992)", () => {
+    const parsed = parsePythonNumberConstants(
+      `
+RATE = 0.000_001
+SCALE = 3.14_15
+VAL = 1_000.000_5
+BARE = .5_0
+`,
+      { knownOnly: false },
+    );
+    expect(parsed.RATE).toBe(0.000001);
+    expect(parsed.SCALE).toBe(3.1415);
+    expect(parsed.VAL).toBe(1000.0005);
+    expect(parsed.BARE).toBe(0.5);
+  });
+
   it("flags only scoring snapshots older than the freshness window as stale (#810)", () => {
     const now = Date.parse("2026-06-21T12:00:00.000Z");
     const justFresh = new Date(now - SCORING_SNAPSHOT_STALE_MS + 60_000).toISOString();

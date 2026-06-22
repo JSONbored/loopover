@@ -88,4 +88,90 @@ describe("fetchTaostatsSubnetIdentity (key-gated, fail-open)", () => {
     const f = jsonFetch([{ match: "taostats", status: 500 }]);
     expect(await fetchTaostatsSubnetIdentity({ TAOSTATS_API_KEY: "secret" }, 14, f)).toBeNull();
   });
+
+  it("returns null (fail-open) when the key is set but no row matches the netuid", async () => {
+    const f = jsonFetch([{ match: "taostats", body: { data: [{ netuid: 99, subnet_name: "Other" }] } }]);
+    expect(await fetchTaostatsSubnetIdentity({ TAOSTATS_API_KEY: "secret" }, 14, f)).toBeNull();
+  });
+
+  it("returns null (fail-open) for a non-integer netuid even with a key", async () => {
+    const f = jsonFetch([{ match: "taostats", body: { data: [{ netuid: 14, subnet_name: "X" }] } }]);
+    expect(await fetchTaostatsSubnetIdentity({ TAOSTATS_API_KEY: "secret" }, 1.5, f)).toBeNull();
+  });
+
+  it("falls back to summary when description is absent + drops blank strings", async () => {
+    const f = jsonFetch([
+      {
+        match: "taostats",
+        body: { data: [{ netuid: 14, subnet_name: "   ", github_repo: "", subnet_url: "https://x.ai", summary: "from summary" }] },
+      },
+    ]);
+    const id = await fetchTaostatsSubnetIdentity({ TAOSTATS_API_KEY: "secret" }, 14, f);
+    expect(id).toMatchObject({ netuid: 14, name: null, github: null, url: "https://x.ai", description: "from summary" });
+  });
+
+  it("returns null when the body is not valid JSON (json().catch → empty rows)", async () => {
+    const f = (async () => new Response("<<<not json>>>", { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    // payload?.data is undefined → rows [] → no row → null. Drives the json().catch + empty-rows path.
+    expect(await fetchTaostatsSubnetIdentity({ TAOSTATS_API_KEY: "secret" }, 14, f)).toBeNull();
+  });
+
+  it("fails open to null when the fetch itself throws (line 176 outer catch)", async () => {
+    const f = (async () => {
+      throw new Error("network exploded"); // fetchWithRetry exhausts retries + re-throws → outer try/catch
+    }) as unknown as typeof fetch;
+    expect(await fetchTaostatsSubnetIdentity({ TAOSTATS_API_KEY: "secret" }, 14, f)).toBeNull();
+  });
+});
+
+describe("fetchWithRetry behavior (via fetchSubnetRecord)", () => {
+  it("retries a thrown fetch error then succeeds (covers the catch + backoff retry path, lines 61-63)", async () => {
+    let calls = 0;
+    const f = (async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("transient network");
+      return new Response(JSON.stringify({ data: { subnet: { netuid: 3, name: "Recovered" } } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const r = await fetchSubnetRecord({}, 3, f);
+    expect(calls).toBe(2); // first threw, second succeeded
+    expect(r.status).toBe("exists");
+    expect(r.record).toMatchObject({ name: "Recovered" });
+  });
+
+  it("exhausts retries on a persistent thrown error → caught as 'error' (covers the final throw, line 65)", async () => {
+    let calls = 0;
+    const f = (async () => {
+      calls += 1;
+      throw new Error("always down");
+    }) as unknown as typeof fetch;
+    const r = await fetchSubnetRecord({}, 7, f);
+    expect(r.status).toBe("error"); // fetchWithRetry re-throws lastError → fetchSubnetRecord catch
+    expect(calls).toBe(3); // initial + 2 retries
+  });
+
+  it("re-throws a non-Error rejection as a generic Error (line 65 fallback)", async () => {
+    const f = (async () => {
+      throw "string failure"; // non-Error throw
+    }) as unknown as typeof fetch;
+    // The non-Error branch of `lastError instanceof Error ? ... : new Error(...)` is taken, then caught → error.
+    const r = await fetchSubnetRecord({}, 8, f);
+    expect(r.status).toBe("error");
+  });
+});
+
+describe("fetchSubnetRecord — array-shaped data envelope", () => {
+  it("reports exists from a non-empty array data envelope (line 103)", async () => {
+    const f = jsonFetch([{ match: "/subnets/22", body: { data: [{ netuid: 22, name: "ArrShape" }] } }]);
+    const r = await fetchSubnetRecord({}, 22, f);
+    expect(r.status).toBe("exists");
+    expect(r.record).toMatchObject({ name: "ArrShape" });
+  });
+
+  it("reports missing from an empty array data envelope", async () => {
+    const f = jsonFetch([{ match: "/subnets/23", body: { data: [] } }]);
+    expect((await fetchSubnetRecord({}, 23, f)).status).toBe("missing");
+  });
 });

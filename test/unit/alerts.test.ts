@@ -135,3 +135,120 @@ describe("runAnomalyAlerts guards", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+// ── runAnomalyAlerts send path ───────────────────────────────────────────────────────────────────────
+// gittensory's migrated `notification_deliveries` table is the badge read-model — a DIFFERENT schema than
+// the native port's claim SQL (project/target_id/notification_key). So we emulate the claim store: the
+// INSERT ... ON CONFLICT(project, target_id, notification_key) DO NOTHING returns changes=1 the first time a
+// (project, target_id, notification_key) tuple is seen and changes=0 on a repeat (the per-hour throttle).
+function claimEnv(extra: Record<string, unknown> = {}): Env {
+  const seen = new Set<string>();
+  return {
+    ...extra,
+    DB: {
+      prepare: (_sql: string) => ({
+        bind: (...binds: unknown[]) => ({
+          run: async () => {
+            // bind order: id, project (slug), notification_key. target_id is the literal in the SQL
+            // ('__healthcheck__' / '__anomaly__') — fold it in via the key text so the two claims never collide.
+            const key = `${String(binds[1])}::${String(binds[2])}`;
+            const firstTime = !seen.has(key);
+            seen.add(key);
+            return { meta: { changes: firstTime ? 1 : 0 } };
+          },
+        }),
+      }),
+    },
+  } as unknown as Env;
+}
+
+const WEBHOOK = "https://discord.com/api/webhooks/123/abc";
+
+const anomalousHealth: AgentHealth = { ...healthy, failed: 1, dlqCount: 3, dlqTargets: [{ number: 9, repo: "o/r", verdict: null, lastError: "storm" }] };
+const driftCal: Calibration = {
+  currentFloor: 0.9, mergedCount: 50, revertedCount: 2, keptAvgConfidence: 0.95, revertedMaxConfidence: 0.93,
+  recommendedFloor: 0.95, note: "raise",
+  closesByReason: [{ reasonCode: "source_unfetchable", closes: 10, disputed: 2 }],
+  disputedCloseCount: 2,
+};
+
+describe("runAnomalyAlerts — send path", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("POSTs a Discord embed when anomalies fire, resolving the webhook from discordWebhookUrl", async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = { slug: "ac", name: "Awesome", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: WEBHOOK } as AlertAgentConfig;
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => anomalousHealth, computeCalibration: async () => driftCal };
+
+    await runAnomalyAlerts(claimEnv(), config, deps);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(WEBHOOK);
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(String(init.body)) as { username: string; embeds: Array<{ title: string; description: string }> };
+    expect(body.username).toBe("Awesome"); // config.name preferred over slug
+    expect(body.embeds[0]?.title).toContain("ac: health anomaly");
+    expect(body.embeds[0]?.description).toMatch(/calibration drift|DEAD-LETTERED|permanently failed/);
+  });
+
+  it("resolves the webhook from a named secret (config.secrets.discordWebhook → env[name])", async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = { slug: "mg", features: { discordNotify: true }, secrets: { discordWebhook: "MG_DISCORD" } } as AlertAgentConfig;
+    const env = claimEnv({ MG_DISCORD: WEBHOOK });
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => anomalousHealth, computeCalibration: async () => driftCal };
+
+    await runAnomalyAlerts(env, config, deps);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(WEBHOOK);
+  });
+
+  it("does NOT fetch when there are no anomalies (healthy snapshot behind the claim)", async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = { slug: "ac", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: WEBHOOK } as AlertAgentConfig;
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => healthy, computeCalibration: async () => ({ ...driftCal, recommendedFloor: null, disputedCloseCount: 0 }) };
+    await runAnomalyAlerts(claimEnv(), config, deps);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("throttles per condition-set: a SECOND run the same hour does not re-POST (anomaly claim conflicts)", async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = { slug: "ac", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: WEBHOOK } as AlertAgentConfig;
+    // Health check claim differs from the anomaly claim (distinct target_id text), so to exercise the
+    // anomaly-key short-circuit specifically, let the health claim succeed both times but the anomaly
+    // claim conflict the 2nd time. The shared `seen` set in claimEnv does exactly that across both calls.
+    const env = claimEnv();
+    let healthCalls = 0;
+    const deps: AnomalyAlertDeps = {
+      computeAgentHealth: async () => { healthCalls += 1; return anomalousHealth; },
+      computeCalibration: async () => driftCal,
+    };
+    await runAnomalyAlerts(env, config, deps); // 1st: health claim + anomaly claim succeed → POST
+    await runAnomalyAlerts(env, config, deps); // 2nd: health claim already taken → returns before computing health
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(healthCalls).toBe(1); // the hourly health claim short-circuited the 2nd tick before computing
+  });
+
+  it("logs and does NOT reject when the webhook fetch throws", async () => {
+    const fetchSpy = vi.fn(async () => { throw new Error("network down"); });
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = { slug: "ac", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: WEBHOOK } as AlertAgentConfig;
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => anomalousHealth, computeCalibration: async () => driftCal };
+    await expect(runAnomalyAlerts(claimEnv(), config, deps)).resolves.toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an invalid (non-discord-host) webhook before computing health", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const config = { slug: "ac", features: { discordNotify: true }, secrets: {}, discordWebhookUrl: "https://evil.example.com/api/webhooks/1/2" } as AlertAgentConfig;
+    let computed = false;
+    const deps: AnomalyAlertDeps = { computeAgentHealth: async () => { computed = true; return anomalousHealth; }, computeCalibration: async () => driftCal };
+    await runAnomalyAlerts(claimEnv(), config, deps);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(computed).toBe(false); // bailed at the webhook-validity guard, never reached the claim/health
+  });
+});

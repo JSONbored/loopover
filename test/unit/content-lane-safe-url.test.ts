@@ -40,6 +40,32 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("not a url")).toBe(false);
     expect(isSafeHttpUrl("")).toBe(false);
   });
+
+  it("accepts public IPv4 literals (the non-private fall-through)", () => {
+    // Exercises ipv4IsPrivateOrLocal's final `return false` for a routable public IP.
+    expect(isSafeHttpUrl("https://8.8.8.8")).toBe(true);
+    expect(isSafeHttpUrl("https://1.1.1.1")).toBe(true);
+    // 172.x outside the 16-31 private band is public.
+    expect(isSafeHttpUrl("https://172.15.0.1")).toBe(true);
+    expect(isSafeHttpUrl("https://172.32.0.1")).toBe(true);
+  });
+
+  it("rejects an IPv4-mapped IPv6 in ::ffff:HHHH:HHHH hex form pointing at a private IP", () => {
+    // ::ffff:7f00:0001 == 127.0.0.1 — exercises the hex-mapped IPv6 branch.
+    expect(isSafeHttpUrl("https://[::ffff:7f00:0001]")).toBe(false);
+    // ::ffff:c0a8:0101 == 192.168.1.1
+    expect(isSafeHttpUrl("https://[::ffff:c0a8:0101]")).toBe(false);
+  });
+
+  it("accepts an IPv4-mapped IPv6 (hex form) pointing at a public IP", () => {
+    // ::ffff:0808:0808 == 8.8.8.8 — hex branch returns the public verdict.
+    expect(isSafeHttpUrl("https://[::ffff:0808:0808]")).toBe(true);
+  });
+
+  it("accepts a public IPv6 literal (the IPv6 non-private fall-through)", () => {
+    // Exercises ipv6IsPrivateOrLocal's final `return false` (not loopback/ULA/link-local/mapped).
+    expect(isSafeHttpUrl("https://[2001:4860:4860::8888]")).toBe(true);
+  });
 });
 
 describe("isSafeEndpointUrl", () => {
@@ -57,5 +83,10 @@ describe("isSafeEndpointUrl", () => {
   it("rejects non-ws/https protocols", () => {
     expect(isSafeEndpointUrl("http://example.com")).toBe(false);
     expect(isSafeEndpointUrl("ftp://example.com")).toBe(false);
+  });
+
+  it("returns false for unparseable endpoint input (the URL-parse catch)", () => {
+    expect(isSafeEndpointUrl("not a url")).toBe(false);
+    expect(isSafeEndpointUrl("")).toBe(false);
   });
 });

@@ -2,18 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   bm25Rerank,
   bm25Scores,
+  type BoundStatement,
   chunkFile,
   classifyRepoFile,
+  countRepoChunks,
+  deleteChunksForPaths,
   embedTexts,
   filePriority,
   formatRetrievedContext,
   type InferenceAdapter,
   isIndexablePath,
+  type RagChunk,
   type RagInfra,
   ragNamespace,
+  readChunkTexts,
   retrieveContext,
   type StorageAdapter,
+  upsertChunks,
   type VectorAdapter,
+  type VectorUpsert,
 } from "../../src/review/rag";
 
 // ── Adapter stub helpers (the injected infra replaces reviewbot's raw env bindings) ───────────────
@@ -216,5 +223,172 @@ describe("rag: fail-safe (never throws; degrades to no context)", () => {
     const out = await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "refactor the auth token verification and add coverage", minScore: 0.5 });
     expect(out).toContain("src/hit.ts");
     expect(out).not.toContain("src/weak.ts"); // below minScore → dropped (was injected before the threshold existed)
+  });
+});
+
+// ── Index write (upsertChunks) ─────────────────────────────────────────────────────────────────────
+describe("rag: upsertChunks (embed + vector upsert + chunk-text store)", () => {
+  const chunks: RagChunk[] = [
+    { id: "ns|src/a.ts::0", path: "src/a.ts", chunkIndex: 0, kind: "code", text: "export const x = 1;" },
+  ];
+
+  it("embeds, upserts vectors + metadata, persists chunk text, and returns the count", async () => {
+    const upserted: VectorUpsert[][] = [];
+    const vector = { upsert: async (v: VectorUpsert[]) => { upserted.push(v); } } as unknown as VectorAdapter;
+    let batched = 0;
+    const storage = {
+      prepare: () => ({ bind: () => ({ run: async () => undefined }) as unknown as BoundStatement }),
+      batch: async (stmts: BoundStatement[]) => { batched = stmts.length; },
+    } as unknown as StorageAdapter;
+    const n = await upsertChunks({ storage, vector, inference: ai1024 }, "gittensory", "o/r", chunks);
+    expect(n).toBe(1);
+    expect(upserted).toHaveLength(1);
+    expect(upserted[0]?.[0]).toMatchObject({ id: "ns|src/a.ts::0", namespace: ragNamespace("gittensory", "o/r"), metadata: { path: "src/a.ts", chunkIndex: 0, kind: "code" } });
+    expect((upserted[0]?.[0]?.values ?? []).length).toBe(1024);
+    expect(batched).toBe(1); // one INSERT statement per chunk handed to db.batch
+  });
+
+  it("returns 0 with no vector / no inference / empty chunks (the fail-safe guard)", async () => {
+    const vector = { upsert: async () => undefined } as unknown as VectorAdapter;
+    const storage = storageStub();
+    expect(await upsertChunks({ storage, inference: ai1024 }, "p", "o/r", chunks)).toBe(0); // no vector
+    expect(await upsertChunks({ storage, vector }, "p", "o/r", chunks)).toBe(0); // no inference
+    expect(await upsertChunks({ storage, vector, inference: ai1024 }, "p", "o/r", [])).toBe(0); // empty
+  });
+
+  it("returns 0 when embedding yields nothing (a degraded inference response)", async () => {
+    const vector = { upsert: async () => undefined } as unknown as VectorAdapter;
+    const badAi: InferenceAdapter = { run: async () => ({ data: null }) }; // null data → embedTexts returns null
+    expect(await upsertChunks({ storage: storageStub(), vector, inference: badAi }, "p", "o/r", chunks)).toBe(0);
+  });
+
+  it("returns 0 (no throw) when the vector upsert fails (#fail-safe)", async () => {
+    const vector = { upsert: async () => { throw new Error("vectorize down"); } } as unknown as VectorAdapter;
+    expect(await upsertChunks({ storage: storageStub(), vector, inference: ai1024 }, "p", "o/r", chunks)).toBe(0);
+  });
+});
+
+// ── Incremental delete (deleteChunksForPaths) ────────────────────────────────────────────────────────
+describe("rag: deleteChunksForPaths (incremental re-index of changed files)", () => {
+  it("resolves ids for the paths then deletes them from the vector index + storage", async () => {
+    const deletedIds: string[][] = [];
+    const vector = { deleteByIds: async (ids: string[]) => { deletedIds.push(ids); } } as unknown as VectorAdapter;
+    let deleteRuns = 0;
+    const storage = {
+      prepare: (sql: string) => ({
+        bind: () => ({
+          all: async () => ({ results: sql.includes("SELECT id") ? [{ id: "ns|src/a.ts::0" }, { id: "ns|src/b.ts::0" }] : [] }),
+          run: async () => { if (sql.startsWith("DELETE")) deleteRuns += 1; },
+        }) as unknown as BoundStatement,
+      }),
+      batch: async () => undefined,
+    } as unknown as StorageAdapter;
+    await deleteChunksForPaths({ storage, vector }, "p", "o/r", ["src/a.ts", "src/b.ts"]);
+    expect(deletedIds).toEqual([["ns|src/a.ts::0", "ns|src/b.ts::0"]]);
+    expect(deleteRuns).toBe(1);
+  });
+
+  it("early-returns for an empty path list (no storage I/O)", async () => {
+    let touched = false;
+    const storage = { prepare: () => { touched = true; return { bind: () => ({}) }; }, batch: async () => undefined } as unknown as StorageAdapter;
+    await deleteChunksForPaths({ storage }, "p", "o/r", []);
+    expect(touched).toBe(false);
+  });
+
+  it("returns early when no ids resolve (nothing to delete)", async () => {
+    let deleted = false;
+    const vector = { deleteByIds: async () => { deleted = true; } } as unknown as VectorAdapter;
+    const storage = storageStub({ rows: [] }); // SELECT id → []
+    await deleteChunksForPaths({ storage, vector }, "p", "o/r", ["src/a.ts"]);
+    expect(deleted).toBe(false);
+  });
+
+  it("swallows a storage failure (fail-safe; never throws)", async () => {
+    const storage = { prepare: () => { throw new Error("d1 down"); }, batch: async () => undefined } as unknown as StorageAdapter;
+    await expect(deleteChunksForPaths({ storage }, "p", "o/r", ["src/a.ts"])).resolves.toBeUndefined();
+  });
+});
+
+// ── countRepoChunks / embedTexts / readChunkTexts catch paths ────────────────────────────────────────
+describe("rag: storage/inference catch paths return their fail-safe defaults", () => {
+  it("countRepoChunks returns 0 when the storage read throws", async () => {
+    const storage = { prepare: () => { throw new Error("d1 down"); }, batch: async () => undefined } as unknown as StorageAdapter;
+    expect(await countRepoChunks(storage, "p", "o/r")).toBe(0);
+  });
+
+  it("embedTexts returns null when inference throws", async () => {
+    const inference: InferenceAdapter = { run: async () => { throw new Error("ai down"); } };
+    expect(await embedTexts(inference, ["hi"])).toBeNull();
+  });
+
+  it("readChunkTexts returns an empty Map when the storage read throws", async () => {
+    const storage = { prepare: () => { throw new Error("d1 down"); }, batch: async () => undefined } as unknown as StorageAdapter;
+    const map = await readChunkTexts(storage, ["id-1"]);
+    expect(map.size).toBe(0);
+  });
+
+  it("readChunkTexts short-circuits on an empty id list", async () => {
+    expect((await readChunkTexts(storageStub(), [])).size).toBe(0);
+  });
+});
+
+// ── JS/TS chunker boundary kinds + oversized-unit newline split ───────────────────────────────────────
+describe("rag: chunkJsTs boundary kinds + oversized single unit (#282)", () => {
+  it("tags a leading `class` boundary as 'class' and a plain function/const as 'function'", () => {
+    // First unit a class, a second smaller-than-budget unit forces >1 segment so chunkJsTs runs.
+    const classBody = Array.from({ length: 120 }, (_, i) => `  m${i}() { return ${i}; } // padding aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`).join("\n");
+    const fnBody = Array.from({ length: 120 }, (_, i) => `  const v${i} = ${i}; // padding bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`).join("\n");
+    const text = `class Foo {\n${classBody}\n}\nconst helper = function () {\n${fnBody}\n};\n`;
+    const chunks = chunkFile("src/c.ts", text); // two units, each ~6k → packs into >1 chunk
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0]?.boundary).toBe("class"); // non-exported `class X` → class
+    expect(chunks.some((c) => c.boundary === "function")).toBe(true); // the `const helper = function` unit → function
+  });
+
+  it("newline-splits an OVERSIZED single logical unit so no chunk exceeds the budget (#282)", () => {
+    // One function body > CHUNK_CHARS(16000). Add a small second unit so segments.length > 1 (chunkJsTs runs);
+    // the big unit then takes the oversized-segment newline-split branch.
+    const huge = Array.from({ length: 700 }, (_, i) => `  const z${i} = ${i}; // ${"x".repeat(40)}`).join("\n"); // > 16000 chars
+    // a second boundary-matching unit so segments.length > 1 (chunkJsTs runs); the big unit then hits
+    // the oversized-segment newline-split branch.
+    const text = `function big() {\n${huge}\n}\nconst tail = function () { return 1; };\n`;
+    const chunks = chunkFile("src/huge.ts", text);
+    expect(chunks.length).toBeGreaterThan(1);
+    // the oversized unit was split into newline sub-chunks, all tagged 'function', none over the budget
+    expect(chunks.some((c) => c.boundary === "function")).toBe(true);
+    expect(chunks.every((c) => c.text.length <= 16000)).toBe(true);
+    chunks.forEach((c, i) => expect(c.id).toBe(`src/huge.ts::${i}`)); // ids stay dense + stable across the split
+  });
+});
+
+describe("rag: retrieveContext outer catch", () => {
+  it("returns '' (never throws) when the vector query throws AFTER a long-enough query reaches it", async () => {
+    // queryText >= MIN_QUERY_CHARS(40) so it gets PAST the short-query guard into the try, where query throws.
+    const vector = { query: async () => { throw new Error("vectorize query boom"); } } as unknown as VectorAdapter;
+    const infra: RagInfra = { storage: storageStub({ count: 9 }), vector, inference: ai1024 }; // warm index → reaches the query
+    const out = await retrieveContext(infra, { project: "catchp", repo: "o/catch-repo", queryText: "this is a sufficiently long query to clear the min length guard" });
+    expect(out).toBe("");
+  });
+});
+
+describe("rag: classifyRepoFile unknown extension", () => {
+  it("skips an unknown/unrecognized extension", () => {
+    expect(classifyRepoFile("foo.xyz")).toBe("skip");
+    expect(isIndexablePath("foo.xyz")).toBe(false);
+  });
+});
+
+describe("rag: formatRetrievedContext budget omission", () => {
+  it("omits trailing chunks once the budget is exceeded and notes the omission", () => {
+    const big = "y".repeat(8000);
+    const chunks = [
+      { path: "src/a.ts", text: big },
+      { path: "src/b.ts", text: big }, // combined > MAX_CONTEXT_CHARS(14000) → second is omitted
+      { path: "src/c.ts", text: big },
+    ];
+    const out = formatRetrievedContext(chunks);
+    expect(out).toContain("src/a.ts");
+    expect(out).toContain("additional related context omitted to stay within budget");
+    expect(out).not.toContain("src/c.ts"); // never reached after the budget break
   });
 });

@@ -3,11 +3,17 @@ import {
   assessCandidateDocument,
   assessFreshness,
   assessProviderDocument,
+  candidateRegistryKey,
   classifyPrScope,
   computeGrounding,
   containsSecretLikeText,
   deriveRegistryIdentityTokens,
+  functionalRequired,
+  isAllowedChain,
   isBaseLayerKind,
+  isDirectSubmissionScope,
+  isInternalAutomationBranch,
+  isNonEmptyStructuredBody,
   netuidGroundingRegex,
   normalizePublicUrl,
   probeFunctionalSurface,
@@ -239,5 +245,204 @@ describe("isBaseLayerKind", () => {
   it("recognizes the chain base-layer kinds", () => {
     expect(isBaseLayerKind("subtensor-wss")).toBe(true);
     expect(isBaseLayerKind("website")).toBe(false);
+  });
+});
+
+describe("isInternalAutomationBranch", () => {
+  it("recognizes noise-bot branch prefixes (case/whitespace-insensitive)", () => {
+    expect(isInternalAutomationBranch("renovate/lock-file-maintenance")).toBe(true);
+    expect(isInternalAutomationBranch("  Dependabot/npm_and_yarn/x  ")).toBe(true);
+    expect(isInternalAutomationBranch("github-actions/sync")).toBe(true);
+    expect(isInternalAutomationBranch("reviewbot/auto")).toBe(true);
+  });
+  it("treats human + codex branches (and undefined) as NOT automation", () => {
+    expect(isInternalAutomationBranch("feature/add-subnet")).toBe(false);
+    expect(isInternalAutomationBranch("codex/fix-bug")).toBe(false);
+    expect(isInternalAutomationBranch(undefined)).toBe(false);
+  });
+});
+
+describe("isNonEmptyStructuredBody", () => {
+  it("is false for a blank body or non-string body", () => {
+    expect(isNonEmptyStructuredBody("application/json", "   ")).toBe(false);
+    expect(isNonEmptyStructuredBody("application/json", 42)).toBe(false);
+    expect(isNonEmptyStructuredBody(123, "{}")).toBe(false); // non-string content-type → ct ""
+  });
+  it("treats a non-empty JSON object/array/scalar as substantive", () => {
+    expect(isNonEmptyStructuredBody("application/json", '{"a":1}')).toBe(true);
+    expect(isNonEmptyStructuredBody("application/vnd.api+json", "[1,2]")).toBe(true);
+    expect(isNonEmptyStructuredBody("application/json", "42")).toBe(true); // a JSON scalar
+  });
+  it("treats an EMPTY JSON object/array as not substantive", () => {
+    expect(isNonEmptyStructuredBody("application/json", "{}")).toBe(false);
+    expect(isNonEmptyStructuredBody("application/json", "[]")).toBe(false);
+    expect(isNonEmptyStructuredBody("application/json", "null")).toBe(false);
+  });
+  it("returns false when a JSON content-type carries invalid JSON", () => {
+    expect(isNonEmptyStructuredBody("application/json", "<<not json>>")).toBe(false);
+  });
+  it("accepts non-blank xml/yaml/csv/event-stream bodies by content-type", () => {
+    expect(isNonEmptyStructuredBody("application/xml", "<root/>")).toBe(true);
+    expect(isNonEmptyStructuredBody("text/csv", "a,b")).toBe(true);
+    expect(isNonEmptyStructuredBody("text/event-stream", "data: x")).toBe(true);
+    expect(isNonEmptyStructuredBody("text/html", "<p>x</p>")).toBe(false); // HTML uses the length heuristic elsewhere
+  });
+});
+
+describe("functionalRequired + isAllowedChain", () => {
+  it("requires a functional surface only for openapi/subnet-api/sse", () => {
+    expect(functionalRequired("openapi")).toBe(true);
+    expect(functionalRequired("subnet-api")).toBe(true);
+    expect(functionalRequired("sse")).toBe(true);
+    expect(functionalRequired("website")).toBe(false);
+  });
+  it("accepts bittensor/subtensor-family chain names, rejects others/blank", () => {
+    expect(isAllowedChain("Bittensor Finney")).toBe(true);
+    expect(isAllowedChain("subtensor")).toBe(true);
+    expect(isAllowedChain("nakamoto")).toBe(true);
+    expect(isAllowedChain("ethereum")).toBe(false);
+    expect(isAllowedChain("")).toBe(false);
+    expect(isAllowedChain(null)).toBe(false);
+  });
+});
+
+describe("isDirectSubmissionScope", () => {
+  it("is true only for the direct candidate/provider scopes", () => {
+    expect(isDirectSubmissionScope("direct-candidate")).toBe(true);
+    expect(isDirectSubmissionScope("direct-provider")).toBe(true);
+    expect(isDirectSubmissionScope("mixed-files")).toBe(false);
+    expect(isDirectSubmissionScope("not-direct-submission")).toBe(false);
+  });
+});
+
+describe("registry-logic edge branches (additional coverage)", () => {
+  it("computeGrounding grounds via huggingface owner tokens + host-referenced-in-source", () => {
+    // ownerTokens huggingface branch (datasets/models/spaces prefix stripped) + sourceText.includes(targetHost)
+    const candidate = {
+      netuid: 5,
+      url: "https://huggingface.co/cacheonlabs/model",
+      source_url: "https://docs.example.org/about",
+    };
+    const target = { title: "t", snippet: "no number" };
+    const source = { title: "s", snippet: "huggingface.co hosts cacheonlabs and references huggingface.co/cacheonlabs/model" };
+    const g = computeGrounding(candidate, target, source);
+    expect(g.ownerMentioned).toBe(true); // "cacheonlabs" token (≥4 chars) appears in evidence
+  });
+
+  it("harvests org tokens from source_repo + domain labels from a links array, ignoring aggregators", () => {
+    const tokens = deriveRegistryIdentityTokens({
+      name: "Byzantium",
+      native_name: "Byzantium AI",
+      source_repo: "https://github.com/byzantiumlabs/core", // ownerTokens path → "byzantiumlabs"
+      links: [
+        { url: "https://aurora.net/home" }, // links domain-label path → "aurora"
+        "https://taostats.io/sn/5", // aggregator label dropped
+        { nourl: true }, // no url → skipped (covers the missing-url branch)
+      ],
+    });
+    expect(tokens).toContain("byzantium");
+    expect(tokens).toContain("byzantiumai");
+    expect(tokens).toContain("byzantiumlabs"); // from source_repo ownerTokens
+    expect(tokens).toContain("aurora"); // from the links domain label
+    expect(tokens).not.toContain("taostats");
+    expect(tokens).not.toContain("github"); // aggregator/code-host label excluded
+  });
+
+  it("deriveRegistryIdentityTokens returns [] for a null/non-object record", () => {
+    expect(deriveRegistryIdentityTokens(null)).toEqual([]);
+    expect(deriveRegistryIdentityTokens(undefined)).toEqual([]);
+  });
+
+  it("surfaceMatchesRegistryIdentity matches on an owner-token (repo org), not just the domain label", () => {
+    // domainLabel of github.com is the aggregator-excluded 'github', so this must match via ownerTokens.
+    expect(surfaceMatchesRegistryIdentity("https://github.com/cacheonlabs/repo", ["cacheonlabs"])).toBe(true);
+    // No matching token at all → false (exercises the loop-falls-through return).
+    expect(surfaceMatchesRegistryIdentity("https://github.com/someoneelse/repo", ["cacheonlabs"])).toBe(false);
+  });
+
+  it("assessProviderDocument closes a non-object/null document as malformed-json", () => {
+    const r = assessProviderDocument(null);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("malformed-json");
+  });
+
+  it("assessProviderDocument closes a secret-bearing provider profile", () => {
+    const r = assessProviderDocument({ provider: { id: "a", name: "A", website_url: "https://a.example", note: "ghp_" + "z".repeat(25) } });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("secret-or-credential");
+  });
+
+  it("assessProviderDocument accepts a FLAT (non-enveloped) provider object", () => {
+    const r = assessProviderDocument({ id: "flat", name: "Flat Co", website_url: "https://flat.example" });
+    expect(r.ok).toBe(true);
+    expect(r.provider?.id).toBe("flat");
+  });
+
+  it("normalizePublicUrl drops tracking params + sorts the query deterministically", () => {
+    const a = normalizePublicUrl("https://x.example/p?b=2&utm_source=q&a=1&fbclid=z");
+    const b = normalizePublicUrl("https://x.example/p?a=1&b=2");
+    expect(a).toBe(b);
+  });
+
+  it("assessCandidateDocument closes a non-integer netuid as unsupported-shape", () => {
+    const r = assessCandidateDocument({
+      candidate: { netuid: "abc", kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true },
+    });
+    expect(r.verdict).toBe("closed");
+    expect(r.reason).toBe("unsupported-shape");
+    expect(r.summary).toContain("integer");
+  });
+
+  it("assessCandidateDocument closes an unsupported kind", () => {
+    const r = assessCandidateDocument({
+      candidate: { netuid: 14, kind: "totally-made-up", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true },
+    });
+    expect(r.verdict).toBe("closed");
+    expect(r.reason).toBe("unsupported-shape");
+    expect(r.summary).toContain("not supported");
+  });
+
+  it("assessCandidateDocument closes an unsafe source URL even when the surface URL is fine", () => {
+    const r = assessCandidateDocument({
+      candidate: { netuid: 14, kind: "website", url: "https://x.example", source_url: "http://127.0.0.1/x", public_safe: true },
+    });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("source URL");
+  });
+
+  it("assessCandidateDocument validates a base-layer kind URL via the endpoint (wss) check", () => {
+    const r = assessCandidateDocument({
+      candidate: { netuid: 14, kind: "subtensor-wss", url: "wss://entrypoint.example/ws", source_url: "https://github.com/a/b", public_safe: true },
+    });
+    expect(r.verdict).toBe("merged");
+  });
+
+  it("assessCandidateDocument closes a base-layer kind with an unsafe (non-wss/https) endpoint", () => {
+    const r = assessCandidateDocument({
+      candidate: { netuid: 14, kind: "archive", url: "ws://127.0.0.1/ws", source_url: "https://github.com/a/b", public_safe: true },
+    });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("HTTPS or WSS");
+  });
+
+  it("candidateRegistryKey builds netuid|kind|normalizedUrl, null on missing parts", () => {
+    expect(candidateRegistryKey({ netuid: 14, kind: "openapi", url: "https://www.A.example/x/" })).toBe(
+      "14|openapi|https://a.example/x",
+    );
+    expect(candidateRegistryKey({ netuid: "x", kind: "openapi", url: "https://a.example" })).toBeNull();
+    expect(candidateRegistryKey({ netuid: 14, url: "https://a.example" })).toBeNull(); // no kind
+    expect(candidateRegistryKey({ netuid: 14, kind: "openapi", url: "not-a-url" })).toBeNull();
+    expect(candidateRegistryKey(null)).toBeNull();
+  });
+
+  it("registryDedupKeys / registryUrls return empty for an invalid candidate", () => {
+    expect(registryDedupKeys({ netuid: "x", kind: "openapi", url: "https://a.example" }).size).toBe(0);
+    expect(registryDedupKeys(null).size).toBe(0);
+    expect(registryUrls({ url: "not-a-url" }).size).toBe(0);
+  });
+
+  it("normalizePublicUrl keeps ws/wss endpoints and strips the wss default port", () => {
+    expect(normalizePublicUrl("wss://node.example:443/ws")).toBe("wss://node.example/ws");
+    expect(normalizePublicUrl("ws://node.example:80/ws")).toBe("ws://node.example/ws");
   });
 });

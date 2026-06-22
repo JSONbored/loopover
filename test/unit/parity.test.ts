@@ -207,4 +207,51 @@ describe("computeGateEval — source scoping for per-system standalone accuracy 
     expect(boundSql).not.toContain("AND source = ?");
     expect(bound).toHaveLength(1); // only fromIso
   });
+
+  it("folds the prediction-vs-outcome confusion matrix into per-project precisions", async () => {
+    // A stub D1 returning the gd⨝po cells directly (the self-join is exercised against real SQL in prod;
+    // here we drive the FOLD): merge-correct/merge-false/close-correct/close-false/hold buckets.
+    const cells = [
+      { project: "p", pred: "merge", truth: "merged", n: 8 }, // would-merge, human merged → confirmed
+      { project: "p", pred: "merge", truth: "closed", n: 2 }, // would-merge, human closed → the dangerous false
+      { project: "p", pred: "close", truth: "closed", n: 5 }, // would-close, human closed → confirmed
+      { project: "p", pred: "close", truth: "merged", n: 1 }, // would-close, human merged → false-close
+      { project: "p", pred: "hold", truth: "merged", n: 3 }, // hold → neither a merge nor a close prediction
+    ];
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: cells }) }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.project).toBe("p");
+    expect(r.wouldMerge).toBe(10);
+    expect(r.mergeConfirmed).toBe(8);
+    expect(r.mergeFalse).toBe(2);
+    expect(r.mergePrecision).toBeCloseTo(0.8); // 8/10
+    expect(r.wouldClose).toBe(6);
+    expect(r.closeConfirmed).toBe(5);
+    expect(r.closeFalse).toBe(1);
+    expect(r.closePrecision).toBeCloseTo(5 / 6);
+    expect(r.hold).toBe(3);
+    expect(r.decided).toBe(19);
+    expect(out.hasSignal).toBe(true); // decided(19) >= MIN_DECIDED_FOR_SIGNAL(10)
+  });
+
+  it("is fail-safe → empty report when the eval query throws", async () => {
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => { throw new Error("d1 down"); } }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    expect(out.rows).toEqual([]);
+    expect(out.hasSignal).toBe(false);
+  });
+
+  it("leaves precisions null and hasSignal false when a project has no merge/close predictions or too few decided", async () => {
+    const cells = [{ project: "q", pred: "hold", truth: "merged", n: 4 }]; // only holds, 4 decided
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: cells }) }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    const r = out.rows[0];
+    expect(r?.mergePrecision).toBeNull(); // no would-merge → null, not 0/0
+    expect(r?.closePrecision).toBeNull();
+    expect(r?.hold).toBe(4);
+    expect(out.hasSignal).toBe(false); // 4 < MIN_DECIDED_FOR_SIGNAL(10)
+  });
 });

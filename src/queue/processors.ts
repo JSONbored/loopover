@@ -103,6 +103,7 @@ import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-ex
 import { selectRegateCandidates } from "../settings/agent-sweep";
 import { planAgentMaintenanceActions } from "../settings/agent-actions";
 import { executeAgentMaintenanceActions } from "../services/agent-action-executor";
+import { processSubmitDraft } from "../services/draft";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
@@ -330,6 +331,10 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);
+      return;
+    case "submit-draft":
+      // Public OAuth draft-submission (REVIEWBOT_DRAFT). No-ops internally when the flag is off.
+      await processSubmitDraft(env, message.draftId);
       return;
   }
 }

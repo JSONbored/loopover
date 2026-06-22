@@ -147,6 +147,13 @@ export type JobMessage =
       // ON (index.ts), so flag-OFF this job never exists.
       type: "selftune";
       requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      // Public OAuth draft-submission flow (REVIEWBOT_DRAFT): fork the content repo with the
+      // contributor's token + open the PR. Enqueued by the draft OAuth callback.
+      type: "submit-draft";
+      requestedBy: "api" | "test";
+      draftId: string;
     };
 
 export type GitHubWebhookPayload = {

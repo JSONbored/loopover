@@ -135,6 +135,7 @@ import {
   startAgentRun,
 } from "../services/agent-orchestrator";
 import { buildRemediationPlan } from "../services/remediation-plan";
+import { handleDraftCreate, handleDraftOAuthCallback, handleDraftStatus } from "../services/draft";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
@@ -903,6 +904,15 @@ export function createApp() {
       return c.redirect(authRedirectWithError(c.env, message), 302);
     }
   });
+
+  // Public OAuth draft-submission flow (REVIEWBOT_DRAFT), ported from reviewbot. When the flag is OFF
+  // every handler returns 404, so the endpoints are effectively absent (the router still registers them
+  // but they short-circuit). The static `/auth/callback` route is registered before the `:id` param
+  // route so it is not captured as a draft id. These are public (unauthenticated) by design — submission
+  // is the unauthenticated entry point; the OAuth state hash + token exchange are the trust boundary.
+  app.post("/v1/drafts", (c) => handleDraftCreate(c.req.raw, c.env));
+  app.get("/v1/drafts/auth/callback", (c) => handleDraftOAuthCallback(c.req.raw, c.env));
+  app.get("/v1/drafts/:id", (c) => handleDraftStatus(c.req.raw, c.env, c.req.param("id")));
 
   app.post("/v1/auth/github/device/start", async (c) => {
     try {
@@ -4740,6 +4750,9 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/public/subnet-interface") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
+  // Public OAuth draft-submission flow (REVIEWBOT_DRAFT): the submission entry points are unauthenticated
+  // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
+  if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
   if (path.startsWith("/v1/internal/")) return false;

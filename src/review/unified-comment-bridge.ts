@@ -21,6 +21,7 @@
 import type { AdvisoryFinding } from "../types";
 import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
 import type { PublicPrPanelSignalRow } from "../signals/engine";
+import type { CaptureRoute } from "./visual/capture";
 // Single-source the panel marker from its canonical home (the upsert reads it there); re-export so existing
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
 // verbatim or `createOrUpdatePrIntelligenceComment` posts a DUPLICATE instead of updating in place.
@@ -195,7 +196,42 @@ export type UnifiedCommentBridgeArgs = {
   extraCollapsibles?: UnifiedCollapsible[] | undefined;
   /** Headline brand (default "Gittensory review"). */
   brand?: string | undefined;
+  /** Visual before/after capture routes (visual-capture port). When present + non-empty, a "Visual preview"
+   *  collapsible (a markdown table of <img> tags pointing at the public /gittensory/shot URLs) is appended.
+   *  Public-safe: only URLs + route paths — no private terms. Default OFF (the processor passes this only
+   *  when screenshotsAllowed + the PR touches web-visible files). */
+  beforeAfter?: CaptureRoute[] | undefined;
 };
+
+/**
+ * Build the "Visual preview" collapsible from the before/after capture routes — a markdown table of image
+ * cells pointing at the public /gittensory/shot URLs. Uses GitHub markdown image syntax `![](url)` rather
+ * than raw `<img>` tags ON PURPOSE: the unified renderer's `details()` HTML-escapes a collapsible body (a
+ * security control so caller text can't inject structure-changing HTML), which would turn a literal `<img>`
+ * into inert `&lt;img&gt;` text — markdown image syntax has no angle brackets, so it survives the escape and
+ * still renders as an image. Public-safe by construction: every cell is a route path or a shot URL (no
+ * private rubric/scoring terms). Returns null when nothing is renderable (no route has any shot URL), so the
+ * section is omitted entirely rather than showing an empty table.
+ */
+export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedCollapsible | null {
+  const rows = routes
+    .filter((route) => route.beforeUrl || route.afterUrl || route.beforeUrlMobile || route.afterUrlMobile)
+    .map((route) => {
+      // Escape `(`/`)`/`]` in the URL so a crafted shot URL can't break out of the markdown image token; the
+      // URLs are first-party (we mint them), but this keeps the cell robust regardless.
+      const cell = (url: string | undefined): string => (url ? `![preview](${url.replace(/[()\]]/g, encodeURIComponent)})` : "—");
+      return `| \`${route.path.replace(/\|/g, "\\|")}\` | ${cell(route.beforeUrl)} | ${cell(route.afterUrl)} |`;
+    });
+  if (rows.length === 0) return null;
+  const body = [
+    "| Route | Before (production) | After (this PR's preview) |",
+    "| --- | --- | --- |",
+    ...rows,
+    "",
+    "_Before = production · After = this PR's preview deploy._",
+  ].join("\n");
+  return { title: "Visual preview", body };
+}
 
 /**
  * Build the unified PR-review comment body from gittensory's live data. Returns a string that STARTS with
@@ -228,13 +264,19 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   const visibleRows = args.panelRows.filter((row) => args.reviewFields?.[row.key] !== false);
   const signals = panelRowsToSignalRows(visibleRows);
 
+  // Visual-capture port: when before/after routes are present, append a "Visual preview" collapsible to the
+  // extra sections. Flag-OFF (the processor passes no beforeAfter) ⇒ extraCollapsibles is unchanged.
+  const visualCollapsible = args.beforeAfter && args.beforeAfter.length > 0 ? buildBeforeAfterCollapsible(args.beforeAfter) : null;
+  const extraCollapsibles =
+    visualCollapsible !== null ? [...(args.extraCollapsibles ?? []), visualCollapsible] : args.extraCollapsibles;
+
   const body = renderUnifiedReviewComment(input, {
     brand: args.brand ?? "Gittensory review",
     readinessScore: args.readinessTotal,
     signals,
     footerMarkdown: args.footerMarkdown,
     ...(args.reRunLabel !== undefined ? { reRunLabel: args.reRunLabel } : {}),
-    ...(args.extraCollapsibles !== undefined ? { extraCollapsibles: args.extraCollapsibles } : {}),
+    ...(extraCollapsibles !== undefined ? { extraCollapsibles } : {}),
   });
 
   // Prepend the marker verbatim (matching the legacy body, which leads with the marker then a blank line)

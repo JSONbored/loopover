@@ -68,7 +68,7 @@ import {
   refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
 import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import {
@@ -148,6 +148,9 @@ import {
   type ContributorProfile,
 } from "../signals/engine";
 import { buildClosedUnifiedCommentBody, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
+import { screenshotsAllowed } from "../review/visual-wire";
+import { isVisualPath } from "../review/visual/paths";
+import { buildCapture, type CaptureRoute } from "../review/visual/capture";
 import type { MergeReadiness } from "../review/unified-comment";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
@@ -1823,6 +1826,29 @@ async function maybePublishPrPublicSurface(
         ...(pr.mergeableState ? { mergeStateLabel: pr.mergeableState } : {}),
         ...(failedChecks.length > 0 ? { failingChecks: failedChecks.map((check) => check.name) } : {}),
       };
+      // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo
+      // cutover gate both allow it (screenshotsAllowed) AND (2) the PR touches WEB-VISIBLE files (isVisualPath
+      // — frontend pages / public OG images; backend .ts/.md/.json PRs never qualify). Fully wrapped in
+      // try/catch + defaults to [] so a capture failure (render timeout, missing binding, GitHub hiccup) can
+      // NEVER sink the review — it just omits the "Visual preview" section. Flag-OFF (default) ⇒ this block is
+      // skipped entirely and the unified comment is byte-identical.
+      let beforeAfter: CaptureRoute[] = [];
+      const visualFiles = unifiedFiles.map((file) => file.path).filter(isVisualPath);
+      if (screenshotsAllowed(env, repoFullName) && visualFiles.length > 0) {
+        try {
+          const token = await createInstallationToken(env, installationId);
+          const capture = await buildCapture(env, token, {
+            repoFullName,
+            prNumber: pr.number,
+            ...(pr.headSha ? { headSha: pr.headSha } : {}),
+            ...(pr.headRef ? { headRef: pr.headRef } : {}),
+            previewFromChecks: true,
+          }, visualFiles);
+          beforeAfter = capture.routes;
+        } catch (error) {
+          console.log(JSON.stringify({ ev: "visual_capture_error", repoFullName, pull: pr.number, message: errorMessage(error).slice(0, 200) }));
+        }
+      }
       deterministicBody = buildUnifiedCommentBody({
         gate: gateEvaluation,
         ...(aiReview !== undefined ? { aiReview } : {}),
@@ -1850,6 +1876,7 @@ async function maybePublishPrPublicSurface(
           ...(reviewConfig?.footerText ? { customText: reviewConfig.footerText } : {}),
         }),
         reRunLabel: `${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
+        ...(beforeAfter.length > 0 ? { beforeAfter } : {}),
       });
     } else {
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);

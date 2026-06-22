@@ -53,6 +53,10 @@
     // title/body/diff before the AI reviewer sees it, and surface a secret-leak blocker from the diff.
     // Default OFF — flag-OFF keeps the review path byte-identical.
     "GITTENSORY_REVIEW_SAFETY": "true",
+    // Convergence (visual capture): capture a before/after screenshot for PRs touching WEB-VISIBLE files
+    // (frontend pages / public OG images). Needs the BROWSER + REVIEW_AUDIT bindings; runs only when this is
+    // ON AND the repo is in GITTENSORY_REVIEW_REPOS. DEFAULT OFF — flag-OFF captures nothing (byte-identical).
+    "GITTENSORY_REVIEW_SCREENSHOTS": "false",
     // Convergence (grounding): ground the AI reviewer prompt with the PR's finished CI status + the full
     // post-change content of the changed files, so a non-frontier model verifies claims instead of guessing.
     // Default OFF — flag-OFF keeps the reviewer prompt byte-identical and makes no extra GitHub fetch.

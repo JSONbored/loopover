@@ -3,6 +3,7 @@ import { z } from "zod";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
+import { handleShot } from "../review/visual/shot";
 import {
   BROWSER_SESSION_COOKIE,
   GITHUB_OAUTH_STATE_COOKIE,
@@ -853,6 +854,20 @@ export function createApp() {
     c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
     return c.json(buildShieldsBadge(quality, 600));
   });
+
+  // Visual before/after screenshot endpoint (visual-capture port). PUBLIC + UNAUTHENTICATED by design: it
+  // lives OUTSIDE the /v1/ prefix, so requiresApiToken (which only gates path.startsWith('/v1/')) never
+  // touches it — GitHub's camo image proxy must fetch it without a bearer token. The handler itself enforces
+  // every security choke-point: ?key= validates the R2 prefix + rejects '..'; ?url= keeps the host allowlist
+  // (*.workers.dev / *.pages.dev / PUBLIC_SITE_ORIGIN) AND the isSafeHttpUrl SSRF guard. Inert flag-OFF: with
+  // GITTENSORY_REVIEW_SCREENSHOTS off nothing ever writes shots to R2, so ?key= 404s and ?url= still requires
+  // an allowlisted public host. The route's own Cache-Control headers (per mode) are set inside handleShot;
+  // the rate-limit middleware classifies it as 'normal' (a sane public class) via routeClassForPath.
+  app.get("/gittensory/shot", (c) =>
+    handleShot(c.req.raw, c.env, {
+      ...(c.env.PUBLIC_SITE_ORIGIN ? { productionUrl: c.env.PUBLIC_SITE_ORIGIN } : {}),
+    }),
+  );
 
   app.get("/v1/auth/github/start", async (c) => {
     try {

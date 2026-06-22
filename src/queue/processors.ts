@@ -682,12 +682,36 @@ async function reReviewStoredPullRequest(env: Env, deliveryId: string, installat
   });
 }
 
+// One CI run fires MANY check_run (one per job) + check_suite completions. Re-reviewing on every one storms the
+// PR with duplicate reviews (and races the request_changes/approve dedup). reviewbot's CI_COALESCE_WINDOW parity:
+// re-review a given PR at most once per this window. The re-review always re-fetches the LIVE CI, so the window
+// only bounds FREQUENCY, never correctness — a later out-of-window completion + the hourly sweep + the merge-time
+// re-check still catch the settled state.
+const CI_COALESCE_WINDOW_SECONDS = 60;
+
+/**
+ * Coalesce CI-completion re-reviews: claims a per-PR window and returns true if this PR was already re-reviewed
+ * within CI_COALESCE_WINDOW_SECONDS (caller skips). KV-backed (REVIEW_CONFIG); a missing KV or a KV hiccup
+ * degrades to NO coalescing (returns false — never blocks a re-review, never throws).
+ */
+async function ciReReviewCoalesced(env: Env, repoFullName: string, prNumber: number): Promise<boolean> {
+  if (!env.REVIEW_CONFIG) return false;
+  const key = `ci-coalesce:${repoFullName.toLowerCase()}#${prNumber}`;
+  try {
+    if (await env.REVIEW_CONFIG.get(key)) return true; // re-reviewed within the window → skip this event
+    await env.REVIEW_CONFIG.put(key, "1", { expirationTtl: CI_COALESCE_WINDOW_SECONDS }); // claim the window
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * THE auto-merge / close-on-red TRIGGER. A `check_run`/`check_suite` `completed` event means a PR's CI just
  * settled — re-review the associated PR(s) so the now-green PR is merged and the now-red PR is closed (non-owner)
  * / held (owner). Without this, a PR reviewed at open-time (CI still pending → deferred) is never re-evaluated.
  * Resolves the PR number(s) from `payload[event].pull_requests[]` (reviewbot core/scope.ts parity), NOT from
- * the CI head SHA. Returns true (handled) so the dispatcher short-circuits.
+ * the CI head SHA. COALESCED so one CI run's ~20 completions collapse to one re-review. Returns true (handled).
  */
 async function maybeReReviewOnCiCompletion(env: Env, deliveryId: string, eventName: string, payload: GitHubWebhookPayload): Promise<boolean> {
   if (eventName !== "check_run" && eventName !== "check_suite") return false;
@@ -699,6 +723,8 @@ async function maybeReReviewOnCiCompletion(env: Env, deliveryId: string, eventNa
   const prNumbers = [...new Set((node?.pull_requests ?? []).map((entry) => entry?.number).filter((value): value is number => typeof value === "number"))];
   if (prNumbers.length > 0 && isConvergenceRepoAllowed(env, repoFullName)) {
     for (const prNumber of prNumbers) {
+      // Coalesce the CI-completion storm: skip if this PR was re-reviewed within the window.
+      if (await ciReReviewCoalesced(env, repoFullName, prNumber)) continue;
       await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, prNumber);
     }
   }

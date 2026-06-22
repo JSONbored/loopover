@@ -183,7 +183,7 @@ describe("runAnomalyAlerts — send path", () => {
 
     await runAnomalyAlerts(claimEnv(), config, deps);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(WEBHOOK);
     expect(init.method).toBe("POST");
     const body = JSON.parse(String(init.body)) as { username: string; embeds: Array<{ title: string; description: string }> };
@@ -201,7 +201,7 @@ describe("runAnomalyAlerts — send path", () => {
 
     await runAnomalyAlerts(env, config, deps);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(WEBHOOK);
+    expect((fetchSpy.mock.calls[0] as unknown as [string])[0]).toBe(WEBHOOK);
   });
 
   it("does NOT fetch when there are no anomalies (healthy snapshot behind the claim)", async () => {

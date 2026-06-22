@@ -705,3 +705,96 @@ describe("buildContributorMdx — block-scalar branch + optional frontmatter", (
     expect(mdx).toContain('author: "Jane Doe"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Added coverage: queue dispatch for the submit-draft job, the non-JSON GitHub
+// error body, and the fork-readiness retry loop (driven under FAKE TIMERS so the
+// real setTimeout-backed sleep(3000) can never run for real in the test suite —
+// this loop is what hangs a coverage run if exercised with real timers).
+// ---------------------------------------------------------------------------
+
+describe("queue dispatch — submit-draft job", () => {
+  it("processJob routes a submit-draft message to processSubmitDraft (flag-off → internal no-op, no fetch)", async () => {
+    const { processJob } = await import("../../src/queue/processors");
+    const env = createTestEnv(); // REVIEWBOT_DRAFT unset → processSubmitDraft no-ops internally
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await processJob(env, { type: "submit-draft", requestedBy: "test", draftId: "draft_anything" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+});
+
+describe("githubUserJson error body — non-JSON payload", () => {
+  it("falls back to the raw text when a non-OK response body is not JSON (GET /user 502 'Bad Gateway')", async () => {
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env);
+    // A plain-text (non-JSON) error body exercises the JSON.parse catch -> payload=null,
+    // and the thrown GitHubUserApiError then uses the raw body as the message.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      makeGithubFetch([{ method: "GET", url: "https://api.github.com/user", respond: () => new Response("Bad Gateway", { status: 502 }) }]),
+    );
+
+    await processSubmitDraft(env, id);
+    fetchSpy.mockRestore();
+
+    const row = await env.DB.prepare("SELECT status, last_error FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; last_error: string }>();
+    expect(row?.status).toBe("error");
+    expect(row?.last_error).toContain("GitHub API 502");
+    expect(row?.last_error).toContain("Bad Gateway");
+  });
+});
+
+describe("processSubmitDraft — fork-readiness retry loop (fake timers)", () => {
+  it("polls again after the fork is initially absent, then proceeds once it appears (no real sleep)", async () => {
+    vi.useFakeTimers();
+    try {
+      const env = draftEnv();
+      const id = await seedQueuedDraftWithToken(env);
+      // The fork-existence GET returns 404 on the first probe (forcing one sleep(3000))
+      // and the fork on the second; every other route is a one-shot success.
+      let forkProbe = 0;
+      const routes = makeGithubFetch([
+        { method: "GET", url: "https://api.github.com/user", respond: () => ok({ login: "octocat" }) },
+        { method: "POST", url: `/repos/${UPSTREAM}/forks`, respond: () => ok({ full_name: "octocat/awesome-claude", default_branch: "main" }) },
+        { method: "GET", url: `/repos/${UPSTREAM}/pulls`, respond: () => ok([]) },
+        { method: "GET", url: "/git/ref/heads/main", respond: () => ok({ object: { sha: "basesha123" } }) },
+        { method: "GET", url: "/git/ref/heads/heyclaude/submit-skills-example-skill", respond: () => notFound() },
+        { method: "POST", url: "/git/refs", respond: () => ok({ ref: "refs/heads/x" }) },
+        { method: "GET", url: "/contents/content/skills/example-skill.mdx?ref=", respond: () => notFound() },
+        { method: "PUT", url: "/contents/content/skills/example-skill.mdx", respond: () => ok({ content: { sha: "filesha" } }) },
+        { method: "POST", url: `/repos/${UPSTREAM}/pulls`, respond: () => ok({ number: 808, html_url: "https://github.com/JSONbored/awesome-claude/pull/808" }) },
+      ]);
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        const method = (init?.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+        // The repeatable fork-readiness probe: GET of the repo ROOT (no sub-path), 404 first then
+        // the fork. Matched exactly so sibling repo paths (/pulls, /git/ref, /contents) fall through
+        // to the one-shot route table. Not delegated to that table (it would match at most once).
+        if (method === "GET" && /\/repos\/octocat\/awesome-claude$/.test(url)) {
+          forkProbe += 1;
+          return forkProbe === 1 ? notFound() : ok({ full_name: "octocat/awesome-claude", default_branch: "main" });
+        }
+        return routes(input, init);
+      });
+
+      let settled = false;
+      const done = processSubmitDraft(env, id).then(() => {
+        settled = true;
+      });
+      // The loop interleaves real-async D1/fetch work with the one fake setTimeout(sleep 3000).
+      // Pump fake timers repeatedly (flushing pending real microtasks each pass) until the whole
+      // flow settles, so the sleep advances the instant it is scheduled — and never runs for real.
+      for (let i = 0; i < 50 && !settled; i += 1) {
+        await vi.advanceTimersByTimeAsync(3000);
+      }
+      await done;
+      fetchSpy.mockRestore();
+
+      expect(forkProbe).toBe(2); // probed once (absent), slept, probed again (present)
+      const row = await env.DB.prepare("SELECT status, pull_request_number FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; pull_request_number: number }>();
+      expect(row).toMatchObject({ status: "pr_open", pull_request_number: 808 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

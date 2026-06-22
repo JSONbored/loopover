@@ -10,6 +10,16 @@ import {
 } from "../../src/review/ops-wire";
 import { createTestEnv } from "../helpers/d1";
 
+// Wrap env.DB.prepare so any SQL matching `pattern` throws, exercising a fail-safe catch; every other
+// query delegates to the real test DB unchanged.
+function poisonDbPrepare(env: Env, pattern: RegExp): void {
+  const realPrepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = ((sql: string) => {
+    if (pattern.test(sql)) throw new Error("poisoned query");
+    return realPrepare(sql);
+  }) as typeof env.DB.prepare;
+}
+
 // ── Pure detector fixtures ────────────────────────────────────────────────────────────────────────────────
 
 const healthySnapshot: RepoOutcomeSnapshot = {
@@ -178,6 +188,33 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
 
     expect(found["owner/clean"]).toBeUndefined();
     expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly\""))).toBe(false);
+  });
+
+  it("fails safe per-repo: a load error on one repo is logged and the scan continues (ops_anomaly_repo_error)", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo");
+    // The repo is scanned, but the per-repo precision load throws → caught at the inner catch.
+    // gate-precision reads pull_requests (Drizzle, quoted table name) per repo.
+    poisonDbPrepare(env, /"pull_requests"/i);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env); // resolves (never throws)
+
+    expect(found).toEqual({});
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_repo_error") && line.includes("owner/repo"))).toBe(true);
+  });
+
+  it("fails safe at the top level: a repo-scan error is swallowed (ops_anomaly_error), returns {}", async () => {
+    const env = createTestEnv();
+    // opsScanRepos → listRepositories reads the repositories table (Drizzle, quoted); poison it so the
+    // outer try throws.
+    poisonDbPrepare(env, /"repositories"/i);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const found = await runOpsAlerts(env); // resolves (never throws)
+
+    expect(found).toEqual({});
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly_error"))).toBe(true);
   });
 });
 

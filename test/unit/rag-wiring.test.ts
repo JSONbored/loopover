@@ -245,3 +245,12 @@ describe("populateRepoIndexStub (deferred index-population follow-up)", () => {
     await expect(populateRepoIndexStub(env, "acme/widgets", [])).resolves.toBe(0);
   });
 });
+
+describe("buildReviewRagContext outer fail-safe", () => {
+  it("returns '' (never throws) when query construction throws", async () => {
+    const env = createTestEnv({ DB: ragDbStub() });
+    // A file whose `path` getter throws makes buildRagQuery throw inside the try → outer catch → "".
+    const poison = { get path(): string { throw new Error("boom"); } } as unknown as { path: string; patch?: string };
+    await expect(buildReviewRagContext(env, { repoFullName: "acme/widgets", files: [poison] })).resolves.toBe("");
+  });
+});

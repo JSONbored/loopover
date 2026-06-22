@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import {
   GITTENSORY_NATIVE_SOURCE,
@@ -106,6 +106,24 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
     const envFalse = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "false" });
     await recordNativeGateDecision(envFalse, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "failure" });
     expect((await rawAll(envFalse, "SELECT * FROM review_audit")).length).toBe(0);
+  });
+
+  it("fails safe: a D1 write error is swallowed + logged (telemetry never breaks finalization)", async () => {
+    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    // Poison the audit INSERT so .run() rejects → the catch logs parity_audit_record_error and resolves.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/review_audit/i.test(sql)) throw new Error("poisoned write");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "failure", reasonCode: "slop_risk" }),
+    ).resolves.toBeUndefined();
+
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("parity_audit_record_error"))).toBe(true);
+    warn.mockRestore();
   });
 });
 

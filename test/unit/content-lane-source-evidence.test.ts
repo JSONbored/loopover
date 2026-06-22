@@ -131,7 +131,7 @@ function specFetch(specByUrl: Record<string, FetchSpec>): typeof fetch {
       return new Response("ok", { status: 200 });
     }
     const headers = spec.location ? { location: spec.location } : undefined;
-    return new Response(spec.status >= 200 && spec.status < 300 ? "ok" : "", { status: spec.status, headers });
+    return new Response(spec.status >= 200 && spec.status < 300 ? "ok" : "", { status: spec.status, ...(headers ? { headers } : {}) });
   }) as unknown as typeof fetch;
 }
 

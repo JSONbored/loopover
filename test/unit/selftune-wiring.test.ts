@@ -15,6 +15,16 @@ import {
 import { computeTuningRecommendations } from "../../src/review/auto-tune";
 import { createTestEnv } from "../helpers/d1";
 
+// Wrap env.DB.prepare so any SQL matching `pattern` throws (exercising a fail-safe catch); all other
+// queries delegate to the real test DB unchanged.
+function poisonDbPrepare(env: Env, pattern: RegExp): void {
+  const realPrepare = env.DB.prepare.bind(env.DB);
+  env.DB.prepare = ((sql: string) => {
+    if (pattern.test(sql)) throw new Error("poisoned query");
+    return realPrepare(sql);
+  }) as typeof env.DB.prepare;
+}
+
 // ── Test seeders (raw D1; FKs are enforced in the test sqlite, so we disable them for the orphan seed) ─────
 
 async function seedRegisteredRepo(env: Env, fullName: string, autonomyJson: string): Promise<void> {
@@ -208,6 +218,31 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
     await processJob(env, { type: "selftune", requestedBy: "schedule" });
 
     expect((await loadShadowOverride(env as never, "owner/repo"))?.override.confidenceFloor).toBeGreaterThan(0);
+  });
+
+  it("fails safe per-repo: an eval-build error on one repo is logged and the pass continues (selftune_repo_error)", async () => {
+    const env = createTestEnv();
+    await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
+    // The repo is scanned (settings read OK), but buildEvalRow's calibration read of pull_requests throws.
+    poisonDbPrepare(env, /"pull_requests"/i);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await runSelfTune(env); // resolves (never throws)
+
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("selftune_repo_error") && line.includes("owner/repo"))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("fails safe at the top level: a repo-scan error is swallowed (selftune_error)", async () => {
+    const env = createTestEnv();
+    // selfTuneRepos → listRepositories reads repositories (Drizzle, quoted); poison it so the outer try throws.
+    poisonDbPrepare(env, /"repositories"/i);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await runSelfTune(env); // resolves (never throws)
+
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("selftune_error"))).toBe(true);
+    warn.mockRestore();
   });
 });
 

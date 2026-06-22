@@ -266,4 +266,49 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     expect(await fetcher.getFileContent("any.ts", "sha7")).toBeNull();
     fetchSpy.mockRestore();
   });
+
+  it("attempts an installation token when given an installationId, falling back to the public token on failure", async () => {
+    // No GitHub App key is configured in the test env, so createInstallationToken rejects; the wire
+    // swallows it (.catch -> undefined) and the fetcher then authenticates with the public token.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_public" });
+    let sawAuth: string | null = null;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const headers = new Headers(init?.headers);
+      sawAuth = headers.get("authorization");
+      return new Response("body", { status: 200 });
+    });
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", 12345);
+    expect(await fetcher.getFileContent("ok.ts", "sha7")).toBe("body");
+    // The installation-token path failed → it fell back to the public token, not a Bearer install token.
+    expect(sawAuth).toBe("Bearer ghp_public");
+    fetchSpy.mockRestore();
+  });
+});
+
+// ── checkSummaryText empty fallback + outer-catch fail-safe ─────────────────────────────────────────
+
+describe("buildCheckAggregate / buildReviewGroundingText edge branches", () => {
+  it("a failing check with no usable output fields carries no summary (empty-text fallback)", () => {
+    // payload has no output.title/summary and no description → checkSummaryText returns "".
+    const agg = buildCheckAggregate([
+      check({ name: "lint", conclusion: "failure", payload: {} as Record<string, JsonValue> }),
+    ]);
+    expect(agg?.state).toBe("failed");
+    // No `summary` key attached when the failure reason text is empty.
+    expect(agg?.failingDetails).toEqual([{ name: "lint" }]);
+  });
+
+  it("FLAG-ON outer fail-safe: a throw inside the build degrades to EMPTY_GROUNDING (never throws)", async () => {
+    const env = createTestEnv({ REVIEWBOT_GROUNDING: "true" });
+    // A file record whose path getter throws makes toGroundingFiles throw inside the try → outer catch.
+    const poison = { get path(): string { throw new Error("boom"); } } as unknown as PullRequestFileRecord;
+    const out = await buildReviewGroundingText(env, {
+      repoFullName: "acme/widgets",
+      headSha: "sha7",
+      files: [poison],
+      checks: [check()],
+      installationId: null,
+    });
+    expect(out).toEqual({ systemSuffix: "", promptSection: "" });
+  });
 });

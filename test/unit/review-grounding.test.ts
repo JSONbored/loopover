@@ -136,4 +136,29 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
     const out = await fetchFullFileContents({ ciGrounding: false, fullFileContext: true }, "sha", files(["gone.ts"]), fetcherFrom({}));
     expect(out).toBeUndefined();
   });
+
+  it("marks files truncated once the total inline budget is exhausted (later files skipped, not fetched)", async () => {
+    // Four 20k files: the first three inline (60k = exactly the budget), and any further file
+    // trips the budget-exhausted guard at the loop top → text:"" + truncated:true (no fetch).
+    const chunk = "y".repeat(20_000); // < MAX_SINGLE_FILE so each is individually inlinable
+    const map: Record<string, string> = { "src/a.ts": chunk, "src/b.ts": chunk, "src/c.ts": chunk, "src/d.ts": chunk };
+    const reads: string[] = [];
+    const fetcher: FileFetcher = {
+      getFileContent: async (path) => {
+        reads.push(path);
+        return map[path] ?? null;
+      },
+    };
+    const out = await fetchFullFileContents(
+      { ciGrounding: false, fullFileContext: true },
+      "sha",
+      files(["src/a.ts"], ["src/b.ts"], ["src/c.ts"], ["src/d.ts"]),
+      fetcher,
+    );
+    expect(out).toBeDefined();
+    const dEntry = out?.find((f) => f.path === "src/d.ts");
+    expect(dEntry).toEqual({ path: "src/d.ts", text: "", truncated: true });
+    // The over-budget file is NOT fetched — the budget guard short-circuits before the read.
+    expect(reads).not.toContain("src/d.ts");
+  });
 });

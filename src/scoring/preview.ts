@@ -735,10 +735,10 @@ function deltaExplanationFor(core: ScoreCore, blockedBy: ScoreGateBlocker[]): st
 
 function selectLabelMultiplier(labels: string[], multipliers: Record<string, number>, fallback: number): number {
   const normalized = new Set(labels.map((label) => label.toLowerCase()));
-  return Math.max(
-    fallback || 1,
-    ...Object.entries(multipliers).flatMap(([label, multiplier]) => (normalized.has(label.toLowerCase()) ? [multiplier] : [])),
+  const matched = Object.entries(multipliers).flatMap(([label, multiplier]) =>
+    normalized.has(label.toLowerCase()) ? [multiplier] : [],
   );
+  return matched.length > 0 ? Math.max(...matched) : fallback || 1;
 }
 
 function decideLinkedIssueMultiplier(

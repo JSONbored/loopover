@@ -75,6 +75,34 @@
       "migrations_dir": "migrations",
     },
   ],
+  // Convergence (infra): inert bindings for the ported review modules. Each is OPTIONAL in `Env` and the
+  // review path is NOT wired to them yet (per-module wiring lands in later chunks), so a deploy without the
+  // resource provisioned is byte-identical to today — `createReviewAdapters` degrades each absent binding to a
+  // no-op/"unavailable" adapter (fail-safe to no-context), never throwing.
+  //
+  // RAG codebase retrieval (Layer C). The index MUST be created with bge-m3's `--dimensions=1024`
+  // (`--metric=cosine`). Absent ⇒ no RAG (review proceeds with no retrieved context).
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "gittensory-review-rag",
+    },
+  ],
+  // Review audit / visual-capture blob store. Absent ⇒ no audit/screenshot persistence.
+  "r2_buckets": [
+    {
+      "binding": "REVIEW_AUDIT",
+      "bucket_name": "gittensory-review-audit",
+    },
+  ],
+  // Browser Rendering for visual (before/after screenshot) capture. Absent ⇒ no visual capture.
+  "browser": {
+    "binding": "BROWSER",
+  },
+  // TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) so concurrent
+  // webhook deliveries for the same PR serialize. That is a separate, more-involved sub-task — it needs a DO
+  // class (ported) + its own `migrations` tag (`new_sqlite_classes: ["SubmissionLock"]`) + a `durable_objects`
+  // binding here. NOT ported in this chunk; the review path keeps its current concurrency behavior until then.
   "durable_objects": {
     "bindings": [
       {

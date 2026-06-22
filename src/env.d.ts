@@ -4,6 +4,20 @@ declare global {
     JOBS: Queue;
     RATE_LIMITER?: DurableObjectNamespace;
     AI?: Ai;
+    /** Convergence (infra): Vectorize index for codebase RAG retrieval (Layer C). Optional — the review is
+     *  fully fail-safe without it (absent ⇒ no RAG, review proceeds with no retrieved context). The index is
+     *  created with bge-m3's 1024 dimensions. Unused until the per-module RAG wiring chunk; an unbound deploy
+     *  is inert (`createReviewAdapters` degrades a missing binding to an unavailable vector adapter). */
+    VECTORIZE?: Vectorize;
+    /** Convergence (infra): R2 bucket for review audit + visual-capture blobs. Optional — absent ⇒ no
+     *  audit/screenshot persistence. Unused until the per-module wiring chunk; an unbound deploy is inert. */
+    REVIEW_AUDIT?: R2Bucket;
+    /** Convergence (infra): Browser Rendering binding for visual (before/after screenshot) capture. Optional —
+     *  absent ⇒ no visual capture. Unused until the per-module wiring chunk; an unbound deploy is inert. */
+    BROWSER?: Fetcher;
+    /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
+     *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
+     *  Deliberately NOT declared in this chunk; the review path keeps its current concurrency behavior. */
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;
     AI_SUMMARIES_ENABLED?: string;

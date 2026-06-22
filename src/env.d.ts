@@ -50,6 +50,17 @@ declare global {
      *  (ONE in-place comment in the converged shape) instead of the legacy `buildPublicPrIntelligenceComment`
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
     UNIFIED_REVIEW_COMMENT?: string;
+    /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
+     *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
+     *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */
+    REVIEWBOT_DRAFT?: string;
+    /** owner/repo the draft fork PR targets (defaults to the awesome-claude content repo when unset). */
+    DRAFT_PUBLIC_REPO?: string;
+    /** Base branch the draft PR opens against (defaults to "main"). */
+    DRAFT_BASE_REF?: string;
+    /** AES-256-GCM secret used to encrypt the short-lived contributor OAuth token at rest. A Worker
+     *  secret (`wrangler secret put`). When absent, the draft create/callback endpoints return 503. */
+    DRAFT_TOKEN_ENCRYPTION_SECRET?: string;
   }
 }
 

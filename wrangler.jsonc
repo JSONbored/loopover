@@ -49,6 +49,10 @@
     // Convergence (Stage D): render the public PR comment via the unified-comment bridge. Default OFF —
     // flag-OFF keeps the legacy buildPublicPrIntelligenceComment panel byte-identical.
     "UNIFIED_REVIEW_COMMENT": "false",
+    // Convergence (port): public OAuth draft-submission flow ported from reviewbot. Default OFF — every
+    // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
+    // DRAFT_TOKEN_ENCRYPTION_SECRET worker secret + GITHUB_OAUTH_CLIENT_SECRET to be set.
+    "REVIEWBOT_DRAFT": "false",
   },
   "routes": [
     {

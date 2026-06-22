@@ -6,6 +6,8 @@ import {
   sourceEvidenceCloseDecision,
   sourceEvidenceSummary,
   sourceEvidenceToDecisionEvidence,
+  type SourceEvidenceItem,
+  type SourceEvidenceReport,
 } from "../../src/review/content-lane/source-evidence";
 
 const mdx = (frontmatter: Record<string, string>): string => {
@@ -846,5 +848,91 @@ describe("shouldHardCloseSourceEvidence — partial authoritative failure", () =
     expect(shouldHardCloseSourceEvidence(report)).toBe(false);
     // And it routes to MANUAL (single blocking hard-failure present).
     expect(sourceEvidenceCloseDecision(report)?.verdict).toBe("manual");
+  });
+});
+
+// ── Remaining partial-branch coverage ─────────────────────────────────────────────────────────────
+
+describe("frontmatter parsing — remaining quote / empty-source branches", () => {
+  it("unquotes a DOUBLE-quoted scalar frontmatter value (unquoteYamlScalar startsWith('\"') true → endsWith('\"'))", () => {
+    // The other scalar test uses single quotes; this exercises the double-quote arm of unquoteYamlScalar
+    // (`trimmed.startsWith('"') && trimmed.endsWith('"')`).
+    const src = ['---', 'githubUrl: "https://github.com/acme/dq"', "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("githubUrl:https://github.com/acme/dq");
+  });
+
+  it("returns [] for an EMPTY source string (String(source || '') fallback in both parsers)", () => {
+    // An empty string is falsy → both parseSimpleFrontmatter and frontmatterBlock hit the `|| ""` fallback.
+    expect(extractSubmittedSourceUrls("")).toEqual([]);
+  });
+});
+
+describe("decision string rendering — empty field/url + manual finalUrl + close outcome branches", () => {
+  // Hand-built reports let us drive the rendering fallbacks (`item.field || "source"`,
+  // `item.url || item.matchedUrl`) that real frontmatter never leaves empty.
+  const blockingHardFailure = (over: Partial<SourceEvidenceItem>): SourceEvidenceItem => ({
+    field: "",
+    url: "",
+    status: "hard_failure",
+    role: "canonical",
+    blocking: true,
+    outcome: "invalid_url",
+    ...over,
+  });
+  const reportOf = (urls: SourceEvidenceItem[]): SourceEvidenceReport => ({
+    status: "failed",
+    hash: "deadbeef",
+    urls,
+    warnings: [],
+  });
+
+  it("MANUAL summary falls back to `source` / matchedUrl when field+url are empty (|| fallbacks)", () => {
+    // Single blocking authoritative hard-failure → manual. Empty field/url exercise the
+    // `item.field || "source"` and `item.url || item.matchedUrl` true-of-arm[1] fallbacks (L585).
+    const report = reportOf([blockingHardFailure({ field: "", url: "" })]);
+    expect(shouldHardCloseSourceEvidence(report)).toBe(false);
+    const decision = sourceEvidenceCloseDecision(report);
+    expect(decision?.verdict).toBe("manual");
+    // toDecisionEvidence sets matchedUrl = item.url (also ""), so the fallback renders an empty matchedUrl;
+    // the `source` label fallback for the empty field is what we assert.
+    expect(decision?.summary).toContain("`source`");
+  });
+
+  it("MANUAL summary renders the final-URL annotation when finalUrl differs from url (L587 true arm)", () => {
+    // A single authoritative hard-failure with a differing finalUrl → manual decision whose Source Review
+    // line includes `(final URL: ...)` — the `item.finalUrl && item.finalUrl !== item.url ? ... : ""` true arm.
+    const report = reportOf([
+      blockingHardFailure({
+        field: "githubUrl",
+        url: "https://github.com/acme/moved-from",
+        finalUrl: "https://github.com/acme/moved-to",
+        httpStatus: 404,
+        outcome: "http_hard_failure",
+      }),
+    ]);
+    expect(shouldHardCloseSourceEvidence(report)).toBe(false);
+    const decision = sourceEvidenceCloseDecision(report);
+    expect(decision?.verdict).toBe("manual");
+    expect(decision?.summary).toContain("(final URL: https://github.com/acme/moved-to)");
+    expect(decision?.summary).toContain("returned HTTP 404");
+  });
+
+  it("CLOSE summary uses the OUTCOME (no httpStatus) and `source` fallback for two empty-field invalid_url authoritatives", () => {
+    // Two blocking authoritative invalid_url hard-failures (no httpStatus) → hard-close. Renders the
+    // `httpStatus ? ... : item.outcome` arm[1] (L622) and the `item.field || "source"` fallback (L621).
+    const report = reportOf([
+      blockingHardFailure({ field: "", url: "", outcome: "invalid_url" }),
+      blockingHardFailure({ field: "", url: "", outcome: "invalid_url" }),
+    ]);
+    expect(shouldHardCloseSourceEvidence(report)).toBe(true);
+    const decision = sourceEvidenceCloseDecision(report);
+    expect(decision?.verdict).toBe("close");
+    expect(decision?.close).toBe(true);
+    // No httpStatus → outcome string is rendered, not "HTTP n".
+    expect(decision?.summary).toContain("invalid_url");
+    expect(decision?.summary).not.toContain("returned HTTP");
+    // Empty field → `source` label fallback.
+    expect(decision?.summary).toContain("`source`");
   });
 });

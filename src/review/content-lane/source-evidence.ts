@@ -171,20 +171,32 @@ function parseSimpleFrontmatter(source: string): Record<string, string> {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(String(source || ""));
   const fields: Record<string, string> = {};
   if (!match) return fields;
+  // `match[1]` is the frontmatter capture group `([\s\S]*?)`; it is always a string when the regex
+  // matches, so the `?? ""` noUncheckedIndexedAccess fallback can never fire.
+  /* v8 ignore next */
   const lines = (match[1] ?? "").split(/\r?\n/);
   let i = 0;
   while (i < lines.length) {
+    // `lines[i]` is bounded by `i < lines.length`; the `?? ""` is an unreachable
+    // noUncheckedIndexedAccess fallback.
+    /* v8 ignore next */
     const head = /^([A-Za-z][A-Za-z0-9_]*):(.*)$/.exec(lines[i] ?? "");
     if (!head) {
       i += 1;
       continue;
     }
     const key = head[1] as string;
+    // `head[2]` is the capture group `(.*)`, always present when `head` matches; the `?? ""` is an
+    // unreachable noUncheckedIndexedAccess fallback.
+    /* v8 ignore next */
     const inline = (head[2] ?? "").trim();
     i += 1;
     if (/^[|>][+-]?\d*$/.test(inline)) {
       const block: string[] = [];
       while (i < lines.length && ((lines[i] ?? "").trim() === "" || /^\s/.test(lines[i] ?? ""))) {
+        // `lines[i]` is bounded by the `i < lines.length` loop guard; `?? ""` cannot fire
+        // (unreachable noUncheckedIndexedAccess fallback).
+        /* v8 ignore next */
         block.push((lines[i] ?? "").replace(/^\s+/, ""));
         i += 1;
       }
@@ -298,9 +310,11 @@ function sourceStatusFromHttpStatus(status: number): "passed" | "hard_failure" |
   return "retryable";
 }
 
+/* v8 ignore start -- Dead parity retainer: only ever called by _sourceHostIsTrusted (itself ignored, allowlist-free live gate). */
 function normalizeHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/\.$/, "");
 }
+/* v8 ignore stop */
 
 // Retained for parity with the reviewbot source (the allowlist is the gate's documented posture);
 // the live gate fetches any safe public host, not just an allowlist — see validateFetchableSourceUrl.
@@ -326,7 +340,9 @@ function validateFetchableSourceUrl(url: string): FetchableValidation {
     return {
       ok: false,
       outcome: "invalid_url",
-      error: error instanceof Error ? error.message : "Invalid source URL.",
+      // `new URL(...)` only ever throws a `TypeError` (an `Error`), so the non-Error fallback string
+      // is defensively unreachable in a unit test.
+      error: error instanceof Error ? error.message : /* v8 ignore next */ "Invalid source URL.",
     };
   }
   if (!["http:", "https:"].includes(parsed.protocol)) {

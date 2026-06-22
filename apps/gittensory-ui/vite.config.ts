@@ -28,7 +28,26 @@ function manualChunks(id: string) {
 }
 
 export default defineConfig({
-  nitro: shouldBuildNitro,
+  // Pin the Cloudflare target + output layout explicitly.
+  //
+  // Outside a Lovable sandbox (e.g. the Cloudflare Workers Build CI), the plugin
+  // only forwards `defaultPreset`/`preset` to nitro and does NOT override the
+  // output dir. With the pinned `nitro@3.0.260429-beta` (which predates nitro's
+  // `defaultPreset` option, added in 3.0.260603-beta), the Cloudflare fallback is
+  // ignored and a zero-config build targets Node, writing to `.output/server/`
+  // with no `wrangler.json`. Deploy then fails: `Could not read file:
+  // dist/server/wrangler.json (ENOENT)`.
+  //
+  // Replicate exactly what the plugin's sandbox path does so a fresh `npm ci`
+  // build lands the Cloudflare worker (and its generated `wrangler.json`) at
+  // `dist/server/`, matching the `version:built`/`deploy:built` scripts.
+  nitro: shouldBuildNitro
+    ? {
+        preset: "cloudflare-module",
+        output: { dir: "dist", serverDir: "dist/server", publicDir: "dist/client" },
+        cloudflare: { nodeCompat: true, deployConfig: true },
+      }
+    : false,
   vite: {
     build: {
       rollupOptions: {

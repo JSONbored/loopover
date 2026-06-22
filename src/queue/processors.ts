@@ -145,7 +145,7 @@ import {
   unionScopedOverlapClusters,
   type ContributorProfile,
 } from "../signals/engine";
-import { buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
+import { buildClosedUnifiedCommentBody, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
@@ -1338,14 +1338,14 @@ async function maybePublishPrPublicSurface(
     if (gateCheckResult?.kind === "permission_missing") {
       await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
     }
-    await createOrUpdatePrIntelligenceComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      buildClosedPrPanelUpdate(repoFullName, pr.number),
-      { createIfMissing: false },
-    ).catch(() => undefined);
+    // Convergence (Stage D): when the unified-comment flag is ON, render the closed/skipped state through the
+    // unified renderer too. Otherwise an OPEN PR's unified comment would be overwritten by the legacy panel
+    // under the SAME marker when it closes. Flag-OFF (default) keeps the legacy panel byte-identical. The
+    // update is createIfMissing:false either way — we only refresh an existing comment for a closing PR.
+    const closedBody = isUnifiedReviewCommentEnabled(env)
+      ? buildClosedUnifiedCommentBody({ repoFullName, pullNumber: pr.number, footerMarkdown: gittensoryFooter({ earnUrl: gittensorRepoEarnUrl(repoFullName) }) })
+      : buildClosedPrPanelUpdate(repoFullName, pr.number);
+    await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, closedBody, { createIfMissing: false }).catch(() => undefined);
     return undefined;
   }
   const prelimHasPublicOutput =

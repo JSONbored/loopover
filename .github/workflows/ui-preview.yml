@@ -31,13 +31,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -58,7 +58,7 @@ jobs:
       # The trusted deploy workflow downloads this by name + run-id. It contains only the built bundle
       # (server/ + client/) — no secrets, no source needed downstream.
       - name: Upload built UI artifact
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ui-preview-dist
           path: apps/gittensory-ui/dist

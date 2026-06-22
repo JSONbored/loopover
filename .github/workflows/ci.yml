@@ -29,7 +29,7 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Check whitespace
@@ -74,11 +74,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -118,13 +118,13 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           # Full history so Codecov can resolve the merge base for patch coverage.
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -155,14 +155,14 @@ jobs:
           echo "Reproduce locally with the full suite: 'npm run test:coverage' (no sharding)."
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           fail_ci_if_error: false
       - name: Upload Vitest results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./reports/junit/vitest-shard-${{ matrix.shard }}.xml
@@ -179,11 +179,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -210,11 +210,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -245,11 +245,11 @@ jobs:
       VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -290,7 +290,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Dependency review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:

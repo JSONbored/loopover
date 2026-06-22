@@ -1,6 +1,7 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
 import type { GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
+import { changedPathsHittingGuardrail } from "../signals/change-guardrail";
 
 // High-slop threshold default when a repo hasn't set slopGateMinScore (mirrors the gate's `high` band).
 const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
@@ -35,6 +36,14 @@ export type AgentActionPlanInput = {
   // Optional so the trigger can pass raw repo settings; both fall back to conservative defaults here.
   autoMaintain?: AutoMaintainPolicy | undefined;
   slopGateMinScore?: number | null | undefined;
+  // Convergence safety (hard-guardrail port, #4196 incident class): the PR's changed paths + the repo's
+  // hard-guardrail globs. Any changed path matching a guardrail glob forces MANUAL review — gittensory will
+  // neither auto-merge, auto-approve, nor auto-close such a PR; it falls through to a human.
+  changedPaths: string[];
+  hardGuardrailGlobs: string[];
+  // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
+  // auto-closed. They may still auto-merge when clean + passing.
+  authorIsOwner: boolean;
   pr: {
     mergeableState?: string | null | undefined;
     reviewDecision?: string | null | undefined;
@@ -75,6 +84,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
 
   const blocking = isBlocking(input.conclusion);
   const passing = input.conclusion === "success";
+  // A changed path matching a hard guardrail forces manual review: suppress the irreversible dispositions
+  // (merge / close) AND the auto-approve that could later satisfy a merge. label + request_changes still run.
+  const guardrailHit = changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0;
 
   // 1) label — reflect the verdict bucket. After the neutral/skipped return above, a non-blocking verdict is
   // necessarily `success`. Idempotent: skip if the PR already carries the label.
@@ -94,7 +106,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       reason: `${input.blockerTitles.length || 1} blocker(s)`,
       reviewBody: `Gittensory requests changes — the gate is not yet satisfied:\n\n${summary}`,
     });
-  } else if (passing && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
+  } else if (passing && acting("approve") && !guardrailHit && input.pr.reviewDecision !== "APPROVED") {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),
@@ -105,7 +117,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
 
   // 3) disposition — merge a clean, approved, passing PR; otherwise close clear noise. Mutually exclusive.
   const mergeableClean = input.pr.mergeableState === "clean";
-  const canMerge = passing && acting("merge") && mergeableClean && approvalsSatisfied;
+  const canMerge = passing && acting("merge") && mergeableClean && approvalsSatisfied && !guardrailHit;
   if (canMerge) {
     actions.push({
       actionClass: "merge",
@@ -113,7 +125,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       reason: `gate passed, mergeable, ${autoMaintain.requireApprovals} approval(s) satisfied`,
       mergeMethod: autoMaintain.mergeMethod,
     });
-  } else if (acting("close") && !passing) {
+  } else if (acting("close") && !passing && !guardrailHit && !input.authorIsOwner) {
     const noiseReasons: string[] = [];
     if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) noiseReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);
     if ((input.pr.linkedDuplicateCount ?? 0) > 0) noiseReasons.push("duplicate of another open PR");

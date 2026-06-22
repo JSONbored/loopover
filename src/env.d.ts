@@ -15,6 +15,11 @@ declare global {
     /** Convergence (infra): Browser Rendering binding for visual (before/after screenshot) capture. Optional —
      *  absent ⇒ no visual capture. Unused until the per-module wiring chunk; an unbound deploy is inert. */
     BROWSER?: Fetcher;
+    /** Convergence (infra): the shared REVIEW_CONFIG KV (reviewbot's per-repo config, keyed by repo slug).
+     *  The converged auto-maintain path resolves each repo's `hardGuardrailGlobs` from it so guarded paths
+     *  force MANUAL review (no auto-merge / auto-close). Optional — absent ⇒ the conservative
+     *  DEFAULT_CRUCIAL_GUARDRAIL_GLOBS fallback applies (CI workflows + scripts still guarded). */
+    REVIEW_CONFIG?: KVNamespace;
     /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
      *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
      *  Deliberately NOT declared in this chunk; the review path keeps its current concurrency behavior. */

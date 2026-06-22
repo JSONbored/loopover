@@ -143,6 +143,16 @@
   "browser": {
     "binding": "BROWSER",
   },
+  // Convergence: the shared REVIEW_CONFIG KV (reviewbot's per-repo config, keyed by repo slug). The converged
+  // auto-maintain path reads each repo's hardGuardrailGlobs from it so guarded paths (scoring / auth / CI /
+  // policy scripts) force MANUAL review — never auto-merge/auto-close. Absent ⇒ DEFAULT_CRUCIAL_GUARDRAIL_GLOBS
+  // fallback (CI workflows + scripts still guarded). This KV survives reviewbot's decommission.
+  "kv_namespaces": [
+    {
+      "binding": "REVIEW_CONFIG",
+      "id": "aed9890dbd3f4f73bf46b43d7d0478d7",
+    },
+  ],
   // TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) so concurrent
   // webhook deliveries for the same PR serialize. That is a separate, more-involved sub-task — it needs a DO
   // class (ported) + its own `migrations` tag (`new_sqlite_classes: ["SubmissionLock"]`) + a `durable_objects`

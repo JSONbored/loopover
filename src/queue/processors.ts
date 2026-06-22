@@ -160,6 +160,7 @@ import { buildReviewGroundingText, isGroundingEnabled } from "../review/groundin
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
+import { loadHardGuardrailGlobs } from "../review/guardrail-config";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { recordNativeGateDecision } from "../review/parity-wire";
@@ -480,12 +481,26 @@ async function maybeRunAgentMaintenance(
   if (pr.state !== "open") return;
   if (!gate) return;
 
+  // Convergence safety: feed the planner the PR's changed paths + the repo's hard-guardrail globs so guarded
+  // paths force manual review, and flag owner-authored PRs so they are never auto-closed (standing rule).
+  const [changedFiles, hardGuardrailGlobs] = await Promise.all([
+    listPullRequestFiles(env, repoFullName, pr.number),
+    loadHardGuardrailGlobs(env, repoFullName),
+  ]);
+  const changedPaths = changedFiles.map((file) => file.path).filter((path) => path.length > 0);
+  const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
+  const authorLogin = pr.authorLogin ?? "";
+  const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
+
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
     autonomy: settings.autonomy,
     autoMaintain: settings.autoMaintain,
     slopGateMinScore: settings.slopGateMinScore,
+    changedPaths,
+    hardGuardrailGlobs,
+    authorIsOwner,
     pr: {
       mergeableState: pr.mergeableState,
       reviewDecision: pr.reviewDecision,

@@ -298,7 +298,11 @@ function computeScoreCore(
   // TEST_FILE_CONTRIBUTION_WEIGHT (#808): upstream weights test-file tokens at 0.05× relative to source tokens.
   // Applied only when totalTokenScore is not explicitly provided — an explicit caller total is honoured as-is.
   const testFileWeight = constant(constants, "TEST_FILE_CONTRIBUTION_WEIGHT", 0.05);
-  const totalTokenScore = nonNegative(input.totalTokenScore ?? sourceTokenScore + testFileWeight * nonNegative(input.testTokenScore) + nonNegative(input.nonCodeTokenScore));
+  // Non-code files (docs, data, config) contribute capped token score: upstream limits the lines scored for
+  // a non-code extension to MAX_LINES_SCORED_FOR_NON_CODE_EXT so a huge generated/non-code file cannot inflate
+  // the component total (#809). Honour an explicit caller total as-is.
+  const cappedNonCodeTokenScore = Math.min(nonNegative(input.nonCodeTokenScore), constant(constants, "MAX_LINES_SCORED_FOR_NON_CODE_EXT", 300));
+  const totalTokenScore = nonNegative(input.totalTokenScore ?? sourceTokenScore + testFileWeight * nonNegative(input.testTokenScore) + cappedNonCodeTokenScore);
   const sourceLines = Math.max(1, nonNegative(input.sourceLines ?? sourceTokenScore));
   const fixedBaseScore = input.fixedBaseScore ?? config?.fixedBaseScore ?? undefined;
   const rawDensity = sourceTokenScore / sourceLines;

@@ -191,6 +191,26 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(unmodeled).not.toContain("TIME_DECAY_GRACE_PERIOD_HOURS"); // modeled as of #703
   });
 
+  it("models the previously-dropped upstream scoring constants so they sync and stop surfacing as drift (#809)", () => {
+    expect(DEFAULT_SCORING_CONSTANTS.MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER).toBe(2);
+    expect(DEFAULT_SCORING_CONSTANTS.MAX_LINES_SCORED_FOR_NON_CODE_EXT).toBe(300);
+    expect(DEFAULT_SCORING_CONSTANTS.DEFAULT_ISSUE_DISCOVERY_SHARE).toBe(0.5);
+    expect(
+      findUnmodeledUpstreamConstants("MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER = 2.0\nMAX_LINES_SCORED_FOR_NON_CODE_EXT = 300\nDEFAULT_ISSUE_DISCOVERY_SHARE = 0.5\n"),
+    ).toEqual([]);
+  });
+
+  it("caps a PR's non-code token contribution at MAX_LINES_SCORED_FOR_NON_CODE_EXT (#809)", () => {
+    const base = { repoFullName: repo.fullName, sourceTokenScore: 40, sourceLines: 40, credibility: 1 };
+    // nonCodeTokenScore 500 is capped at 300, so the two previews (500 vs exactly 300) yield the same total.
+    const capped = buildScorePreview({ repo, snapshot, input: { ...base, nonCodeTokenScore: 500 } });
+    const atCap = buildScorePreview({ repo, snapshot, input: { ...base, nonCodeTokenScore: 300 } });
+    const underCap = buildScorePreview({ repo, snapshot, input: { ...base, nonCodeTokenScore: 100 } });
+    // The cap caps the component total, which feeds the contribution-bonus ramp.
+    expect(capped.scoreEstimate.contributionBonus).toBe(atCap.scoreEstimate.contributionBonus);
+    expect(underCap.scoreEstimate.contributionBonus).toBeLessThan(atCap.scoreEstimate.contributionBonus);
+  });
+
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
     const env = createTestEnv({
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",

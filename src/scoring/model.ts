@@ -47,6 +47,13 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   TIME_DECAY_SIGMOID_MIDPOINT: 10,
   TIME_DECAY_SIGMOID_STEEPNESS_SCALAR: 0.4,
   TIME_DECAY_MIN_MULTIPLIER: 0.05,
+  // Upstream scoring constants the knownOnly parser previously dropped (absent from SCORING_CONSTANT_NAMES),
+  // so they never synced from upstream and surfaced as unmodeled drift (#809). DEFAULT_ISSUE_DISCOVERY_SHARE is
+  // the upstream default for a repo's issue-discovery share when its registry config does not set one (applied
+  // in preview.ts); the other two sync for parity with upstream review-collateral and non-code line handling.
+  MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0,
+  MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300,
+  DEFAULT_ISSUE_DISCOVERY_SHARE: 0.5,
 };
 
 export const DEFAULT_GITTENSOR_UPSTREAM_REPO = "entrius/gittensor";

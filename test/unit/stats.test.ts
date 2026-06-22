@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { computeStats, handleParity, handleStats, type StatsEvalDeps } from "../../src/review/stats";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  computeStats,
+  handleParity,
+  handleStats,
+  isParityCutoverReady,
+  MIN_PARITY_SAMPLE,
+  PARITY_AGREEMENT_FLOOR,
+  type GateParityRow,
+  type StatsEvalDeps,
+} from "../../src/review/stats";
 
 // Stub D1: route by table name — review_audit → reversals, else decision rows.
 function stubEnv(extra: Record<string, unknown> = {}): Env {
@@ -189,5 +198,194 @@ describe("handleParity — bearer-gated, CORS-open cross-system parity feed", ()
     expect(body.shadow).toBe("gittensory");
     // first row (40 paired, perfect agreement, 0 unsafe) is cutover-ready; the thin 5-sample row is not.
     expect(body.cutoverReady).toEqual([{ project: "gittensory", ready: true }, { project: "gittensory", ready: false }]);
+  });
+
+  it("forwards the ?authoritative / ?shadow params (non-null branch) and uses ?days override", async () => {
+    let seen: { days: number; authoritative?: string; shadow?: string } | undefined;
+    const deps: StatsEvalDeps = {
+      computeGateEval: async () => ({ rows: [], hasSignal: false }),
+      computeTuningRecommendations: () => [],
+      computeGateParity: async (_env, o) => {
+        seen = { days: o.days, ...(o.authoritative !== undefined ? { authoritative: o.authoritative } : {}), ...(o.shadow !== undefined ? { shadow: o.shadow } : {}) };
+        return { authoritative: o.authoritative ?? "a", shadow: o.shadow ?? "s", hasSignal: false, rows: [] };
+      },
+    };
+    const r = new Request("https://w.dev/gittensory/internal/parity?days=14&authoritative=reviewbot&shadow=gittensory", {
+      method: "GET",
+      headers: { authorization: "Bearer s3cret" },
+    });
+    const res = await handleParity(r, stubEnv({ REVIEWBOT_STATS_TOKEN: "s3cret" }), "gittensory", deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ days: 14, authoritative: "reviewbot", shadow: "gittensory" });
+  });
+
+  it("omits authoritative/shadow (the {} branch) and defaults days to 90 when those params are absent", async () => {
+    let seen: { days: number; hasAuthoritative: boolean; hasShadow: boolean } | undefined;
+    const deps: StatsEvalDeps = {
+      computeGateEval: async () => ({ rows: [], hasSignal: false }),
+      computeTuningRecommendations: () => [],
+      computeGateParity: async (_env, o) => {
+        seen = { days: o.days, hasAuthoritative: "authoritative" in o, hasShadow: "shadow" in o };
+        return { authoritative: "reviewbot", shadow: "gittensory", hasSignal: false, rows: [] };
+      },
+    };
+    // No days / authoritative / shadow params → days defaults to 90, both spreads collapse to {}.
+    const r = new Request("https://w.dev/gittensory/internal/parity", { method: "GET", headers: { authorization: "Bearer s3cret" } });
+    const res = await handleParity(r, stubEnv({ REVIEWBOT_STATS_TOKEN: "s3cret" }), "gittensory", deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ days: 90, hasAuthoritative: false, hasShadow: false });
+  });
+
+  it("uses the default deps (defaultStatsEvalDeps) when none are injected — empty parity, no cutoverReady rows", async () => {
+    const res = await handleParity(req({ authorization: "Bearer s3cret" }), stubEnv({ REVIEWBOT_STATS_TOKEN: "s3cret" }), "gittensory");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authoritative: string; cutoverReady: unknown[] };
+    // default emptyParity uses the URL's shadow=gittensory and a default authoritative=reviewbot.
+    expect(body.authoritative).toBe("reviewbot");
+    expect(body.cutoverReady).toEqual([]);
+  });
+});
+
+describe("handleStats — query-param default branches", () => {
+  it("defaults days→90 and bucket→day when those params are absent (the ?? fallbacks)", async () => {
+    let captured: { days: number; bucket: string } | undefined;
+    const deps: StatsEvalDeps = {
+      // capture is observed via the payload window below; deps stay no-op.
+      computeGateEval: async (_env, o) => {
+        captured = { days: o.days, bucket: "" };
+        return { rows: [], hasSignal: false };
+      },
+      computeTuningRecommendations: () => [],
+      computeGateParity: async () => ({ authoritative: "reviewbot", shadow: "gittensory", hasSignal: false, rows: [] }),
+    };
+    // No days / bucket query params → days ?? 90, bucket ?? "day".
+    const r = new Request("https://w.dev/stats/data", { method: "GET", headers: { authorization: "Bearer s3cret" } });
+    const res = await handleStats(r, stubEnv({ REVIEWBOT_STATS_TOKEN: "s3cret" }), deps);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { window: { days: number; bucket: string } };
+    expect(body.window.days).toBe(90);
+    expect(body.window.bucket).toBe("day");
+    expect(captured?.days).toBe(90);
+  });
+});
+
+describe("computeStats — NaN window + null D1 results (the ?? [] fallbacks)", () => {
+  // A stub whose .all() returns NO `results` key, exercising the `?? []` on decision/reversal/gate rows.
+  function nullResultsEnv(): Env {
+    return {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({}), // results undefined → the ?? [] fallbacks fire on all three reads
+          }),
+        }),
+      },
+    } as unknown as Env;
+  }
+
+  it("defaults to 90 days when opts.days is NaN (Number.isFinite false branch)", async () => {
+    const out = await computeStats(nullResultsEnv(), { days: Number.NaN, bucket: "day", nowMs: NOW });
+    expect(out.window.days).toBe(90);
+  });
+
+  it("defaults to 90 days when opts.days is Infinity (Number.isFinite false branch)", async () => {
+    const out = await computeStats(nullResultsEnv(), { days: Number.POSITIVE_INFINITY, bucket: "day", nowMs: NOW });
+    expect(out.window.days).toBe(90);
+  });
+
+  it("falls back to empty arrays when D1 returns no `results` field", async () => {
+    const out = await computeStats(nullResultsEnv(), { days: 30, bucket: "day", nowMs: NOW });
+    expect(out.rows).toEqual([]);
+    expect(out.reversals).toEqual([]);
+    expect(out.gateActions).toEqual([]);
+    expect(out.projects).toEqual([]);
+    expect(out.verdicts).toEqual([]);
+  });
+});
+
+describe("isParityCutoverReady — every gate condition", () => {
+  const base: GateParityRow = {
+    project: "p",
+    pairedSamples: MIN_PARITY_SAMPLE,
+    bothMerge: MIN_PARITY_SAMPLE,
+    bothClose: 0,
+    bothHold: 0,
+    disagree: 0,
+    agreementRate: PARITY_AGREEMENT_FLOOR,
+    unsafeDisagreements: 0,
+    byReasonCode: [],
+  };
+
+  it("is ready when all four conditions hold (enough samples, 0 unsafe, rate at the floor)", () => {
+    expect(isParityCutoverReady(base)).toBe(true);
+  });
+
+  it("is NOT ready with too few paired samples", () => {
+    expect(isParityCutoverReady({ ...base, pairedSamples: MIN_PARITY_SAMPLE - 1 })).toBe(false);
+  });
+
+  it("is NOT ready with any unsafe disagreement", () => {
+    expect(isParityCutoverReady({ ...base, unsafeDisagreements: 1 })).toBe(false);
+  });
+
+  it("is NOT ready when agreementRate is null (the != null guard)", () => {
+    expect(isParityCutoverReady({ ...base, agreementRate: null })).toBe(false);
+  });
+
+  it("is NOT ready when agreementRate is below the floor", () => {
+    expect(isParityCutoverReady({ ...base, agreementRate: PARITY_AGREEMENT_FLOOR - 0.001 })).toBe(false);
+  });
+});
+
+describe("timingSafeEqual + readSecret — branches reached through the handlers", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the native crypto.subtle.timingSafeEqual when present (equal-length, function-typed branch)", async () => {
+    const subtle = crypto.subtle as unknown as Record<string, unknown>;
+    const had = "timingSafeEqual" in subtle;
+    const native = vi.fn((a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]));
+    subtle.timingSafeEqual = native;
+    try {
+      // Correct token, equal lengths → the native path is taken and authorizes (200).
+      const res = await handleStats(
+        new Request("https://w.dev/stats/data?days=1&bucket=day", { method: "GET", headers: { authorization: "Bearer s3cret" } }),
+        stubEnv({ REVIEWBOT_STATS_TOKEN: "s3cret" }),
+      );
+      expect(res.status).toBe(200);
+      expect(native).toHaveBeenCalled();
+    } finally {
+      if (!had) delete subtle.timingSafeEqual;
+    }
+  });
+
+  it("uses the manual constant-time loop for UNEQUAL-length tokens (the diff=1 + ?? 0 out-of-range branch)", async () => {
+    const subtle = crypto.subtle as unknown as Record<string, unknown>;
+    const had = "timingSafeEqual" in subtle;
+    // Force the non-native path so the manual loop (and its ?? 0 out-of-bounds reads) runs.
+    if (had) delete subtle.timingSafeEqual;
+    try {
+      // Provided "Bearer x" is far shorter than expected "Bearer <long>" → unequal length → diff seeded 1,
+      // the loop XORs out-of-range indices via `?? 0`, and the compare fails → 401.
+      const res = await handleStats(
+        new Request("https://w.dev/stats/data", { method: "GET", headers: { authorization: "Bearer x" } }),
+        stubEnv({ REVIEWBOT_STATS_TOKEN: "averylongtokenvalue-far-longer-than-x" }),
+      );
+      expect(res.status).toBe(401);
+    } finally {
+      // afterEach restores; nothing to re-add since it was absent in this env.
+      void had;
+    }
+  });
+
+  it("treats a non-string token secret as unset (readSecret's `: \"\"` branch → 401)", async () => {
+    // REVIEWBOT_STATS_TOKEN present but NOT a string → readSecret returns "" → !expected → 401.
+    const env = stubEnv({ REVIEWBOT_STATS_TOKEN: 12345 });
+    const res = await handleStats(
+      new Request("https://w.dev/stats/data", { method: "GET", headers: { authorization: "Bearer 12345" } }),
+      env,
+    );
+    expect(res.status).toBe(401);
   });
 });

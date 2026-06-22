@@ -191,6 +191,9 @@ export async function computeStats(
   // hasOwn (not `in`) so prototype keys like "constructor"/"toString" can't defeat the whitelist and
   // interpolate a non-SQL value into the query.
   const bucket = Object.hasOwn(BUCKET_SQL, opts.bucket) ? opts.bucket : "day";
+  // `bucket` is now always a present BUCKET_SQL key (day/week/month), so `BUCKET_SQL[bucket]` is never
+  // undefined; the `?? BUCKET_SQL.day` only satisfies noUncheckedIndexedAccess and is unreachable.
+  /* v8 ignore next */
   const bucketExpr = BUCKET_SQL[bucket] ?? BUCKET_SQL.day;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10); // YYYY-MM-DD
 

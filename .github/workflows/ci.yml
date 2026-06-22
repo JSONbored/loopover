@@ -33,7 +33,7 @@ jobs:
         run: git diff --check
       - name: Filter changed paths
         id: filter
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         with:
           filters: |
             backend:

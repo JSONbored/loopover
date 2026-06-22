@@ -45,10 +45,10 @@ function Tuning() {
           <code>.gittensory.yml</code> file in the repo.
         </li>
         <li>
-          <strong>Feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of environment
-          variables on the worker. These switch whole capabilities (safety scanning, grounding, RAG
-          context, the unified comment, the content lane, observability, self-tuning, and more) on or
-          off for the deployment.
+          <strong>Feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of
+          environment variables on the worker. These switch whole capabilities (safety scanning,
+          grounding, RAG context, the unified comment, the content lane, observability, self-tuning,
+          and more) on or off for the deployment.
         </li>
       </ul>
       <p>
@@ -64,8 +64,8 @@ function Tuning() {
         <code>.gittensory.yml</code> falls back to a quiet, non-blocking profile: the gate is{" "}
         <code>off</code>, AI review is <code>off</code>, slop scoring is <code>off</code>, comments
         go only to detected contributors, and no check-run is published. Turning anything on is
-        always an explicit opt-in — you roll capabilities forward, and back, one flag and one repo at
-        a time.
+        always an explicit opt-in — you roll capabilities forward, and back, one flag and one repo
+        at a time.
       </Callout>
 
       <h2>Precedence</h2>
@@ -78,9 +78,9 @@ function Tuning() {
         <li>built-in safe defaults.</li>
       </ul>
       <p>
-        The friendly <code>gate:</code> block in <code>.gittensory.yml</code> is a typed alias for the
-        gate-related fields and wins over the generic <code>settings:</code> block for those same
-        fields. Gittensory looks for the manifest at the first match of{" "}
+        The friendly <code>gate:</code> block in <code>.gittensory.yml</code> is a typed alias for
+        the gate-related fields and wins over the generic <code>settings:</code> block for those
+        same fields. Gittensory looks for the manifest at the first match of{" "}
         <code>.gittensory.yml</code> → <code>.github/gittensory.yml</code> →{" "}
         <code>.gittensory.json</code> → <code>.github/gittensory.json</code>.
       </p>
@@ -88,15 +88,15 @@ function Tuning() {
       <h2>Feature flags (GITTENSORY_REVIEW_*)</h2>
       <p>
         These are worker environment variables, every one defaulting to <strong>OFF</strong>.
-        "Truthy" means one of <code>1</code>, <code>true</code>, <code>yes</code>, or <code>on</code>{" "}
-        (case-insensitive); anything else — including unset, empty, or <code>false</code> — is OFF.
-        When a flag is OFF its code path is inert: the review behaves exactly as if the feature did
-        not exist.
+        "Truthy" means one of <code>1</code>, <code>true</code>, <code>yes</code>, or{" "}
+        <code>on</code> (case-insensitive); anything else — including unset, empty, or{" "}
+        <code>false</code> — is OFF. When a flag is OFF its code path is inert: the review behaves
+        exactly as if the feature did not exist.
       </p>
       <p>
         One flag is a <strong>scope</strong> rather than a capability:{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code> is a per-repo allowlist that must <em>also</em> pass for
-        any per-PR feature to run on a given repo. So a per-PR feature activates only when{" "}
+        <code>GITTENSORY_REVIEW_REPOS</code> is a per-repo allowlist that must <em>also</em> pass
+        for any per-PR feature to run on a given repo. So a per-PR feature activates only when{" "}
         <strong>its own flag is ON and the repo is allowlisted</strong>.
       </p>
       <ul>
@@ -122,10 +122,10 @@ function Tuning() {
         </li>
         <li>
           <code>GITTENSORY_REVIEW_RAG</code> — retrieval-augmented context: queries the codebase
-          vector index for related code and docs (callers, related modules, existing conventions) and
-          appends a "Relevant existing code / docs" section to the reviewer prompt. Additive only.
-          Inert until a vector index exists for the repo — a cold or missing index degrades to no
-          context. Per-PR.
+          vector index for related code and docs (callers, related modules, existing conventions)
+          and appends a "Relevant existing code / docs" section to the reviewer prompt. Additive
+          only. Inert until a vector index exists for the repo — a cold or missing index degrades to
+          no context. Per-PR.
         </li>
         <li>
           <code>GITTENSORY_REVIEW_REPUTATION</code> — submitter-reputation spend control. A new,
@@ -142,8 +142,8 @@ function Tuning() {
           <code>GITTENSORY_REVIEW_OPS</code> — observability, read-only. On the cron tick an anomaly
           scan over the gate-block ledger and calibration data emits a structured{" "}
           <code>ops_anomaly</code> log when something drifts, and a bearer-gated{" "}
-          <code>GET /v1/internal/ops/stats</code> serves an outcome aggregate. Does not mutate config.
-          Global.
+          <code>GET /v1/internal/ops/stats</code> serves an outcome aggregate. Does not mutate
+          config. Global.
         </li>
         <li>
           <code>GITTENSORY_REVIEW_SELFTUNE</code> — the self-improvement loop. On the cron tick it
@@ -153,8 +153,8 @@ function Tuning() {
           Global, and safe to leave on.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_PARITY_AUDIT</code> — parity readiness, shadow record-only. Records
-          each finalized gate decision and serves a readiness report at{" "}
+          <code>GITTENSORY_REVIEW_PARITY_AUDIT</code> — parity readiness, shadow record-only.
+          Records each finalized gate decision and serves a readiness report at{" "}
           <code>GET /v1/internal/parity</code>. Changes no review behavior. Global.
         </li>
         <li>
@@ -171,18 +171,18 @@ function Tuning() {
           secrets. Global.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_STATS_TOKEN</code> — the bearer secret for the stats data endpoint.
-          Not an on/off switch; it is the token value. When set, the stats route requires this bearer
-          token.
+          <code>GITTENSORY_REVIEW_STATS_TOKEN</code> — the bearer secret for the stats data
+          endpoint. Not an on/off switch; it is the token value. When set, the stats route requires
+          this bearer token.
         </li>
       </ul>
 
       <Callout variant="note" title="Rolling out a per-PR feature">
-        A safe rollout is two flips: turn the capability flag <code>true</code>, then add the repo to{" "}
-        <code>GITTENSORY_REVIEW_REPOS</code>. Because both must be true, you can leave a capability
-        globally enabled while it stays dormant everywhere except the repos you have explicitly
-        allowlisted — and you roll a single repo back by removing it from the list without disturbing
-        the others.
+        A safe rollout is two flips: turn the capability flag <code>true</code>, then add the repo
+        to <code>GITTENSORY_REVIEW_REPOS</code>. Because both must be true, you can leave a
+        capability globally enabled while it stays dormant everywhere except the repos you have
+        explicitly allowlisted — and you roll a single repo back by removing it from the list
+        without disturbing the others.
       </Callout>
 
       <h2>Gate modes</h2>
@@ -195,7 +195,8 @@ function Tuning() {
           <code>off</code> — the dimension is not evaluated.
         </li>
         <li>
-          <code>advisory</code> — the finding is surfaced in the comment or context but never blocks.
+          <code>advisory</code> — the finding is surfaced in the comment or context but never
+          blocks.
         </li>
         <li>
           <code>block</code> — the finding can become a hard <code>Gittensory Gate</code> blocker.
@@ -204,8 +205,8 @@ function Tuning() {
         </li>
       </ul>
       <p>
-        The master switch is <code>gate.enabled</code> (<code>off</code> / <code>enabled</code>). The
-        per-dimension modes refine an already-enabled gate. The main dimensions:
+        The master switch is <code>gate.enabled</code> (<code>off</code> / <code>enabled</code>).
+        The per-dimension modes refine an already-enabled gate. The main dimensions:
       </p>
       <ul>
         <li>
@@ -231,14 +232,14 @@ function Tuning() {
         <li>
           <code>gate.slop.mode</code> — the deterministic anti-slop signal. Default <code>off</code>{" "}
           (opt-in). <code>advisory</code> surfaces the slop score and warnings; <code>block</code>{" "}
-          also hard-blocks at or above <code>gate.slop.minScore</code> (0–100; <code>null</code> uses{" "}
-          <code>60</code>, the "high" band). Set <code>gate.slop.aiAdvisory: true</code> to add a
-          free advisory-only <code>ai_slop_advisory</code> finding — it never feeds the slop score or
-          the gate.
+          also hard-blocks at or above <code>gate.slop.minScore</code> (0–100; <code>null</code>{" "}
+          uses <code>60</code>, the "high" band). Set <code>gate.slop.aiAdvisory: true</code> to add
+          a free advisory-only <code>ai_slop_advisory</code> finding — it never feeds the slop score
+          or the gate.
         </li>
         <li>
-          <code>gate.mergeReadiness</code> — composite merge-readiness gate. Default <code>off</code>,
-          no min score.
+          <code>gate.mergeReadiness</code> — composite merge-readiness gate. Default{" "}
+          <code>off</code>, no min score.
         </li>
         <li>
           <code>gate.manifestPolicy</code> — when <code>block</code>, the manifest's declared policy
@@ -270,13 +271,13 @@ function Tuning() {
         </li>
         <li>
           <code>gate.aiReview.provider</code> — <code>anthropic</code>, <code>openai</code>, or{" "}
-          <code>null</code> (use the stored key's own provider). Must match the stored key's provider
-          or BYOK is skipped and falls back to the built-in pair.
+          <code>null</code> (use the stored key's own provider). Must match the stored key's
+          provider or BYOK is skipped and falls back to the built-in pair.
         </li>
         <li>
           <code>gate.aiReview.model</code> — model override for the BYOK write-up (for example{" "}
-          <code>claude-3-5-sonnet-latest</code>); <code>null</code> uses the key record's model, else
-          a conservative per-provider default.
+          <code>claude-3-5-sonnet-latest</code>); <code>null</code> uses the key record's model,
+          else a conservative per-provider default.
         </li>
       </ul>
       <Callout variant="safety">
@@ -288,10 +289,10 @@ function Tuning() {
 
       <h2>Guardrails and scope</h2>
       <p>
-        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and guardrails. These
-        feed the deterministic findings (such as <code>manifest_blocked_path</code> and{" "}
-        <code>manifest_missing_tests</code>) and — when <code>gate.manifestPolicy: block</code> — can
-        become enforceable blockers.
+        Top-level keys in <code>.gittensory.yml</code> declare the repo's focus and guardrails.
+        These feed the deterministic findings (such as <code>manifest_blocked_path</code> and{" "}
+        <code>manifest_missing_tests</code>) and — when <code>gate.manifestPolicy: block</code> —
+        can become enforceable blockers.
       </p>
       <ul>
         <li>
@@ -325,15 +326,16 @@ function Tuning() {
           GitHub surface. Default <code>[]</code>.
         </li>
         <li>
-          <code>publicNotes</code> — notes explicitly opted into public output (public-safe filtered;
-          unsafe lines are dropped). Default <code>[]</code>.
+          <code>publicNotes</code> — notes explicitly opted into public output (public-safe
+          filtered; unsafe lines are dropped). Default <code>[]</code>.
         </li>
       </ul>
 
       <h2>Other repo settings</h2>
       <p>
-        Anything you can toggle in the dashboard can also be set as code under <code>settings:</code>{" "}
-        in <code>.gittensory.yml</code>. Common ones, all defaulting to the safe values shown:
+        Anything you can toggle in the dashboard can also be set as code under{" "}
+        <code>settings:</code> in <code>.gittensory.yml</code>. Common ones, all defaulting to the
+        safe values shown:
       </p>
       <ul>
         <li>
@@ -428,10 +430,10 @@ settings:
       />
 
       <Callout variant="warn" title="Roll forward one step at a time">
-        Start conservative: enable the gate in <code>advisory</code> before <code>block</code>, watch
-        the surfaced findings, and only then tighten. Combined with the tightening-only self-tune
-        loop, this keeps the gate from ever blocking a contributor on a setting you have not
-        validated.
+        Start conservative: enable the gate in <code>advisory</code> before <code>block</code>,
+        watch the surfaced findings, and only then tighten. Combined with the tightening-only
+        self-tune loop, this keeps the gate from ever blocking a contributor on a setting you have
+        not validated.
       </Callout>
 
       <p>

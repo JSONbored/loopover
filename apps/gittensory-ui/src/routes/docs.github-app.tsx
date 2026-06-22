@@ -36,10 +36,10 @@ function GithubApp() {
     >
       <p>
         Once installed, the <strong>gittensory app reviews every pull request</strong> on the repos
-        you select. Each review produces two surfaces: the <strong>Gittensory Gate</strong> check run
-        (and the advisory <strong>Gittensory Context</strong> check), and a single review comment
-        posted by <code>gittensory[bot]</code> that updates in place as the PR evolves. Everything on
-        this page configures that review.
+        you select. Each review produces two surfaces: the <strong>Gittensory Gate</strong> check
+        run (and the advisory <strong>Gittensory Context</strong> check), and a single review
+        comment posted by <code>gittensory[bot]</code> that updates in place as the PR evolves.
+        Everything on this page configures that review.
       </p>
 
       <h2>Install</h2>
@@ -107,17 +107,18 @@ GET /v1/installations/:id/repair`}
       <h2>PR panel</h2>
       <p>
         The PR panel is the review comment the gittensory app posts on each pull request. It is one
-        sticky comment authored by <code>gittensory[bot]</code> that updates in place — the app edits
-        the same comment instead of adding new ones. It shows a public-safe readiness score, concrete
-        signal evidence, and short actions for linked issues, related work, review load, validation
-        evidence, open PR queue, contributor context, and Gate result.
+        sticky comment authored by <code>gittensory[bot]</code> that updates in place — the app
+        edits the same comment instead of adding new ones. It shows a public-safe readiness score,
+        concrete signal evidence, and short actions for linked issues, related work, review load,
+        validation evidence, open PR queue, contributor context, and Gate result.
       </p>
       <p>
         By default the comment is posted only to detected contributors (<code>commentMode</code> is{" "}
-        <code>detected_contributors_only</code>). Set <code>commentMode</code> to <code>all_prs</code>{" "}
-        to comment on every PR, or <code>off</code> to suppress the comment entirely. Operators who
-        have rolled the deployment onto the unified review comment (see below) get the single in-place
-        comment shape; otherwise the legacy multi-panel comment is used unchanged.
+        <code>detected_contributors_only</code>). Set <code>commentMode</code> to{" "}
+        <code>all_prs</code> to comment on every PR, or <code>off</code> to suppress the comment
+        entirely. Operators who have rolled the deployment onto the unified review comment (see
+        below) get the single in-place comment shape; otherwise the legacy multi-panel comment is
+        used unchanged.
       </p>
 
       <h2>Checks</h2>
@@ -125,8 +126,8 @@ GET /v1/installations/:id/repair`}
         The gittensory app publishes its review as check runs. <strong>Gittensory Gate</strong> is
         the gate result; <strong>Gittensory Context</strong> is the advisory companion. Both are
         controlled per repo by <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>),
-        with <code>checkRunDetailLevel</code> choosing <code>minimal</code>, <code>standard</code>, or{" "}
-        <code>deep</code> output.
+        with <code>checkRunDetailLevel</code> choosing <code>minimal</code>, <code>standard</code>,
+        or <code>deep</code> output.
       </p>
       <p>
         <strong>Gittensory Context</strong> is advisory and should not be required in branch
@@ -228,8 +229,9 @@ review:
         always remain on the footer.
       </p>
       <p>
-        The per-repo settings above choose <em>what</em> Gittensory does on each PR. The next section
-        covers the deployment-wide capability switches that turn whole review features on or off.
+        The per-repo settings above choose <em>what</em> Gittensory does on each PR. The next
+        section covers the deployment-wide capability switches that turn whole review features on or
+        off.
       </p>
 
       <h2>
@@ -238,10 +240,10 @@ review:
       <p>
         Beyond per-repo settings, operators turn whole review <em>capabilities</em> on or off with
         the <code>GITTENSORY_REVIEW_*</code> worker environment variables. Every flag defaults to{" "}
-        <strong>OFF</strong>: when a flag is off its code path is inert and the review behaves exactly
-        as if the feature did not exist. "Truthy" is one of <code>1</code>, <code>true</code>,{" "}
-        <code>yes</code>, or <code>on</code>. You roll capabilities forward — and back — one flag, and
-        one repo, at a time.
+        <strong>OFF</strong>: when a flag is off its code path is inert and the review behaves
+        exactly as if the feature did not exist. "Truthy" is one of <code>1</code>,{" "}
+        <code>true</code>, <code>yes</code>, or <code>on</code>. You roll capabilities forward — and
+        back — one flag, and one repo, at a time.
       </p>
       <Callout variant="safety">
         Per-PR features require <strong>two</strong> conditions: the capability flag is on{" "}
@@ -280,9 +282,9 @@ review:
           the legacy comment byte-identical.
         </li>
         <li>
-          <code>GITTENSORY_REVIEW_OPS</code> — read-only observability: a cron anomaly scan over your
-          own review-outcome data plus a bearer-gated stats aggregate. Global (not scoped by the repo
-          allowlist).
+          <code>GITTENSORY_REVIEW_OPS</code> — read-only observability: a cron anomaly scan over
+          your own review-outcome data plus a bearer-gated stats aggregate. Global (not scoped by
+          the repo allowlist).
         </li>
         <li>
           <code>GITTENSORY_REVIEW_SELFTUNE</code> — self-improvement loop that computes tuning
@@ -299,10 +301,10 @@ review:
         </li>
       </ul>
       <p>
-        A safe rollout for a per-PR feature is two flips: set the capability flag truthy, then add the
-        repo to <code>GITTENSORY_REVIEW_REPOS</code>. Because both must hold, a capability can stay
-        globally enabled while remaining dormant everywhere except the repos you have explicitly
-        added.
+        A safe rollout for a per-PR feature is two flips: set the capability flag truthy, then add
+        the repo to <code>GITTENSORY_REVIEW_REPOS</code>. Because both must hold, a capability can
+        stay globally enabled while remaining dormant everywhere except the repos you have
+        explicitly added.
       </p>
       <CodeBlock
         lang="bash"

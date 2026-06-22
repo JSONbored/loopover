@@ -46,13 +46,13 @@ function PrivacySecurity() {
 
       <h2>Open algorithm, private tuning</h2>
       <p>
-        Gittensory's review engine is built so the <strong>logic is public but the dial settings are
-        not</strong>. The deterministic gate, the scoring signals, the slop detector, the
-        grounding/RAG context builders, and the comment renderer all live in the open source tree —
-        anyone can read exactly how a verdict is reached. What stays private is the{" "}
-        <strong>production tuning</strong>: the thresholds, guardrail paths, and gate modes an
-        operator runs in production. That separation is what keeps a review from being gameable off
-        the public code.
+        Gittensory's review engine is built so the{" "}
+        <strong>logic is public but the dial settings are not</strong>. The deterministic gate, the
+        scoring signals, the slop detector, the grounding/RAG context builders, and the comment
+        renderer all live in the open source tree — anyone can read exactly how a verdict is
+        reached. What stays private is the <strong>production tuning</strong>: the thresholds,
+        guardrail paths, and gate modes an operator runs in production. That separation is what
+        keeps a review from being gameable off the public code.
       </p>
       <p>
         Tuning lives in two private, repo-scoped places that sit on top of the open algorithm, and
@@ -61,10 +61,10 @@ function PrivacySecurity() {
       <ul>
         <li>
           <strong>Per-repo settings</strong> — gate modes, score thresholds, and guardrails, stored
-          in the operator's database (set through the dashboard/API) or declared as config-as-code in
-          a repo's <code>.gittensory.yml</code>. Choosing <code>gate.slop.minScore</code> or marking
-          a path under <code>blockedPaths</code> tightens the gate without telling a contributor how
-          to pass it.
+          in the operator's database (set through the dashboard/API) or declared as config-as-code
+          in a repo's <code>.gittensory.yml</code>. Choosing <code>gate.slop.minScore</code> or
+          marking a path under <code>blockedPaths</code> tightens the gate without telling a
+          contributor how to pass it.
         </li>
         <li>
           <strong>Operator feature flags</strong> — the <code>GITTENSORY_REVIEW_*</code> family of
@@ -74,10 +74,10 @@ function PrivacySecurity() {
         </li>
       </ul>
       <p>
-        Every feature flag ships <strong>OFF</strong>, and a per-PR capability runs only when its own
-        flag is on <em>and</em> the repo is in the <code>GITTENSORY_REVIEW_REPOS</code> allowlist —
-        so capabilities stay dormant until an operator explicitly converges a repo, one flag and one
-        repo at a time.
+        Every feature flag ships <strong>OFF</strong>, and a per-PR capability runs only when its
+        own flag is on <em>and</em> the repo is in the <code>GITTENSORY_REVIEW_REPOS</code>{" "}
+        allowlist — so capabilities stay dormant until an operator explicitly converges a repo, one
+        flag and one repo at a time.
       </p>
       <CodeBlock
         code={`# Per-PR features run only when the flag is ON and the repo is allowlisted.
@@ -90,16 +90,16 @@ GITTENSORY_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comme
       />
       <p>
         The internal-only controls never surface publicly. Submitter reputation, for example, can
-        downgrade a burst or low-reputation submitter to a deterministic-only review — but no comment,
-        label, or check ever shows a reputation value. Reputation thresholds are generic anti-abuse
-        defaults that reveal no review direction and are not per-repo tunable.
+        downgrade a burst or low-reputation submitter to a deterministic-only review — but no
+        comment, label, or check ever shows a reputation value. Reputation thresholds are generic
+        anti-abuse defaults that reveal no review direction and are not per-repo tunable.
       </p>
       <Callout variant="safety">
         Reading the open source tells you <strong>how</strong> a verdict is computed, never{" "}
         <strong>what</strong> an operator's production gate will decide. The deciding inputs —
-        thresholds, guardrail globs, and which <code>GITTENSORY_REVIEW_*</code> capabilities are live
-        — are private runtime settings, so reviews cannot be reverse-engineered or gamed from the
-        public code.
+        thresholds, guardrail globs, and which <code>GITTENSORY_REVIEW_*</code> capabilities are
+        live — are private runtime settings, so reviews cannot be reverse-engineered or gamed from
+        the public code.
       </Callout>
 
       <h2>Public output rules</h2>

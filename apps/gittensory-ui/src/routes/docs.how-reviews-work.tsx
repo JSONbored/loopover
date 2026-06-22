@@ -39,13 +39,13 @@ function HowReviewsWork() {
       </p>
       <ol>
         <li>
-          <strong>The gate</strong> — a deterministic pass that never asks an AI. It runs a fixed set
-          of rules (duplicates, linked issues, merge-readiness, anti-slop, manifest policy) and each
-          rule is <code>off</code>, <code>advisory</code>, or <code>block</code>.
+          <strong>The gate</strong> — a deterministic pass that never asks an AI. It runs a fixed
+          set of rules (duplicates, linked issues, merge-readiness, anti-slop, manifest policy) and
+          each rule is <code>off</code>, <code>advisory</code>, or <code>block</code>.
         </li>
         <li>
-          <strong>The AI review</strong> — a dual-model read of the diff that writes review notes and,
-          when you opt in, lets a high-confidence <em>consensus</em> become a blocker.
+          <strong>The AI review</strong> — a dual-model read of the diff that writes review notes
+          and, when you opt in, lets a high-confidence <em>consensus</em> become a blocker.
         </li>
       </ol>
       <p>
@@ -63,8 +63,8 @@ function HowReviewsWork() {
       <h2>1. The gate: advisory vs. block</h2>
       <p>
         The gate is deterministic — same inputs, same verdict, no model in the loop. Its master
-        switch is <code>gateCheckMode</code> (<code>off</code> / <code>enabled</code>). Once enabled,
-        each <em>dimension</em> is independently set to one of three modes:
+        switch is <code>gateCheckMode</code> (<code>off</code> / <code>enabled</code>). Once
+        enabled, each <em>dimension</em> is independently set to one of three modes:
       </p>
       <ul>
         <li>
@@ -80,8 +80,8 @@ function HowReviewsWork() {
         </li>
       </ul>
       <p>
-        A <code>block</code> outcome is always <strong>confirmed-contributor-gated</strong>: the mode
-        chooses <em>which</em> checks are active, never <em>who</em> can be blocked. A genuine
+        A <code>block</code> outcome is always <strong>confirmed-contributor-gated</strong>: the
+        mode chooses <em>which</em> checks are active, never <em>who</em> can be blocked. A genuine
         newcomer can be softened from a block to an advisory when{" "}
         <code>firstTimeContributorGrace</code> is on.
       </p>
@@ -105,9 +105,9 @@ function HowReviewsWork() {
         </li>
         <li>
           <strong>Slop gate</strong> (<code>slopGateMode</code>, default <code>off</code>) — the
-          deterministic anti-slop signal. <code>advisory</code> surfaces the slop score and warnings;{" "}
-          <code>block</code> also hard-blocks at or above <code>slopGateMinScore</code> (engine
-          default band <code>60</code>).
+          deterministic anti-slop signal. <code>advisory</code> surfaces the slop score and
+          warnings; <code>block</code> also hard-blocks at or above <code>slopGateMinScore</code>{" "}
+          (engine default band <code>60</code>).
         </li>
         <li>
           <strong>Merge-readiness gate</strong> (<code>mergeReadinessGateMode</code>, default{" "}
@@ -144,8 +144,8 @@ function HowReviewsWork() {
 
       <h2>2. The dual-AI review and consensus</h2>
       <p>
-        AI review is its own dimension (<code>aiReviewMode</code>, default <code>off</code>). It reads
-        the diff and produces review notes — concrete findings tied to the change, not a vague
+        AI review is its own dimension (<code>aiReviewMode</code>, default <code>off</code>). It
+        reads the diff and produces review notes — concrete findings tied to the change, not a vague
         verdict. Two modes:
       </p>
       <ul>
@@ -169,16 +169,16 @@ function HowReviewsWork() {
       <p>
         With <code>aiReviewByok: true</code> and a configured provider key, the <em>advisory</em>{" "}
         write-up can use a maintainer's own frontier model (<code>aiReviewProvider</code> /{" "}
-        <code>aiReviewModel</code>, e.g. <code>claude-3-5-sonnet-latest</code>). The consensus blocker
-        always stays on the free model pair, so BYOK improves the prose without ever changing{" "}
-        <em>who</em> can be blocked.
+        <code>aiReviewModel</code>, e.g. <code>claude-3-5-sonnet-latest</code>). The consensus
+        blocker always stays on the free model pair, so BYOK improves the prose without ever
+        changing <em>who</em> can be blocked.
       </p>
       <Callout variant="note" title="Grounding makes the AI check reality">
         The <code>GITTENSORY_REVIEW_GROUNDING</code> flag grounds the reviewer prompt with the PR's
         finished CI status and the full post-change content of the changed files — so the model
         verifies its claims instead of predicting CI or flagging a symbol defined just outside the
-        diff hunk. <code>GITTENSORY_REVIEW_RAG</code> adds semantically related existing code and docs
-        as extra context. Both are additive and opt-in.
+        diff hunk. <code>GITTENSORY_REVIEW_RAG</code> adds semantically related existing code and
+        docs as extra context. Both are additive and opt-in.
       </Callout>
 
       <h2>3. The unified review comment</h2>
@@ -189,14 +189,14 @@ function HowReviewsWork() {
       </p>
       <ul>
         <li>
-          <strong>The alert</strong> — a one-line headline verdict: whether the gate blocks, what the
-          single most important blocker is, or that the PR is clear. This is the line a reader scans
-          first.
+          <strong>The alert</strong> — a one-line headline verdict: whether the gate blocks, what
+          the single most important blocker is, or that the PR is clear. This is the line a reader
+          scans first.
         </li>
         <li>
           <strong>The signal table</strong> — a compact row-per-signal summary: each dimension that
-          ran, its state (pass / advisory / block), and a short reason. This is the at-a-glance map of
-          why the verdict came out the way it did.
+          ran, its state (pass / advisory / block), and a short reason. This is the at-a-glance map
+          of why the verdict came out the way it did.
         </li>
         <li>
           <strong>Collapsibles</strong> — expandable sections for the detail behind each signal: the
@@ -209,19 +209,18 @@ function HowReviewsWork() {
         <code>commentMode</code> chooses the audience (<code>off</code> /{" "}
         <code>detected_contributors_only</code> / <code>all_prs</code>), and{" "}
         <code>publicSignalLevel</code> (<code>minimal</code> / <code>standard</code>) controls how
-        much of the signal detail is published. Private review context (
-        <code>maintainerNotes</code>) is never published to a public surface.
+        much of the signal detail is published. Private review context (<code>maintainerNotes</code>
+        ) is never published to a public surface.
       </p>
       <Callout variant="safety">
         Public-facing comments are sanitized before they leave the worker. Private scoring, reward,
         and reputation language never appears in the PR thread — and reputation-based spend control
-        (<code>GITTENSORY_REVIEW_REPUTATION</code>) is never surfaced in any comment, label, or check.
+        (<code>GITTENSORY_REVIEW_REPUTATION</code>) is never surfaced in any comment, label, or
+        check.
       </Callout>
 
       <h2>4. The signals behind a verdict</h2>
-      <p>
-        Each row in the signal table comes from a named finding. The common ones you will see:
-      </p>
+      <p>Each row in the signal table comes from a named finding. The common ones you will see:</p>
       <ul>
         <li>
           <code>secret_leak</code> — the safety scan (<code>GITTENSORY_REVIEW_SAFETY</code>) found a
@@ -230,7 +229,8 @@ function HowReviewsWork() {
         </li>
         <li>
           <code>manifest_blocked_path</code> — the PR touches a path listed in the repo's{" "}
-          <code>blockedPaths</code>. Enforceable when <code>manifestPolicy</code> is <code>block</code>.
+          <code>blockedPaths</code>. Enforceable when <code>manifestPolicy</code> is{" "}
+          <code>block</code>.
         </li>
         <li>
           <code>manifest_missing_tests</code> — code changed but the expected test paths (
@@ -245,26 +245,25 @@ function HowReviewsWork() {
           <strong>Duplicate match</strong> — the other PR this one duplicates or supersedes.
         </li>
         <li>
-          <strong>AI review notes</strong> — the dual-model findings, and (in <code>block</code> mode)
-          any consensus defect.
+          <strong>AI review notes</strong> — the dual-model findings, and (in <code>block</code>{" "}
+          mode) any consensus defect.
         </li>
       </ul>
       <p>
-        The check run can carry the same signals at adjustable depth:{" "}
-        <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>) publishes the{" "}
-        <strong>Gittensory Gate</strong> check, and <code>checkRunDetailLevel</code> (
-        <code>minimal</code> / <code>standard</code> / <code>deep</code>) sets how much the check
-        summary spells out.
+        The check run can carry the same signals at adjustable depth: <code>checkRunMode</code> (
+        <code>off</code> / <code>enabled</code>) publishes the <strong>Gittensory Gate</strong>{" "}
+        check, and <code>checkRunDetailLevel</code> (<code>minimal</code> / <code>standard</code> /{" "}
+        <code>deep</code>) sets how much the check summary spells out.
       </p>
 
       <h2>Putting it together</h2>
       <p>
-        A pull request flows through the deterministic gate, then the dual-AI review, and the union of
-        both is rendered as one alert + signal table + collapsibles comment. The gate decides{" "}
-        <em>can this merge</em> with fixed rules you can read; the AI review adds judgment as advisory
-        notes, escalating to a blocker only on two-model consensus; and the comment is the single,
-        sanitized place a contributor reads the whole verdict. Tune every mode, threshold, and surface
-        in <a href="/docs/review-configuration">Review configuration</a>.
+        A pull request flows through the deterministic gate, then the dual-AI review, and the union
+        of both is rendered as one alert + signal table + collapsibles comment. The gate decides{" "}
+        <em>can this merge</em> with fixed rules you can read; the AI review adds judgment as
+        advisory notes, escalating to a blocker only on two-model consensus; and the comment is the
+        single, sanitized place a contributor reads the whole verdict. Tune every mode, threshold,
+        and surface in <a href="/docs/review-configuration">Review configuration</a>.
       </p>
     </DocsPage>
   );

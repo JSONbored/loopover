@@ -147,6 +147,27 @@ describe("review-grounding: fetchFullFileContents (injected FileFetcher, fail-sa
     expect(out).toEqual([{ path: "src/big.ts", text: "", truncated: true }]);
   });
 
+  it("passes a per-read cap and stops fetching after an oversized file exhausts the budget", async () => {
+    const reads: Array<{ path: string; maxChars: number | undefined }> = [];
+    const fetcher: FileFetcher = {
+      getFileContent: async (path, _ref, maxChars) => {
+        reads.push({ path, maxChars });
+        return path === "src/big.ts" ? "x".repeat((maxChars ?? 0) + 1) : "ok";
+      },
+    };
+    const out = await fetchFullFileContents(
+      { ciGrounding: false, fullFileContext: true },
+      "sha",
+      files(["src/big.ts"], ["src/after.ts"]),
+      fetcher,
+    );
+    expect(out).toEqual([
+      { path: "src/big.ts", text: "", truncated: true },
+      { path: "src/after.ts", text: "", truncated: true },
+    ]);
+    expect(reads).toEqual([{ path: "src/big.ts", maxChars: 24_001 }]);
+  });
+
   it("returns undefined when nothing readable was inlined", async () => {
     const out = await fetchFullFileContents({ ciGrounding: false, fullFileContext: true }, "sha", files(["gone.ts"]), fetcherFrom({}));
     expect(out).toBeUndefined();

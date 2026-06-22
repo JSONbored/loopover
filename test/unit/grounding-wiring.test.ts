@@ -347,6 +347,22 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     fetchSpy.mockRestore();
   });
 
+  it("does not read bodies whose Content-Length exceeds the per-file cap", async () => {
+    const env = createTestEnv();
+    const text = vi.fn(async () => "too large");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-length": "100" }),
+      text,
+      body: null,
+    } as unknown as Response);
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    const out = await fetcher.getFileContent("big.ts", "sha7", 10);
+    expect(out?.length).toBeGreaterThan(10);
+    expect(text).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
   it("attempts an installation token when given an installationId, falling back to the public token on failure", async () => {
     // No GitHub App key is configured in the test env, so createInstallationToken rejects; the wire
     // swallows it (.catch -> undefined) and the fetcher then authenticates with the public token.

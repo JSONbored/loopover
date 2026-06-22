@@ -117,7 +117,7 @@ export function diffFilePriority(path: string): number {
  *  post-change text of one file at a ref, returning null when unreadable (binary / vanished / perms). The
  *  host adapts reviewbot's getRepositoryFileContent (or any backend) to this shape at the call site. */
 export interface FileFetcher {
-  getFileContent(path: string, ref: string): Promise<string | null>;
+  getFileContent(path: string, ref: string, maxChars?: number): Promise<string | null>;
 }
 
 /** Centrally fetch the FULL post-change content of changed files (the one grounding input no lane fetches
@@ -143,13 +143,14 @@ export async function fetchFullFileContents(
     }
     let text: string | null = null;
     try {
-      text = await fetcher.getFileContent(file.filename, ref);
+      text = await fetcher.getFileContent(file.filename, ref, Math.min(MAX_SINGLE_FILE, FILE_CONTENT_BUDGET - used) + 1);
     } catch {
       text = null;
     }
     if (text == null) continue; // unreadable (binary / vanished / perms) — skip silently
     if (text.length > MAX_SINGLE_FILE || used + text.length > FILE_CONTENT_BUDGET) {
       out.push({ path: file.filename, text: "", truncated: true });
+      used = FILE_CONTENT_BUDGET;
       continue;
     }
     out.push({ path: file.filename, text });

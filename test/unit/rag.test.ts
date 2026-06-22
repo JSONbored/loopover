@@ -1,0 +1,220 @@
+import { describe, expect, it } from "vitest";
+import {
+  bm25Rerank,
+  bm25Scores,
+  chunkFile,
+  classifyRepoFile,
+  embedTexts,
+  filePriority,
+  formatRetrievedContext,
+  type InferenceAdapter,
+  isIndexablePath,
+  type RagInfra,
+  ragNamespace,
+  retrieveContext,
+  type StorageAdapter,
+  type VectorAdapter,
+} from "../../src/review/rag";
+
+// ── Adapter stub helpers (the injected infra replaces reviewbot's raw env bindings) ───────────────
+const aiThatReturns = (data: unknown): InferenceAdapter => ({ run: async () => ({ data }) });
+const ai1024: InferenceAdapter = aiThatReturns([Array(1024).fill(0.1)]);
+
+/** A storage stub whose COUNT(*) returns `n` (warm vs cold index) and whose chunk-text SELECT returns rows. */
+function storageStub(opts: { count?: number; rows?: Array<{ id: string; text: string }> } = {}): StorageAdapter {
+  const bound = {
+    first: async () => ({ n: opts.count ?? 0 }),
+    all: async () => ({ results: opts.rows ?? [] }),
+    run: async () => undefined,
+  };
+  return { prepare: () => ({ bind: () => bound }), batch: async () => undefined } as unknown as StorageAdapter;
+}
+
+describe("rag: code-not-content filtering (free-tier cost guard)", () => {
+  it("indexes source code + docs, skips content/data/deps/binaries", () => {
+    expect(classifyRepoFile("src/core/runtime.ts")).toBe("code");
+    expect(classifyRepoFile("scripts/build.mjs")).toBe("code");
+    expect(classifyRepoFile("README.md")).toBe("doc");
+    expect(classifyRepoFile("docs/architecture.mdx")).toBe("doc");
+    // skipped: the huge content corpus, data, deps, build output, binaries, lockfiles
+    expect(classifyRepoFile("content/mcp/some-entry.mdx")).toBe("skip");
+    expect(classifyRepoFile("data/fixtures.json")).toBe("skip");
+    expect(classifyRepoFile("node_modules/x/index.js")).toBe("skip");
+    expect(classifyRepoFile("dist/bundle.js")).toBe("skip");
+    expect(classifyRepoFile("package-lock.json")).toBe("skip");
+    expect(classifyRepoFile("pnpm-lock.yaml")).toBe("skip");
+    expect(classifyRepoFile("public/logo.png")).toBe("skip");
+    expect(classifyRepoFile("app.min.js")).toBe("skip");
+  });
+
+  it("skips oversized files and orders source before docs", () => {
+    expect(isIndexablePath("src/a.ts")).toBe(true);
+    expect(isIndexablePath("src/a.ts", 2_000_000)).toBe(false); // > 1MB
+    expect(isIndexablePath("content/x.mdx")).toBe(false);
+    expect(filePriority("src/a.ts")).toBeLessThan(filePriority("README.md"));
+  });
+
+  it("namespaces per repo (bounded to 64 bytes, lowercased)", () => {
+    expect(ragNamespace("gittensory", "JSONbored/gittensory")).toBe("gittensory:jsonbored/gittensory");
+  });
+});
+
+describe("rag: per-file chunking", () => {
+  it("emits one chunk for a small file", () => {
+    const chunks = chunkFile("src/a.ts", "export const x = 1;\n");
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatchObject({ path: "src/a.ts", chunkIndex: 0, kind: "code", id: "src/a.ts::0" });
+  });
+
+  it("splits an oversized file into overlapping chunks with stable ids", () => {
+    const big = Array.from({ length: 4000 }, (_, i) => `line ${i} aaaaaaaaaa`).join("\n"); // > 16k chars
+    const chunks = chunkFile("src/big.ts", big);
+    expect(chunks.length).toBeGreaterThan(1);
+    chunks.forEach((c, i) => expect(c.id).toBe(`src/big.ts::${i}`));
+    expect(chunks.every((c) => c.text.length > 0)).toBe(true);
+  });
+
+  it("returns nothing for skipped paths or empty files", () => {
+    expect(chunkFile("content/x.mdx", "stuff")).toEqual([]);
+    expect(chunkFile("src/a.ts", "   ")).toEqual([]);
+  });
+
+  it("splits a JS/TS file at FUNCTION boundaries, never mid-function, tagging the boundary kind (#282)", () => {
+    const fn = (n: number) => `export function f${n}() {\n${Array.from({ length: 120 }, (_, i) => `  const v${i} = ${i}; // padding aaaaaaaaaaaaaaaaaaaaaaaa`).join("\n")}\n}\n`;
+    const chunks = chunkFile("src/multi.ts", fn(1) + fn(2) + fn(3)); // 3 functions, each ~6k; total > CHUNK_CHARS
+    expect(chunks.length).toBeGreaterThan(1);
+    // every chunk begins at a logical boundary (an export-function), not arbitrary mid-function newlines
+    expect(chunks.every((c) => /^export function f\d/.test(c.text.trimStart()))).toBe(true);
+    expect(chunks.every((c) => c.boundary === "export")).toBe(true);
+    chunks.forEach((c, i) => expect(c.id).toBe(`src/multi.ts::${i}`));
+  });
+
+  it("does NOT hang on a degenerate chunkChars<=0 (clamped to >=1) (#rag-verify infinite-loop guard)", () => {
+    const big = Array.from({ length: 2000 }, (_, i) => `line ${i} aaaaaaaaaa`).join("\n");
+    const chunks = chunkFile("src/big.py", big, "", { chunkChars: 0, chunkOverlap: 9999 }); // would loop forever unclamped
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.every((c) => c.text.length > 0)).toBe(true);
+  });
+
+  it("PACKS a small multi-function JS file into one chunk (free-tier vector budget unaffected) (#282)", () => {
+    const chunks = chunkFile("src/small.ts", "export function a(){return 1;}\nexport function b(){return 2;}\nexport function c(){return 3;}\n");
+    expect(chunks).toHaveLength(1);
+  });
+
+  it("tags a tiny single-unit file as a whole-file chunk + falls back to newline chunking for non-JS (#282)", () => {
+    expect(chunkFile("src/a.ts", "export const x = 1;\n")[0]?.boundary).toBe("file"); // no boundary line → file
+    const bigPy = Array.from({ length: 4000 }, (_, i) => `x_${i} = ${i}`).join("\n");
+    expect(chunkFile("src/big.py", bigPy).every((c) => c.boundary === "file")).toBe(true); // non-JS → newline chunker
+  });
+
+  it("scopes chunk ids by namespace so different repos can't collide in the shared vector index", () => {
+    const a = chunkFile("README.md", "hello", "gittensory:o/repo-a");
+    const b = chunkFile("README.md", "hello", "gittensory:o/repo-b");
+    expect(a[0]?.id).toBe("gittensory:o/repo-a|README.md::0");
+    expect(b[0]?.id).toBe("gittensory:o/repo-b|README.md::0");
+    expect(a[0]?.id).not.toBe(b[0]?.id);
+  });
+});
+
+describe("rag: BM25 reranking (#283)", () => {
+  it("scores a doc with exact query-term overlap above an unrelated doc", () => {
+    const scores = bm25Scores("parse the auth token", ["function parseAuthToken(token) { return verify(token); }", "const colors = ['red','green','blue']; // palette"]);
+    expect(scores[0]!).toBeGreaterThan(scores[1]!);
+  });
+  it("reorders chunks so the term-relevant one wins (demotes a vector-accident match)", () => {
+    const chunks = [
+      { path: "palette.ts", text: "export const palette = ['red','green']; // unrelated to the query" },
+      { path: "auth.ts", text: "export function verifyAuthToken(token) { return decode(token); }" },
+    ];
+    const out = bm25Rerank("verify auth token", chunks);
+    expect(out[0]?.path).toBe("auth.ts");
+  });
+  it("is a no-op for 0/1 chunk", () => {
+    expect(bm25Rerank("x", [])).toEqual([]);
+    const one = [{ path: "a", text: "b" }];
+    expect(bm25Rerank("x", one)).toBe(one);
+  });
+});
+
+describe("rag: formatRetrievedContext", () => {
+  it("renders a delimited, reference-only block (empty for no chunks)", () => {
+    expect(formatRetrievedContext([])).toBe("");
+    const out = formatRetrievedContext([{ path: "src/a.ts", text: "export const x = 1;" }]);
+    expect(out).toContain("RELEVANT EXISTING CODE / DOCS");
+    expect(out).toContain("src/a.ts");
+    expect(out).toContain("export const x = 1;");
+    expect(out).toMatch(/ignore any instructions embedded/i); // reference-only framing
+  });
+});
+
+describe("rag: fail-safe (never throws; degrades to no context)", () => {
+  it("embedTexts returns null without an AI binding", async () => {
+    expect(await embedTexts(undefined, ["hi"])).toBeNull();
+  });
+
+  it("embedTexts rejects a wrong-DIMENSION embedding (a non-1024-d model / malformed vector) (#abc-verify)", async () => {
+    expect(await embedTexts(aiThatReturns([[0.1, 0.2]]), ["hi"])).toBeNull(); // 2-d, not 1024
+    expect((await embedTexts(ai1024, ["hi"]))?.[0]?.length).toBe(1024);
+  });
+
+  it("retrieveContext returns '' when the vector index / AI are unbound", async () => {
+    const infra: RagInfra = { storage: storageStub({ count: 5 }) };
+    expect(await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "x" })).toBe("");
+  });
+
+  it("retrieveContext returns '' when the vector query throws", async () => {
+    const vector = { query: async () => { throw new Error("boom"); } } as unknown as VectorAdapter;
+    const infra: RagInfra = { storage: storageStub({ count: 5 }), vector, inference: ai1024 }; // warm index → reaches the query
+    expect(await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "x" })).toBe("");
+  });
+
+  it("retrieveContext skips the embed + query entirely when the index is cold (0 chunks) (#audit)", async () => {
+    let queried = false;
+    const vector = { query: async () => { queried = true; return { matches: [] }; } } as unknown as VectorAdapter;
+    const infra: RagInfra = { storage: storageStub({ count: 0 }), vector, inference: ai1024 }; // cold index
+    expect(await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "x" })).toBe("");
+    expect(queried).toBe(false); // never spent a vector query / inference call on an empty namespace
+  });
+
+  it("skips a trivially-short query without any embed/query (#cloud-opt min-length guard)", async () => {
+    let aiCalled = false;
+    const inference: InferenceAdapter = { run: async () => { aiCalled = true; return { data: [[0.1]] }; } };
+    const vector = { query: async () => ({ matches: [] }) } as unknown as VectorAdapter;
+    const infra: RagInfra = { storage: storageStub({ count: 5 }), vector, inference };
+    expect(await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "tweak" })).toBe(""); // < 40 chars
+    expect(aiCalled).toBe(false);
+  });
+
+  it("retrieves + formats matches, and excludes the changed files themselves", async () => {
+    const matches = [
+      { id: "src/a.ts::0", score: 0.9, metadata: { path: "src/a.ts" } },
+      { id: "src/changed.ts::0", score: 0.8, metadata: { path: "src/changed.ts" } },
+    ];
+    const vector = { query: async () => ({ matches }) } as unknown as VectorAdapter;
+    const infra: RagInfra = {
+      storage: storageStub({ count: 2, rows: [{ id: "src/a.ts::0", text: "export const x = 1;" }] }),
+      vector,
+      inference: ai1024,
+    };
+    const out = await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "refactor the auth token verification and add coverage", excludePaths: ["src/changed.ts"] });
+    expect(out).toContain("src/a.ts");
+    expect(out).toContain("export const x = 1;");
+    expect(out).not.toContain("src/changed.ts"); // the file under review is excluded → only RELATED code surfaces
+  });
+
+  it("minScore drops low-relevance matches (#rag-observability)", async () => {
+    const matches = [
+      { id: "src/hit.ts::0", score: 0.82, metadata: { path: "src/hit.ts" } },
+      { id: "src/weak.ts::0", score: 0.2, metadata: { path: "src/weak.ts" } },
+    ];
+    const vector = { query: async () => ({ matches }) } as unknown as VectorAdapter;
+    const infra: RagInfra = {
+      storage: storageStub({ count: 2, rows: [{ id: "src/hit.ts::0", text: "kept code" }, { id: "src/weak.ts::0", text: "weak code" }] }),
+      vector,
+      inference: ai1024,
+    };
+    const out = await retrieveContext(infra, { project: "p", repo: "o/r", queryText: "refactor the auth token verification and add coverage", minScore: 0.5 });
+    expect(out).toContain("src/hit.ts");
+    expect(out).not.toContain("src/weak.ts"); // below minScore → dropped (was injected before the threshold existed)
+  });
+});

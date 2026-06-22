@@ -4847,12 +4847,28 @@ function productUsageRoleSortValue(role: ProductUsageRole): number {
   return PRODUCT_USAGE_ROLE_ORDER.indexOf(role);
 }
 
+// Single pass: keep predicate-matching items and collect their distinct non-empty selected values,
+// instead of building the intermediate filter()/map()/filter() arrays. Exported for direct unit coverage.
+export function distinctNonEmptyValues<T>(
+  items: T[],
+  predicate: (item: T) => boolean,
+  select: (item: T) => string | null | undefined,
+): Set<string> {
+  const result = new Set<string>();
+  for (const item of items) {
+    if (!predicate(item)) continue;
+    const value = select(item);
+    if (isNonEmptyString(value)) result.add(value);
+  }
+  return result;
+}
+
 function productUsageActorSet(events: ProductUsageEventRecord[], predicate: (event: ProductUsageEventRecord) => boolean): Set<string> {
-  return new Set(events.filter(predicate).map((event) => event.actorHash).filter(isNonEmptyString));
+  return distinctNonEmptyValues(events, predicate, (event) => event.actorHash);
 }
 
 function productUsageRepoSet(events: ProductUsageEventRecord[], predicate: (event: ProductUsageEventRecord) => boolean): Set<string> {
-  return new Set(events.filter(predicate).map((event) => event.repoFullName).filter(isNonEmptyString));
+  return distinctNonEmptyValues(events, predicate, (event) => event.repoFullName);
 }
 
 function isProductUsageDoctorPassEvent(event: ProductUsageEventRecord): boolean {

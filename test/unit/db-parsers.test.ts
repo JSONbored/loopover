@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  distinctNonEmptyValues,
   getLatestScorePreview,
   getRepoAuthorPullRequestHistory,
   getLatestScoringModelSnapshot,
@@ -426,5 +427,29 @@ describe("database row parser hardening", () => {
     const raw = await env.DB.prepare("select snapshot_json from official_miner_detections where login = ?").bind("anonymous").first<{ snapshot_json: string }>();
     expect(raw?.snapshot_json).not.toMatch(/hotkey|coldkey|wallet|must-not-cache/i);
     expect(JSON.parse(raw?.snapshot_json ?? "{}")).toMatchObject({ githubId: "", githubUsername: "", issueLabels: [] });
+  });
+});
+
+describe("distinctNonEmptyValues", () => {
+  const rows: { kind: string; value: string | null }[] = [
+    { kind: "a", value: "x" },
+    { kind: "b", value: "y" },
+    { kind: "a", value: "" },
+    { kind: "a", value: "x" },
+    { kind: "a", value: null },
+    { kind: "a", value: "z" },
+  ];
+
+  it("collects distinct non-empty selected values for predicate-matching items only", () => {
+    const result = distinctNonEmptyValues(
+      rows,
+      (row) => row.kind === "a",
+      (row) => row.value,
+    );
+    expect([...result].sort()).toEqual(["x", "z"]);
+  });
+
+  it("returns an empty set when nothing matches the predicate", () => {
+    expect(distinctNonEmptyValues(rows, () => false, (row) => row.value).size).toBe(0);
   });
 });

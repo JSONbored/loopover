@@ -13,7 +13,9 @@ async function seed(env: Env) {
     ["t-m3", "JSONbored/awesome-claude", 6, "merged"],
   ];
   for (const [id, project, number, status] of rows) {
-    await env.DB.prepare(`INSERT INTO review_targets (id, project, kind, repo, number, status) VALUES (?, ?, 'pr', ?, ?, ?)`)
+    await env.DB.prepare(
+      `INSERT INTO review_targets (id, project, kind, repo, number, status) VALUES (?, ?, 'pr', ?, ?, ?)`,
+    )
       .bind(id, project, project, number, status)
       .run();
   }
@@ -54,6 +56,8 @@ describe("GET /v1/public/stats (#1059)", () => {
     expect(body.totals.accuracyPct).toBe(75); // 1 - 1 / (3 + 1)
     // busiest repo first: gittensory reviewed 3 (m1+c1+cm1) > awesome-claude 2 (m2+m3)
     expect(body.byProject[0]?.project).toBe("JSONbored/gittensory");
-    expect(body.byProject.map((p) => p.project)).toContain("JSONbored/awesome-claude");
+    expect(body.byProject.map((p) => p.project)).toContain(
+      "JSONbored/awesome-claude",
+    );
   });
 });

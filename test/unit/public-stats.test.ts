@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getPublicStats, isPublicStatsEnabled, MINUTES_SAVED_PER_PR } from "../../src/review/public-stats";
+import {
+  getPublicStats,
+  isPublicStatsEnabled,
+  MINUTES_SAVED_PER_PR,
+} from "../../src/review/public-stats";
 
 type Row = Record<string, unknown>;
 
@@ -16,8 +20,10 @@ const NOW = Date.parse("2026-06-22T00:00:00Z");
 
 describe("isPublicStatsEnabled", () => {
   it("is truthy only for 1/true/yes/on (case-insensitive)", () => {
-    for (const v of ["1", "true", "TRUE", "yes", "on"]) expect(isPublicStatsEnabled({ GITTENSORY_PUBLIC_STATS: v })).toBe(true);
-    for (const v of ["", "0", "false", "off", "no", undefined]) expect(isPublicStatsEnabled({ GITTENSORY_PUBLIC_STATS: v })).toBe(false);
+    for (const v of ["1", "true", "TRUE", "yes", "on"])
+      expect(isPublicStatsEnabled({ GITTENSORY_PUBLIC_STATS: v })).toBe(true);
+    for (const v of ["", "0", "false", "off", "no", undefined])
+      expect(isPublicStatsEnabled({ GITTENSORY_PUBLIC_STATS: v })).toBe(false);
   });
 });
 
@@ -25,11 +31,41 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   // Real prod proportions: merged 1392 + closed 724 + commented 514 + ignored 491 + manual 78 + error 34 = 3233;
   // reviewed = 1392+724+514+78 = 2708; reversed 33 over 2116 auto-actions.
   function ledger(sql: string): Row[] {
-    if (sql.includes("FROM review_targets") && sql.includes("GROUP BY project")) {
+    if (
+      sql.includes("FROM review_targets") &&
+      sql.includes("GROUP BY project")
+    ) {
       return [
-        { project: "JSONbored/awesome-claude", handled: 2066, merged: 1231, closed: 524, commented: 200, ignored: 80, manual: 31, error: 0 },
-        { project: "JSONbored/metagraphed", handled: 829, merged: 137, closed: 176, commented: 200, ignored: 300, manual: 16, error: 0 },
-        { project: "JSONbored/gittensory", handled: 338, merged: 24, closed: 24, commented: 114, ignored: 111, manual: 31, error: 34 },
+        {
+          project: "JSONbored/awesome-claude",
+          handled: 2066,
+          merged: 1231,
+          closed: 524,
+          commented: 200,
+          ignored: 80,
+          manual: 31,
+          error: 0,
+        },
+        {
+          project: "JSONbored/metagraphed",
+          handled: 829,
+          merged: 137,
+          closed: 176,
+          commented: 200,
+          ignored: 300,
+          manual: 16,
+          error: 0,
+        },
+        {
+          project: "JSONbored/gittensory",
+          handled: 338,
+          merged: 24,
+          closed: 24,
+          commented: 114,
+          ignored: 111,
+          manual: 31,
+          error: 34,
+        },
       ];
     }
     if (sql.includes("FROM review_audit")) {
@@ -74,7 +110,10 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   });
 
   it("returns zeroed totals with null derived metrics when the ledger is empty", async () => {
-    const out = await getPublicStats(stubEnv(() => []), NOW);
+    const out = await getPublicStats(
+      stubEnv(() => []),
+      NOW,
+    );
     expect(out.totals.handled).toBe(0);
     expect(out.totals.reviewed).toBe(0);
     expect(out.totals.filteredPct).toBeNull();
@@ -86,11 +125,79 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   it("is fail-safe: a throwing read degrades to zeros, not an error", async () => {
     const env = stubEnv((sql) => {
-      if (sql.includes("GROUP BY project")) throw new Error("review_targets down");
+      if (sql.includes("GROUP BY project"))
+        throw new Error("review_targets down");
       return [];
     });
     const out = await getPublicStats(env, NOW);
     expect(out.totals.handled).toBe(0);
     expect(out.totals.accuracyPct).toBeNull();
+  });
+
+  it("coerces null SUM/reversal/weekly fields to 0 (SUM over an empty set returns NULL in SQLite)", async () => {
+    // Every numeric column comes back null (the nullish arm of each `?? 0`); p2 has no reversal row, exercising
+    // the `reversedByProject.get(...) ?? 0` fallback; weekly[0] is present but its fields are null.
+    const out = await getPublicStats(
+      stubEnv((sql) => {
+        if (sql.includes("FROM review_audit"))
+          return [{ project: "p1", reversed: null }];
+        if (sql.includes("created_at >= ?"))
+          return [
+            { merged: null, closed: null, commented: null, manual: null },
+          ];
+        if (sql.includes("GROUP BY project")) {
+          return [
+            {
+              project: "p1",
+              handled: null,
+              merged: null,
+              closed: null,
+              commented: null,
+              ignored: null,
+              manual: null,
+              error: null,
+            },
+            {
+              project: "p2",
+              handled: null,
+              merged: null,
+              closed: null,
+              commented: null,
+              ignored: null,
+              manual: null,
+              error: null,
+            },
+          ];
+        }
+        return [];
+      }),
+      NOW,
+    );
+    expect(out.totals).toMatchObject({
+      handled: 0,
+      merged: 0,
+      closed: 0,
+      reversed: 0,
+    });
+    expect(out.totals.accuracyPct).toBeNull();
+    expect(out.totals.minutesSaved).toBe(0);
+    expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
+    expect(out.byProject).toEqual([]); // both projects have reviewed 0 → filtered out
+  });
+
+  it("degrades a no-results D1 response to [] (safeAll `res.results ?? []`)", async () => {
+    // .all() returns an object with no `results` key (defensive arm), so every safeAll yields [].
+    const env = {
+      DB: {
+        prepare: () => {
+          const stmt = { bind: () => stmt, all: async () => ({}) };
+          return stmt;
+        },
+      },
+    } as unknown as Env;
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.handled).toBe(0);
+    expect(out.byProject).toEqual([]);
+    expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
   });
 });

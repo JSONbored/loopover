@@ -446,3 +446,312 @@ describe("registry-logic edge branches (additional coverage)", () => {
     expect(normalizePublicUrl("ws://node.example:80/ws")).toBe("ws://node.example/ws");
   });
 });
+
+describe("registry-logic branch coverage (gap-filling)", () => {
+  // ── containsSecretLikeText falsy-input branch ─────────────────────────────
+  it("containsSecretLikeText returns false for an empty string (the `|| ''` falsy branch)", () => {
+    expect(containsSecretLikeText("")).toBe(false);
+    expect(containsSecretLikeText("github_pat_" + "a".repeat(25))).toBe(true);
+  });
+
+  // ── normalizePublicUrl untested branches ──────────────────────────────────
+  it("normalizePublicUrl leaves a root path untouched (pathname === '/' branch)", () => {
+    // pathname === "/" so the trailing-slash strip is skipped; non-default port preserved.
+    expect(normalizePublicUrl("https://example.com/")).toBe("https://example.com/");
+    expect(normalizePublicUrl("https://example.com:8443/")).toBe("https://example.com:8443/");
+  });
+  it("normalizePublicUrl collapses /index.html and keeps a non-default port", () => {
+    // /docs/index.html → /docs/ (index strip) → /docs (trailing-slash strip, since != "/").
+    expect(normalizePublicUrl("https://example.com:8080/docs/index.html")).toBe("https://example.com:8080/docs");
+  });
+
+  // ── registrableDomain untested branches ───────────────────────────────────
+  it("registrableDomain returns null for a non-string or empty value", () => {
+    expect(registrableDomain(42)).toBeNull();
+    expect(registrableDomain("")).toBeNull();
+    expect(registrableDomain(null)).toBeNull();
+  });
+  it("registrableDomain returns a bare single-label host unchanged (no dot)", () => {
+    // not parseable as a URL → treated as a bare hostname; no "." → returned as-is.
+    expect(registrableDomain("localhost")).toBe("localhost");
+  });
+  it("registrableDomain returns the multi-tenant suffix itself when host === suffix", () => {
+    // host equals a multi-tenant suffix exactly → returned as-is (host === suffix branch).
+    expect(registrableDomain("https://github.io")).toBe("github.io");
+    expect(registrableDomain("pages.dev")).toBe("pages.dev");
+  });
+  it("registrableDomain takes the deepest tenant label under a multi-tenant suffix", () => {
+    // tenant is the LAST label before the suffix (a.b.github.io → b.github.io).
+    expect(registrableDomain("https://a.b.github.io/x")).toBe("b.github.io");
+  });
+  it("registrableDomain returns a two-label apex directly (parts.length <= 2 branch)", () => {
+    expect(registrableDomain("https://example.com")).toBe("example.com");
+  });
+
+  // ── computeGrounding untested branches ────────────────────────────────────
+  it("computeGrounding handles a null candidate + empty evidence (all-false, strong 0)", () => {
+    const g = computeGrounding(null, null, undefined);
+    expect(g).toEqual({
+      netuidMentioned: false,
+      ownerMentioned: false,
+      hostMatchesClaim: false,
+      crossOriginRedirect: false,
+      strong: 0,
+    });
+  });
+  it("computeGrounding uses source_urls[0] when source_url is absent", () => {
+    // exercises the `(candidate?.source_urls)?.[0]` middle fallback of the source-url chain.
+    const candidate = {
+      netuid: 9,
+      url: "https://cacheon.ai/api",
+      source_urls: ["https://cacheon.ai/about"],
+    };
+    const target = { title: "t", snippet: "no num" };
+    const source = { title: "s", snippet: "cacheon.ai is subnet 9" };
+    const g = computeGrounding(candidate, target, source);
+    // same registrable apex (cacheon.ai) AND source is independent (different path) → host matches.
+    expect(g.hostMatchesClaim).toBe(true);
+  });
+  it("computeGrounding: no source at all → not independent, owner/host both false", () => {
+    // source_url falsy + source_urls absent → sourceUrl === "" → independentSource false.
+    const candidate = { netuid: 3, url: "https://github.com/cacheonlabs/repo" };
+    const ev = { title: "x", snippet: "cacheonlabs subnet 3 cacheonlabs" };
+    const g = computeGrounding(candidate, ev, ev);
+    expect(g.ownerMentioned).toBe(false);
+    expect(g.hostMatchesClaim).toBe(false);
+    expect(g.netuidMentioned).toBe(true); // netuid path is source-independent
+  });
+  it("computeGrounding: an unnormalizable target url makes targetKey null → still independent", () => {
+    // candidate.url is not a normalizable URL → stripScheme(targetKey) == null → independentSource true.
+    const candidate = {
+      netuid: 11,
+      url: "not-a-url",
+      source_url: "https://github.com/byzantiumlabs/core",
+    };
+    const target = { title: "t", snippet: "byzantiumlabs" };
+    const source = { title: "s", snippet: "byzantiumlabs repo for subnet 11" };
+    const g = computeGrounding(candidate, target, source);
+    expect(g.ownerMentioned).toBe(true); // owner token grounded because source counts as independent
+  });
+  it("computeGrounding: host referenced in source body grounds even without a shared apex", () => {
+    // targetApex !== sourceApex, but sourceText includes the literal targetHost → hostMatchesClaim true.
+    const candidate = {
+      netuid: 2,
+      url: "https://target-host.example/api",
+      source_url: "https://other-domain.org/page",
+    };
+    const target = { title: "t", snippet: "nothing" };
+    const source = { title: "s", snippet: "this page references target-host.example directly" };
+    const g = computeGrounding(candidate, target, source);
+    expect(g.hostMatchesClaim).toBe(true);
+  });
+  it("computeGrounding: a cross-origin redirect on the SOURCE side is detected too", () => {
+    const candidate = { netuid: 4, url: "https://a.example", source_url: "https://b.example" };
+    const target = { title: "t", snippet: "subnet 4" };
+    const source = { title: "s", snippet: "subnet 4", cross_origin_redirect: true };
+    const g = computeGrounding(candidate, target, source);
+    expect(g.crossOriginRedirect).toBe(true);
+  });
+
+  // ── ownerTokens (via computeGrounding/deriveRegistryIdentityTokens) branches ─
+  it("deriveRegistryIdentityTokens harvests gitlab + bitbucket org tokens and strips .git", () => {
+    const tokens = deriveRegistryIdentityTokens({
+      name: "Helios",
+      website_url: "https://gitlab.com/heliosorg/heliosrepo.git", // gitlab branch + .git strip on seg[1]
+    });
+    expect(tokens).toContain("heliosorg");
+    expect(tokens).toContain("heliosrepo"); // ".git" stripped, ≥4 chars kept
+    const tokens2 = deriveRegistryIdentityTokens({
+      name: "Orion",
+      source_repo: "https://bitbucket.org/orionlabs/orioncore", // bitbucket branch
+    });
+    expect(tokens2).toContain("orionlabs");
+    expect(tokens2).toContain("orioncore");
+  });
+  it("deriveRegistryIdentityTokens harvests a huggingface owner WITHOUT a datasets/models/spaces prefix", () => {
+    const tokens = deriveRegistryIdentityTokens({
+      name: "Nimbus",
+      source_repo: "https://huggingface.co/nimbuslabs/model-x", // no prefix → seg used as-is
+    });
+    expect(tokens).toContain("nimbuslabs");
+  });
+  it("deriveRegistryIdentityTokens drops owner tokens shorter than 4 chars", () => {
+    const tokens = deriveRegistryIdentityTokens({
+      name: "Zed", // 3 chars → usableIdentityToken false (drops the name token)
+      source_repo: "https://github.com/ab/cd", // both <4 chars → ownerTokens filtered out
+    });
+    expect(tokens).not.toContain("zed");
+    expect(tokens).not.toContain("ab");
+    expect(tokens).not.toContain("cd");
+  });
+
+  // ── deriveRegistryIdentityTokens links: bare-string links + non-array links ─
+  it("deriveRegistryIdentityTokens accepts a bare-string link and ignores non-array links", () => {
+    const tokens = deriveRegistryIdentityTokens({
+      name: "Vega",
+      links: ["https://vegasurface.io/home"], // bare string link → domainLabel path
+    });
+    expect(tokens).toContain("vegasurface");
+    // links not an array → the Array.isArray guard short-circuits (no throw, just skipped).
+    const tokens2 = deriveRegistryIdentityTokens({ name: "Lyra", links: "https://lyra.example" });
+    expect(tokens2).toContain("lyra");
+    expect(tokens2).not.toContain("lyra.example");
+  });
+
+  // ── assessFreshness untested branches ─────────────────────────────────────
+  it("assessFreshness with a missing pushedAt yields ageDays null and not stale", () => {
+    const r = assessFreshness({ archived: false }, Date.parse("2026-06-22T00:00:00Z"));
+    expect(r).toMatchObject({ known: true, archived: false, pushedAt: null, ageDays: null, stale: false, reason: null });
+  });
+  it("assessFreshness reports the 'no commits in N days' reason for a stale-but-unarchived repo", () => {
+    const now = Date.parse("2026-06-22T00:00:00Z");
+    const r = assessFreshness({ archived: false, pushedAt: "2024-01-01T00:00:00Z" }, now);
+    expect(r.stale).toBe(true);
+    expect(r.archived).toBe(false);
+    expect(r.reason).toMatch(/^no commits in \d+ days$/);
+  });
+  it("assessFreshness reports 'archived' when both archived and stale-old", () => {
+    const now = Date.parse("2026-06-22T00:00:00Z");
+    const r = assessFreshness({ archived: true, pushedAt: "2020-01-01T00:00:00Z" }, now);
+    expect(r.reason).toBe("archived"); // archived takes precedence over the age reason
+  });
+  it("assessFreshness with an unparseable pushedAt yields ageDays null", () => {
+    const r = assessFreshness({ archived: false, pushedAt: "not-a-date" }, Date.now());
+    expect(r.ageDays).toBeNull();
+    expect(r.stale).toBe(false);
+  });
+
+  // ── assessProviderDocument untested branches ──────────────────────────────
+  it("assessProviderDocument treats a non-string id/name as empty → unsupported-shape", () => {
+    const r = assessProviderDocument({ provider: { id: 123, name: 456, website_url: "https://a.example" } });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("unsupported-shape");
+  });
+  it("assessProviderDocument can skip url validation when sourceUrlValidation is off", () => {
+    const r = assessProviderDocument(
+      { provider: { id: "a", name: "A", website_url: "http://insecure.example" } },
+      { sourceUrlValidation: false },
+    );
+    expect(r.ok).toBe(true);
+  });
+  it("assessProviderDocument can skip the secret scan when secretsScan is off", () => {
+    const r = assessProviderDocument(
+      { provider: { id: "a", name: "A", website_url: "https://a.example", note: "ghp_" + "q".repeat(25) } },
+      { secretsScan: false },
+    );
+    expect(r.ok).toBe(true); // secret not scanned → accepted
+  });
+
+  // ── assessCandidateDocument untested branches ─────────────────────────────
+  it("assessCandidateDocument reads the array `candidates` form (single entry merges)", () => {
+    const r = assessCandidateDocument({
+      candidates: [{ netuid: 14, kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true }],
+    });
+    expect(r.verdict).toBe("merged");
+  });
+  it("assessCandidateDocument closes when there are MULTIPLE candidates", () => {
+    const c = { netuid: 14, kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true };
+    const r = assessCandidateDocument({ candidates: [c, c] });
+    expect(r.verdict).toBe("closed"); // unsupported-shape IS a reviewer-close reason
+    expect(r.reason).toBe("unsupported-shape");
+  });
+  it("assessCandidateDocument can skip the secret scan via the toggle", () => {
+    const r = assessCandidateDocument(
+      { candidate: { netuid: 14, kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true, note: "ghp_" + "k".repeat(25) } },
+      { secretsScan: false },
+    );
+    expect(r.verdict).toBe("merged"); // secret not scanned
+  });
+  it("assessCandidateDocument with a null document closes as unsupported-shape (zero candidates)", () => {
+    const r = assessCandidateDocument(null);
+    expect(r.reason).toBe("unsupported-shape");
+  });
+  it("assessCandidateDocument closes a base-layer kind with an unsafe HTTP url message", () => {
+    // baseLayer true → unsafe-url uses the "HTTPS or WSS" message branch.
+    const r = assessCandidateDocument({
+      candidate: { netuid: 1, kind: "subtensor-rpc", url: "http://127.0.0.1", source_url: "https://github.com/a/b", public_safe: true },
+    });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("HTTPS or WSS");
+  });
+  it("assessCandidateDocument closes a non-base-layer kind with the plain HTTPS message", () => {
+    const r = assessCandidateDocument({
+      candidate: { netuid: 1, kind: "website", url: "http://plain.example", source_url: "https://github.com/a/b", public_safe: true },
+    });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("public HTTPS URL");
+    expect(r.summary).not.toContain("WSS");
+  });
+
+  // ── probeFunctionalSurface untested branches ──────────────────────────────
+  it("probeFunctionalSurface: openapi version key but paths beyond the window", () => {
+    const r = probeFunctionalSurface("openapi", "application/json", '{"openapi":"3.0.0"');
+    expect(r.served).toBe(true);
+    expect(r.detail).toContain("paths beyond window");
+  });
+  it("probeFunctionalSurface: a YAML openapi spec (im-multiline form) is recognized", () => {
+    const r = probeFunctionalSurface("openapi", "text/yaml", "openapi: 3.0.0\npaths:\n  /x: {}");
+    expect(r.served).toBe(true);
+    expect(r.detail).toBe("openapi schema served");
+  });
+  it("probeFunctionalSurface: subnet-api recognized by a leading bracket when content-type isn't json", () => {
+    const r = probeFunctionalSurface("subnet-api", "text/plain", "[1,2,3]");
+    expect(r.served).toBe(true);
+  });
+  it("probeFunctionalSurface: subnet-api unserved reports the content-type (none when absent)", () => {
+    const r = probeFunctionalSurface("subnet-api", undefined, "<html>");
+    expect(r.served).toBe(false);
+    expect(r.detail).toContain("content-type:none");
+  });
+  it("probeFunctionalSurface: sse unserved reports the non-stream content-type", () => {
+    const r = probeFunctionalSurface("sse", "application/json", "{}");
+    expect(r.served).toBe(false);
+    expect(r.detail).toContain("content-type:application/json");
+  });
+
+  // ── isAllowedChain undefined branch ───────────────────────────────────────
+  it("isAllowedChain returns false for undefined (the nullish-coalesce empty branch)", () => {
+    expect(isAllowedChain(undefined)).toBe(false);
+  });
+
+  // ── isBaseLayerKind with non-string + isNonEmptyStructuredBody scalar edge ─
+  it("isBaseLayerKind coerces a non-string kind (number) to its string form", () => {
+    expect(isBaseLayerKind(123)).toBe(false);
+    expect(isBaseLayerKind(null)).toBe(false);
+  });
+
+  // ── classifyPrScope untested branches ─────────────────────────────────────
+  it("classifyPrScope: empty/whitespace-only entries are filtered before classification", () => {
+    // null changedFiles (?? []), blank entries filtered → not-direct-submission.
+    expect(classifyPrScope(["", "   "]).scope).toBe("not-direct-submission");
+    expect(classifyPrScope(null as unknown as string[]).scope).toBe("not-direct-submission");
+  });
+  it("classifyPrScope: a provider PR with a forbidden companion is mixed-files", () => {
+    const r = classifyPrScope(["registry/providers/community/acme.json", "docs/readme.md"]);
+    expect(r.scope).toBe("mixed-files");
+    expect(r.directFile).toBeNull();
+    expect(r.isProvider).toBe(false);
+  });
+  it("classifyPrScope: a candidate PR may register its provider as an allowed companion", () => {
+    const r = classifyPrScope([
+      "registry/candidates/community/foo.json",
+      "registry/providers/community/foo.json",
+      "public/metagraph/index.json",
+    ]);
+    expect(r.scope).toBe("direct-candidate");
+    expect(r.isProvider).toBe(false);
+  });
+  it("classifyPrScope: two candidate files (not exactly one) is not a direct submission", () => {
+    const r = classifyPrScope([
+      "registry/candidates/community/a.json",
+      "registry/candidates/community/b.json",
+    ]);
+    expect(r.scope).toBe("not-direct-submission");
+  });
+
+  // ── surfaceMatchesRegistryIdentity domain-label match branch ───────────────
+  it("surfaceMatchesRegistryIdentity matches directly on the domain label (not just owner tokens)", () => {
+    // domainLabel(cacheon.ai) === "cacheon" which is in the want set → early-return true.
+    expect(surfaceMatchesRegistryIdentity("https://cacheon.ai", ["cacheon"])).toBe(true);
+  });
+});

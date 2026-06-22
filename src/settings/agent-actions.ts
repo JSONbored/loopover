@@ -99,7 +99,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const passing = input.conclusion === "success";
   // A changed path matching a hard guardrail forces manual review: suppress the irreversible dispositions
   // (merge / close) AND the auto-approve that could later satisfy a merge. label + request_changes still run.
-  const guardrailHit = changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0;
+  // Fail SAFE on UNKNOWN paths: when guardrails are configured but the changed-file set is empty (cache not
+  // yet/no-longer populated), we cannot prove the PR doesn't touch a guarded path, so treat it as a hit —
+  // never auto-merge/close a PR whose diff we don't know. Repos with no guardrails stay permissive.
+  const guardrailHit =
+    input.hardGuardrailGlobs.length > 0 &&
+    (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
 
   // 1) label — reflect the verdict bucket. After the neutral/skipped return above, a non-blocking verdict is
   // necessarily `success`. Idempotent: skip if the PR already carries the label.

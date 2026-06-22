@@ -145,6 +145,23 @@ describe("planAgentMaintenanceActions (#778)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, changedPaths: ["docs/readme.md", "src/ui/button.tsx"], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
       expect(plan).toContain("merge");
     });
+
+    it("fails SAFE on UNKNOWN paths: with guardrails configured but no changed-file set, suppress merge/close/approve", () => {
+      // The changed-file cache can be empty (fresh PR before backfill) or stale; we cannot prove the PR
+      // doesn't touch a guarded path, so it must fall through to a human (label/request_changes still run).
+      const merge = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", label: "auto" }, changedPaths: [], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(merge).not.toContain("merge");
+      expect(merge).toContain("label");
+      const close = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], changedPaths: [], hardGuardrailGlobs: ["src/scoring/**"], pr: { labels: [], slopRisk: 95 } })));
+      expect(close).not.toContain("close");
+      const approve = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto" }, changedPaths: [], hardGuardrailGlobs: ["src/scoring/**"], pr: { labels: [] } })));
+      expect(approve).not.toContain("approve");
+    });
+
+    it("stays permissive on empty paths when the repo has NO guardrails configured (opted out)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
+    });
   });
 
   describe("owner-PR guard: never auto-close the repo owner's own PRs", () => {

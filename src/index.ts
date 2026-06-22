@@ -1,6 +1,8 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
 import { processJob } from "./queue/processors";
+import { isOpsEnabled } from "./review/ops-wire";
+import { isSelfTuneEnabled } from "./review/selftune-wire";
 import type { JobMessage } from "./types";
 
 const app = createApp();
@@ -52,6 +54,16 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // Agent layer (#777): re-gate stale open PRs hourly. Fans out to one job per agent-configured repo;
     // webhooks don't fire when a PR's base advances, so this is what keeps those verdicts fresh.
     jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
+    // Convergence (ops / observability, flag REVIEWBOT_OPS). Hourly anomaly scan over gittensory's own
+    // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
+    // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
+    if (isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
+    // Convergence (self-improve / auto-tune, flag REVIEWBOT_SELFTUNE). Hourly self-improvement tick over
+    // gittensory's own review-outcome data: compute tuning recommendations, shadow-soak any strictly-tightening
+    // one, and auto-promote it to live only after the soak window passes the gate (TIGHTENING-ONLY, audited).
+    // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does
+    // ZERO new tuning work and the enqueued set is byte-identical to today.
+    if (isSelfTuneEnabled(env)) jobs.push({ type: "selftune", requestedBy: "schedule" });
   }
   if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
     jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });

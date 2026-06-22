@@ -143,6 +143,47 @@ describe("worker entrypoint", () => {
     ]);
   });
 
+  it("enqueues the ops-alerts job hourly ONLY when REVIEWBOT_OPS is ON (flag-OFF is byte-identical)", async () => {
+    const sentFor = async (opsFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(opsFlag === undefined ? {} : { REVIEWBOT_OPS: opsFlag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // Flag OFF (default) → no ops-alerts job; the enqueued set is unchanged from today.
+    expect((await sentFor()).some((m) => m.type === "ops-alerts")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "ops-alerts")).toBe(false);
+    // Flag ON → exactly one ops-alerts job, enqueued in the hourly window.
+    const on = await sentFor("true");
+    expect(on.filter((m) => m.type === "ops-alerts")).toEqual([{ type: "ops-alerts", requestedBy: "schedule" }]);
+  });
+
+  it("does NOT enqueue ops-alerts outside the hourly window even when REVIEWBOT_OPS is ON", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      REVIEWBOT_OPS: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
+  });
+
   it("enqueues weekly value report generation during the Monday report window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

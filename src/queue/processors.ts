@@ -103,6 +103,7 @@ import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-ex
 import { selectRegateCandidates } from "../settings/agent-sweep";
 import { planAgentMaintenanceActions } from "../settings/agent-actions";
 import { executeAgentMaintenanceActions } from "../services/agent-action-executor";
+import { processSubmitDraft } from "../services/draft";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
 import { generateWeeklyValueReport } from "../services/weekly-value-report";
 import { REPO_OUTCOME_PATTERNS_SIGNAL, computeRepoOutcomePatterns } from "../services/repo-outcome-patterns";
@@ -145,7 +146,7 @@ import {
   unionScopedOverlapClusters,
   type ContributorProfile,
 } from "../signals/engine";
-import { buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
+import { buildClosedUnifiedCommentBody, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
@@ -154,6 +155,14 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
+import { isSafetyEnabled, secretLeakFinding } from "../review/safety";
+import { buildReviewGroundingText, isGroundingEnabled } from "../review/grounding-wire";
+import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
+import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
+import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
+import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
+import { recordNativeGateDecision } from "../review/parity-wire";
+import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
@@ -308,8 +317,25 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     case "notify-deliver":
       await deliverNotification(env, message.deliveryId);
       return;
+    case "ops-alerts":
+      // Convergence (ops / observability, flag REVIEWBOT_OPS). Defense-in-depth: the cron only ENQUEUES this
+      // when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so
+      // flag-OFF does zero work here too. Read-only telemetry — never throws into the queue.
+      if (isOpsEnabled(env)) await runOpsAlerts(env);
+      return;
+    case "selftune":
+      // Convergence (self-improve / auto-tune, flag REVIEWBOT_SELFTUNE). Defense-in-depth: the cron only
+      // ENQUEUES this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still
+      // no-op, so flag-OFF does zero work here too. TIGHTENING-ONLY + shadow-soak + audited; never throws into
+      // the queue (runSelfTune fails safe).
+      if (isSelfTuneEnabled(env)) await runSelfTune(env);
+      return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);
+      return;
+    case "submit-draft":
+      // Public OAuth draft-submission (REVIEWBOT_DRAFT). No-ops internally when the flag is off.
+      await processSubmitDraft(env, message.draftId);
       return;
   }
 }
@@ -987,6 +1013,18 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
           /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
           console.error(JSON.stringify({ level: "warn", event: "agent_maintenance_failed", deliveryId, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
         });
+        // Reputation (convergence, flag-gated by REVIEWBOT_REPUTATION). After the gate decides, record this
+        // submitter's terminal outcome (merged / closed / manual) so the INTERNAL reputation stays current. The
+        // outcome is derived ONLY from the PR's realized terminal state + the gate verdict (no PR content);
+        // nothing is ever surfaced publicly. Flag-OFF (default) is an immediate no-op (nothing recorded), so the
+        // path is byte-identical. Best-effort: a record failure must never affect the gate or the public surface.
+        const reputationOutcome = isReputationEnabled(env) ? reputationOutcomeFromTerminalState(pr, payload.pull_request, gate) : undefined;
+        if (reputationOutcome) {
+          await recordReputationOutcome(env, { project: repoFullName, submitter: pr.authorLogin ?? null, outcome: reputationOutcome }).catch((error) => {
+            /* v8 ignore next -- best-effort: a reputation-record failure is logged, never surfaced to the gate. */
+            console.error(JSON.stringify({ level: "warn", event: "reputation_record_failed", deliveryId, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+          });
+        }
       }
     }
 
@@ -1161,6 +1199,14 @@ export async function runAiReviewForAdvisory(
 ): Promise<{ notes: string } | undefined> {
   const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
   if (args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha) return undefined;
+  // Reputation anti-abuse (convergence, flag-gated by REVIEWBOT_REPUTATION). Extends the AI-spend gate above:
+  // an INTERNAL low-reputation / burst / new submitter is downgraded to a DETERMINISTIC-ONLY review — the
+  // (paid) AI neurons are skipped here exactly as they are for an unconfirmed contributor, so a serial abuser
+  // can't make the project spend AI on a flood of low-quality PRs. STRICTLY INTERNAL: the reputation is never
+  // surfaced — this only routes the private AI-spend decision. Flag-OFF (default) is an immediate no-op (no DB
+  // read, no new branch) → the AI-spend gate is byte-identical to today. Fail-safe (the read degrades to
+  // neutral → false on any error).
+  if (isReputationEnabled(env) && (await shouldSkipAiForReputation(env, { project: args.repoFullName, submitter: args.author }))) return undefined;
   try {
     // BYOK: decrypt the maintainer's provider key only for confirmed contributors when opted in. Falls back to free Workers AI when
     // no key is configured or the encryption secret is unavailable (getDecryptedRepositoryAiKey → null).
@@ -1172,6 +1218,29 @@ export async function runAiReviewForAdvisory(
         ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
         : null;
     const files = await listPullRequestFiles(env, args.repoFullName, args.pr.number);
+    // Grounding (convergence, flag-gated by REVIEWBOT_GROUNDING). Build the FINISHED CI status + the full
+    // content of the changed files so the reviewer verifies its claims against reality instead of guessing.
+    // Flag-OFF (default) → we take no new branch at all: NO check/repo load, NO file fetch, and `grounding`
+    // is left undefined so the prompt handed to the model is byte-identical to today. Fully fail-safe.
+    const grounding = isGroundingEnabled(env)
+      ? await buildReviewGroundingText(env, {
+          repoFullName: args.repoFullName,
+          headSha: args.advisory.headSha,
+          files,
+          checks: await listCheckSummaries(env, args.repoFullName, args.pr.number),
+          installationId: (await getRepository(env, args.repoFullName))?.installationId ?? null,
+        })
+      : undefined;
+    // RAG retrieval (convergence, flag-gated by REVIEWBOT_RAG). Query the codebase vector index for code/docs
+    // semantically related to the changed files and append them as additive reference context — exactly like
+    // grounding. Flag-OFF (default) → NO new branch: no adapter use, no vector query, and `ragContext` is left
+    // undefined so the prompt is byte-identical to today. Fully fail-safe (a missing/cold index degrades to "").
+    const ragContext = isRagEnabled(env)
+      ? await buildReviewRagContext(env, {
+          repoFullName: args.repoFullName,
+          files: files.map((file) => ({ path: file.path, patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined })),
+        })
+      : undefined;
     const result = await runGittensoryAiReview(env, {
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
@@ -1181,6 +1250,8 @@ export async function runAiReviewForAdvisory(
       actor: args.author,
       mode: args.settings.aiReviewMode === "block" ? "block" : "advisory",
       providerKey,
+      grounding,
+      ragContext,
     });
     if (result.status !== "ok") return undefined;
     if (result.consensusDefect) {
@@ -1197,6 +1268,34 @@ export async function runAiReviewForAdvisory(
   } catch (error) {
     console.error(JSON.stringify({ level: "warn", event: "ai_review_failed", repository: args.repoFullName, pullNumber: args.pr.number, error: errorMessage(error) }));
     return undefined;
+  }
+}
+
+/**
+ * Safety secrets-scan (convergence, flag-gated by REVIEWBOT_SAFETY). Scans the PR diff for leaked secrets and,
+ * on a hit, appends ONE critical `secret_leak` finding to the advisory BEFORE evaluateGateCheck runs — the
+ * gate treats that code as a hard blocker (rules/advisory.ts), so a committed credential holds the PR. Reuses
+ * the already-loaded gate files when present, else loads them lazily. Flag-OFF (default) returns immediately:
+ * no finding is produced and the advisory/gate is byte-identical to today. Fail-safe: a load error is
+ * swallowed so it can never destabilize the gate.
+ */
+export async function maybeAddSecretLeakFinding(
+  env: Env,
+  args: {
+    advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
+    repoFullName: string;
+    pullNumber: number;
+    files: Awaited<ReturnType<typeof listPullRequestFiles>> | null;
+  },
+): Promise<void> {
+  if (!isSafetyEnabled(env)) return;
+  try {
+    const files = args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pullNumber));
+    const finding = secretLeakFinding(buildAiReviewDiff(files));
+    if (finding) args.advisory.findings.push(finding);
+  } catch (error) {
+    /* v8 ignore next -- fail-safe: a file-load error never destabilizes the gate. */
+    console.error(JSON.stringify({ level: "warn", event: "secret_scan_failed", repository: args.repoFullName, pullNumber: args.pullNumber, error: errorMessage(error) }));
   }
 }
 
@@ -1298,6 +1397,27 @@ function buildClosedPrPanelUpdate(repoFullName: string, pullNumber: number): str
   ].join("\n");
 }
 
+/**
+ * Map a PR's realized terminal state + the gate verdict to the {@link SubmissionOutcome} the reputation table
+ * records — or `undefined` when there is no terminal signal to record yet. Pure + total; uses ONLY the PR
+ * state / merged flag and the gate conclusion (no PR content):
+ *   • merged (the webhook payload's merged_at, or the persisted mergedAt) → "merged" (ground-truth success).
+ *   • closed without merge → "closed".
+ *   • still open but the gate routed it to manual review (failure / action_required) → "manual".
+ *   • still open and the gate did not flag it → undefined (no terminal outcome — nothing to record).
+ * Internal-only; the result is never surfaced. Used only when REVIEWBOT_REPUTATION is ON.
+ */
+export function reputationOutcomeFromTerminalState(
+  pr: { state: string; mergedAt?: string | null | undefined },
+  payload: { merged_at?: string | null | undefined } | undefined,
+  gate: ReturnType<typeof evaluateGateCheck> | undefined,
+): SubmissionOutcome | undefined {
+  const merged = Boolean(payload?.merged_at) || Boolean(pr.mergedAt);
+  if (pr.state !== "open") return merged ? "merged" : "closed";
+  if (gate && (gate.conclusion === "failure" || gate.conclusion === "action_required")) return "manual";
+  return undefined;
+}
+
 async function maybePublishPrPublicSurface(
   env: Env,
   installationId: number,
@@ -1338,14 +1458,14 @@ async function maybePublishPrPublicSurface(
     if (gateCheckResult?.kind === "permission_missing") {
       await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
     }
-    await createOrUpdatePrIntelligenceComment(
-      env,
-      installationId,
-      repoFullName,
-      pr.number,
-      buildClosedPrPanelUpdate(repoFullName, pr.number),
-      { createIfMissing: false },
-    ).catch(() => undefined);
+    // Convergence (Stage D): when the unified-comment flag is ON, render the closed/skipped state through the
+    // unified renderer too. Otherwise an OPEN PR's unified comment would be overwritten by the legacy panel
+    // under the SAME marker when it closes. Flag-OFF (default) keeps the legacy panel byte-identical. The
+    // update is createIfMissing:false either way — we only refresh an existing comment for a closing PR.
+    const closedBody = isUnifiedReviewCommentEnabled(env)
+      ? buildClosedUnifiedCommentBody({ repoFullName, pullNumber: pr.number, footerMarkdown: gittensoryFooter({ earnUrl: gittensorRepoEarnUrl(repoFullName) }) })
+      : buildClosedPrPanelUpdate(repoFullName, pr.number);
+    await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, closedBody, { createIfMissing: false }).catch(() => undefined);
     return undefined;
   }
   const prelimHasPublicOutput =
@@ -1505,6 +1625,11 @@ async function maybePublishPrPublicSurface(
     // failure is caught and the gate is still finalized (never left in_progress).
     aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
 
+    // Safety secrets-scan (convergence, flag-gated by REVIEWBOT_SAFETY). Scans the diff and, on a hit,
+    // appends a critical `secret_leak` blocker BEFORE the gate evaluates. Reuses the already-loaded gate
+    // files when present. Flag-OFF (default) is an immediate no-op → the advisory/gate is byte-identical.
+    await maybeAddSecretLeakFinding(env, { advisory, repoFullName, pullNumber: pr.number, files: gateFiles });
+
     // First-time-contributor grace (#552): compute the author's complete per-repo PR history
     // (excluding this PR) with an aggregate DB query. Do not derive policy-enforcement history from
     // the bounded repoPullRequests sample; missing or case-mismatched history could soften a block.
@@ -1525,6 +1650,16 @@ async function maybePublishPrPublicSurface(
         outcome: "completed",
         metadata: { blockerCodes },
       });
+    }
+    // #preconv-parity (convergence prep): SHADOW-record the gittensory-native gate decision (source=
+    // 'gittensory-native') into review_audit so the pre-cutover parity harness has data to read. RECORD-ONLY,
+    // flag-gated by REVIEWBOT_PARITY_AUDIT: flag-OFF (default) is an immediate no-op (NO D1 write) so the review
+    // path is BYTE-IDENTICAL to today; flag-ON it writes one row and changes NO behavior. Best-effort. The
+    // authoritative 'reviewbot' rows it is later compared against are written by reviewbot's deploy-time dual-
+    // run, not here (see src/review/parity-wire.ts). Only a finalized gate evaluation (not skipped) is recorded.
+    if (gateEvaluation) {
+      const reasonCode = gateEvaluation.conclusion === "failure" ? (gateEvaluation.blockers[0]?.code ?? gateEvaluation.conclusion) : gateEvaluation.conclusion;
+      await recordNativeGateDecision(env, { project: repoFullName, pullNumber: pr.number, headSha: pr.headSha, conclusion: gateEvaluation.conclusion, reasonCode });
     }
     if (gateEnabled) {
       const gateCheckResult = await createOrUpdateGateCheckRun(
@@ -1623,6 +1758,20 @@ async function maybePublishPrPublicSurface(
     // (gittensory shape + reviewbot's review folded in). The gate stays authoritative (passed as `decision`),
     // and the body carries the SAME panel marker so the upsert updates in place. Flag-OFF (default) keeps the
     // legacy panel byte-identical. Only the comment lane is affected; the gate check-run/labels/audit are not.
+    //
+    // RECONCILIATION INVARIANT (#1016 — two-gate → one authoritative path; pinned by
+    // test/unit/unified-comment-bridge.test.ts "reconciliation invariant"):
+    //   1. ONE AI pass. `runAiReviewForAdvisory` ran exactly once above (line ~1600) and its result feeds
+    //      BOTH surfaces: it mutated `advisory.findings` with the `ai_consensus_defect` (which the SAME
+    //      `gateEvaluation` already read via evaluateGateCheck) AND returned `aiReview.notes`. We pass that
+    //      same `advisory.findings` here so the bridge RECOVERS the consensus defect (consensusDefectFromFindings)
+    //      — it never makes a second model call or a divergent second synthesis.
+    //   2. The gate is AUTHORITATIVE for the comment's color/headline: `buildUnifiedCommentBody` maps
+    //      `gateEvaluation.conclusion` → a Verdict and feeds it as the renderer `decision`, which
+    //      deriveUnifiedStatus honors BEFORE any reviewer recommendation. So the comment's tone can never
+    //      contradict the Gittensory Gate check-run conclusion.
+    //   3. The `ai_consensus_defect` surfaces exactly ONCE — as the Code-review blocker — never also in the
+    //      gate signal row (which renders only the conclusion-derived status text, not the defect string).
     if (isUnifiedReviewCommentEnabled(env) && gateEvaluation) {
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation });
       const unifiedFiles = await listPullRequestFiles(env, repoFullName, pr.number);

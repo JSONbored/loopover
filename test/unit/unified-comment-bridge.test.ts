@@ -7,7 +7,9 @@ import {
   isUnifiedReviewCommentEnabled,
   panelRowsToSignalRows,
   PR_PANEL_COMMENT_MARKER,
+  verdictToRecommendation,
 } from "../../src/review/unified-comment-bridge";
+import type { MergeReadiness, UnifiedCollapsible } from "../../src/review/unified-comment";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
 import type { AdvisoryFinding } from "../../src/types";
 import type { PublicPrPanelSignalRow } from "../../src/signals/engine";
@@ -45,6 +47,16 @@ describe("gateConclusionToVerdict", () => {
     expect(gateConclusionToVerdict("action_required")).toBe("manual");
     expect(gateConclusionToVerdict("neutral")).toBe("manual");
     expect(gateConclusionToVerdict("skipped")).toBe("comment");
+  });
+});
+
+describe("verdictToRecommendation", () => {
+  it("maps every verdict (incl. the comment/ignore advisory pair) to a reviewer recommendation", () => {
+    expect(verdictToRecommendation("merge")).toBe("merge");
+    expect(verdictToRecommendation("close")).toBe("close");
+    expect(verdictToRecommendation("manual")).toBe("manual_review");
+    expect(verdictToRecommendation("comment")).toBe("manual_review");
+    expect(verdictToRecommendation("ignore")).toBe("manual_review");
   });
 });
 
@@ -93,6 +105,17 @@ describe("buildDualReviewNotes", () => {
 
   it("returns [] when there is nothing reviewer-side to surface", () => {
     expect(buildDualReviewNotes({ recommendation: "merge", verdict: "merge" })).toEqual([]);
+  });
+
+  it("omits the ': detail' and ' — action' suffixes when the defect has no detail and the warning has no action", () => {
+    const reviews = buildDualReviewNotes({
+      consensusDefect: { title: "Null deref", detail: "" },
+      warnings: [{ code: "w1", severity: "warning", title: "No test", detail: "..." }], // no `action`
+      recommendation: "close",
+      verdict: "close",
+    });
+    expect(reviews[0]?.notes?.blockers).toEqual(["Null deref"]); // title only, no trailing ": "
+    expect(reviews[0]?.notes?.nits).toEqual(["No test"]); // title only, no trailing " — "
   });
 });
 
@@ -161,6 +184,35 @@ describe("buildUnifiedCommentBody", () => {
     });
     expect(body).not.toContain("Confirmed Gittensor contributor");
     expect(body).toContain("Gate result"); // a visible row is still present
+  });
+
+  it("threads the optional merge-readiness, merged, re-run label, and extra collapsibles into the renderer", () => {
+    const mergeReadiness: MergeReadiness = { ciState: "passed", mergeStateLabel: "clean" };
+    const extra: UnifiedCollapsible[] = [{ title: "Signal definitions", body: "Readiness signals describe public-metadata readiness." }];
+    const body = buildUnifiedCommentBody({
+      gate: gate(),
+      aiReview: { notes: "Clean change." },
+      panelRows,
+      readinessTotal: 91,
+      changedFiles: 4,
+      mergeReadiness,
+      merged: true,
+      reRunLabel: "Re-run Gittensory review",
+      extraCollapsibles: extra,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("`CI green`"); // mergeReadiness ciState → chip
+    expect(body).toContain("`clean`"); // mergeStateLabel → chip
+    expect(body).toContain("auto-merged"); // merged → ready wording
+    expect(body).toContain("- [ ] Re-run Gittensory review"); // reRunLabel
+    expect(body).toContain("<details><summary><b>Signal definitions</b></summary>"); // extraCollapsibles
+  });
+
+  it("maps a non-merge/non-failure gate conclusion (manual / comment verdicts) through the bridge", () => {
+    const manual = buildUnifiedCommentBody({ gate: gate({ conclusion: "action_required" }), panelRows, readinessTotal: 60, changedFiles: 2, footerMarkdown: footer });
+    expect(manual).toContain("> [!WARNING]"); // action_required → manual → held
+    const advisory = buildUnifiedCommentBody({ gate: gate({ conclusion: "skipped" }), panelRows, readinessTotal: 50, changedFiles: 2, footerMarkdown: footer });
+    expect(advisory).toContain("> [!NOTE]"); // skipped → comment → advisory
   });
 });
 

@@ -52,7 +52,7 @@ export function gateConclusionToVerdict(conclusion: GateCheckConclusion): Verdic
 }
 
 /** A reviewer recommendation aligned with the gate verdict (advisory; the gate `decision` overrides it). */
-function verdictToRecommendation(verdict: Verdict): ReviewRecommendation {
+export function verdictToRecommendation(verdict: Verdict): ReviewRecommendation {
   switch (verdict) {
     case "merge":
       return "merge";

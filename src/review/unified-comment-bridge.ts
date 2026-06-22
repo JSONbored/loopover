@@ -84,8 +84,9 @@ export function gateConclusionToVerdict(conclusion: GateCheckConclusion): Verdic
   }
 }
 
-/** A reviewer recommendation aligned with the gate verdict (advisory; the gate `decision` overrides it). */
-function verdictToRecommendation(verdict: Verdict): ReviewRecommendation {
+/** A reviewer recommendation aligned with the gate verdict (advisory; the gate `decision` overrides it).
+ *  Exported so the bridge unit tests can pin the gate-verdict → reviewer-recommendation mapping directly. */
+export function verdictToRecommendation(verdict: Verdict): ReviewRecommendation {
   switch (verdict) {
     case "merge":
       return "merge";

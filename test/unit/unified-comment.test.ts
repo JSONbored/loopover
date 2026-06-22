@@ -49,6 +49,11 @@ describe("deriveUnifiedStatus", () => {
   it("honors an explicit host status override", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "close" }, { statusOverride: "ready" })).toBe("ready");
   });
+
+  it("treats a missing recommendations array as no recs → advisory", () => {
+    // exercises the `recommendations ?? []` guard for a defensively-shaped input
+    expect(deriveUnifiedStatus({ changedFiles: 1, reviewerCount: 0, summary: "" } as UnifiedReviewInput)).toBe("advisory");
+  });
 });
 
 describe("renderUnifiedReviewComment", () => {
@@ -137,6 +142,90 @@ describe("renderUnifiedReviewComment", () => {
     const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, ctx);
     expect(md).not.toMatch(/confidenceFloor|scopeCap|hardGuardrailGlobs|rubric/i);
   });
+
+  it("a blocked status from reviewer recs (no close decision) reads 'blocked', not 'closed'", () => {
+    const md = renderUnifiedReviewComment({ ...base, recommendations: ["close"], blockers: ["Leaks a token."], consensusBlocker: true }, {});
+    expect(md).toContain("> [!CAUTION]");
+    expect(md).toContain("Gittensory review — blocked"); // verb(): decision !== "close"
+    expect(md).toContain("**🛑 Blocked**"); // verdictLine(): decision !== "close"
+    expect(md).not.toContain("Closed");
+  });
+
+  it("renders CI-failing / CI-pending chips and the merge-state label", () => {
+    const failing = renderUnifiedReviewComment({ ...base, readiness: { ciState: "failed", mergeStateLabel: "behind" } }, {});
+    expect(failing).toContain("`CI failing`");
+    expect(failing).toContain("`behind`");
+    const pending = renderUnifiedReviewComment({ ...base, readiness: { ciState: "unverified" } }, {});
+    expect(pending).toContain("`CI pending`");
+  });
+
+  it("appends an explicit verdict reason across ready (merged + unmerged) and advisory states", () => {
+    // The verdict word is bolded (`**…**`); the reason follows outside the bold, so assert each separately.
+    const merged = renderUnifiedReviewComment({ ...base, decision: "merge", merged: true, verdictReason: "all checks green" }, {});
+    expect(merged).toContain("Approved & auto-merged");
+    expect(merged).toContain("all checks green"); // verdictReason appended, not the default " — all checks passed"
+    const unmerged = renderUnifiedReviewComment({ ...base, decision: "merge", verdictReason: "looks correct" }, {});
+    expect(unmerged).not.toContain("auto-merged"); // the unmerged ready variant
+    expect(unmerged).toContain("looks correct");
+    const advisory = renderUnifiedReviewComment({ ...base, decision: "comment", recommendations: [], verdictReason: "for your awareness" }, {});
+    expect(advisory).toContain("Advisory only");
+    expect(advisory).toContain("for your awareness");
+  });
+
+  it("skips empty blocker lines and caps long nit lists at 12", () => {
+    const withEmpty = renderUnifiedReviewComment({ ...base, decision: "close", blockers: ["", "   ", "Real blocker"] }, {});
+    expect(withEmpty.match(/Real blocker/g)?.length).toBe(1);
+    const capped = renderUnifiedReviewComment({ ...base, decision: "merge", nits: Array.from({ length: 13 }, (_, i) => `Distinct nit ${i + 1}`) }, {});
+    expect(capped).toContain("Distinct nit 12");
+    expect(capped).not.toContain("Distinct nit 13");
+  });
+
+  it("renders a signal row that has neither a result nor evidence", () => {
+    const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, { signals: [{ label: "Bare row", state: "warn" }] });
+    expect(md).toContain("| Bare row | ⚠️ |  |");
+  });
+
+  it("uses the 'Concerns raised' heading (not 'Why this is blocked') for blockers on a non-blocked status", () => {
+    // a lone request_changes blocker → held, but the concern is still surfaced under the softer heading
+    const md = renderUnifiedReviewComment({ ...base, recommendations: ["request_changes"], blockers: ["Edge case unhandled."], consensusBlocker: false }, {});
+    expect(md).toContain("> [!WARNING]");
+    expect(md).toContain("Concerns raised — review before merging");
+    expect(md).not.toContain("Why this is blocked");
+    expect(md).toContain("Edge case unhandled.");
+  });
+
+  it("skips an extra collapsible whose body is empty", () => {
+    const md = renderUnifiedReviewComment({ ...base, decision: "merge" }, { extraCollapsibles: [{ title: "Empty section", body: "   " }] });
+    expect(md).not.toContain("Empty section");
+  });
+
+  it("escapes angle brackets from public renderer fields while preserving details wrappers", () => {
+    const md = renderUnifiedReviewComment(
+      {
+        ...base,
+        decision: "manual",
+        summary: "Safe summary </details><!-- hidden -->",
+        blockers: ["Blocker <script>alert(1)</script>"],
+        nits: ["Nit closes </details>"],
+        verdictReason: "needs <maintainer> review",
+      },
+      {
+        signals: [{ label: "Gate <row>", state: "fail", result: "Bad <tag>", evidence: "Evidence </td>" }],
+        extraCollapsibles: [{ title: "Extra <title>", body: "Body <!-- comment -->" }],
+      },
+    );
+
+    expect(md).toContain("Safe summary &lt;/details&gt;&lt;!-- hidden --&gt;");
+    expect(md).toContain("- Blocker &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(md).toContain("- Nit closes &lt;/details&gt;");
+    expect(md).toContain("needs &lt;maintainer&gt; review");
+    expect(md).toContain("| Gate &lt;row&gt; | ❌ Bad &lt;tag&gt; | Evidence &lt;/td&gt; |");
+    expect(md).toContain("<details><summary><b>Extra &lt;title&gt;</b></summary>");
+    expect(md).toContain("Body &lt;!-- comment --&gt;");
+    expect(md).toContain("<details><summary><b>Nits</b> — 1 non-blocking</summary>");
+    expect(md).not.toContain("Safe summary </details>");
+    expect(md).not.toContain("Body <!-- comment -->");
+  });
 });
 
 function reviewNote(rec: ReviewRecommendation, extra: Partial<ReviewNotes> = {}): DualReviewNote {
@@ -185,5 +274,23 @@ describe("buildUnifiedReviewInput", () => {
       reviews: [reviewNote("close", { blockers: ["Same", "same"] }), reviewNote("close", { blockers: ["Same"] })],
     });
     expect(input.blockers).toEqual(["Same"]);
+  });
+
+  it("drops empty/whitespace blocker lines in the shared extraction", () => {
+    const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("close", { blockers: ["", "   ", "Real defect"] })] });
+    expect(input.blockers).toEqual(["Real defect"]);
+  });
+
+  it("threads optional readiness, merged, and verdictReason through to the input", () => {
+    const input = buildUnifiedReviewInput({
+      changedFiles: 1,
+      reviews: [reviewNote("merge")],
+      readiness: { ciState: "passed" },
+      merged: true,
+      verdictReason: "auto-merged after green CI",
+    });
+    expect(input.readiness).toEqual({ ciState: "passed" });
+    expect(input.merged).toBe(true);
+    expect(input.verdictReason).toBe("auto-merged after green CI");
   });
 });

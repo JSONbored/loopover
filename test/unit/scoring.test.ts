@@ -114,6 +114,17 @@ OSS_EMISSION_SHARE = 0.90
     expect(served.warnings.some((warning) => /stale/i.test(warning))).toBe(false);
   });
 
+  it("surfaces snapshot warnings in score previews (#810)", () => {
+    const warning = "Scoring constants snapshot is stale; preview scores may use old constants.";
+    const preview = buildScorePreview({
+      repo,
+      input: { repoFullName: repo.fullName, sourceTokenScore: 10 },
+      snapshot: { ...snapshot, warnings: [warning] },
+    });
+
+    expect(preview.warnings).toContain(warning);
+  });
+
   it("prefers exponential saturation when mixed upstream constants are present", () => {
     const parsed = parsePythonNumberConstants(`
 MERGED_PR_BASE_SCORE = 25

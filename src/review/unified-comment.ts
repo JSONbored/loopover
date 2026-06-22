@@ -263,14 +263,14 @@ function statusChips(input: UnifiedReviewInput, ctx: UnifiedCommentContext): str
   if (input.readiness) {
     const ci = input.readiness.ciState;
     chips.push(ci === "passed" ? "`CI green`" : ci === "failed" ? "`CI failing`" : "`CI pending`");
-    if (input.readiness.mergeStateLabel) chips.push(`\`${input.readiness.mergeStateLabel}\``);
+    if (input.readiness.mergeStateLabel) chips.push(`\`${escapePublicHtmlAngles(input.readiness.mergeStateLabel)}\``);
   }
   return chips.join(" · ");
 }
 
 function verdictLine(status: UnifiedCommentStatus, input: UnifiedReviewInput): string {
   const icon = STATUS_META[status].icon;
-  const reason = input.verdictReason ? ` — ${input.verdictReason}` : "";
+  const reason = input.verdictReason ? ` — ${escapePublicHtmlAngles(input.verdictReason)}` : "";
   switch (status) {
     case "ready":
       return input.merged
@@ -301,9 +301,15 @@ function dedupeLines(items: string[], cap = 12): string[] {
   return out;
 }
 
+/** Escape angle brackets in caller-provided public text so raw HTML, HTML comments,
+ *  or stray closing tags cannot change the GitHub comment structure. */
+function escapePublicHtmlAngles(text: string): string {
+  return text.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"));
+}
+
 function bullets(items: string[]): string {
   return dedupeLines(items)
-    .map((i) => `- ${i}`)
+    .map((i) => `- ${escapePublicHtmlAngles(i)}`)
     .join("\n");
 }
 
@@ -317,15 +323,19 @@ function signalTable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): str
   };
   const rows = [codeRow, ...(ctx.signals ?? [])];
   const lines = rows.map((r, i) => {
-    const label = i === 0 ? `**${r.label}**` : r.label;
-    const result = `${SIGNAL_ICON[r.state]}${r.result ? ` ${r.result}` : ""}`;
-    return `| ${label} | ${result} | ${r.evidence ?? ""} |`;
+    const labelText = escapePublicHtmlAngles(r.label);
+    const label = i === 0 ? `**${labelText}**` : labelText;
+    const resultText = r.result ? ` ${escapePublicHtmlAngles(r.result)}` : "";
+    const result = `${SIGNAL_ICON[r.state]}${resultText}`;
+    return `| ${label} | ${result} | ${escapePublicHtmlAngles(r.evidence ?? "")} |`;
   });
   return ["| Signal | Result | Evidence |", "|---|---|---|", ...lines].join("\n");
 }
 
 function details(title: string, body: string, sub?: string): string {
-  return `<details><summary><b>${title}</b>${sub ? ` — ${sub}` : ""}</summary>\n\n${body}\n</details>`;
+  const safeTitle = escapePublicHtmlAngles(title);
+  const safeSub = sub ? ` — ${escapePublicHtmlAngles(sub)}` : "";
+  return `<details><summary><b>${safeTitle}</b>${safeSub}</summary>\n\n${escapePublicHtmlAngles(body)}\n</details>`;
 }
 
 /** Wrap the assembled body in a GitHub alert blockquote — this is the full-comment colored sidebar. */
@@ -345,7 +355,7 @@ function asAlert(alert: string, inner: string): string {
 export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: UnifiedCommentContext = {}): string {
   const status = deriveUnifiedStatus(input, ctx);
   const meta = STATUS_META[status];
-  const brand = ctx.brand ?? "Gittensory review";
+  const brand = escapePublicHtmlAngles(ctx.brand ?? "Gittensory review");
 
   const blocks: string[] = [
     meta.square.repeat(12),
@@ -354,7 +364,7 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
     verdictLine(status, input),
   ];
 
-  if (input.summary.trim()) blocks.push(`**Review summary**\n${input.summary.trim()}`);
+  if (input.summary.trim()) blocks.push(`**Review summary**\n${escapePublicHtmlAngles(input.summary.trim())}`);
 
   const blockers = dedupeLines(input.blockers ?? []);
   if (blockers.length) {

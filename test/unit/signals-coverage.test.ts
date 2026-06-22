@@ -19,6 +19,7 @@ import {
   buildPreflightResult,
   buildPublicCommentSignalBundle,
   buildPublicPrIntelligenceComment,
+  buildPublicPrPanelSignalRows,
   buildPublicReadinessScore,
   buildQueueHealth,
   buildRoleContext,
@@ -686,6 +687,64 @@ describe("signal coverage edge cases", () => {
 
     expect(maintainerComment).toContain("maintainer lane");
     expect(maintainerComment).not.toMatch(/reward|wallet|hotkey|trust score|farming/i);
+  });
+
+  it("buildPublicPrPanelSignalRows derives the gate conclusion across provided/fallback paths (#1007 unified-panel extraction)", () => {
+    const directRepo = repo("owner/panel");
+    const collisions = buildCollisionReport(directRepo.fullName, [], []);
+    const baseArgs = {
+      repo: directRepo,
+      pr: pr(directRepo.fullName, 70, "Fix cache", { authorLogin: "miner", linkedIssues: [42], body: "Fixes #42" }),
+      profile: buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []),
+      detection: { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 },
+      queueHealth: buildQueueHealth(directRepo, [], [], collisions),
+      collisions,
+      preflight: buildPreflightResult({ repoFullName: directRepo.fullName, title: "Fix cache", body: "Fixes #42", changedFiles: ["src/cache.ts"] }, directRepo, [], []),
+    };
+    const KEYS = ["linkedIssue", "relatedWork", "reviewLoad", "validationEvidence", "openPrQueue", "contributorContext", "gateResult"];
+
+    // Provided gate is authoritative; gate enabled → a real gate action (not the advisory-only copy).
+    const provided = buildPublicPrPanelSignalRows({ ...baseArgs, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" }, gate: { conclusion: "success", summary: "Passing" } });
+    expect(provided.rows.map((r) => r.key)).toEqual(KEYS);
+    expect(typeof provided.readinessTotal).toBe("number");
+    const providedGate = provided.rows.find((r) => r.key === "gateResult")!;
+    expect(providedGate.cells[2]).not.toBe("Advisory only.");
+
+    // Gate check NOT enabled → fallback success conclusion + the advisory-only action/next-step.
+    const advisory = buildPublicPrPanelSignalRows({ ...baseArgs, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "off" } });
+    const advisoryGate = advisory.rows.find((r) => r.key === "gateResult")!;
+    expect(advisoryGate.cells[2]).toBe("Advisory only.");
+    expect(advisoryGate.cells[3]).toBe("No action.");
+
+    // No gate + enabled + unknown repo → neutral fallback (distinct from the passing cell).
+    const neutral = buildPublicPrPanelSignalRows({ ...baseArgs, repo: null, settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" } });
+    expect(neutral.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
+
+    // No gate + enabled + a hard linked-issue block (no linked issue, no rationale) → failure fallback.
+    const blocked = buildPublicPrPanelSignalRows({
+      ...baseArgs,
+      pr: pr(directRepo.fullName, 71, "No issue", { authorLogin: "miner", linkedIssues: [], body: "just a change" }),
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", linkedIssueGateMode: "block" },
+    });
+    expect(blocked.rows).toHaveLength(7);
+    expect(blocked.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
+
+    // No gate + enabled + a hard duplicate-PR block (another open PR shares the linked issue, and the repo
+    // configured duplicatePrGateMode: block) → failure fallback via `hardDuplicateBlock`. The current PR (70)
+    // links #42; a second open PR (88) on the same issue forms the duplicate cluster.
+    const dupIssue = issue(directRepo.fullName, 42, "Cache invalidation race");
+    const dupPr = pr(directRepo.fullName, 88, "Also fixes the cache race", { authorLogin: "other", linkedIssues: [42], body: "Fixes #42" });
+    const dupCollisions = buildCollisionReport(directRepo.fullName, [dupIssue], [baseArgs.pr, dupPr]);
+    const duplicateBlocked = buildPublicPrPanelSignalRows({
+      ...baseArgs,
+      collisions: dupCollisions,
+      queueHealth: buildQueueHealth(directRepo, [dupIssue], [baseArgs.pr, dupPr], dupCollisions),
+      settings: { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled", duplicatePrGateMode: "block" },
+    });
+    expect(duplicateBlocked.rows).toHaveLength(7);
+    // The duplicate cluster surfaces in the related-work row, and the gate falls back to the failing cell.
+    expect(duplicateBlocked.rows.find((r) => r.key === "relatedWork")!.cells[1]).toContain("#88");
+    expect(duplicateBlocked.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
   });
 
   it("renders opt-in gate panel states for collision and repo evaluation blockers", () => {

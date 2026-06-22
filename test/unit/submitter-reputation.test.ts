@@ -139,6 +139,15 @@ describe("signalFromCounts — config-overridable thresholds (#private-config pa
     expect(signalFromCounts(c, DEFAULT_REPUTATION_CONFIG)).toBe("low");
     expect(signalFromCounts(c, { ...DEFAULT_REPUTATION_CONFIG, minSample: 6 })).toBe("neutral");
   });
+
+  it("an empty sample with minSample 0 exercises the failRate sample-0 guard → neutral (not low/trusted)", () => {
+    // With minSample lowered to 0, an all-EXCLUDE (sample 0) history passes the `sample < minSample` floor
+    // (0 < 0 is false) and reaches `failRate = sample > 0 ? … : 0`, taking the `: 0` (sample === 0) branch.
+    // failRate 0 → not 'low'; success 0 < trustedMinSuccess → not 'trusted'; stays neutral.
+    const c = countOutcomes(rows(["closed", "merge_conflict_closed", 3], ["manual", null, 2]));
+    expect(c).toEqual({ success: 0, qualityFail: 0, qualityFailLight: 0, promptInjection: 0 });
+    expect(signalFromCounts(c, { ...DEFAULT_REPUTATION_CONFIG, minSample: 0 })).toBe("neutral");
+  });
 });
 
 describe("getSubmitterReputation — recency window (#reputation-redesign)", () => {
@@ -189,6 +198,75 @@ describe("recordSubmissionOutcome / getSubmitterReputation (D1, fail-safe)", () 
   it("recordSubmissionOutcome never throws (no submitter / no DB / DB ok)", async () => {
     await expect(recordSubmissionOutcome({} as Env, "p", undefined, "merged")).resolves.toBeUndefined();
     await expect(recordSubmissionOutcome({ DB: { prepare: () => ({ bind: () => ({ run: async () => undefined }) }) } } as unknown as Env, "p", "u", "closed")).resolves.toBeUndefined();
+  });
+
+  it("recordSubmissionOutcome binds the right column per outcome (merged / closed / manual ternary)", async () => {
+    // Capture the prepared SQL so we can assert the `${col}` interpolation picks the correct column for each
+    // outcome — exercises both ternary arms of `col` (merged → "merged", closed → "closed", manual → "manual").
+    const seen: string[] = [];
+    const mkEnv = () =>
+      ({
+        DB: {
+          prepare: (sql: string) => {
+            seen.push(sql);
+            return { bind: () => ({ run: async () => undefined }) };
+          },
+        },
+      }) as unknown as Env;
+
+    await recordSubmissionOutcome(mkEnv(), "p", "u", "merged");
+    expect(seen[0]).toContain(", merged, last_seen)");
+    expect(seen[0]).toContain("merged = merged + 1");
+
+    seen.length = 0;
+    await recordSubmissionOutcome(mkEnv(), "p", "u", "closed");
+    expect(seen[0]).toContain(", closed, last_seen)");
+    expect(seen[0]).toContain("closed = closed + 1");
+
+    seen.length = 0;
+    await recordSubmissionOutcome(mkEnv(), "p", "u", "manual");
+    expect(seen[0]).toContain(", manual, last_seen)");
+    expect(seen[0]).toContain("manual = manual + 1");
+  });
+
+  it("recordSubmissionOutcome swallows a DB error fail-safe (logs, never throws)", async () => {
+    // Exercises the catch path (the console.log fail-safe branch) — a throwing .run() must degrade to a no-op.
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            run: async () => {
+              throw new Error("D1 write boom");
+            },
+          }),
+        }),
+      },
+    } as unknown as Env;
+    await expect(recordSubmissionOutcome(env, "p", "u", "merged")).resolves.toBeUndefined();
+  });
+
+  it("getSubmitterReputation → neutral with no submitter (early return guard)", async () => {
+    // The `if (!submitter) return neutral` early-return branch: undefined submitter never touches the DB.
+    const rep = await getSubmitterReputation({} as Env, "p", undefined);
+    expect(rep).toEqual({ submissions: 0, merged: 0, closed: 0, manual: 0, closeRate: 0, signal: "neutral" });
+  });
+
+  it("getSubmitterReputation → neutral when the window query returns a malformed result (?? [] fallback)", async () => {
+    // `.all()` resolves to undefined (no `results` key) → `result?.results ?? []` takes the `?? []` fallback,
+    // so countOutcomes sees an empty list and the signal degrades to neutral — never throws.
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            first: async () => ({ submissions: 3, merged: 2, closed: 1, manual: 0 }),
+            all: async () => undefined,
+          }),
+        }),
+      },
+    } as unknown as Env;
+    const rep = await getSubmitterReputation(env, "p", "u");
+    expect(rep.signal).toBe("neutral");
+    expect(rep.closeRate).toBeCloseTo(1 / 3); // closed 1 / (merged 2 + closed 1)
   });
 });
 

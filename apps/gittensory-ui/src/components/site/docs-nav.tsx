@@ -27,6 +27,7 @@ export const docsNav: DocsGroup[] = [
   {
     title: "Core concepts",
     items: [
+      { to: "/docs/how-reviews-work", label: "How reviews work" },
       { to: "/docs/branch-analysis", label: "Branch analysis" },
       { to: "/docs/scoreability", label: "Scoreability" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
@@ -35,6 +36,7 @@ export const docsNav: DocsGroup[] = [
   {
     title: "Operating",
     items: [
+      { to: "/docs/tuning", label: "Tuning your reviews" },
       { to: "/docs/privacy-security", label: "Privacy & security" },
       { to: "/docs/troubleshooting", label: "Troubleshooting" },
     ],

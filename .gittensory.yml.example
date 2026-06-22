@@ -1,0 +1,248 @@
+# ============================================================================
+# .gittensory.yml — per-repo configuration for gittensory CI & gittensory review
+# ============================================================================
+#
+# Drop this file at the root of any repo gittensory watches to tune how the
+# review engine scores, gates, and comments on its pull requests — as
+# config-as-code, versioned alongside the project it governs.
+#
+# WHERE IT LIVES (first match wins):
+#   .gittensory.yml  →  .github/gittensory.yml  →  .gittensory.json  →  .github/gittensory.json
+#
+# PRECEDENCE (most specific wins):
+#   this file  >  per-repo dashboard/API settings  >  built-in safe defaults
+#   The typed `gate:` block below is an alias for the gate fields and wins over
+#   the generic `settings:` block for those same fields.
+#
+# SAFE BY DEFAULT: with no file and no dashboard row, a repo falls back to a
+# quiet, non-blocking profile — gate off, AI review off, slop scoring off,
+# comments only to detected contributors, no check-run published. Everything
+# here is an explicit opt-in; every value shown is the documented default
+# unless a comment says otherwise. Delete any block to inherit the default.
+#
+# WHO CAN BE BLOCKED: gate modes choose *which* deterministic checks run, never
+# *who* gets blocked. A hard block is always confirmed-contributor-gated.
+#
+# NOTE: some capabilities (safety scanning, CI/full-file grounding, RAG,
+# reputation control, the unified comment) are switched on at the deployment
+# level by the operator's GITTENSORY_REVIEW_* feature flags AND a per-repo
+# cutover allowlist. This file tunes behavior; it does not enable those
+# deployment-wide capabilities.
+# ============================================================================
+
+
+# ----------------------------------------------------------------------------
+# 1. FOCUS / GUARDRAILS (focus manifest)
+# ----------------------------------------------------------------------------
+# Declares the repo's work areas and off-limits paths. These feed deterministic
+# findings (e.g. manifest_blocked_path, manifest_missing_tests) and — when
+# `gate.manifestPolicy: block` is set below — can become enforceable blockers.
+
+# Work areas the maintainer wants. PRs touching these are preferred/encouraged.
+# Glob list. Default: [] (no preference).
+wantedPaths:
+  - "src/**"
+
+# Paths off-limits to contributors. Touching one yields a manifest_blocked_path
+# finding (enforceable when `gate.manifestPolicy: block`).
+# Glob list. Default: [] (nothing blocked).
+blockedPaths:
+  - "vendor/**"
+  - ".github/workflows/**"
+
+# Labels the maintainer prefers on incoming PRs; a missing preferred label is
+# surfaced (never blocks). String list. Default: [].
+preferredLabels:
+  - bug
+  - enhancement
+
+# How strongly a linked issue is expected on a PR.
+# Values: required | preferred | optional. Default: optional.
+linkedIssuePolicy: optional
+
+# Test paths/areas expected to change alongside code. When code changes without
+# them, a manifest_missing_tests finding fires. String list. Default: [].
+testExpectations:
+  - "tests/**"
+
+# Whether opening discovery issues is encouraged for this repo.
+# Values: encouraged | neutral | discouraged. Default: neutral.
+issueDiscoveryPolicy: neutral
+
+# PRIVATE review context — never published to any public GitHub surface.
+# Use for triage hints the engine should know but contributors should not see.
+# String list. Default: [].
+maintainerNotes:
+  - "Private triage context only — never appears on a public comment."
+
+# Notes explicitly opted into public output. Each line is public-safe filtered;
+# unsafe lines are silently dropped. String list. Default: [].
+publicNotes:
+  - "Prefer backend changes that tie to safety or release readiness."
+
+
+# ----------------------------------------------------------------------------
+# 2. GATE POLICY (`gate:`) — refines the deterministic gate
+# ----------------------------------------------------------------------------
+# Most gate dimensions are tri-state modes:
+#   off      — the dimension is not evaluated.
+#   advisory — the finding is surfaced (comment/context) but never blocks.
+#   block    — the finding can become a hard `Gittensory Gate` blocker
+#              (always confirmed-contributor-gated).
+gate:
+  # Gate master switch. Turns the whole deterministic gate on; the per-dimension
+  # modes below only refine an already-enabled gate.
+  # Bool. Default: false (gate off).
+  enabled: true
+
+  # Policy pack.
+  #   gittensor      — confirmed-contributor-gated, registry-aware.
+  #   oss-anti-slop  — runs the deterministic rules against ANY author on ANY repo.
+  # Default: gittensor.
+  pack: gittensor
+
+  # Linked-issue gate. off | advisory | block. Default: advisory.
+  # (If the dashboard "Require linked issue" toggle is on but this is `off`,
+  #  it is auto-promoted to `block`.)
+  linkedIssue: advisory
+
+  # Duplicate-PR gate — detects duplicate/superseding PRs.
+  # off | advisory | block. Default: block.
+  duplicates: block
+
+  # Quality / merge-readiness score gate (the PR-quality score).
+  readiness:
+    # off | advisory | block. Default: advisory.
+    mode: advisory
+    # At/above this score the quality dimension passes.
+    # Number 0–100, or null for the engine default band. Default: null.
+    minScore: null
+
+  # Deterministic anti-slop signal. Opt-in.
+  slop:
+    # off | advisory | block. Default: off.
+    #   advisory — surfaces the slop score + warnings.
+    #   block    — also hard-blocks at/above minScore.
+    mode: off
+    # Slop-risk threshold at/above which `block` blocks.
+    # Number 0–100, or null. Default: null (engine uses 60, the "high" band).
+    minScore: null
+    # When true AND slop is not off, a free Workers-AI pass adds an
+    # advisory-only ai_slop_advisory finding. It never feeds the slop score or
+    # the gate. Bool. Default: false.
+    aiAdvisory: false
+
+  # Composite merge-readiness gate (no min score).
+  # off | advisory | block. Default: off.
+  mergeReadiness: off
+
+  # Manifest-policy gate. When `block`, this repo's declared policy from
+  # section 1 (blockedPaths, required linked issue, testExpectations) becomes
+  # an enforceable blocker. Independent of mergeReadiness.
+  # off | advisory | block. Default: off.
+  manifestPolicy: off
+
+  # First-time-contributor grace. When true, softens a would-be block to
+  # advisory for a genuine newcomer (0 merged PRs, < 3 closed-unmerged PRs).
+  # Repeat offenders and authors with merge history are gated normally.
+  # Bool. Default: false.
+  firstTimeContributorGrace: false
+
+  # AI maintainer review. Opt-in; the AI capabilities are switched on at the
+  # deployment level.
+  aiReview:
+    # off | advisory | block. Default: off.
+    #   advisory — posts AI review notes only.
+    #   block    — a dual-model high-confidence consensus defect may become a
+    #              blocker (confirmed-contributors only).
+    mode: off
+    # Use the maintainer's frontier model for the *advisory* write-up when a
+    # provider key is configured. The consensus blocker always uses the free
+    # Workers-AI pair, so BYOK never changes who can be blocked.
+    # Bool. Default: false.
+    byok: false
+    # BYOK provider. anthropic | openai | null. Default: null (use the stored
+    # key's own provider). Must match the stored key's provider or BYOK is
+    # skipped (Workers-AI fallback). The key itself lives only in the encrypted
+    # key store — never in this file.
+    provider: null
+    # Model override for the BYOK advisory write-up (e.g. claude-3-5-sonnet-latest).
+    # String or null. Default: null (the key record's model, else a conservative
+    # per-provider default).
+    model: null
+
+
+# ----------------------------------------------------------------------------
+# 3. GENERIC SETTINGS (`settings:`) — dashboard-equivalent overrides
+# ----------------------------------------------------------------------------
+# Everything a maintainer can toggle in the dashboard can be set here as code.
+# All values shown are the safe defaults; delete any line to inherit it.
+settings:
+  # Who receives the public PR comment.
+  # off | detected_contributors_only | all_prs. Default: detected_contributors_only.
+  commentMode: detected_contributors_only
+
+  # Public audience framing. oss_maintainer | gittensor_only. Default: oss_maintainer.
+  publicAudienceMode: oss_maintainer
+
+  # How much signal the public surface shows. minimal | standard. Default: standard.
+  publicSignalLevel: standard
+
+  # Publish a GitHub check-run. off | enabled. Default: off.
+  checkRunMode: off
+
+  # Check-run detail. minimal | standard | deep. Default: minimal.
+  checkRunDetailLevel: minimal
+
+  # Which public surfaces are used.
+  # off | comment_and_label | comment_only | label_only. Default: comment_and_label.
+  publicSurface: comment_and_label
+
+  # Apply the gittensor label automatically. Bool. Default: true.
+  autoLabelEnabled: true
+
+  # The label name to apply. String. Default: gittensor.
+  gittensorLabel: gittensor
+
+  # Create the label if it does not yet exist. Bool. Default: true.
+  createMissingLabel: true
+
+  # Also review PRs authored by maintainers (not just detected contributors).
+  # Bool. Default: false.
+  includeMaintainerAuthors: false
+
+  # Require a linked issue on every PR (dashboard equivalent of the toggle that
+  # can auto-promote gate.linkedIssue to block). Bool. Default: false.
+  requireLinkedIssue: false
+
+  # Backfill review of pre-existing open PRs when first installed.
+  # Bool. Default: true.
+  backfillEnabled: true
+
+  # Use private trust signals in scoring. Bool. Default: true.
+  privateTrustEnabled: true
+
+  # Render a README status badge for the repo. Bool. Default: false.
+  badgeEnabled: false
+
+  # Per-repo kill-switch: when true, the agent does nothing on this repo.
+  # Bool. Default: false.
+  agentPaused: false
+
+  # Dry-run / shadow mode: compute everything but take no public action.
+  # Bool. Default: false.
+  agentDryRun: false
+
+  # Autonomy dial — per-action-class level (observe … auto).
+  # Map. Default: {} (= observe everywhere, deny-by-default).
+  autonomy: {}
+
+  # Auto-maintain policy for merges the agent is allowed to perform.
+  # Defaults: mergeMethod = squash, requireApprovals = 1.
+  autoMaintain:
+    mergeMethod: squash
+    requireApprovals: 1
+
+  # Command authorization role policy. Map. Default: the built-in policy.
+  # Omit to inherit the safe built-in default.
+  # commandAuthorization: {}

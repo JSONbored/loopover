@@ -138,6 +138,119 @@ describe("computeGateParity — cross-system gate-decision agreement (#preconv-p
     expect(out.hasSignal).toBe(false);
     expect(out.authoritative).toBe("reviewbot");
   });
+
+  it("skips when the SHADOW side action isn't comparable (exercises the right ||-operand of the gate-action guard)", async () => {
+    // auth_act is a valid gate action; shadow_act is NOT → the second isGateAction() must short-circuit-exclude.
+    const out = await computeGateParity(
+      parityEnv([
+        { project: "p", auth_act: "merge", shadow_act: "merge", reason: "ok", n: 7 },
+        { project: "p", auth_act: "merge", shadow_act: "comment", reason: "weird", n: 11 }, // shadow not a gate action → skipped
+      ]),
+      { days: 90, nowMs: NOW },
+    );
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.pairedSamples).toBe(7); // the 11 comment-shadow pairs are excluded
+    expect(r.bothMerge).toBe(7);
+    expect(r.disagree).toBe(0);
+  });
+
+  it("yields a null agreementRate for a project row whose only paired cell has n=0 (pairedSamples stays 0)", async () => {
+    // A row gets seeded by any cell, but pairedSamples += n; with n=0 the row exists with pairedSamples 0,
+    // driving the `pairedSamples > 0 ? agree/paired : null` FALSE branch.
+    const out = await computeGateParity(
+      parityEnv([{ project: "z", auth_act: "merge", shadow_act: "merge", reason: "ok", n: 0 }]),
+      { days: 90, nowMs: NOW },
+    );
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.project).toBe("z");
+    expect(r.pairedSamples).toBe(0);
+    expect(r.agreementRate).toBeNull();
+  });
+
+  it("treats the AUTHORITATIVE merge→close disagreement (shadow more conservative) as NOT unsafe", async () => {
+    // Covers the unsafe-direction `&&` when shadow_act !== 'merge': disagree increments but unsafe must not.
+    const out = await computeGateParity(
+      parityEnv([
+        { project: "p", auth_act: "merge", shadow_act: "close", reason: "ok", n: 6 },
+        { project: "p", auth_act: "close", shadow_act: "hold", reason: "x", n: 3 }, // also benign (shadow not merge)
+      ]),
+      { days: 90, nowMs: NOW },
+    );
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.disagree).toBe(9);
+    expect(r.unsafeDisagreements).toBe(0);
+  });
+
+  it("counts a shadow-merge against an authoritative HOLD as unsafe but a shadow-merge against an authoritative MERGE-disagree-free path stays safe", async () => {
+    // Drives the `auth_act === 'hold' || auth_act === 'close'` ||: hold side true, and a shadow=merge with
+    // auth=merge is the agreed path (never reaches the unsafe check).
+    const out = await computeGateParity(
+      parityEnv([
+        { project: "p", auth_act: "hold", shadow_act: "merge", reason: "split", n: 2 }, // unsafe (hold side of ||)
+        { project: "p", auth_act: "merge", shadow_act: "merge", reason: "ok", n: 4 }, // agreed, never unsafe
+      ]),
+      { days: 90, nowMs: NOW },
+    );
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.unsafeDisagreements).toBe(2);
+    expect(r.bothMerge).toBe(4);
+  });
+
+  it("uses explicit authoritative/shadow overrides instead of the defaults", async () => {
+    const out = await computeGateParity(
+      parityEnv([{ project: "p", auth_act: "merge", shadow_act: "merge", reason: "ok", n: 1 }]),
+      { days: 90, nowMs: NOW, authoritative: "alpha", shadow: "beta" },
+    );
+    expect(out.authoritative).toBe("alpha"); // ?? right-hand default NOT taken
+    expect(out.shadow).toBe("beta");
+  });
+
+  it("sorts multiple project rows by project name ascending", async () => {
+    const out = await computeGateParity(
+      parityEnv([
+        { project: "zeta", auth_act: "merge", shadow_act: "merge", reason: "ok", n: 1 },
+        { project: "alpha", auth_act: "close", shadow_act: "close", reason: "x", n: 1 },
+        { project: "mid", auth_act: "hold", shadow_act: "hold", reason: "y", n: 1 },
+      ]),
+      { days: 90, nowMs: NOW },
+    );
+    expect(out.rows.map((r) => r.project)).toEqual(["alpha", "mid", "zeta"]);
+  });
+
+  it("defaults to a null/empty result set when the driver returns no `results` field", async () => {
+    // Exercises the `res.results ?? []` nullish fallback (results undefined → []).
+    const env = {
+      DB: { prepare: () => ({ bind: () => ({ all: async () => ({}) }) }) },
+    } as unknown as Env;
+    const out = await computeGateParity(env, { days: 90, nowMs: NOW });
+    expect(out.rows).toEqual([]);
+    expect(out.hasSignal).toBe(false);
+  });
+
+  it("clamps an over-long days window to 730 and defaults a non-positive/non-finite days to 90", async () => {
+    const capBig: { binds?: unknown[] } = {};
+    await computeGateParity(parityEnv([], capBig), { days: 9999, nowMs: NOW }); // > 730 → clamp
+    const bigFrom = capBig.binds?.[1] as string;
+    expect(bigFrom).toBe(new Date(NOW - 730 * 86_400_000).toISOString().slice(0, 10));
+
+    const capDefault: { binds?: unknown[] } = {};
+    await computeGateParity(parityEnv([], capDefault), { days: 0, nowMs: NOW }); // non-positive → 90
+    const defFrom = capDefault.binds?.[1] as string;
+    expect(defFrom).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
+
+    const capNaN: { binds?: unknown[] } = {};
+    await computeGateParity(parityEnv([], capNaN), { days: Number.NaN, nowMs: NOW }); // non-finite → 90
+    const nanFrom = capNaN.binds?.[1] as string;
+    expect(nanFrom).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
+  });
 });
 
 describe("isParityCutoverReady — the per-repo cutover gate (#preconv-parity)", () => {
@@ -253,5 +366,86 @@ describe("computeGateEval — source scoping for per-system standalone accuracy 
     expect(r?.closePrecision).toBeNull();
     expect(r?.hold).toBe(4);
     expect(out.hasSignal).toBe(false); // 4 < MIN_DECIDED_FOR_SIGNAL(10)
+  });
+
+  it("counts decided but no confusion bucket for an unknown prediction (none of merge/close/hold)", async () => {
+    // pred falls through every `pred === ...` arm: decided increments, all matrix counters stay 0.
+    const cells = [{ project: "p", pred: "comment", truth: "merged", n: 6 }];
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: cells }) }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.decided).toBe(6);
+    expect(r.wouldMerge).toBe(0);
+    expect(r.wouldClose).toBe(0);
+    expect(r.hold).toBe(0);
+    expect(r.mergePrecision).toBeNull();
+    expect(r.closePrecision).toBeNull();
+  });
+
+  it("ignores a merge/close prediction whose outcome is neither merged nor closed (e.g. expired)", async () => {
+    // merge-pred truth='expired' → wouldMerge counts, but neither mergeConfirmed nor mergeFalse;
+    // close-pred truth='expired' → wouldClose counts, but neither closeConfirmed nor closeFalse.
+    const cells = [
+      { project: "p", pred: "merge", truth: "expired", n: 4 },
+      { project: "p", pred: "close", truth: "expired", n: 3 },
+    ];
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: cells }) }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    const r = out.rows[0];
+    expect(r).toBeDefined();
+    if (!r) return;
+    expect(r.wouldMerge).toBe(4);
+    expect(r.mergeConfirmed).toBe(0);
+    expect(r.mergeFalse).toBe(0);
+    expect(r.mergePrecision).toBe(0); // 0 confirmed / 4 would-merge → 0, NOT null
+    expect(r.wouldClose).toBe(3);
+    expect(r.closeConfirmed).toBe(0);
+    expect(r.closeFalse).toBe(0);
+    expect(r.closePrecision).toBe(0);
+  });
+
+  it("defaults to [] when the eval driver returns no `results` field (nullish fallback)", async () => {
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => ({}) }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    expect(out.rows).toEqual([]);
+    expect(out.hasSignal).toBe(false);
+  });
+
+  it("sorts multiple eval project rows by project name ascending", async () => {
+    const cells = [
+      { project: "yankee", pred: "merge", truth: "merged", n: 1 },
+      { project: "bravo", pred: "close", truth: "closed", n: 1 },
+    ];
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: cells }) }) }) } } as unknown as Env;
+    const out = await computeGateEval(env, { days: 90, nowMs: NOW });
+    expect(out.rows.map((r) => r.project)).toEqual(["bravo", "yankee"]);
+  });
+
+  it("clamps an over-long days window to 730 and defaults a non-positive/non-finite days to 90", async () => {
+    const cap = (capture: { binds?: unknown[] }): Env =>
+      ({
+        DB: {
+          prepare: () => ({
+            bind: (...a: unknown[]) => {
+              capture.binds = a;
+              return { all: async () => ({ results: [] }) };
+            },
+          }),
+        },
+      }) as unknown as Env;
+
+    const big: { binds?: unknown[] } = {};
+    await computeGateEval(cap(big), { days: 9999, nowMs: NOW }); // > 730 → clamp
+    expect(big.binds?.[0]).toBe(new Date(NOW - 730 * 86_400_000).toISOString().slice(0, 10));
+
+    const zero: { binds?: unknown[] } = {};
+    await computeGateEval(cap(zero), { days: -5, nowMs: NOW }); // non-positive → 90
+    expect(zero.binds?.[0]).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
+
+    const nan: { binds?: unknown[] } = {};
+    await computeGateEval(cap(nan), { days: Number.POSITIVE_INFINITY, nowMs: NOW }); // non-finite → 90
+    expect(nan.binds?.[0]).toBe(new Date(NOW - 90 * 86_400_000).toISOString().slice(0, 10));
   });
 });

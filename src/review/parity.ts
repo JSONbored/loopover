@@ -274,6 +274,7 @@ export async function computeGateParity(
     }
     const reasons = reasonByProject.get(c.project);
     // reasonByProject always has an entry for c.project here (row() seeded it). Guard for strict indexing only.
+    /* v8 ignore next */ // unreachable: reasonByProject is seeded in the same if(!r) block as byProject
     if (!reasons) continue;
     let rb = reasons.get(c.reason);
     if (!rb) {
@@ -291,6 +292,7 @@ export async function computeGateParity(
     return {
       ...r,
       agreementRate: r.pairedSamples > 0 ? agree / r.pairedSamples : null,
+      /* v8 ignore next */ // `: []` unreachable: reasonByProject is seeded for every byProject entry
       byReasonCode: reasons ? [...reasons.values()].sort((a, b) => b.paired - a.paired) : [],
     };
   });

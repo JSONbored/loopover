@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { processJob } from "../../src/queue/processors";
+import {
+  persistRegistrySnapshot,
+} from "../../src/registry/sync";
+import { normalizeRegistryPayload } from "../../src/registry/normalize";
+import {
+  upsertOfficialMinerDetection,
+  upsertRepositoryFromGitHub,
+  upsertRepositorySettings,
+} from "../../src/db/repositories";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import {
   GITTENSORY_NATIVE_SOURCE,
   computeParityReadiness,
@@ -218,5 +229,142 @@ describe("GET /v1/internal/parity — bearer-gated, flag-gated endpoint", () => 
     expect(row?.cutoverReady).toBe(true);
     // Privacy: aggregate only — never actor logins / trust internals.
     expect(JSON.stringify(body)).not.toMatch(/login|actor|reward|payout|trust|wallet|hotkey/i);
+  });
+});
+
+// ── Flag-gated SHADOW recording driven through the review FINALIZE path (processors.ts) ───────────────────────
+// processGitHubWebhook → maybePublishPrPublicSurface finalizes the gate and (flag-ON) records the native
+// gate_decision via `recordNativeGateDecision`. These exercise the processors WIRING at the call site
+// (`if (gateEvaluation) { const reasonCode = … ; await recordNativeGateDecision(…) }`) BOTH flag-ways, plus
+// both sides of the reasonCode ternary (failure → blockers[0].code, non-failure → conclusion).
+
+// A self-signed RSA PEM so the GitHub App can mint an installation token (gate check-run posting).
+async function generatePrivateKeyPem(): Promise<string> {
+  const key = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const pkcs8 = await crypto.subtle.exportKey("pkcs8", key.privateKey);
+  const b64 = Buffer.from(pkcs8 as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
+  return `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----\n`;
+}
+
+// A confirmed-miner snapshot so the gate can hard-BLOCK (a non-confirmed author always gets a neutral gate).
+function parityMinerSnapshot(login: string) {
+  return {
+    source: "gittensor_api" as const,
+    githubId: "123",
+    githubUsername: login,
+    isEligible: true,
+    credibility: 1,
+    eligibleRepoCount: 1,
+    issueDiscoveryScore: 0,
+    issueTokenScore: 0,
+    issueCredibility: 1,
+    isIssueEligible: false,
+    issueEligibleRepoCount: 0,
+    alphaPerDay: 0,
+    taoPerDay: 0,
+    usdPerDay: 0,
+    totals: { pullRequests: 3, mergedPullRequests: 2, openPullRequests: 1, closedPullRequests: 0, openIssues: 0, closedIssues: 0, solvedIssues: 0, validSolvedIssues: 0 },
+    repositories: [],
+    pullRequests: [],
+    issueLabels: [],
+  };
+}
+
+// Stand up a gate-enabled repo (no comment/label surface — gate only) so the finalize path runs the gate and
+// reaches the parity-record call site with the minimum of moving parts.
+async function seedGateEnabledRepo(env: Env): Promise<void> {
+  await persistRegistrySnapshot(
+    env,
+    normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+  );
+  await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+  await upsertRepositorySettings(env, {
+    repoFullName: "JSONbored/gittensory",
+    commentMode: "off",
+    publicSurface: "off",
+    autoLabelEnabled: false,
+    checkRunMode: "off",
+    gateCheckMode: "enabled",
+    linkedIssueGateMode: "block",
+    requireLinkedIssue: true,
+  });
+  // .gittensory.yml authoritatively sets the linked-issue blocker to "block" (config-as-code).
+  await upsertRepoFocusManifest(env, "JSONbored/gittensory", { gate: { linkedIssue: "block" } });
+}
+
+// The miner-list/token/check-run endpoints the gate finalize touches; `confirmedAuthor` toggles whether the
+// gittensor miner list confirms the PR author (a confirmed author can be hard-blocked → a `failure` gate).
+function stubFinalizeFetch(confirmedAuthor: string | null): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url === "https://api.gittensor.io/miners") return Response.json(confirmedAuthor ? [{ uid: 7, githubUsername: confirmedAuthor, githubId: "123", totalPrs: 4, totalMergedPrs: 3, totalOpenPrs: 1, totalClosedPrs: 0, totalOpenIssues: 0, totalClosedIssues: 0, totalSolvedIssues: 0, totalValidSolvedIssues: 0, isEligible: true, credibility: 1, eligibleRepoCount: 1 }] : []);
+    if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+    if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function prWebhook(deliveryId: string, author: string) {
+  return {
+    type: "github-webhook" as const,
+    deliveryId,
+    eventName: "pull_request",
+    payload: {
+      action: "opened",
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+      repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+      pull_request: { number: 42, title: "Gate without issue", state: "open", user: { login: author }, head: { sha: "gate123" }, labels: [], body: "No issue link." },
+    },
+  };
+}
+
+async function nativeRows(env: Env): Promise<Array<{ decision: string; summary: string; source: string }>> {
+  const res = await env.DB.prepare("SELECT decision, summary, source FROM review_audit WHERE source = ? AND event_type = 'gate_decision'").bind(GITTENSORY_NATIVE_SOURCE).all<{ decision: string; summary: string; source: string }>();
+  return res.results;
+}
+
+describe("recordNativeGateDecision wired into the review FINALIZE path (REVIEWBOT_PARITY_AUDIT)", () => {
+  it("FLAG-ON, FAILING gate (confirmed author + linked-issue block): records a 'hold' native row whose reasonCode is the blocker code (failure ternary side)", async () => {
+    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedGateEnabledRepo(env);
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: parityMinerSnapshot("contributor") }, 60_000);
+    stubFinalizeFetch("contributor");
+    try {
+      await processJob(env, prWebhook("parity-finalize-fail", "contributor"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const rows = await nativeRows(env);
+    // gateEvaluation.conclusion === "failure" → native action "hold"; reasonCode = blockers[0].code.
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE });
+    expect(rows[0]!.summary).toBe("missing_linked_issue");
+  });
+
+  it("FLAG-ON, NON-confirmed author → NEUTRAL gate: the call site still runs (non-failure reasonCode side) but a neutral conclusion is non-comparable → NO native row", async () => {
+    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedGateEnabledRepo(env);
+    stubFinalizeFetch(null); // miner list empty → author unconfirmed → gate cannot hard-block → neutral
+    try {
+      await processJob(env, prWebhook("parity-finalize-neutral", "contributor"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // reasonCode took the non-"failure" branch (= the neutral conclusion); recordNativeGateDecision no-ops on a
+    // non-comparable (neutral) conclusion, so nothing is written — the call site ran, the recorder declined.
+    expect(await nativeRows(env)).toEqual([]);
+  });
+
+  it("FLAG-OFF (default): the finalize path records NOTHING — byte-identical review path, no native row", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() }); // flag unset → OFF
+    await seedGateEnabledRepo(env);
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: parityMinerSnapshot("contributor") }, 60_000);
+    stubFinalizeFetch("contributor");
+    try {
+      await processJob(env, prWebhook("parity-finalize-off", "contributor"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(await nativeRows(env)).toEqual([]);
   });
 });

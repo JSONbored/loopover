@@ -90,6 +90,37 @@ export const PublicRepoStatsSchema = z
   })
   .openapi("PublicRepoStats");
 
+export const PublicStatsSchema = z
+  .object({
+    generatedAt: z.string(),
+    updatedAt: z.string(),
+    totals: z.object({
+      handled: z.number(),
+      reviewed: z.number(),
+      merged: z.number(),
+      closed: z.number(),
+      commented: z.number(),
+      ignored: z.number(),
+      manual: z.number(),
+      error: z.number(),
+      reversed: z.number(),
+      filteredPct: z.number().nullable(),
+      accuracyPct: z.number().nullable(),
+      minutesSaved: z.number(),
+    }),
+    weekly: z.object({ reviewed: z.number(), merged: z.number() }),
+    byProject: z.array(
+      z.object({
+        project: z.string(),
+        reviewed: z.number(),
+        merged: z.number(),
+        closed: z.number(),
+        accuracyPct: z.number().nullable(),
+      }),
+    ),
+  })
+  .openapi("PublicStats");
+
 export const WorkboardItemSchema = z
   .object({
     repoFullName: z.string(),

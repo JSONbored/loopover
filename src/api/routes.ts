@@ -223,6 +223,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
+import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
@@ -817,6 +818,21 @@ export function createApp() {
     const origin = c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin;
     c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
     return c.json(buildSubnetInterfaceDescriptor({ origin, generatedAt: nowIso(), appSlug: c.env.GITHUB_APP_SLUG, upstreamRepo: c.env.GITTENSOR_UPSTREAM_REPO }));
+  });
+
+  // Proof of Power (#1059): unauthenticated homepage stats counter — lifetime PRs handled / merged / closed,
+  // gate + slop blocks, and a reversal-grounded accuracy %. Aggregate counts only (no PR content, authors,
+  // scores, or reward internals). Flag-gated: 404s when GITTENSORY_PUBLIC_STATS is off so the worker is
+  // byte-identical to today. Excluded from requiresApiToken below.
+  app.get("/v1/public/stats", async (c) => {
+    if (!isPublicStatsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    try {
+      const stats = await getPublicStats(c.env);
+      c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      return c.json(stats);
+    } catch {
+      return c.json({ error: "public_stats_unavailable" }, 503);
+    }
   });
 
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
@@ -4762,6 +4778,7 @@ function requiresApiToken(path: string): boolean {
   if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
   if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/badge\.(svg|json)$/.test(path)) return false;
   if (path === "/v1/public/subnet-interface") return false;
+  if (path === "/v1/public/stats") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
   // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): the submission entry points are unauthenticated

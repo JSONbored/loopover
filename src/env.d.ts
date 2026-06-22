@@ -117,6 +117,13 @@ declare global {
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     GITTENSORY_REVIEW_SELFTUNE?: string;
+    /** Proof of Power (#1059): when truthy, the unauthenticated `GET /v1/public/stats` endpoint serves the public
+     *  homepage counter — computed LIVE from gittensory's OWN review ledger (review_targets + review_audit) behind
+     *  a 60s cache, so it stays current as new reviews land. Default OFF — unset/false 404s the endpoint, so the
+     *  worker is byte-identical to today. Exposes review-disposition counts + a reversal-grounded accuracy
+     *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
+     *  See review/public-stats.ts. */
+    GITTENSORY_PUBLIC_STATS?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */

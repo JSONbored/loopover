@@ -45,6 +45,7 @@ import {
   PullRequestReviewabilitySchema,
   PreflightResultSchema,
   PublicRepoStatsSchema,
+  PublicStatsSchema,
   QueueHealthSchema,
   ReadinessSchema,
   RegistryChangeReportSchema,
@@ -84,6 +85,7 @@ export function buildOpenApiSpec() {
   registry.register("RegistrySnapshot", RegistrySnapshotSchema);
   registry.register("Repository", RepositorySchema);
   registry.register("PublicRepoStats", PublicRepoStatsSchema);
+  registry.register("PublicStats", PublicStatsSchema);
   registry.register("Advisory", AdvisorySchema);
   registry.register("ActionPortfolio", ActionPortfolioSchema);
   registry.register("WorkboardItem", WorkboardItemSchema);
@@ -165,6 +167,15 @@ export function buildOpenApiSpec() {
     path: "/v1/mcp/compatibility",
     responses: {
       200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/stats",
+    responses: {
+      200: { description: "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.", content: { "application/json": { schema: PublicStatsSchema } } },
+      404: { description: "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)" },
+      503: { description: "Public stats are temporarily unavailable" },
     },
   });
   registry.registerPath({

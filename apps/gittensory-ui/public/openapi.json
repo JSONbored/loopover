@@ -12190,6 +12190,127 @@
           "source",
           "stale"
         ]
+      },
+      "PublicStats": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "handled": {
+                "type": "number"
+              },
+              "merged": {
+                "type": "number"
+              },
+              "closed": {
+                "type": "number"
+              },
+              "reversed": {
+                "type": "number"
+              },
+              "accuracyPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "commented": {
+                "type": "number"
+              },
+              "ignored": {
+                "type": "number"
+              },
+              "manual": {
+                "type": "number"
+              },
+              "error": {
+                "type": "number"
+              },
+              "reviewed": {
+                "type": "number"
+              },
+              "filteredPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "minutesSaved": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "handled",
+              "reviewed",
+              "merged",
+              "closed",
+              "commented",
+              "ignored",
+              "manual",
+              "error",
+              "reversed",
+              "filteredPct",
+              "accuracyPct",
+              "minutesSaved"
+            ]
+          },
+          "weekly": {
+            "type": "object",
+            "properties": {
+              "merged": {
+                "type": "number"
+              },
+              "reviewed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "reviewed",
+              "merged"
+            ]
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "project": {
+                  "type": "string"
+                },
+                "merged": {
+                  "type": "number"
+                },
+                "closed": {
+                  "type": "number"
+                },
+                "accuracyPct": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "reviewed": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "project",
+                "reviewed",
+                "merged",
+                "closed",
+                "accuracyPct"
+              ]
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "updatedAt",
+          "totals",
+          "weekly",
+          "byProject"
+        ]
       }
     },
     "parameters": {},
@@ -15008,6 +15129,36 @@
           },
           "403": {
             "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/public/stats": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicStats"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)"
+          },
+          "503": {
+            "description": "Public stats are temporarily unavailable"
           }
         },
         "security": [

@@ -31,10 +31,17 @@ describe("deriveUnifiedStatus", () => {
     expect(deriveUnifiedStatus({ ...base, recommendations: [] })).toBe("advisory");
   });
 
-  it("held for manual / request_changes / failing CI", () => {
+  it("held for manual / request_changes", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "manual" })).toBe("held");
     expect(deriveUnifiedStatus({ ...base, recommendations: ["request_changes"] })).toBe("held");
-    expect(deriveUnifiedStatus({ ...base, readiness: { ciState: "failed" } })).toBe("held");
+  });
+
+  it("a failing CI is BLOCKED (never safe-to-merge) and overrides an optimistic merge verdict", () => {
+    // A red CI must never render "safe to merge". It downgrades even an explicit `merge` verdict to blocked.
+    expect(deriveUnifiedStatus({ ...base, readiness: { ciState: "failed" } })).toBe("blocked");
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "failed" } })).toBe("blocked");
+    // green CI + merge verdict still renders ready.
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } })).toBe("ready");
   });
 
   it("blocked for a close verdict or consensus blockers", () => {

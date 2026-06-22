@@ -64,6 +64,7 @@ import {
   backfillRepositorySegment,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
+  fetchLiveCiAggregate,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -167,6 +168,7 @@ import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
+import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
 import { loadHardGuardrailGlobs } from "../review/guardrail-config";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
@@ -528,12 +530,30 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
   const requireLinkedIssue = settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off";
   const verdicts: Record<string, string> = {};
   const flaggedPulls: number[] = [];
+  const sweepInstallationId = repo?.installationId ?? null;
   for (const pr of candidates) {
     const others = openPullRequests.filter((other) => other.number !== pr.number);
     const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: others, requireLinkedIssue });
     const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
     verdicts[String(pr.number)] = gate.conclusion;
     if (gate.conclusion === "failure" || gate.conclusion === "action_required") flaggedPulls.push(pr.number);
+    // Backstop the CI-completion trigger: re-run auto-maintain so a clean+green+approved PR is merged and a
+    // red-CI non-owner PR is closed (owner held) even if its check_run/check_suite webhook was missed or
+    // coalesced. maybeRunAgentMaintenance self-guards on autonomy + fetches the live CI aggregate itself.
+    if (sweepInstallationId != null) {
+      await maybeRunAgentMaintenance(env, {
+        installationId: sweepInstallationId,
+        repoFullName,
+        repo,
+        pr,
+        settings,
+        otherOpenPullRequests: others,
+        deliveryId: `regate-sweep:${repoFullName}#${pr.number}`,
+        gate,
+      }).catch((error) => {
+        console.error(JSON.stringify({ level: "warn", event: "agent_maintenance_failed", deliveryId: `regate-sweep:${repoFullName}#${pr.number}`, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+      });
+    }
   }
   await recordAuditEvent(env, {
     eventType: "agent.sweep.regate",
@@ -580,9 +600,15 @@ async function maybeRunAgentMaintenance(
   // FIX B: resolve files via the shared resolver so an EMPTY stored list (the maintenance ran before the
   // detail-sync populated pull_request_files) can't silently empty changedPaths and let a guarded PR slip the
   // guardrail into an auto-merge — it inline-fetches the real changed paths when stored is still empty.
-  const [changedFiles, hardGuardrailGlobs] = await Promise.all([
+  // CRITICAL CI POLICY (reviewbot ci_red parity): fetch the LIVE CI aggregate over BOTH check-runs AND classic
+  // commit-statuses (codecov posts a commit-status, NOT a check-run — the stored check_summaries miss it). The
+  // planner uses this to NEVER approve/merge a PR whose CI isn't green, to CLOSE a red-CI non-owner PR (citing
+  // the failing checks) / HOLD the owner's, and to DEFER entirely while CI is still pending.
+  const ciToken = await createInstallationToken(env, installationId).catch(() => undefined);
+  const [changedFiles, hardGuardrailGlobs, ciAggregate] = await Promise.all([
     resolvePullRequestFilesForReview(env, { installationId, repoFullName, pullNumber: pr.number }),
     loadHardGuardrailGlobs(env, repoFullName),
+    fetchLiveCiAggregate(env, repoFullName, pr.headSha, ciToken ?? env.GITHUB_PUBLIC_TOKEN),
   ]);
   const changedPaths = changedFiles.map((file) => file.path).filter((path) => path.length > 0);
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")) : "";
@@ -600,6 +626,8 @@ async function maybeRunAgentMaintenance(
     hardGuardrailGlobs,
     authorIsOwner,
     authorIsAutomationBot,
+    ciState: ciAggregate.ciState,
+    failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     pr: {
       mergeableState: pr.mergeableState,
       reviewDecision: pr.reviewDecision,
@@ -627,6 +655,73 @@ async function maybeRunAgentMaintenance(
     },
     planned,
   );
+}
+
+/**
+ * Re-review a STORED open PR (no payload PR) — rebuild the advisory + gate, re-publish the unified comment, and
+ * re-run auto-maintain. Shared by the CI-completion (check_suite/check_run) handler below, mirroring reviewbot's
+ * "the CI event WAKES the existing row and re-runs the full review". The PR's persisted head SHA is used as-is
+ * (never overwritten from the CI payload — reviewbot scope parity). Best-effort throughout.
+ */
+async function reReviewStoredPullRequest(env: Env, deliveryId: string, installationId: number, repoFullName: string, prNumber: number): Promise<void> {
+  const [repo, settings] = await Promise.all([getRepository(env, repoFullName), resolveRepositorySettings(env, repoFullName)]);
+  const pr = await getPullRequest(env, repoFullName, prNumber);
+  if (!pr || pr.state !== "open") return;
+  const otherOpenPullRequests = await listOtherOpenPullRequests(env, repoFullName, prNumber);
+  const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests, requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings) });
+  await persistAdvisory(env, advisory);
+  if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
+    await refreshPullRequestDetails(env, repoFullName, prNumber).catch(() => undefined);
+  }
+  const gate = await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, { deliveryId }).catch((error) => {
+    console.error(JSON.stringify({ level: "warn", event: "pr_public_surface_failed", deliveryId, repository: repoFullName, pullNumber: prNumber, error: errorMessage(error) }));
+    return undefined;
+  });
+  await maybeRunAgentMaintenance(env, { installationId, repoFullName, repo, pr, settings, otherOpenPullRequests, deliveryId, gate }).catch((error) => {
+    console.error(JSON.stringify({ level: "warn", event: "agent_maintenance_failed", deliveryId, repository: repoFullName, pullNumber: prNumber, error: errorMessage(error) }));
+  });
+}
+
+/**
+ * THE auto-merge / close-on-red TRIGGER. A `check_run`/`check_suite` `completed` event means a PR's CI just
+ * settled — re-review the associated PR(s) so the now-green PR is merged and the now-red PR is closed (non-owner)
+ * / held (owner). Without this, a PR reviewed at open-time (CI still pending → deferred) is never re-evaluated.
+ * Resolves the PR number(s) from `payload[event].pull_requests[]` (reviewbot core/scope.ts parity), NOT from
+ * the CI head SHA. Returns true (handled) so the dispatcher short-circuits.
+ */
+async function maybeReReviewOnCiCompletion(env: Env, deliveryId: string, eventName: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  if (eventName !== "check_run" && eventName !== "check_suite") return false;
+  if (payload.action !== "completed") return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  if (!repoFullName || !installationId) return false;
+  const node = (payload as Record<string, unknown>)[eventName] as { pull_requests?: Array<{ number?: number | null }> } | undefined;
+  const prNumbers = [...new Set((node?.pull_requests ?? []).map((entry) => entry?.number).filter((value): value is number => typeof value === "number"))];
+  if (prNumbers.length > 0 && isConvergenceRepoAllowed(env, repoFullName)) {
+    for (const prNumber of prNumbers) {
+      await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, prNumber);
+    }
+  }
+  await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId, repositoryFullName: repoFullName, payloadHash: "processed", status: "processed" });
+  return true;
+}
+
+/**
+ * deployment_status (success/failure) → re-review the associated PR so the before/after visual capture fills the
+ * "after" cell once the preview deploy finishes (or flips to a deploy-failed note). Mirrors reviewbot's
+ * deployment_status routing; the capture itself runs inside the re-published review (visual-capture path).
+ */
+async function maybeCaptureOnDeploymentStatus(env: Env, deliveryId: string, eventName: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  if (eventName !== "deployment_status") return false;
+  const repoFullName = payload.repository?.full_name;
+  const installationId = getInstallationId(payload);
+  if (!repoFullName || !installationId) return false;
+  const preview = deploymentStatusToPreview(payload as unknown as DeploymentStatusPayload);
+  if (preview && isConvergenceRepoAllowed(env, repoFullName)) {
+    await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, preview.prNumber);
+  }
+  await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId, repositoryFullName: repoFullName, payloadHash: "processed", status: "processed" });
+  return true;
 }
 
 async function repairDataFidelity(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
@@ -1086,6 +1181,14 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       });
       return;
     }
+
+    // CI-completion re-review — THE auto-merge / close-on-red trigger. A check_run/check_suite completion
+    // carries no `payload.pull_request`, so it must be handled BEFORE the pull_request block: it wakes the
+    // stored PR row and re-reviews it now that CI has settled (merge on green, close-non-owner / hold-owner on
+    // red). Without this a PR that goes green/red AFTER its open-time review is never re-evaluated.
+    if (await maybeReReviewOnCiCompletion(env, deliveryId, eventName, payload)) return;
+    // deployment_status (preview deploy finished) → re-review so the visual before/after capture fills in.
+    if (await maybeCaptureOnDeploymentStatus(env, deliveryId, eventName, payload)) return;
 
     if (payload.repository?.full_name && payload.pull_request) {
       const repoFullName = payload.repository.full_name;
@@ -1991,24 +2094,25 @@ async function maybePublishPrPublicSurface(
       // check's conclusion to passed/failed/unverified; any failure (failure/timed_out/cancelled/action_required)
       // flips the whole PR to 'failed'. The gate decision stays authoritative for the comment's color (always
       // passed here), so these CI chips never spuriously flip the unified status to held/blocked.
-      const checkSummaries = await listCheckSummaries(env, repoFullName, pr.number);
-      const failedChecks = checkSummaries.filter((check) => {
-        const conclusion = (check.conclusion ?? "").toLowerCase();
-        return conclusion === "failure" || conclusion === "timed_out" || conclusion === "cancelled" || conclusion === "action_required";
-      });
-      const anyPassed = checkSummaries.some((check) => (check.conclusion ?? "").toLowerCase() === "success");
-      const ciState: MergeReadiness["ciState"] = failedChecks.length > 0 ? "failed" : anyPassed ? "passed" : "unverified";
-      // FIX D3: per-failed-check WHY (codecov %/test/lint reason) from each check's output.title/summary or a
-      // commit-status description — the SAME extraction the grounding path uses (checkSummaryText), capped +
-      // public-safe (check name + short reason only). The renderer lists these under the CI chip.
-      const failingDetails: CheckFailureDetail[] = failedChecks.map((check) => {
-        const summary = checkFailureSummaryText(check);
-        return { name: check.name, ...(summary ? { summary } : {}), ...(check.detailsUrl ? { detailsUrl: check.detailsUrl } : {}) };
-      });
+      // CRITICAL (CI-green parity): the comment's CI state must reflect the LIVE aggregate over BOTH check-runs
+      // AND classic commit-statuses — codecov (codecov/patch) posts a commit-status the stored check_summaries
+      // never captured, which is why a red codecov was shown as "CI green". Use the SAME live fetch the
+      // auto-maintain planner uses so the public chip and the disposition can never disagree. "pending" folds to
+      // the "unverified" bucket for the 3-state comment chip (renders "CI pending").
+      const ciToken = await createInstallationToken(env, installationId).catch(() => undefined);
+      const liveCi = await fetchLiveCiAggregate(env, repoFullName, pr.headSha, ciToken ?? env.GITHUB_PUBLIC_TOKEN);
+      const ciState: MergeReadiness["ciState"] = liveCi.ciState === "passed" ? "passed" : liveCi.ciState === "failed" ? "failed" : "unverified";
+      // Per-failed-check WHY (codecov %/test/lint reason) from each check-run output or commit-status
+      // description — capped + public-safe (name + short reason only). The renderer lists these under the CI chip.
+      const failingDetails: CheckFailureDetail[] = liveCi.failingDetails.map((detail) => ({
+        name: detail.name,
+        ...(detail.summary ? { summary: detail.summary } : {}),
+        ...(detail.detailsUrl ? { detailsUrl: detail.detailsUrl } : {}),
+      }));
       const mergeReadiness: MergeReadiness = {
         ciState,
         ...(pr.mergeableState ? { mergeStateLabel: pr.mergeableState } : {}),
-        ...(failedChecks.length > 0 ? { failingChecks: failedChecks.map((check) => check.name) } : {}),
+        ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };
       // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo

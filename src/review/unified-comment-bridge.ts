@@ -221,33 +221,39 @@ export type UnifiedCommentBridgeArgs = {
 };
 
 /**
- * Build the "Visual preview" collapsible from the before/after capture routes — a markdown table of image
- * cells pointing at the public /gittensory/shot URLs. Uses GitHub markdown image syntax `![](url)` rather
- * than raw `<img>` tags ON PURPOSE: the unified renderer's `details()` HTML-escapes a collapsible body (a
- * security control so caller text can't inject structure-changing HTML), which would turn a literal `<img>`
- * into inert `&lt;img&gt;` text — markdown image syntax has no angle brackets, so it survives the escape and
- * still renders as an image. Public-safe by construction: every cell is a route path or a shot URL (no
- * private rubric/scoring terms). Returns null when nothing is renderable (no route has any shot URL), so the
- * section is omitted entirely rather than showing an empty table.
+ * Build the "Visual preview" collapsible from the before/after capture routes — a clean table whose cells are
+ * CLICKABLE THUMBNAILS: a small `<img>` (GitHub caps it to the column width) wrapped in an `<a href>` to the
+ * SAME full-resolution shot, so a click opens the screenshot full-size. One row per route per viewport
+ * (desktop / mobile), with the route path as the caption and a before (production) vs after (this PR's preview)
+ * column. Emitted as TRUSTED raw HTML (`rawHtml: true`) so the `<a>/<img>` survive — public-safe by
+ * construction: every value is a first-party minted /gittensory/shot URL or a route path (no private rubric /
+ * scoring terms), and a stray `"` in a URL is neutralized so it can't break out of the attribute. Returns null
+ * when nothing is renderable (no route has any shot URL), so the section is omitted rather than shown empty.
  */
 export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedCollapsible | null {
-  const rows = routes
-    .filter((route) => route.beforeUrl || route.afterUrl || route.beforeUrlMobile || route.afterUrlMobile)
-    .map((route) => {
-      // Escape `(`/`)`/`]` in the URL so a crafted shot URL can't break out of the markdown image token; the
-      // URLs are first-party (we mint them), but this keeps the cell robust regardless.
-      const cell = (url: string | undefined): string => (url ? `![preview](${url.replace(/[()\]]/g, encodeURIComponent)})` : "—");
-      return `| \`${route.path.replace(/\|/g, "\\|")}\` | ${cell(route.beforeUrl)} | ${cell(route.afterUrl)} |`;
-    });
+  const attr = (value: string): string => value.replace(/"/g, "%22");
+  const alt = (value: string): string => value.replace(/"/g, "'");
+  const cell = (url: string | undefined, label: string): string =>
+    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${alt(label)}" src="${attr(url)}"></a>` : "—";
+  const rows: string[] = [];
+  for (const route of routes) {
+    const path = `\`${route.path.replace(/\|/g, "\\|")}\``;
+    if (route.beforeUrl || route.afterUrl) {
+      rows.push(`| ${path} | desktop | ${cell(route.beforeUrl, `before ${route.path}`)} | ${cell(route.afterUrl, `after ${route.path}`)} |`);
+    }
+    if (route.beforeUrlMobile || route.afterUrlMobile) {
+      rows.push(`| ${path} | mobile | ${cell(route.beforeUrlMobile, `before ${route.path} (mobile)`)} | ${cell(route.afterUrlMobile, `after ${route.path} (mobile)`)} |`);
+    }
+  }
   if (rows.length === 0) return null;
   const body = [
-    "| Route | Before (production) | After (this PR's preview) |",
-    "| --- | --- | --- |",
+    "| Route | Viewport | Before (production) | After (this PR's preview) |",
+    "| --- | --- | --- | --- |",
     ...rows,
     "",
-    "_Before = production · After = this PR's preview deploy._",
+    "_Click any thumbnail to open the full-size screenshot. Before = production · After = this PR's preview deploy._",
   ].join("\n");
-  return { title: "Visual preview", body };
+  return { title: "Visual preview", body, rawHtml: true };
 }
 
 /**

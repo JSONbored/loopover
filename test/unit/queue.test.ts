@@ -2963,7 +2963,12 @@ describe("queue processors", () => {
         filesFetched += 1;
         return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified", patch: "@@\n+const x = 1;" }]);
       }
+      // The review path now reads the LIVE CI aggregate (check-runs + commit-statuses). codecov/patch is a
+      // classic COMMIT-STATUS (not a check-run), so it comes from the combined-status endpoint; the check-runs
+      // list stays empty (it must, so the gate's own check-run upsert finds no pre-existing run to PATCH).
       if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/") && url.includes("/status"))
+        return Response.json({ state: "failure", statuses: [{ context: "codecov/patch", state: "failure", description: "60% of diff hit (target 97%)", target_url: "https://codecov.io/report" }] });
       if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 902 }, { status: 201 });
       if (url.includes("/check-runs/902") && method === "PATCH") return Response.json({ id: 902 });
       if (url.includes("/issues/3/comments") && method === "GET") return Response.json([]);

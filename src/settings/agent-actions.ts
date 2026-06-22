@@ -62,6 +62,17 @@ export type AgentActionPlanInput = {
   // accumulator like automation/readme-refresh, or dependabot/renovate). These are NEVER auto-closed — a noise
   // heuristic (duplicate/slop) must not kill a recurring maintainer-managed PR. They may still auto-merge.
   authorIsAutomationBot: boolean;
+  // Live CI aggregate over ALL of the PR's checks — required OR not, including non-required ones like
+  // codecov/patch and every commit-status (reviewbot parity). "passed" = every check completed and none
+  // failed; "failed" = at least one check failed; "pending" = at least one check still running; "unverified"
+  // = no checks reported (or CI can't be verified, e.g. a fork PR whose workflows await approval). The
+  // disposition layer NEVER approves/merges unless "passed", CLOSES a non-owner PR on "failed" (citing the
+  // failing checks) / HOLDS the owner's, and DEFERS every action while "pending" (settle-before-decide — the
+  // check-completion webhook re-runs this planner once CI settles).
+  ciState: "passed" | "failed" | "pending" | "unverified";
+  // The names of the failing checks, surfaced in the close/request-changes reason so the contributor knows
+  // WHY (e.g. "codecov/patch"). Empty unless ciState === "failed".
+  failingCheckNames?: string[] | undefined;
   pr: {
     mergeableState?: string | null | undefined;
     reviewDecision?: string | null | undefined;
@@ -92,6 +103,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const slopGateMinScore = input.slopGateMinScore ?? DEFAULT_SLOP_GATE_MIN_SCORE;
   // Branch-protection-aware: required approvals are satisfied when the repo asks for none, or GitHub already
   // resolved the PR's reviews to APPROVED.
+  const failingCheckNames = input.failingCheckNames ?? [];
   const approvalsSatisfied = autoMaintain.requireApprovals === 0 || input.pr.reviewDecision === "APPROVED";
   const level = (actionClass: AgentActionClass) => resolveAutonomy(input.autonomy, actionClass);
   const acting = (actionClass: AgentActionClass) => isActingAutonomyLevel(level(actionClass));
@@ -100,59 +112,83 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // App/infra-neutral verdicts (not evaluated yet) never drive an action.
   if (input.conclusion === "neutral" || input.conclusion === "skipped") return actions;
 
+  // CI state over ALL of the PR's checks (required OR not — codecov/patch included) — reviewbot's ci_red
+  // parity. A red CI is NEVER approved/merged and is itself a close-worthy signal (non-owner); while CI is
+  // still running we take NO action and wait for the check-completion webhook to re-run this planner.
+  const ciPassed = input.ciState === "passed";
+  const ciFailed = input.ciState === "failed";
+  // Settle-before-decide: never approve / merge / close on a half-finished CI run.
+  if (input.ciState === "pending") return actions;
+
   const blocking = isBlocking(input.conclusion);
-  const passing = input.conclusion === "success";
+  const gatePassing = input.conclusion === "success";
   // A changed path matching a hard guardrail forces manual review: suppress the irreversible dispositions
   // (merge / close) AND the auto-approve that could later satisfy a merge. label + request_changes still run.
   const guardrailHit = changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0;
+  // Auto-merge-ready ONLY when the gate passes AND CI is green AND no guarded path is touched. A red, pending,
+  // or unverified CI is never approved/merged.
+  const readyToMerge = gatePassing && ciPassed && !guardrailHit;
+  const ciReason = ciFailed ? `CI is failing${failingCheckNames.length ? ` (${failingCheckNames.join(", ")})` : ""}` : "";
 
-  // 1) label — reflect the verdict bucket. After the neutral/skipped return above, a non-blocking verdict is
-  // necessarily `success`. A passing PR that hit a hard guardrail is NOT auto-merge-ready (the irreversible
-  // dispositions below are all suppressed for it) — labeling it `ready-to-merge` would promise an auto-merge
-  // that never happens, so it gets `needs-human-review` instead. Idempotent: skip if the PR already carries
-  // the chosen label.
+  // 1) label — a blocking gate OR a red CI → changes-requested. A gate-passing PR that is not yet
+  // auto-mergeable (guarded path, or CI not green/unverified) → needs-human-review (labeling it
+  // `ready-to-merge` would promise an auto-merge that never happens). Only a gate-passing, CI-green,
+  // non-guarded PR gets `ready-to-merge`. Idempotent: skip if the PR already carries the chosen label.
   if (acting("label")) {
-    const label = blocking ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
-    const reason = !blocking && guardrailHit ? `verdict=${input.conclusion}; guarded path forces human review` : `verdict=${input.conclusion}`;
+    const label = blocking || ciFailed ? AGENT_LABEL_CHANGES : readyToMerge ? AGENT_LABEL_READY : AGENT_LABEL_NEEDS_REVIEW;
+    const reason = ciFailed
+      ? `verdict=${input.conclusion}; ${ciReason}`
+      : !blocking && guardrailHit
+        ? `verdict=${input.conclusion}; guarded path forces human review`
+        : !blocking && !ciPassed
+          ? `verdict=${input.conclusion}; CI not green yet — held for human`
+          : `verdict=${input.conclusion}`;
     if (!hasLabel(input.pr.labels, label)) {
       actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
     }
   }
 
-  // 2) review — approve XOR request-changes, and never re-post the same state.
-  if (blocking && acting("request_changes") && input.pr.reviewDecision !== "CHANGES_REQUESTED") {
-    const summary = input.blockerTitles.length ? input.blockerTitles.map((title) => `- ${title}`).join("\n") : "- The Gittensory Gate is not satisfied.";
+  // 2) review — approve XOR request-changes, never re-post the same state. A red CI forces request-changes
+  // (citing the failing checks) and is NEVER approved; approve fires only when the gate passes AND CI is green
+  // AND no guarded path is touched.
+  if ((blocking || ciFailed) && acting("request_changes") && input.pr.reviewDecision !== "CHANGES_REQUESTED") {
+    const lines = ciFailed ? [ciReason, ...input.blockerTitles] : [...input.blockerTitles];
+    const summary = lines.length ? lines.map((line) => `- ${line}`).join("\n") : "- The Gittensory Gate is not satisfied.";
+    const reason = ciFailed ? `CI failing${input.blockerTitles.length ? ` + ${input.blockerTitles.length} blocker(s)` : ""}` : `${input.blockerTitles.length || 1} blocker(s)`;
     actions.push({
       actionClass: "request_changes",
       requiresApproval: approval("request_changes"),
-      reason: `${input.blockerTitles.length || 1} blocker(s)`,
-      reviewBody: `Gittensory requests changes — the gate is not yet satisfied:\n\n${summary}`,
+      reason,
+      reviewBody: `Gittensory requests changes — ${ciFailed ? "CI is not green" : "the gate is not yet satisfied"}:\n\n${summary}`,
     });
-  } else if (passing && acting("approve") && !guardrailHit && input.pr.reviewDecision !== "APPROVED") {
+  } else if (readyToMerge && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),
-      reason: "gate passed",
-      reviewBody: "Gittensory approves — the gate is satisfied.",
+      reason: "gate passed, CI green",
+      reviewBody: "Gittensory approves — the gate is satisfied and CI is green.",
     });
   }
 
-  // 3) disposition — merge a clean, approved, passing PR; otherwise close clear noise. Mutually exclusive.
+  // 3) disposition — merge a clean, approved, CI-green PR; otherwise close clear noise OR a red-CI PR (citing
+  // the failing checks). Owner + maintainer-automation PRs are NEVER closed (a red-CI owner PR is held via the
+  // request_changes above, left open for the maintainer). Mutually exclusive with merge.
   const mergeableClean = input.pr.mergeableState === "clean";
-  const canMerge = passing && acting("merge") && mergeableClean && approvalsSatisfied && !guardrailHit;
+  const canMerge = readyToMerge && acting("merge") && mergeableClean && approvalsSatisfied;
   if (canMerge) {
     actions.push({
       actionClass: "merge",
       requiresApproval: approval("merge"),
-      reason: `gate passed, mergeable, ${autoMaintain.requireApprovals} approval(s) satisfied`,
+      reason: `gate passed, CI green, mergeable, ${autoMaintain.requireApprovals} approval(s) satisfied`,
       mergeMethod: autoMaintain.mergeMethod,
     });
-  } else if (acting("close") && !passing && !guardrailHit && !input.authorIsOwner && !input.authorIsAutomationBot) {
-    const noiseReasons: string[] = [];
-    if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) noiseReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);
-    if ((input.pr.linkedDuplicateCount ?? 0) > 0) noiseReasons.push("duplicate of another open PR");
-    if (noiseReasons.length > 0) {
-      actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: noiseReasons.join("; "), closeComment: closeMessage(noiseReasons) });
+  } else if (acting("close") && (ciFailed || !gatePassing) && !guardrailHit && !input.authorIsOwner && !input.authorIsAutomationBot) {
+    const closeReasons: string[] = [];
+    if (ciFailed) closeReasons.push(ciReason);
+    if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) closeReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);
+    if ((input.pr.linkedDuplicateCount ?? 0) > 0) closeReasons.push("duplicate of another open PR");
+    if (closeReasons.length > 0) {
+      actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: closeReasons.join("; "), closeComment: closeMessage(closeReasons) });
     }
   }
 

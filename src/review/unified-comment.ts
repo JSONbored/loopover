@@ -182,6 +182,9 @@ export interface UnifiedSignalRow {
 export interface UnifiedCollapsible {
   title: string;
   body: string;
+  /** When true the body is TRUSTED raw HTML and is NOT angle-escaped — used only by the visual before/after
+   *  table (a table of `<a href><img>` clickable thumbnails the bridge builds from first-party shot URLs). */
+  rawHtml?: boolean;
 }
 
 /** The host (gittensory) side: brand, readiness score, signals, sections, re-run, footer. */
@@ -214,6 +217,11 @@ const SIGNAL_ICON: Record<UnifiedSignalRow["state"], string> = { ok: "✅", warn
 /** Derive the single unified status from reviewbot's decision/recs/CI + the host override. */
 export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedCommentContext = {}): UnifiedCommentStatus {
   if (ctx.statusOverride) return ctx.statusOverride;
+  // A failing CI is NEVER "safe to merge": a red CI downgrades any otherwise-ready/merge verdict to blocked (the
+  // disposition layer then closes it for a non-owner author / holds it open for the owner). This runs BEFORE the
+  // explicit-verdict switch so an optimistic gate "merge" can't render a green "safe to merge" headline over a
+  // red CI — the exact bug where a PR with a failing codecov/patch showed "Approved — safe to merge".
+  if (input.readiness?.ciState === "failed") return "blocked";
   // An explicit gate verdict is authoritative — it already weighed the reviewers + guardrails.
   switch (input.decision) {
     case "merge":
@@ -231,7 +239,6 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   const recs = input.recommendations ?? [];
   const hasConsensusBlocker = input.consensusBlocker ?? (input.blockers ?? []).length > 0;
   if (recs.includes("close") || hasConsensusBlocker) return "blocked";
-  if (input.readiness?.ciState === "failed") return "held";
   if (recs.length === 0) return "advisory";
   if ((input.failedCount ?? 0) > 0 || recs.some((r) => r !== "merge")) return "held";
   return "ready";
@@ -361,6 +368,13 @@ function details(title: string, body: string, sub?: string): string {
   return `<details><summary><b>${safeTitle}</b>${safeSub}</summary>\n\n${escapePublicHtmlAngles(body)}\n</details>`;
 }
 
+/** Like details(), but the body is TRUSTED raw HTML and is NOT angle-escaped. Used only for the visual
+ *  before/after table, whose body is built solely from first-party minted shot URLs + route paths (see
+ *  buildBeforeAfterCollapsible). The title is still escaped. */
+function detailsRaw(title: string, body: string): string {
+  return `<details><summary><b>${escapePublicHtmlAngles(title)}</b></summary>\n\n${body}\n</details>`;
+}
+
 /** Wrap the assembled body in a GitHub alert blockquote — this is the full-comment colored sidebar. */
 function asAlert(alert: string, inner: string): string {
   const quoted = inner
@@ -406,10 +420,15 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   const nits = dedupeLines(input.nits ?? []);
   if (nits.length) blocks.push(details("Nits", bullets(nits), `${nits.length} non-blocking`));
   for (const c of ctx.extraCollapsibles ?? []) {
-    if (c.body.trim()) blocks.push(details(c.title, c.body.trim()));
+    if (c.body.trim()) blocks.push(c.rawHtml ? detailsRaw(c.title, c.body.trim()) : details(c.title, c.body.trim()));
   }
 
   if (ctx.reRunLabel) blocks.push(`- [ ] ${ctx.reRunLabel}`);
+  // Color-coded status legend (key) — a quiet footer mapping each headline color/icon to its meaning, so a
+  // reader can tell at a glance what "this PR's status" means. Squares are the SAME ones used in the headline.
+  blocks.push(
+    `<sub>${STATUS_META.ready.square} Safe / merged · ${STATUS_META.advisory.square} Advisory · ${STATUS_META.held.square} Held for review · ${STATUS_META.blocked.square} Blocked / closed</sub>`,
+  );
   if (ctx.footerMarkdown?.trim()) blocks.push(`---\n${ctx.footerMarkdown.trim()}`);
 
   return asAlert(meta.alert, blocks.join("\n\n"));

@@ -1905,6 +1905,81 @@ async function fetchPullRequestChecks(
   return { check_runs: checkRuns };
 }
 
+const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
+const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+
+export type LiveCiAggregate = {
+  ciState: "passed" | "failed" | "pending" | "unverified";
+  failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
+};
+
+/**
+ * Fetch the head SHA's LIVE CI aggregate over BOTH GitHub Check-runs AND classic commit-statuses. This is the
+ * reviewbot `getAllChecksState` parity that the converged auto-maintain path needs: codecov (codecov/patch,
+ * codecov/project) and many other tools post a classic COMMIT-STATUS, not a check-run — fetching only
+ * `/check-runs` (what the backfill sync does) misses them entirely, which is why a red codecov was reported as
+ * "CI green". We aggregate ANY failing check/status → "failed"; else any still-running → "pending"; else any
+ * present → "passed"; none at all → "unverified". The disposition layer NEVER approves/merges unless "passed",
+ * and closes (non-owner) / holds (owner) on "failed". Best-effort: a fetch error degrades that source to empty.
+ */
+export async function fetchLiveCiAggregate(env: Env, repoFullName: string, headSha: string | null | undefined, token: string | undefined): Promise<LiveCiAggregate> {
+  if (!headSha) return { ciState: "unverified", failingDetails: [] };
+  const failingDetails: LiveCiAggregate["failingDetails"] = [];
+  let total = 0;
+  let anyPending = false;
+
+  // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown } }> }>(
+      env,
+      repoFullName,
+      `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
+      token,
+    ).catch(() => undefined);
+    if (!result) break;
+    for (const run of result.data.check_runs ?? []) {
+      total += 1;
+      const conclusion = (run.conclusion ?? "").toLowerCase();
+      const status = (run.status ?? "").toLowerCase();
+      if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
+        const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
+        failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
+      } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
+        // concluded and not failing → passing
+      } else {
+        anyPending = true; // queued / in_progress / not yet concluded
+      }
+    }
+    if (!hasNextPage(result.link)) break;
+  }
+
+  // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context). The
+  // combined endpoint returns the LATEST status per context, so a context that flipped red→green is counted
+  // once at its current state.
+  const statusResult = await githubJsonWithHeaders<{ statuses?: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> }>(
+    env,
+    repoFullName,
+    `/commits/${headSha}/status?per_page=100`,
+    token,
+  ).catch(() => undefined);
+  for (const ctx of statusResult?.data.statuses ?? []) {
+    total += 1;
+    const state = (ctx.state ?? "").toLowerCase();
+    const name = ctx.context ?? "status";
+    if (state === "failure" || state === "error") {
+      const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
+      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
+    } else if (state === "success") {
+      // passing
+    } else {
+      anyPending = true; // pending
+    }
+  }
+
+  const ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
+  return { ciState, failingDetails };
+}
+
 async function fetchPullRequestDetailsFromGraphQl(
   env: Env,
   repoFullName: string,

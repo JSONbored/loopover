@@ -115,6 +115,20 @@ describe("shouldAutoClear (#272 recovery-gated breaker auto-clear)", () => {
     expect(await maybeAutoClearHoldOnly(flags, recovered, "g", now)).toBe(false);
     expect(setFlag).not.toHaveBeenCalled();
   });
+  it("maybeAutoClearHoldOnly swallows a read error and stays held (fail-safe catch)", async () => {
+    // flagSetAt throwing exercises the try/catch around the clear path: it must fail CLOSED (return false,
+    // breaker stays engaged) and never call setFlag — a DB blip can't silently re-enable auto-merge.
+    const setFlag = vi.fn(async () => undefined);
+    const flags: FlagStore = {
+      isHoldOnly: vi.fn(async () => true),
+      setFlag,
+      flagSetAt: vi.fn(async () => {
+        throw new Error("d1 read down");
+      }),
+    };
+    expect(await maybeAutoClearHoldOnly(flags, recovered, "g", now)).toBe(false);
+    expect(setFlag).not.toHaveBeenCalled();
+  });
 });
 
 describe("computeTuningRecommendations (#self-improve)", () => {
@@ -158,5 +172,49 @@ describe("computeTuningRecommendations (#self-improve)", () => {
       ]),
     );
     expect(recs[0]?.severity).toBe("warn");
+  });
+
+  it("renders an em-dash for a NULL close precision in the loosen-warn message (pct null branch)", () => {
+    // closeFalse > 0 but closePrecision is null (e.g. no would-close predictions had a known outcome): the
+    // loosen-warn message interpolates pct(null) → "—" rather than a percentage. Exercises pct's null side.
+    const recs = computeTuningRecommendations(
+      report([row({ project: "p", decided: 15, wouldMerge: 10, mergeConfirmed: 10, mergePrecision: 1.0, closeFalse: 2, closePrecision: null })]),
+    );
+    const loosen = recs.find((r) => r.severity === "warn" && /loosen/i.test(r.message));
+    expect(loosen).toBeDefined();
+    expect(loosen?.message).toContain("close precision —");
+  });
+
+  it("says READY when close precision is also high and non-null (ready close-precision threshold branch)", () => {
+    // The "ready" guard's close arm is (closePrecision == null || closePrecision >= READY_CLOSE_PRECISION).
+    // Prior ready tests only hit the null arm; this hits the non-null-and-passing arm: high merge precision,
+    // no false closes, and a non-null close precision at/above the 0.9 ready bar.
+    const recs = computeTuningRecommendations(
+      report([row({ project: "ready2", decided: 20, wouldMerge: 18, mergeConfirmed: 18, mergePrecision: 1.0, wouldClose: 4, closeConfirmed: 4, closeFalse: 0, closePrecision: 0.95 })]),
+    );
+    expect(recs).toHaveLength(1);
+    expect(recs[0]?.severity).toBe("good");
+    expect(recs[0]?.message).toMatch(/ready to flip live/i);
+  });
+
+  it("does NOT say ready when a non-null close precision is below the ready bar (close arm fails)", () => {
+    // Same ready conditions but closePrecision below READY_CLOSE_PRECISION (0.9) and no false closes → neither
+    // warn nor good fires, so the project yields no recommendation. Asserts the close arm gates 'good'.
+    const recs = computeTuningRecommendations(
+      report([row({ project: "borderline", decided: 20, wouldMerge: 18, mergeConfirmed: 18, mergePrecision: 1.0, wouldClose: 4, closeConfirmed: 3, closeFalse: 0, closePrecision: 0.8 })]),
+    );
+    expect(recs).toHaveLength(0);
+  });
+
+  it("breaks a severity tie by project name (sort localeCompare fallback)", () => {
+    // Two projects with the SAME severity (both 'good') force the sort comparator's secondary key —
+    // a.project.localeCompare(b.project) — which the primary severity-order key alone never exercises.
+    const recs = computeTuningRecommendations(
+      report([
+        row({ project: "zeta", decided: 20, wouldMerge: 20, mergeConfirmed: 20, mergePrecision: 1.0 }),
+        row({ project: "alpha", decided: 20, wouldMerge: 20, mergeConfirmed: 20, mergePrecision: 1.0 }),
+      ]),
+    );
+    expect(recs.map((r) => r.project)).toEqual(["alpha", "zeta"]);
   });
 });

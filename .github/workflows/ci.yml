@@ -10,10 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Keep pull requests in one ref-scoped group so newer commits cancel superseded PR runs.
+  # Add github.sha for push runs so distinct main commits do not cancel each other's validation.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}
   # NB: keep this a literal boolean. An expression here (cancel-in-progress: ${{ ... }}) made GitHub
-  # fail the workflow at startup (startup_failure), so `validate` never reported. Avoid merging multiple
-  # PRs within seconds instead — racing main-push runs in this group can cancel each other on startup.
+  # fail the workflow at startup (startup_failure), so `validate` never reported.
   cancel-in-progress: true
 
 jobs:

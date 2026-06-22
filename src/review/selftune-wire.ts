@@ -1,0 +1,143 @@
+// Convergence (#self-improve) — wires the ported self-improvement loop (src/review/auto-tune.ts +
+// src/review/auto-apply.ts) into gittensory's cron behind the default-OFF `REVIEWBOT_SELFTUNE` flag.
+//
+// SAFETY CONTRACT (must hold under every path):
+//   • flag-OFF (default) → the cron enqueues NO selftune job and this module is never reached; ZERO tuning
+//     work, NO override read/written, the worker is byte-identical to today.
+//   • flag-ON → the loop can ONLY EVER TIGHTEN the gate. It computes tuning recommendations from gittensory's
+//     OWN outcome data, SHADOW-SOAKS only STRICTLY-TIGHTENING recommendations, and AUTO-PROMOTES a soaked
+//     shadow override to live ONLY after the soak window passes the gate (tightening + evidence + soaked).
+//     Every action is recorded to override_audit. A loosening change is NEVER applied — the ported
+//     `isStrictlyTightening` / `evaluateShadowPromotion` reject it, and the eval mapping below NEVER feeds a
+//     loosening directive into the apply path (closeFalse is held at 0, so the one loosening branch of
+//     `computeTuningRecommendations` is unreachable and carries no payload anyway).
+//
+// EVAL INPUT — ADAPTED TO GITTENSORY'S OWN OUTCOME DATA (NOT reviewbot's review_audit, which does not exist in
+// gittensory's migrations — parity.computeGateEval would read an empty table here). The ported auto-tune
+// advisor consumes a GateEvalReport (per-project confusion matrix). We build that report from gittensory's
+// NATIVE outcome sources via the SAME aggregation services ops-wire already reuses (no new queries / schema):
+//   • agent_recommendation_outcomes (#543) — the positive/negative resolved split (buildRepoOutcomeCalibration).
+//     A NEGATIVE outcome (gittensory recommended "proceed", the human CLOSED) is the gittensory-native analogue
+//     of reviewbot's "would-merge BUT human closed" (mergeFalse) — the dangerous error a TIGHTENING fixes.
+// The mapping is deliberately conservative: it only ever populates the would-MERGE side of the matrix, so the
+// advisor can only ever recommend a TIGHTENING (raise the floor) or a no-op — never a loosening.
+//
+// CONFIG-APPLICATION — DEFERRED (NOT wired here), by design and per the convergence task:
+//   The ported override model is `confidenceFloor` (an auto-merge confidence floor in [0,1]) + `scopeCap`.
+//   Gittensory's gate has NEITHER concept — its live tunables are `qualityGateMinScore` / `slopGateMinScore`
+//   (integer score thresholds) and gate MODES (off/advisory/block), resolved via resolveRepositorySettings →
+//   GateCheckPolicy. There is no field a promoted `confidenceFloor`/`scopeCap` override maps onto, and
+//   gittensory's native accuracy signal measures gate FALSE POSITIVES (blocked-then-merged → a LOOSENING
+//   direction). Wiring a promoted override into the live gate is therefore engine-coupled AND points the wrong
+//   way, so it is intentionally NOT read by the gate yet: this module does the MIGRATION + shadow-soak + audit
+//   + recommendation recording, and a promoted override sits inert in `tunables_overrides`. Reading it into the
+//   live gate-config resolution is a noted follow-up that must not risk loosening the gate. (See loadOverride /
+//   resolveRepositorySettings — the seam exists; closing it needs a gittensory-native tightening tunable.)
+
+import { listRepositories } from "../db/repositories";
+import { isAgentConfigured } from "../settings/autonomy";
+import { resolveRepositorySettings } from "../settings/repository-settings";
+import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
+import { errorMessage } from "../utils/json";
+import { computeTuningRecommendations, type GateEvalReport, type GateEvalRow } from "./auto-tune";
+import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
+
+/** True when the self-improvement loop is enabled. Flag-OFF (default) → every export below is a no-op. Truthy
+ *  follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isOpsEnabled / isReputationEnabled). */
+export function isSelfTuneEnabled(env: { REVIEWBOT_SELFTUNE?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_SELFTUNE ?? "");
+}
+
+/** The project's base confidence floor the tightening direction is judged against. Gittensory has no live
+ *  confidenceFloor tunable (config-application is deferred), so a no-override project starts from an UNSET
+ *  base — the apply path treats "no live floor" as the loosest state, so any positive floor recommendation is
+ *  strictly tightening (it can only HOLD more, never add a bad auto-merge). Exposed as a constant so the
+ *  config-application follow-up has a single place to source the real per-project base from. */
+export const SELFTUNE_BASE_CONFIDENCE_FLOOR = 0;
+
+/**
+ * PURE: build the ported GateEvalReport from gittensory's NATIVE recommendation-outcome calibration. The
+ * recommendation NEGATIVE outcomes (gittensory said proceed, the human CLOSED) map to the would-merge ERROR
+ * (`mergeFalse`); POSITIVE outcomes map to `mergeConfirmed`. ONLY the would-merge side is populated, so the
+ * advisor can ONLY produce a TIGHTENING (raise the floor) or no recommendation — never a loosening (the
+ * close-side counters stay 0, so `computeTuningRecommendations`' one loosening branch is unreachable).
+ * Unit-testable with no I/O.
+ */
+export function evalRowFromCalibration(project: string, positive: number, negative: number): GateEvalRow {
+  const wouldMerge = positive + negative; // resolved recommendation outcomes graded against the human's call
+  const decided = wouldMerge;
+  return {
+    project,
+    wouldMerge,
+    mergeConfirmed: positive,
+    mergeFalse: negative, // the dangerous error: recommended-proceed but the human closed → tighten
+    wouldClose: 0, // NEVER populate the close side — keeps the loop tightening-only (no loosening directive)
+    closeConfirmed: 0,
+    closeFalse: 0, // held at 0 by construction: the only loosening branch of the advisor is unreachable
+    hold: 0,
+    decided,
+    mergePrecision: wouldMerge > 0 ? positive / wouldMerge : null,
+    closePrecision: null,
+  };
+}
+
+/** Build the per-project GateEvalReport from gittensory's recommendation-outcome calibration for one repo. */
+async function buildEvalRow(env: Env, repoFullName: string): Promise<GateEvalRow> {
+  const calibration = await buildRepoOutcomeCalibration(env, repoFullName);
+  return evalRowFromCalibration(repoFullName, calibration.recommendations.positive, calibration.recommendations.negative);
+}
+
+/** The registered, agent-configured repos to tune over — SAME scoping the ops scan + regate sweep use (only
+ *  repos that opt into the acting-autonomy surface). A repo whose settings blip is skipped, never aborts. */
+async function selfTuneRepos(env: Env): Promise<string[]> {
+  const repos = (await listRepositories(env)).filter((repo) => repo.isRegistered);
+  const configured: string[] = [];
+  for (const repo of repos) {
+    try {
+      const settings = await resolveRepositorySettings(env, repo.fullName);
+      if (isAgentConfigured(settings.autonomy)) configured.push(repo.fullName);
+    } catch {
+      /* a settings blip on one repo must not abort the whole tuning pass */
+    }
+  }
+  return configured;
+}
+
+/**
+ * One self-improvement tick, run on the cron. FAILS SAFE: a per-repo error is logged and the pass continues; a
+ * top-level error is swallowed (tuning must never break the cron). For each agent-configured repo it: (1) builds
+ * the GateEvalReport from gittensory's own outcome data; (2) computes tuning recommendations; (3) SHADOW-SOAKS
+ * any strictly-tightening recommendation; (4) PROMOTES a soaked shadow override to live ONLY when the gate
+ * passes (tightening + evidence + soaked) — all via the ported runAutoApplyRecommendations, which records every
+ * action to override_audit and NEVER applies a loosening change.
+ *
+ * Caller MUST gate this on {@link isSelfTuneEnabled}: it is invoked only from the flag-ON cron path, so flag-OFF
+ * this function is never reached and the cron does ZERO new work.
+ */
+export async function runSelfTune(env: Env): Promise<void> {
+  try {
+    const repos = await selfTuneRepos(env);
+    const nowMs = Date.now();
+    for (const repoFullName of repos) {
+      try {
+        const row = await buildEvalRow(env, repoFullName);
+        const report: GateEvalReport = { rows: [row], hasSignal: row.decided >= 10 };
+        const recs = computeTuningRecommendations(report);
+        // runAutoApplyRecommendations only ever consumes recs that carry a TIGHTENING overridePayload, shadow-
+        // soaks them, and promotes a soaked override only when isStrictlyTightening + evidence + soak pass.
+        await runAutoApplyRecommendations(env as unknown as StorageEnv, {
+          project: repoFullName,
+          autoTune: true, // this repo opted into the acting-autonomy surface (selfTuneRepos filtered)
+          baseConfidenceFloor: SELFTUNE_BASE_CONFIDENCE_FLOOR,
+          decided: row.decided,
+          recs,
+          nowMs,
+        });
+      } catch (error) {
+        console.warn(JSON.stringify({ ev: "selftune_repo_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));
+      }
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ ev: "selftune_error", message: errorMessage(error).slice(0, 200) }));
+  }
+}

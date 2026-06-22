@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildClosedUnifiedCommentBody,
   buildDualReviewNotes,
   buildUnifiedCommentBody,
   consensusDefectFromFindings,
@@ -9,7 +10,8 @@ import {
   PR_PANEL_COMMENT_MARKER,
   verdictToRecommendation,
 } from "../../src/review/unified-comment-bridge";
-import type { MergeReadiness, UnifiedCollapsible } from "../../src/review/unified-comment";
+import { PR_PANEL_COMMENT_MARKER as MARKER_FROM_COMMENTS } from "../../src/github/comments";
+import { deriveUnifiedStatus, type MergeReadiness, type UnifiedCollapsible, type UnifiedCommentStatus } from "../../src/review/unified-comment";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
 import type { AdvisoryFinding } from "../../src/types";
 import type { PublicPrPanelSignalRow } from "../../src/signals/engine";
@@ -215,6 +217,214 @@ describe("buildUnifiedCommentBody", () => {
     expect(advisory).toContain("> [!NOTE]"); // skipped → comment → advisory
   });
 });
+
+// ── Reconciliation invariant (#1016): comment-verdict ↔ gate-conclusion alignment ──────────────────
+//
+// The two-gate reconciliation makes gittensory's `evaluateGateCheck` conclusion AUTHORITATIVE for the
+// unified comment's headline tone. `buildUnifiedCommentBody` maps the gate conclusion → a Verdict
+// (`gateConclusionToVerdict`) and feeds it as the renderer `decision`, which `deriveUnifiedStatus` honors
+// FIRST — before any reviewer recommendation. So the comment's alert/headline can NEVER contradict the
+// Gate check-run conclusion, even when the AI reviewer disagrees. This pins that contract across every
+// gate conclusion (success/failure/action_required/neutral/skipped) so a future renderer/bridge change
+// that let a reviewer rec override the gate would fail here.
+describe("reconciliation invariant: comment tone is pinned to the gate conclusion (#1016)", () => {
+  // gate conclusion → the alert + the verbatim headline phrase the renderer must emit for that conclusion.
+  const cases: Array<{ conclusion: GateCheckEvaluation["conclusion"]; alert: string; headline: RegExp }> = [
+    { conclusion: "success", alert: "> [!TIP]", headline: /Approved/ }, // success → merge → ready
+    { conclusion: "failure", alert: "> [!CAUTION]", headline: /Closed|Blocked/ }, // failure → close → blocked
+    { conclusion: "action_required", alert: "> [!WARNING]", headline: /Held for maintainer review/ }, // → manual → held
+    { conclusion: "neutral", alert: "> [!WARNING]", headline: /Held for maintainer review/ }, // → manual → held
+    { conclusion: "skipped", alert: "> [!NOTE]", headline: /Advisory only/ }, // → comment → advisory
+  ];
+
+  for (const { conclusion, alert, headline } of cases) {
+    it(`${conclusion} → ${alert} (gate conclusion drives the headline, not the reviewer)`, () => {
+      const body = buildUnifiedCommentBody({
+        gate: gate({ conclusion }),
+        // An upbeat, recommend-merge reviewer assessment — the OPPOSITE of a block — to prove the gate, not
+        // the reviewer, sets the tone. If the reviewer rec ever leaked through, a failure/neutral case below
+        // would render the ready (TIP/Approved) tone and this would fail.
+        aiReview: { notes: "Looks great to me, recommend merge." },
+        panelRows,
+        readinessTotal: 50,
+        changedFiles: 2,
+        footerMarkdown: footer,
+      });
+      expect(body, `${conclusion} must use the ${alert} alert`).toContain(alert);
+      expect(body, `${conclusion} headline phrase`).toMatch(headline);
+      // Cross-check: every other conclusion's alert is ABSENT (exactly one tone, never two).
+      for (const other of cases) {
+        if (other.alert === alert) continue;
+        expect(body, `${conclusion} must NOT also carry ${other.alert}`).not.toContain(other.alert);
+      }
+    });
+  }
+
+  it("the comment tone matches gateConclusionToVerdict → deriveUnifiedStatus for EVERY conclusion (no divergence)", () => {
+    // The status the renderer derives from the gate-mapped verdict, computed directly, must equal the tone
+    // the assembled body shows — proving the body cannot diverge from the gate's own decision path.
+    const expectedStatus: Record<GateCheckEvaluation["conclusion"], UnifiedCommentStatus> = {
+      success: "ready",
+      failure: "blocked",
+      action_required: "held",
+      neutral: "held",
+      skipped: "advisory",
+    };
+    const alertFor: Record<UnifiedCommentStatus, string> = {
+      ready: "> [!TIP]",
+      advisory: "> [!NOTE]",
+      held: "> [!WARNING]",
+      blocked: "> [!CAUTION]",
+    };
+    for (const conclusion of Object.keys(expectedStatus) as GateCheckEvaluation["conclusion"][]) {
+      // deriveUnifiedStatus over the gate-mapped verdict alone agrees with the table above…
+      const derived = deriveUnifiedStatus({ changedFiles: 0, reviewerCount: 0, recommendations: [], summary: "", decision: gateConclusionToVerdict(conclusion) });
+      expect(derived, `derived status for ${conclusion}`).toBe(expectedStatus[conclusion]);
+      // …and the full rendered body carries that same status' alert.
+      const body = buildUnifiedCommentBody({ gate: gate({ conclusion }), panelRows, readinessTotal: 50, changedFiles: 2, footerMarkdown: footer });
+      expect(body, `body tone for ${conclusion}`).toContain(alertFor[expectedStatus[conclusion]]);
+    }
+  });
+});
+
+// ── Single AI pass + single surfacing of the consensus defect (#1016) ───────────────────────────────
+//
+// The processor runs ONE AI review (`runAiReviewForAdvisory` → one `runGittensoryAiReview`) whose result
+// feeds BOTH the gate (it mutates `advisory.findings` with the `ai_consensus_defect`, which
+// `evaluateGateCheck` reads) AND the comment (the same finding is RECOVERED from `advisory.findings` by
+// the bridge — never a second model call/synthesis). These bridge-level tests pin the "recover, don't
+// re-derive" contract that makes the single pass sufficient, and that the recovered defect is surfaced
+// exactly once (as the Code-review blocker, NOT also re-printed in the gate signal row).
+describe("single AI pass: the bridge RECOVERS the consensus defect, never re-derives it (#1016)", () => {
+  it("surfaces the gate's ai_consensus_defect exactly once — as the Code-review blocker, not also in the Gate row", () => {
+    const defectTitle = "Use-after-free in the request handler";
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "failure",
+        title: "Gittensory Gate: blocked",
+        summary: "A hard blocker was found.",
+        // The gate's own blockers list carries the defect (as evaluateGateCheck produced it)…
+        blockers: [{ code: "ai_consensus_defect", severity: "critical", title: defectTitle, detail: "Both models agree." }],
+      }),
+      aiReview: { notes: "The change is risky." },
+      // …and the bridge recovers the SAME finding from advisory.findings — it does not run a second pass.
+      advisoryFindings: [{ code: "ai_consensus_defect", severity: "critical", title: defectTitle, detail: "Both models agree." }],
+      panelRows,
+      readinessTotal: 30,
+      changedFiles: 4,
+      footerMarkdown: footer,
+    });
+    // The defect title appears EXACTLY ONCE in the whole comment (the Code-review blocker bullet), never
+    // duplicated into the gate signal row (which only renders the conclusion-derived "Blocking" status text).
+    const occurrences = body.split(defectTitle).length - 1;
+    expect(occurrences, "consensus defect title must appear exactly once").toBe(1);
+    // It is rendered under the blocked-reasons heading (the Code-review side), confirming where the one copy lives.
+    expect(body).toMatch(/Why this is blocked|Concerns raised/);
+  });
+
+  it("a SINGLE reviewer note is produced (one AI pass), not two — the renderer shows one synthesized review", () => {
+    // buildDualReviewNotes folds the single AI pass (assessment + consensus blocker + nits) into ONE note;
+    // the renderer's reviewer count is 1. A second pass would surface as a second note / reviewerCount 2.
+    const reviews = buildDualReviewNotes({
+      aiReview: { notes: "Single synthesized assessment." },
+      consensusDefect: { title: "Real defect", detail: "..." },
+      warnings: [{ code: "w", severity: "warning", title: "Nit", detail: "...", action: "fix" }],
+      recommendation: "close",
+      verdict: "close",
+    });
+    expect(reviews).toHaveLength(1);
+  });
+});
+
+describe("PR_PANEL_COMMENT_MARKER is single-sourced from github/comments", () => {
+  it("re-exports the SAME marker value the upsert reads (no drift between modules)", () => {
+    // The bridge re-exports the canonical marker rather than redefining it. A divergence here would post a
+    // DUPLICATE comment instead of updating the legacy/unified comment in place.
+    expect(PR_PANEL_COMMENT_MARKER).toBe(MARKER_FROM_COMMENTS);
+    expect(PR_PANEL_COMMENT_MARKER).toBe("<!-- gittensory-pr-panel:v1 -->");
+  });
+});
+
+describe("buildDualReviewNotes — public-safe Nit scrub (privacy-critical, gate warnings)", () => {
+  // Nits are the only renderer input not already routed through an existing public-safe filter. The bridge
+  // scrubs forbidden private terms (→ "[context]") and DROPS a Nit that still leaks after scrubbing. This
+  // mirrors src/rules/advisory.ts sanitizeForCheckRun + src/signals/engine.ts containsPrivatePublicTerm.
+  it("scrubs a forbidden term from a Nit instead of leaking it verbatim", () => {
+    const reviews = buildDualReviewNotes({
+      warnings: [{ code: "w", severity: "warning", title: "Adjust the estimated scores threshold", detail: "...", action: "Tune it." }],
+      recommendation: "manual_review",
+      verdict: "manual",
+    });
+    const nit = reviews[0]?.notes?.nits?.[0] ?? "";
+    expect(nit).not.toMatch(/estimated scores/i);
+    expect(nit).toContain("[context]");
+  });
+
+  it("neutralizes a private internal in a Nit and leaves a benign Nit untouched", () => {
+    const reviews = buildDualReviewNotes({
+      warnings: [
+        // "trust score" is a forbidden term → scrubbed to "[context]"; the leak never reaches the comment.
+        { code: "w1", severity: "warning", title: "Your trust score is low", detail: "...", action: "n/a" },
+        { code: "w2", severity: "warning", title: "Add a unit test", detail: "...", action: "Cover the new branch." },
+      ],
+      recommendation: "manual_review",
+      verdict: "manual",
+    });
+    const nits = reviews[0]?.notes?.nits ?? [];
+    expect(nits).toHaveLength(2);
+    // The forbidden term is gone; the benign Nit is byte-for-byte preserved.
+    expect(nits[0]).not.toMatch(/trust score/i);
+    expect(nits[0]).toContain("[context]");
+    expect(nits).toContain("Add a unit test — Cover the new branch.");
+  });
+
+  it("neutralizes every private drop-term too (the scrub list is a superset of the drop guard)", () => {
+    // The drop guard (PRIVATE_DROP_TERMS) is a fail-safe: it removes any Nit that still names a private
+    // internal AFTER scrubbing. With the current regexes the scrub list (PRIVATE_FORBIDDEN_TERMS) is a
+    // superset of the drop terms, so every drop-term is already neutralized to "[context]" and the line
+    // survives scrubbed rather than being dropped. This asserts the privacy guarantee (no leak) across the
+    // drop-term vocabulary; the drop branch remains as defense-in-depth against a future scrub-list gap.
+    const dropTerms = ["reward", "payout", "farming", "wallet", "hotkey", "trust score", "raw trust", "estimated score", "scoreability", "reviewability3"];
+    for (const term of dropTerms) {
+      const reviews = buildDualReviewNotes({
+        warnings: [{ code: "w", severity: "warning", title: `Concern about ${term} here`, detail: "...", action: "n/a" }],
+        recommendation: "manual_review",
+        verdict: "manual",
+      });
+      const nit = reviews[0]?.notes?.nits?.[0] ?? "";
+      expect(nit, `"${term}" must not leak`).not.toContain(term);
+    }
+  });
+});
+
+describe("buildClosedUnifiedCommentBody (closed/skipped PR through the unified renderer)", () => {
+  it("starts with the canonical marker so it overwrites the OPEN-PR unified comment in place (not a duplicate)", () => {
+    const body = buildClosedUnifiedCommentBody({ repoFullName: "octo/repo", pullNumber: 7, footerMarkdown: footer });
+    expect(body.startsWith(PR_PANEL_COMMENT_MARKER)).toBe(true);
+  });
+
+  it("renders the non-blocking skipped state (skipped → comment verdict → advisory, not a CAUTION block)", () => {
+    const body = buildClosedUnifiedCommentBody({ repoFullName: "octo/repo", pullNumber: 7, footerMarkdown: footer });
+    // skipped maps to the `comment` verdict (gateConclusionToVerdict) → advisory tone, mirroring the legacy
+    // "[!NOTE] Gittensory Gate skipped" panel. It must NOT read as a blocked/closed CAUTION.
+    expect(body).not.toContain("> [!CAUTION]");
+    expect(body).toContain("Skipped");
+    expect(body).toContain("octo/repo#7 is no longer open.");
+    // The footer (earn CTA) is carried through under the divider.
+    expect(body).toContain(footer);
+  });
+
+  it("surfaces no reviewer blocker/nit (the PR was never fully evaluated)", () => {
+    const body = buildClosedUnifiedCommentBody({ repoFullName: "octo/repo", pullNumber: 7, footerMarkdown: footer });
+    // No AI review and no findings → the renderer shows "No blockers" rather than inventing a defect.
+    expect(body).toContain("No blockers");
+  });
+});
+
+// FOLLOW-UP (convergence): a full processGitHubWebhook end-to-end test that drives the closed-PR branch of
+// maybePublishPrPublicSurface (flag ON vs OFF) through real webhook delivery is net-new and entangled with the
+// queue/GitHub-client harness. The focused unit coverage here (open + closed body, marker single-source, flag
+// gate, Nit scrub) asserts the bridge contract the processor relies on; the e2e wiring is a separate task.
 
 describe("isUnifiedReviewCommentEnabled (flag-OFF selects the legacy path)", () => {
   it("is OFF (legacy buildPublicPrIntelligenceComment path) when the flag is unset or falsy", () => {

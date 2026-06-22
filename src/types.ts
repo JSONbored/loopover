@@ -131,6 +131,29 @@ export type JobMessage =
       type: "notify-deliver";
       requestedBy: "notify-evaluate" | "test";
       deliveryId: string;
+    }
+  | {
+      // Convergence (ops / observability, flag-gated by REVIEWBOT_OPS). Scan gittensory's review-outcome data
+      // (gate-block ledger + recommendation/slop calibration) and emit a structured `ops_anomaly` log on drift.
+      // Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job never exists.
+      type: "ops-alerts";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      // Convergence (self-improve / auto-tune, flag-gated by REVIEWBOT_SELFTUNE). Run the ported
+      // self-improvement loop over gittensory's review-outcome data — compute tuning recommendations,
+      // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes
+      // the gate; every action is audited. TIGHTENING-ONLY. Enqueued hourly by the cron ONLY when the flag is
+      // ON (index.ts), so flag-OFF this job never exists.
+      type: "selftune";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      // Public OAuth draft-submission flow (REVIEWBOT_DRAFT): fork the content repo with the
+      // contributor's token + open the PR. Enqueued by the draft OAuth callback.
+      type: "submit-draft";
+      requestedBy: "api" | "test";
+      draftId: string;
     };
 
 export type GitHubWebhookPayload = {

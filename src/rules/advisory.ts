@@ -630,6 +630,11 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // most conservative AI signal (two independent models, high confidence) but still confirmed-contributor
   // gated by evaluateGateCheck, and advisory by default.
   if (code === "ai_consensus_defect") return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
+  // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
+  // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
+  // (REVIEWBOT_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
+  // gate verdict is byte-identical to today.
+  if (code === "secret_leak") return true;
   // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer
   // opts into manifestPolicy: block. Default off/advisory keeps them advisory-only.
   if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {

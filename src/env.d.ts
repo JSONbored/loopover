@@ -4,6 +4,20 @@ declare global {
     JOBS: Queue;
     RATE_LIMITER?: DurableObjectNamespace;
     AI?: Ai;
+    /** Convergence (infra): Vectorize index for codebase RAG retrieval (Layer C). Optional — the review is
+     *  fully fail-safe without it (absent ⇒ no RAG, review proceeds with no retrieved context). The index is
+     *  created with bge-m3's 1024 dimensions. Unused until the per-module RAG wiring chunk; an unbound deploy
+     *  is inert (`createReviewAdapters` degrades a missing binding to an unavailable vector adapter). */
+    VECTORIZE?: Vectorize;
+    /** Convergence (infra): R2 bucket for review audit + visual-capture blobs. Optional — absent ⇒ no
+     *  audit/screenshot persistence. Unused until the per-module wiring chunk; an unbound deploy is inert. */
+    REVIEW_AUDIT?: R2Bucket;
+    /** Convergence (infra): Browser Rendering binding for visual (before/after screenshot) capture. Optional —
+     *  absent ⇒ no visual capture. Unused until the per-module wiring chunk; an unbound deploy is inert. */
+    BROWSER?: Fetcher;
+    /** TODO (convergence follow-up): a per-PR LOCK Durable Object (`SubmissionLock` mutex) is a separate,
+     *  more-involved sub-task — it needs the ported DO class + its own migration tag, not just a binding here.
+     *  Deliberately NOT declared in this chunk; the review path keeps its current concurrency behavior. */
     PUBLIC_API_ORIGIN?: string;
     PUBLIC_SITE_ORIGIN?: string;
     AI_SUMMARIES_ENABLED?: string;
@@ -50,6 +64,74 @@ declare global {
      *  (ONE in-place comment in the converged shape) instead of the legacy `buildPublicPrIntelligenceComment`
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
     UNIFIED_REVIEW_COMMENT?: string;
+    /** Convergence (safety): when truthy, the ported safety scan runs in the review path — (1) untrusted PR
+     *  title/body/diff is defanged (prompt-injection neutralized) before it reaches the AI reviewer, and (2)
+     *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —
+     *  unset/false keeps the review path byte-identical (no new branch is taken). */
+    REVIEWBOT_SAFETY?: string;
+    /** Convergence (grounding): when truthy, the AI reviewer prompt is GROUNDED — the PR's finished CI status
+     *  + the FULL post-change content of the changed files are appended so a non-frontier model verifies its
+     *  claims against reality instead of predicting CI / flagging symbols defined just outside the hunk.
+     *  Default OFF — unset/false keeps the reviewer prompt byte-identical and makes no extra GitHub fetch. */
+    REVIEWBOT_GROUNDING?: string;
+    /** Convergence (reputation): when truthy, the INTERNAL-only ported submitter-reputation signal extends the
+     *  AI-spend gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review
+     *  (the AI neurons are skipped), and the per-(project, submitter) outcome is recorded after the gate
+     *  decides. STRICTLY INTERNAL: the reputation never appears in any public comment/check. Default OFF —
+     *  unset/false reads NO reputation, records NOTHING, and leaves the AI-spend gate byte-identical (the new
+     *  branch is unreachable when off). */
+    REVIEWBOT_REPUTATION?: string;
+    /** Convergence (ops / observability): when truthy, gittensory's OWN review-outcome data drives two
+     *  operator surfaces — (1) on the cron tick, an anomaly scan over the gate-block ledger + recommendation /
+     *  slop calibration emits a structured `ops_anomaly` log when something drifts (gate false-positive spike,
+     *  slop score inverting, a recommendation negative-rate spike); and (2) a bearer-gated
+     *  `GET /v1/internal/ops/stats` endpoint serves the cross-repo outcome aggregate. Default OFF — unset/false
+     *  means the cron tick enqueues NO ops job (does no new work) and the endpoint 404s, so the worker is
+     *  byte-identical to today. NOTE: this is read-only OBSERVABILITY only; the auto-tune / config-mutation
+     *  self-improve loop (src/review/auto-apply.ts) is deliberately NOT wired here — see ops-wire.ts. */
+    REVIEWBOT_OPS?: string;
+    /** Convergence (RAG retrieval): when truthy, the AI reviewer prompt gains a RELEVANT EXISTING CODE / DOCS
+     *  section — at review time the codebase vector index is queried for code/docs semantically related to the
+     *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference
+     *  context, exactly like grounding (see review/rag-wire). Default OFF — unset/false performs NO retrieval,
+     *  uses NO adapter, makes NO vector query, and keeps the reviewer prompt byte-identical (the new branch is
+     *  unreachable when off). Even when ON, retrieval is INERT until a vector index exists for the repo (a
+     *  cold/missing index degrades to no context) — the index-population job is a deploy-time follow-up. */
+    REVIEWBOT_RAG?: string;
+    /** Convergence (self-improve / auto-tune): when truthy, the ported self-improvement loop
+     *  (src/review/auto-tune.ts + auto-apply.ts) runs on the cron tick over gittensory's OWN review-outcome
+     *  data — it computes tuning recommendations, SHADOW-SOAKS any STRICTLY-TIGHTENING recommendation in the
+     *  `tunables_overrides_shadow` table, and AUTO-PROMOTES it to `tunables_overrides` ONLY after the soak
+     *  window passes the gate (tightening + evidence + soaked). Every action is recorded to `override_audit`.
+     *  It can ONLY EVER tighten the gate — a loosening recommendation carries no payload and is never applied
+     *  (isStrictlyTightening + evaluateShadowPromotion enforce the direction). Default OFF — unset/false means
+     *  the cron enqueues NO selftune job (does ZERO tuning work, reads/writes NO override), so the worker is
+     *  byte-identical to today. NOTE: config-application is DEFERRED — a promoted override is NOT yet read by
+     *  the live gate-config resolution (gittensory has no confidenceFloor/scopeCap tunable and its native
+     *  signal measures gate false positives, a loosening direction); the shadow-soak + audit + recommendation
+     *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
+     *  risk loosening the gate. See src/review/selftune-wire.ts. */
+    REVIEWBOT_SELFTUNE?: string;
+    /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
+     *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
+     *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */
+    REVIEWBOT_DRAFT?: string;
+    /** owner/repo the draft fork PR targets (defaults to the awesome-claude content repo when unset). */
+    DRAFT_PUBLIC_REPO?: string;
+    /** Base branch the draft PR opens against (defaults to "main"). */
+    DRAFT_BASE_REF?: string;
+    /** AES-256-GCM secret used to encrypt the short-lived contributor OAuth token at rest. A Worker
+     *  secret (`wrangler secret put`). When absent, the draft create/callback endpoints return 503. */
+    DRAFT_TOKEN_ENCRYPTION_SECRET?: string;
+    /** Convergence prep (#preconv-parity): when truthy, the gittensory-native review path SHADOW-records each
+     *  finalized gate decision (source='gittensory-native') into the `review_audit` audit-source table (D1
+     *  migration 0049), and the bearer-gated `GET /v1/internal/parity` endpoint serves the pre-cutover parity
+     *  READINESS report (computeGateParity / isParityCutoverReady over the recorded data). RECORD-ONLY SHADOW
+     *  mode — recording changes NO review behavior. Default OFF — unset/false records NOTHING (no D1 write, the
+     *  review path is byte-identical) and the endpoint 404s. NOTE: this records the gittensory-native side only;
+     *  the actual COMPARISON vs reviewbot's authoritative decisions needs reviewbot's rows in the SAME table,
+     *  written by the deploy-time dual-run shadow step (out of scope here). See src/review/parity-wire.ts. */
+    REVIEWBOT_PARITY_AUDIT?: string;
   }
 }
 

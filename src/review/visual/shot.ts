@@ -20,6 +20,15 @@ import puppeteer from "@cloudflare/puppeteer";
 import { isSafeHttpUrl } from "../content-lane/safe-url";
 
 export type Viewport = { width: number; height: number };
+export interface CaptureShotOptions {
+  isAllowedUrl?: (targetUrl: string) => boolean;
+}
+type ScreenshotRequest = {
+  url(): string;
+  isNavigationRequest(): boolean;
+  abort(): Promise<unknown>;
+  continue(): Promise<unknown>;
+};
 export const DESKTOP_VIEWPORT: Viewport = { width: 1440, height: 900 };
 export const MOBILE_VIEWPORT: Viewport = { width: 390, height: 844 }; // iPhone-class portrait
 const VIEWPORT = DESKTOP_VIEWPORT;
@@ -106,11 +115,11 @@ function isAllowedHost(targetUrl: string, env: Env, productionUrl?: string): boo
  * not — the caller then shows an honest "requires authentication" placeholder instead of a screenshot of the
  * login screen. `png` is null on any render failure (callers degrade gracefully).
  */
-export async function captureShot(env: Env, url: string, viewport: Viewport = VIEWPORT): Promise<{ png: Uint8Array | null; authWalled: boolean }> {
+export async function captureShot(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<{ png: Uint8Array | null; authWalled: boolean }> {
   // SSRF defense-in-depth: NEVER navigate the headless browser to a non-public host (loopback / link-local /
   // private / cloud-metadata 169.254.169.254 / etc.). Callers may resolve `url` from a deployment_status
   // webhook or a PR-comment preview link, so guard at this choke point regardless of how the URL was obtained.
-  if (!url || !isSafeHttpUrl(url)) {
+  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
     console.log(JSON.stringify({ ev: "render_screenshot_blocked", url: String(url).slice(0, 120) }));
     return { png: null, authWalled: false };
   }
@@ -119,8 +128,32 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
   try {
     browser = await puppeteer.launch(env.BROWSER as unknown as Parameters<typeof puppeteer.launch>[0]);
     const page = await browser.newPage();
+    await page.setRequestInterception(true);
+    page.on("request", (request: ScreenshotRequest) => {
+      const requestUrl = request.url();
+      let protocol = "";
+      try {
+        protocol = new URL(requestUrl).protocol;
+      } catch {
+        request.abort().catch(() => undefined);
+        return;
+      }
+      if (protocol === "http:" || protocol === "https:") {
+        const isAllowedNavigation = !request.isNavigationRequest() || !opts.isAllowedUrl || opts.isAllowedUrl(requestUrl);
+        if (!isSafeHttpUrl(requestUrl) || !isAllowedNavigation) {
+          console.log(JSON.stringify({ ev: "render_screenshot_request_blocked", url: requestUrl.slice(0, 120) }));
+          request.abort().catch(() => undefined);
+          return;
+        }
+      }
+      request.continue().catch(() => undefined);
+    });
     await page.setViewport(viewport);
     await page.goto(url, { waitUntil: "networkidle0", timeout: 20000 });
+    if (!isSafeHttpUrl(page.url()) || (opts.isAllowedUrl && !opts.isAllowedUrl(page.url()))) {
+      console.log(JSON.stringify({ ev: "render_screenshot_redirect_blocked", url, final: page.url().slice(0, 200) }));
+      return { png: null, authWalled: false };
+    }
     // A protected route that redirected to a login page: don't return a screenshot of the sign-in screen —
     // flag it so the caller renders an honest auth placeholder. (The requested URL not itself being a login
     // page guards a PR that legitimately changes the login screen.)
@@ -142,8 +175,8 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
 
 /** Back-compat thin wrapper: render a page to a PNG (or null on failure / auth wall). The on-demand
  *  `/shot?url=` route uses this; the capture pipeline uses `captureShot` to also learn `authWalled`. */
-export async function renderScreenshot(env: Env, url: string, viewport: Viewport = VIEWPORT): Promise<Uint8Array | null> {
-  return (await captureShot(env, url, viewport)).png;
+export async function renderScreenshot(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<Uint8Array | null> {
+  return (await captureShot(env, url, viewport, opts)).png;
 }
 
 export async function handleShot(request: Request, env: Env, opts: ShotOptions = {}): Promise<Response> {
@@ -181,7 +214,7 @@ export async function handleShot(request: Request, env: Env, opts: ShotOptions =
   const w = Number(params.get("w"));
   const h = Number(params.get("h"));
   const viewport: Viewport = Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0 ? { width: Math.min(w, 2560), height: Math.min(h, 2560) } : DESKTOP_VIEWPORT;
-  const png = await renderScreenshot(env, target, viewport);
+  const png = await renderScreenshot(env, target, viewport, { isAllowedUrl: (candidate) => isAllowedHost(candidate, env, opts.productionUrl) });
   if (!png) return new Response("screenshot unavailable", { status: 502 });
   return new Response(png, {
     headers: { "content-type": "image/png", "cache-control": "public, max-age=300" },

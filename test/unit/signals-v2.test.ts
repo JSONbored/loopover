@@ -78,7 +78,7 @@ const pullRequests: PullRequestRecord[] = [
     labels: ["bug"],
     linkedIssues: [1],
     body: "Fixes #1",
-    updatedAt: "2026-05-23T00:00:00.000Z",
+    updatedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
   },
   {
     repoFullName: repo.fullName,
@@ -90,7 +90,7 @@ const pullRequests: PullRequestRecord[] = [
     labels: ["bug"],
     linkedIssues: [1],
     body: "Fixes #1",
-    updatedAt: "2026-04-01T00:00:00.000Z",
+    updatedAt: new Date(Date.now() - 40 * 86_400_000).toISOString(),
   },
 ];
 

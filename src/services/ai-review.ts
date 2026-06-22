@@ -67,6 +67,14 @@ export type GittensoryAiReviewInput = {
   mode: "advisory" | "block";
   /** Present only when the repo has BYOK on AND a key configured; drives the advisory write-up. */
   providerKey?: AiReviewProviderKey | null | undefined;
+  /**
+   * Convergence (grounding, flag-gated by REVIEWBOT_GROUNDING). The caller builds this from the PR's
+   * finished CI status + the full content of the changed files (see `review/grounding-wire`). When ABSENT
+   * (the default, flag-OFF), both the system and user prompts are byte-identical to today — no section is
+   * appended. `systemSuffix` carries the grounding-discipline rules; `promptSection` carries the CI STATUS
+   * + FULL FILE CONTENT blocks. Empty strings behave the same as absent.
+   */
+  grounding?: { systemSuffix?: string | undefined; promptSection?: string | undefined } | null | undefined;
 };
 
 /** A consensus critical defect, already public-safe, ready to become a gate blocker finding. */
@@ -187,14 +195,26 @@ export function parseModelReview(text: string): ModelReview | null {
 }
 
 function buildUserPrompt(input: GittensoryAiReviewInput): string {
-  return [
+  const lines = [
     `Repository: ${input.repoFullName}`,
     `Pull request #${input.prNumber}: ${input.title}`,
     input.body ? `Description:\n${input.body.slice(0, 2000)}` : "Description: (none)",
     "",
     "Unified diff (truncated if large):",
     input.diff.slice(0, 60000),
-  ].join("\n");
+  ];
+  // Convergence (grounding): append the FINISHED CI status + FULL file content when the caller supplied them
+  // (flag REVIEWBOT_GROUNDING on). Absent/empty (the default) → the prompt is byte-identical to today.
+  const groundingSection = input.grounding?.promptSection;
+  if (groundingSection) lines.push("", groundingSection);
+  return lines.join("\n");
+}
+
+/** The effective reviewer SYSTEM prompt. Appends the grounding-discipline suffix when the caller supplied one
+ *  (flag REVIEWBOT_GROUNDING on); absent/empty (default) → the base prompt, byte-identical to today. */
+function buildSystemPrompt(input: GittensoryAiReviewInput): string {
+  const suffix = input.grounding?.systemSuffix;
+  return suffix ? `${REVIEW_SYSTEM_PROMPT}${suffix}` : REVIEW_SYSTEM_PROMPT;
 }
 
 /** One Workers-AI opinion with a per-slot reliable fallback and a 3× retry on the primary. */
@@ -351,12 +371,18 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   // affected; this NEVER changes the verdict (a redaction is data, not a finding).
   const promptInput = isSafetyEnabled(env) ? { ...input, ...defangReviewInput(input) } : input;
   const user = buildUserPrompt(promptInput);
+  // Grounding-discipline SYSTEM suffix (convergence, flag-gated). When the caller supplied grounding, the
+  // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT
+  // unchanged (byte-identical). Computed from `promptInput` so it travels with the (possibly defanged) input.
+  const system = buildSystemPrompt(promptInput);
   // The daily neuron budget governs FREE Workers-AI spend only. BYOK advisory calls bill the maintainer's
   // own provider account, so they are not counted here (and a BYOK advisory still runs when the free
   // budget is exhausted). Free calls = the consensus pair in block mode (always Workers AI), plus the
   // advisory leg only when it is NOT BYOK.
   const freeAiCalls = (input.mode === "block" ? 2 : 0) + (input.providerKey ? 0 : 1);
-  const estimatedNeurons = freeAiCalls === 0 ? 0 : estimateNeurons(REVIEW_SYSTEM_PROMPT.length + user.length, maxTokens, freeAiCalls);
+  // Estimate against the EFFECTIVE system prompt (`system`) so grounding's extra context is billed against the
+  // budget. Flag-OFF, `system === REVIEW_SYSTEM_PROMPT`, so the estimate is byte-identical to today.
+  const estimatedNeurons = freeAiCalls === 0 ? 0 : estimateNeurons(system.length + user.length, maxTokens, freeAiCalls);
   const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
@@ -378,11 +404,11 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   let byokFailure: ProviderFailure | undefined;
   let advisoryReview: ModelReview | null;
   if (input.providerKey) {
-    const outcome = await runProviderReview(input.providerKey, REVIEW_SYSTEM_PROMPT, user, maxTokens);
+    const outcome = await runProviderReview(input.providerKey, system, user, maxTokens);
     advisoryReview = outcome.review;
     byokFailure = outcome.failure;
   } else {
-    advisoryReview = await runWorkersOpinion(env, BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0], REVIEW_SYSTEM_PROMPT, user, maxTokens);
+    advisoryReview = await runWorkersOpinion(env, BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0], system, user, maxTokens);
   }
 
   let consensusDefect: AiConsensusDefect | null = null;
@@ -390,8 +416,8 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   if (input.mode === "block") {
     // Consensus blocker ALWAYS uses the free Workers-AI pair (provider-independent, never BYOK).
     const [a, b] = await Promise.all([
-      input.providerKey ? runWorkersOpinion(env, BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0], REVIEW_SYSTEM_PROMPT, user, maxTokens) : Promise.resolve(advisoryReview),
-      runWorkersOpinion(env, BEST_REVIEW_MODELS[1], RELIABLE_FALLBACK_MODELS[1], REVIEW_SYSTEM_PROMPT, user, maxTokens),
+      input.providerKey ? runWorkersOpinion(env, BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0], system, user, maxTokens) : Promise.resolve(advisoryReview),
+      runWorkersOpinion(env, BEST_REVIEW_MODELS[1], RELIABLE_FALLBACK_MODELS[1], system, user, maxTokens),
     ]);
     secondReview = b;
     if (a && b) consensusDefect = consensusDefectOf(a, b, AI_CONSENSUS_FLOOR);

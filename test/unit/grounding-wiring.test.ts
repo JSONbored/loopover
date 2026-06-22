@@ -1,0 +1,269 @@
+import { describe, expect, it, vi } from "vitest";
+import { runGittensoryAiReview } from "../../src/services/ai-review";
+import {
+  buildCheckAggregate,
+  buildReviewGroundingText,
+  isGroundingEnabled,
+  makeGithubFileFetcher,
+} from "../../src/review/grounding-wire";
+import type { CheckSummaryRecord, JsonValue, PullRequestFileRecord } from "../../src/types";
+import { createTestEnv } from "../helpers/d1";
+
+// ── Test fixtures ────────────────────────────────────────────────────────────────────────────────
+
+const notesJson = JSON.stringify({
+  assessment: "Looks fine.",
+  suggestions: [],
+  risks: [],
+  criticalDefect: { present: false, confidence: 0, title: "", detail: "" },
+});
+
+/** Capture the exact system + user prompts handed to the model so we can assert what the AI actually sees. */
+function capturingAiEnv(grounding: boolean | undefined) {
+  const seenUser: string[] = [];
+  const seenSystem: string[] = [];
+  const run = vi.fn(async (_model: string, options: { messages: Array<{ role: string; content: string }> }) => {
+    const userMsg = options.messages.find((m) => m.role === "user");
+    const systemMsg = options.messages.find((m) => m.role === "system");
+    if (userMsg) seenUser.push(userMsg.content);
+    if (systemMsg) seenSystem.push(systemMsg.content);
+    return { response: notesJson };
+  });
+  const env = createTestEnv({
+    AI: { run } as unknown as Ai,
+    AI_SUMMARIES_ENABLED: "true",
+    AI_PUBLIC_COMMENTS_ENABLED: "true",
+    AI_DAILY_NEURON_BUDGET: "100000",
+    ...(grounding === undefined ? {} : { REVIEWBOT_GROUNDING: grounding ? "true" : "false" }),
+  });
+  return { env, seenUser, seenSystem, run };
+}
+
+const baseReviewInput = {
+  repoFullName: "acme/widgets",
+  prNumber: 7,
+  title: "Add a feature",
+  body: "Implements the thing.",
+  diff: "### src/a.ts (modified) +1/-0\n@@\n+export const A = 1;",
+  actor: "alice",
+  mode: "advisory" as const,
+  providerKey: null,
+};
+
+const check = (over: Partial<CheckSummaryRecord> = {}): CheckSummaryRecord => ({
+  id: "acme/widgets#sha7#build",
+  repoFullName: "acme/widgets",
+  pullNumber: 7,
+  headSha: "sha7",
+  name: "build",
+  status: "completed",
+  conclusion: "success",
+  payload: {} as Record<string, JsonValue>,
+  ...over,
+});
+
+const prFile = (path: string, status = "modified"): PullRequestFileRecord => ({
+  repoFullName: "acme/widgets",
+  pullNumber: 7,
+  path,
+  status,
+  additions: 1,
+  deletions: 0,
+  changes: 1,
+  payload: {},
+});
+
+// ── isGroundingEnabled ─────────────────────────────────────────────────────────────────────────
+
+describe("isGroundingEnabled", () => {
+  it("is OFF for unset/false and ON for the truthy convention", () => {
+    expect(isGroundingEnabled({})).toBe(false);
+    expect(isGroundingEnabled({ REVIEWBOT_GROUNDING: "false" })).toBe(false);
+    expect(isGroundingEnabled({ REVIEWBOT_GROUNDING: "true" })).toBe(true);
+    expect(isGroundingEnabled({ REVIEWBOT_GROUNDING: "1" })).toBe(true);
+    expect(isGroundingEnabled({ REVIEWBOT_GROUNDING: "on" })).toBe(true);
+  });
+});
+
+// ── buildCheckAggregate (CI summary source) ──────────────────────────────────────────────────────
+
+describe("buildCheckAggregate maps gittensory check summaries → the grounding aggregate", () => {
+  it("returns undefined when there are no checks (no CI signal to assert)", () => {
+    expect(buildCheckAggregate([])).toBeUndefined();
+  });
+
+  it("all green → state passed, every check under passing", () => {
+    const agg = buildCheckAggregate([check({ name: "build" }), check({ name: "test", id: "x" })]);
+    expect(agg).toEqual({ state: "passed", passing: ["build", "test"], failingDetails: [] });
+  });
+
+  it("a failing check flips state to failed and carries the output.summary reason", () => {
+    const agg = buildCheckAggregate([
+      check({ name: "build" }),
+      check({
+        name: "codecov/patch",
+        id: "cov",
+        conclusion: "failure",
+        payload: { output: { summary: "60% of diff hit (target 97%)" } } as Record<string, JsonValue>,
+      }),
+    ]);
+    expect(agg?.state).toBe("failed");
+    expect(agg?.passing).toEqual(["build"]);
+    expect(agg?.failingDetails).toEqual([{ name: "codecov/patch", summary: "60% of diff hit (target 97%)" }]);
+  });
+
+  it("an un-concluded (running) check makes state pending", () => {
+    const agg = buildCheckAggregate([check({ name: "deploy", conclusion: null, status: "in_progress" })]);
+    expect(agg?.state).toBe("pending");
+  });
+});
+
+// ── End-to-end: flag-gated prompt grounding through runGittensoryAiReview ─────────────────────────
+
+describe("review-grounding wired into the AI reviewer (flag REVIEWBOT_GROUNDING)", () => {
+  it("FLAG-ON: the user prompt gains CI STATUS + FULL FILE CONTENT and the system prompt gains the grounding discipline", async () => {
+    const { env, seenUser, seenSystem } = capturingAiEnv(true);
+    // Stub the GitHub Contents API so the real FileFetcher returns deterministic file text.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
+      String(url).includes("/contents/src/a.ts") ? new Response("export const A = 1; // full file", { status: 200 }) : new Response("missing", { status: 404 }),
+    );
+    const grounding = await buildReviewGroundingText(env, {
+      repoFullName: "acme/widgets",
+      headSha: "sha7",
+      files: [prFile("src/a.ts")],
+      checks: [check({ name: "build" }), check({ name: "test", id: "t" })],
+      installationId: null,
+    });
+    const result = await runGittensoryAiReview(env, { ...baseReviewInput, grounding });
+    expect(result.status).toBe("ok");
+    const user = seenUser[0] ?? "";
+    const system = seenSystem[0] ?? "";
+    // CI grounding present in the user prompt.
+    expect(user).toContain("CI STATUS");
+    expect(user).toContain("ALL checks PASSED");
+    expect(user).toContain("PASSED: build, test");
+    // Full-file grounding present in the user prompt.
+    expect(user).toContain("FULL FILE CONTENT");
+    expect(user).toContain("### src/a.ts");
+    expect(user).toContain("export const A = 1; // full file");
+    // Grounding discipline appended to the system prompt.
+    expect(system).toContain("GROUNDING");
+    expect(system).toContain("NEVER predict");
+    fetchSpy.mockRestore();
+  });
+
+  it("FLAG-OFF (default): the prompt is byte-identical and NO file fetch is attempted", async () => {
+    // With grounding undefined (the flag-OFF call site leaves it undefined), the prompt must equal the
+    // no-grounding prompt — proving no section was appended.
+    const off = capturingAiEnv(false);
+    await runGittensoryAiReview(off.env, { ...baseReviewInput, grounding: undefined });
+    const none = capturingAiEnv(undefined);
+    await runGittensoryAiReview(none.env, baseReviewInput);
+
+    expect(off.seenUser[0]).not.toContain("CI STATUS");
+    expect(off.seenUser[0]).not.toContain("FULL FILE CONTENT");
+    expect(off.seenSystem[0]).not.toContain("GROUNDING");
+    // undefined grounding === explicit-false: identical prompts, proving flag-OFF took no new branch.
+    expect(none.seenUser[0]).toBe(off.seenUser[0]);
+    expect(none.seenSystem[0]).toBe(off.seenSystem[0]);
+  });
+
+  it("buildReviewGroundingText returns empty (no fetch) when the flag is OFF", async () => {
+    const env = createTestEnv({ REVIEWBOT_GROUNDING: "false" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const out = await buildReviewGroundingText(env, {
+      repoFullName: "acme/widgets",
+      headSha: "sha7",
+      files: [prFile("src/a.ts")],
+      checks: [check()],
+      installationId: null,
+    });
+    expect(out).toEqual({ systemSuffix: "", promptSection: "" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("FLAG-ON e2e: full-file content is fetched (capped/prioritized) and inlined into the prompt", async () => {
+    const env = createTestEnv({ REVIEWBOT_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    // Stub the GitHub Contents API so the real FileFetcher returns deterministic file text.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes("/contents/src/a.ts")) return new Response("export const A = 1; // full file", { status: 200 });
+      if (u.includes("/contents/README.md")) return new Response("# docs", { status: 200 });
+      return new Response("not found", { status: 404 });
+    });
+    const out = await buildReviewGroundingText(env, {
+      repoFullName: "acme/widgets",
+      headSha: "sha7",
+      files: [prFile("README.md"), prFile("src/a.ts")], // docs listed first; source must still come first
+      checks: [check()],
+      installationId: null,
+    });
+    expect(out.promptSection).toContain("FULL FILE CONTENT");
+    expect(out.promptSection).toContain("### src/a.ts");
+    expect(out.promptSection).toContain("export const A = 1; // full file");
+    // Source (priority 0) inlined before docs (priority 2).
+    expect(out.promptSection.indexOf("### src/a.ts")).toBeLessThan(out.promptSection.indexOf("### README.md"));
+    fetchSpy.mockRestore();
+  });
+
+  it("FLAG-ON fail-safe: a throwing fetch degrades to no file section (never throws), CI still grounds", async () => {
+    const env = createTestEnv({ REVIEWBOT_GROUNDING: "true" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    const out = await buildReviewGroundingText(env, {
+      repoFullName: "acme/widgets",
+      headSha: "sha7",
+      files: [prFile("src/a.ts")],
+      checks: [check()],
+      installationId: null,
+    });
+    // No FULL FILE CONTENT (fetch failed) but CI grounding survives — fail-safe, not all-or-nothing.
+    expect(out.promptSection).not.toContain("FULL FILE CONTENT");
+    expect(out.promptSection).toContain("CI STATUS");
+    expect(out.systemSuffix).toContain("GROUNDING");
+    fetchSpy.mockRestore();
+  });
+
+  it("FLAG-ON: with no CI rows AND no readable files, grounding is empty (system suffix not attached)", async () => {
+    const env = createTestEnv({ REVIEWBOT_GROUNDING: "true" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 404 }));
+    const out = await buildReviewGroundingText(env, {
+      repoFullName: "acme/widgets",
+      headSha: "sha7",
+      files: [prFile("src/a.ts")],
+      checks: [], // no CI signal
+      installationId: null,
+    });
+    expect(out).toEqual({ systemSuffix: "", promptSection: "" });
+    fetchSpy.mockRestore();
+  });
+});
+
+// ── makeGithubFileFetcher (the injected FileFetcher) ──────────────────────────────────────────────
+
+describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () => {
+  it("returns the raw file text on 200 and null on a non-OK response", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "ghp_test" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes("/contents/ok.ts")) return new Response("file body", { status: 200 });
+      return new Response("missing", { status: 404 });
+    });
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    expect(await fetcher.getFileContent("ok.ts", "sha7")).toBe("file body");
+    expect(await fetcher.getFileContent("gone.ts", "sha7")).toBeNull();
+    // The request targets the Contents API at the head ref with the raw media type.
+    const firstUrl = String(fetchSpy.mock.calls[0]?.[0]);
+    expect(firstUrl).toContain("/repos/acme/widgets/contents/ok.ts");
+    expect(firstUrl).toContain("ref=sha7");
+    fetchSpy.mockRestore();
+  });
+
+  it("never throws — a fetch rejection resolves to null", async () => {
+    const env = createTestEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("boom"));
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    expect(await fetcher.getFileContent("any.ts", "sha7")).toBeNull();
+    fetchSpy.mockRestore();
+  });
+});

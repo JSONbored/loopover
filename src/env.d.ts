@@ -55,6 +55,11 @@ declare global {
      *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —
      *  unset/false keeps the review path byte-identical (no new branch is taken). */
     REVIEWBOT_SAFETY?: string;
+    /** Convergence (grounding): when truthy, the AI reviewer prompt is GROUNDED — the PR's finished CI status
+     *  + the FULL post-change content of the changed files are appended so a non-frontier model verifies its
+     *  claims against reality instead of predicting CI / flagging symbols defined just outside the hunk.
+     *  Default OFF — unset/false keeps the reviewer prompt byte-identical and makes no extra GitHub fetch. */
+    REVIEWBOT_GROUNDING?: string;
   }
 }
 

@@ -155,6 +155,7 @@ import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
 import { isSafetyEnabled, secretLeakFinding } from "../review/safety";
+import { buildReviewGroundingText, isGroundingEnabled } from "../review/grounding-wire";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
@@ -1173,6 +1174,19 @@ export async function runAiReviewForAdvisory(
         ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
         : null;
     const files = await listPullRequestFiles(env, args.repoFullName, args.pr.number);
+    // Grounding (convergence, flag-gated by REVIEWBOT_GROUNDING). Build the FINISHED CI status + the full
+    // content of the changed files so the reviewer verifies its claims against reality instead of guessing.
+    // Flag-OFF (default) → we take no new branch at all: NO check/repo load, NO file fetch, and `grounding`
+    // is left undefined so the prompt handed to the model is byte-identical to today. Fully fail-safe.
+    const grounding = isGroundingEnabled(env)
+      ? await buildReviewGroundingText(env, {
+          repoFullName: args.repoFullName,
+          headSha: args.advisory.headSha,
+          files,
+          checks: await listCheckSummaries(env, args.repoFullName, args.pr.number),
+          installationId: (await getRepository(env, args.repoFullName))?.installationId ?? null,
+        })
+      : undefined;
     const result = await runGittensoryAiReview(env, {
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
@@ -1182,6 +1196,7 @@ export async function runAiReviewForAdvisory(
       actor: args.author,
       mode: args.settings.aiReviewMode === "block" ? "block" : "advisory",
       providerKey,
+      grounding,
     });
     if (result.status !== "ok") return undefined;
     if (result.consensusDefect) {

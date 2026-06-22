@@ -460,4 +460,391 @@ describe("sourceEvidenceToDecisionEvidence", () => {
     expect(evidence[0]?.behavior).toMatch(/returned HTTP 404/);
     expect(evidence[0]?.fix).toMatch(/reachable authoritative source/);
   });
+
+  it("emits a no-httpStatus row (invalid_url) WITHOUT finalUrl and with the not-reachable behavior", async () => {
+    // An invalid_url hard failure is blocking with no httpStatus and no finalUrl:
+    // exercises BOTH the `finalUrl !== undefined` false branch (no spread) and the
+    // `httpStatus ? ... : behavior` false branch (line 542 "is not a valid reachable source URL").
+    const src = mdx({ githubUrl: "ht!tp://broken url" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
+    const evidence = sourceEvidenceToDecisionEvidence(report);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]?.httpStatus).toBeUndefined();
+    expect(evidence[0]?.finalUrl).toBeUndefined();
+    expect(evidence[0]?.outcome).toBe("invalid_url");
+    expect(evidence[0]?.behavior).toBe("githubUrl is not a valid reachable source URL");
+  });
+
+  it("returns an empty array when no blocking hard-failures exist", async () => {
+    const src = mdx({ githubUrl: "https://github.com/acme/ok" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/ok": 200 }));
+    expect(sourceEvidenceToDecisionEvidence(report)).toEqual([]);
+  });
+});
+
+// ── Frontmatter scalar / YAML-edge branches (stripYamlComment / unquote* / parser) ───────────────
+
+describe("frontmatter scalar parsing branches", () => {
+  it("strips a trailing ' # comment' from an UNQUOTED scalar value (unquoteYamlScalar comment branch)", () => {
+    // unquoteYamlScalar: not quoted → hits the `.replace(/\s+#.*$/, "")` comment-stripping branch.
+    const src = ["---", "githubUrl: https://github.com/acme/x # the canonical repo", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("githubUrl:https://github.com/acme/x");
+  });
+
+  it("keeps a bare unquoted inline-list element verbatim (unquoteYamlValue non-quoted return)", () => {
+    // A bracketed list with a bare (unquoted) element exercises unquoteYamlValue's
+    // final `return trimmed.trim()` branch (neither double- nor single-quoted).
+    const src = ["---", "retrievalSources: [https://bare.example/1]", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("retrievalSources:https://bare.example/1");
+  });
+
+  it("unquotes a SINGLE-quoted inline-list element (unquoteYamlValue single-quote branch)", () => {
+    const src = ["---", "retrievalSources: ['https://sq.example/1']", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("retrievalSources:https://sq.example/1");
+  });
+
+  it("strips a ' # comment' off a bracketed inline-list element (unquoteYamlValue→stripYamlComment)", () => {
+    // unquoteYamlValue calls stripYamlComment first; a comment after a bare element is removed.
+    const src = ["---", "retrievalSources: [https://c.example/1 # note]", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("retrievalSources:https://c.example/1");
+  });
+
+  it("skips a frontmatter key whose inline value is empty and is not a block scalar", () => {
+    // parseSimpleFrontmatter: `inline === ""` and not a `|`/`>` block → field is never set (else-if false).
+    const src = ["---", "githubUrl:", "docsUrl: https://docs.example/x", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    const pairs = urls.map((u) => `${u.field}:${u.url}`);
+    expect(pairs).toContain("docsUrl:https://docs.example/x");
+    expect(pairs.some((p) => p.startsWith("githubUrl:"))).toBe(false);
+  });
+
+  it("ignores a non key:value frontmatter line (parseSimpleFrontmatter head no-match continue)", () => {
+    // A stray line with no `key:` shape is skipped; the real scalar field is still read.
+    const src = ["---", "this line has no colon key shape", "githubUrl: https://github.com/acme/x", "---", "", "body"].join(
+      "\n",
+    );
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("githubUrl:https://github.com/acme/x");
+  });
+
+  it("reads a multi-line | literal block scalar joined by newlines (only the first line is the URL)", () => {
+    // The `|` literal join uses "\n"; scalarSourceUrlValues then takes the whole (multi-line) value as one
+    // entry. We assert the field is parsed as a block (non-empty) and the first line is present.
+    const src = ["---", "documentationUrl: |", "  https://docs.example/a", "  trailing-note", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.some((u) => u.field === "documentationUrl" && u.url.startsWith("https://docs.example/a"))).toBe(true);
+  });
+});
+
+// ── listSourceUrlValues branches (active-field reset, inline |/> guard, empty dash) ──────────────
+
+describe("listSourceUrlValues branches", () => {
+  it("resets the active list field when a non-list top-level key appears (dash items after it are ignored)", () => {
+    // retrievalSources opens a list; then a non-list top-level key (title:) resets activeField to "",
+    // so a following `- ` item is NOT captured (the `if (!activeField) continue` guard).
+    const src = [
+      "---",
+      "retrievalSources:",
+      "  - https://kept.example/1",
+      "title: Something",
+      "  - https://dropped.example/2",
+      "---",
+      "",
+      "body",
+    ].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    const pairs = urls.map((u) => `${u.field}:${u.url}`);
+    expect(pairs).toContain("retrievalSources:https://kept.example/1");
+    expect(pairs.some((p) => p.includes("dropped.example"))).toBe(false);
+  });
+
+  it("does NOT scalar-parse a list field declared as a block scalar header (value === '|')", () => {
+    // listSourceUrlValues guards `value !== "|" && value !== ">"`; with `retrievalSources: |` the inline
+    // value is skipped, and the indented block lines are read as dash-less → no URLs from the header line.
+    const src = ["---", "retrievalSources: |", "  https://block.example/1", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    // The `|` header is not treated as an inline URL; the indented non-dash line is not a `- ` item.
+    expect(urls.some((u) => u.field === "retrievalSources")).toBe(false);
+  });
+
+  it("drops an EMPTY dash item under an active list field (the `if (url)` guard)", () => {
+    const src = ["---", "retrievalSources:", "  - ", "  - https://real.example/1", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    const pairs = urls.map((u) => `${u.field}:${u.url}`);
+    expect(pairs).toContain("retrievalSources:https://real.example/1");
+    expect(pairs).toHaveLength(1);
+  });
+
+  it("reads an inline scalar URL declared directly on a list key line (sourceUrls: <url>)", () => {
+    // A list field with a plain inline value (not |/> and not bracketed) → scalarSourceUrlValues single path.
+    const src = ["---", "sourceUrls: https://inline.example/1", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("sourceUrls:https://inline.example/1");
+  });
+});
+
+// ── extractSubmittedSourceUrls: absolute distribution kept; empty value path ─────────────────────
+
+describe("extractSubmittedSourceUrls — distribution + empty branches", () => {
+  it("KEEPS an absolute distribution (packageUrl) URL (isAbsoluteHttpUrl true branch)", () => {
+    const urls = extractSubmittedSourceUrls(mdx({ packageUrl: "https://npmjs.com/package/foo" }));
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("packageUrl:https://npmjs.com/package/foo");
+  });
+
+  it("drops a distribution field whose value is an UNPARSEABLE (non-absolute) URL (isAbsoluteHttpUrl catch)", () => {
+    // `:::not a url:::` throws in `new URL(...)` inside isAbsoluteHttpUrl → false → distribution drop.
+    const urls = extractSubmittedSourceUrls(mdx({ downloadUrl: ":::not a url:::" }));
+    expect(urls.some((u) => u.field === "downloadUrl")).toBe(false);
+  });
+
+  it("drops a distribution field with a non-http (mailto:) absolute value (isAbsoluteHttpUrl protocol false)", () => {
+    // mailto: parses as a URL but its protocol is not http/https → isAbsoluteHttpUrl false → dropped.
+    const urls = extractSubmittedSourceUrls(mdx({ downloadUrl: "mailto:foo@example.com" }));
+    expect(urls.some((u) => u.field === "downloadUrl")).toBe(false);
+  });
+
+  it("returns [] for an empty scalar source field (scalarSourceUrlValues empty-trimmed branch)", () => {
+    // githubUrl present but empty → scalarSourceUrlValues("") returns [].
+    const src = ["---", "githubUrl: ''", "---", "", "body"].join("\n");
+    expect(extractSubmittedSourceUrls(src)).toEqual([]);
+  });
+});
+
+// ── sourceRole malformed-URL catch ───────────────────────────────────────────────────────────────
+
+describe("sourceRole malformed-URL classification", () => {
+  it("classifies a malformed canonical-field URL as canonical (sourceRole catch → canonical)", async () => {
+    // sourceRole: `new URL("ht!tp://x")` throws → catch → falls through to "canonical".
+    const src = mdx({ githubUrl: "ht!tp://x" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
+    const item = report.urls.find((u) => u.field === "githubUrl");
+    expect(item?.role).toBe("canonical");
+  });
+});
+
+// ── sourceStatusFromHttpStatus: 425 / >=500 / sub-200 fall-through ───────────────────────────────
+
+/** A fetch returning a DUCK-TYPED response so we can use statuses the Response ctor rejects (e.g. 1xx). */
+function rawStatusFetch(status: number): typeof fetch {
+  return (async () => ({
+    status,
+    headers: { get: () => null },
+  })) as unknown as typeof fetch;
+}
+
+describe("sourceStatusFromHttpStatus — remaining bands", () => {
+  it("maps 425 (Too Early) to retryable (explicit list member)", async () => {
+    const src = mdx({ githubUrl: "https://github.com/acme/early" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/early": 425 }));
+    const item = report.urls.find((u) => u.field === "githubUrl");
+    expect(item?.status).toBe("retryable");
+    expect(item?.outcome).toBe("source_inconclusive");
+  });
+
+  it("maps a 5xx (503) to retryable via the `status >= 500` branch", async () => {
+    const src = mdx({ githubUrl: "https://github.com/acme/5xx" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/5xx": 503 }));
+    const item = report.urls.find((u) => u.field === "githubUrl");
+    expect(item?.status).toBe("retryable");
+  });
+
+  it("maps an out-of-band 2xx-3xx boundary 1xx (199) to retryable via the final fall-through return", async () => {
+    // 199 is not >=200, not in the retryable list, not 404/410, not 400-499, not >=500 → final `return "retryable"`.
+    // A real Response rejects 199, so we inject a duck-typed response.
+    const src = mdx({ githubUrl: "https://github.com/acme/onexx" });
+    const report = await checkSubmittedSourceEvidence(src, rawStatusFetch(199));
+    const item = report.urls.find((u) => u.field === "githubUrl");
+    expect(item?.status).toBe("retryable");
+    expect(item?.outcome).toBe("source_inconclusive");
+  });
+});
+
+// ── checkOneSourceUrl: HEAD-pass early return + non-blocking invalid (source_host_not_checked) ───
+
+describe("checkOneSourceUrl branches", () => {
+  it("returns immediately from a passing HEAD (no GET) — HEAD `passed` early return", async () => {
+    // HEAD returns 200 → checkOneSourceUrl returns head without ever issuing a GET.
+    let getCalls = 0;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = ((init?.method as string) || "GET").toUpperCase();
+      if (method === "GET") getCalls += 1;
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    const src = mdx({ githubUrl: "https://github.com/acme/headok" });
+    const report = await checkSubmittedSourceEvidence(src, fetchImpl);
+    expect(report.status).toBe("passed");
+    expect(getCalls).toBe(0);
+  });
+
+  it("non-invalid validation failure → status 'passed' (invalidProtocol false branch)", async () => {
+    // source_host_not_checked (https loopback) is a non-invalid validation failure: invalidProtocol=false
+    // → status 'passed'. Distinct from invalid_url (which is hard_failure).
+    const src = mdx({ githubUrl: "https://127.0.0.1/repo" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
+    const item = report.urls.find((u) => u.field === "githubUrl");
+    expect(item?.status).toBe("passed");
+    expect(item?.outcome).toBe("source_host_not_checked");
+  });
+
+  it("surfaces a non-Error throw as the fallback fetch_error message (lastError not instanceof Error)", async () => {
+    // Both GET attempts throw a NON-Error value → `lastError instanceof Error` is false → fallback string.
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const method = ((init?.method as string) || "GET").toUpperCase();
+      if (method === "GET") throw "string failure"; // non-Error throw
+      throw "head failure"; // HEAD also throws → falls through to GET
+    }) as unknown as typeof fetch;
+    const src = mdx({ githubUrl: "https://github.com/acme/weird" });
+    const report = await checkSubmittedSourceEvidence(src, fetchImpl);
+    const item = report.urls.find((u) => u.field === "githubUrl");
+    expect(item?.status).toBe("retryable");
+    expect(item?.outcome).toBe("fetch_error");
+    expect(item?.error).toBe("Source URL fetch failed before a response was returned.");
+  });
+});
+
+// ── hasVerifiableCanonicalSource: >=2 reachable vs primary-field downgrade trigger ───────────────
+
+describe("downgrade rules (hasVerifiableCanonicalSource / isDowngradableInconclusiveSource)", () => {
+  it("does NOT downgrade when there is no verifiable canonical source (early return, warnings stay blocking)", async () => {
+    // A lone flaky non-primary canonical (docsUrl 503) with NO reachable canonical anchor stays blocking.
+    const src = mdx({ docsUrl: "https://docs.example/flaky" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://docs.example/flaky": 503 }));
+    const item = report.urls.find((u) => u.field === "docsUrl");
+    expect(item?.blocking).toBe(true);
+    expect(report.status).toBe("retryable");
+  });
+
+  it("downgrades via the >=2-reachable-canonical anchor (two non-primary canonicals both reachable)", async () => {
+    // websiteUrl + docsUrl are canonical but NOT primary; two reachable → hasVerifiableCanonicalSource true
+    // via `reachableCanonical.length >= 2`. A third flaky non-primary (documentationUrl) downgrades.
+    const src = mdx({
+      websiteUrl: "https://site.example/a",
+      docsUrl: "https://docs.example/b",
+      documentationUrl: "https://docs.example/flaky",
+    });
+    const report = await checkSubmittedSourceEvidence(
+      src,
+      fakeFetch({
+        "https://site.example/a": 200,
+        "https://docs.example/b": 200,
+        "https://docs.example/flaky": 403,
+      }),
+    );
+    const flaky = report.urls.find((u) => u.field === "documentationUrl");
+    expect(flaky?.blocking).toBe(false);
+    expect(report.warnings.some((w) => w.field === "documentationUrl")).toBe(true);
+  });
+
+  it("downgrades a distribution source_host_not_checked hard_failure to non-blocking when a canonical verifies", async () => {
+    // isDowngradableInconclusiveSource second branch: hard_failure + distribution role + source_host_not_checked.
+    // A distribution field (packageUrl) whose URL is valid but REDIRECTS to a loopback host fails
+    // validateFetchableSourceUrl INSIDE the fetch loop → hard_failure with outcome source_host_not_checked.
+    // A reachable primary canonical (githubUrl) makes hasVerifiableCanonicalSource true → it downgrades.
+    const src = mdx({
+      githubUrl: "https://github.com/acme/live",
+      packageUrl: "https://dist.example/pkg",
+    });
+    const report = await checkSubmittedSourceEvidence(
+      src,
+      specFetch({
+        "https://github.com/acme/live": { status: 200 },
+        "https://dist.example/pkg": { status: 301, location: "https://127.0.0.1/internal" },
+      }),
+    );
+    const pkg = report.urls.find((u) => u.field === "packageUrl");
+    expect(pkg?.role).toBe("distribution");
+    expect(pkg?.status).toBe("hard_failure");
+    expect(pkg?.outcome).toBe("source_host_not_checked");
+    expect(pkg?.blocking).toBe(false);
+    expect(report.status).toBe("passed");
+  });
+
+  it("does NOT downgrade a PRIMARY-field retryable even when a canonical anchor verifies", async () => {
+    // isDowngradableInconclusiveSource: retryable BUT field is primary (sourceUrl) → not downgradable.
+    // githubUrl reachable (primary anchor) → hasVerifiableCanonicalSource true, but the flaky sourceUrl stays blocking.
+    const src = mdx({
+      githubUrl: "https://github.com/acme/anchor",
+      sourceUrl: "https://flaky.example/primary",
+    });
+    const report = await checkSubmittedSourceEvidence(
+      src,
+      fakeFetch({ "https://github.com/acme/anchor": 200, "https://flaky.example/primary": 503 }),
+    );
+    const primary = report.urls.find((u) => u.field === "sourceUrl");
+    expect(primary?.blocking).toBe(true);
+    expect(report.status).toBe("retryable");
+  });
+});
+
+// ── summary / decision string branches ───────────────────────────────────────────────────────────
+
+describe("sourceEvidenceSummary — outcome (no httpStatus) branch", () => {
+  it("renders the OUTCOME (not 'HTTP n') when an item has no httpStatus", async () => {
+    // invalid_url has no httpStatus → summary shows the outcome string, and item is blocking (no suffix).
+    const src = mdx({ githubUrl: "ht!tp://broken" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
+    const summary = sourceEvidenceSummary(report);
+    expect(summary).toContain("githubUrl ht!tp://broken -> invalid_url");
+    expect(summary).not.toContain("(non-blocking source-inconclusive warning)");
+  });
+});
+
+describe("sourceEvidenceCloseDecision — summary string branches", () => {
+  it("CLOSE summary includes the final-URL annotation when finalUrl differs from url", async () => {
+    // Two authoritative sources both hard-fail via a redirect to a 404 → close; the finalUrl differs from url,
+    // exercising the `item.finalUrl && item.finalUrl !== item.url` true branch + the `httpStatus ?` true branch.
+    const src = mdx({
+      githubUrl: "https://github.com/acme/g1",
+      repoUrl: "https://github.com/acme/g2",
+    });
+    const report = await checkSubmittedSourceEvidence(
+      src,
+      specFetch({
+        "https://github.com/acme/g1": { status: 301, location: "https://github.com/acme/g1-moved" },
+        "https://github.com/acme/g1-moved": { status: 404 },
+        "https://github.com/acme/g2": { status: 301, location: "https://github.com/acme/g2-moved" },
+        "https://github.com/acme/g2-moved": { status: 404 },
+      }),
+    );
+    const decision = sourceEvidenceCloseDecision(report);
+    expect(decision?.verdict).toBe("close");
+    expect(decision?.summary).toContain("returned HTTP 404");
+    expect(decision?.summary).toContain("(final URL: https://github.com/acme/g1-moved)");
+    expect(decision?.summary).toContain("Close this PR and resubmit");
+  });
+
+  it("MANUAL summary uses the outcome (no httpStatus) and omits final-URL when it equals url", async () => {
+    // A single invalid_url authoritative failure → manual (not close). No httpStatus → outcome branch;
+    // finalUrl undefined → the `finalUrl && finalUrl !== url` false branch (no annotation).
+    const src = mdx({ githubUrl: "ht!tp://broken url" });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
+    const decision = sourceEvidenceCloseDecision(report);
+    expect(decision?.verdict).toBe("manual");
+    expect(decision?.summary).toContain("invalid_url");
+    expect(decision?.summary).not.toContain("final URL:");
+    expect(decision?.summary).toContain("Review the source manually");
+  });
+});
+
+// ── shouldHardCloseSourceEvidence — mixed authoritative (one passes) ──────────────────────────────
+
+describe("shouldHardCloseSourceEvidence — partial authoritative failure", () => {
+  it("returns false when SOME (not all) authoritative sources hard-failed", async () => {
+    // One authoritative passes, one hard-fails → hardFailures.length !== authoritative.length → false.
+    const src = mdx({
+      githubUrl: "https://github.com/acme/ok",
+      repoUrl: "https://github.com/acme/dead",
+    });
+    const report = await checkSubmittedSourceEvidence(
+      src,
+      fakeFetch({ "https://github.com/acme/ok": 200, "https://github.com/acme/dead": 404 }),
+    );
+    expect(shouldHardCloseSourceEvidence(report)).toBe(false);
+    // And it routes to MANUAL (single blocking hard-failure present).
+    expect(sourceEvidenceCloseDecision(report)?.verdict).toBe("manual");
+  });
 });

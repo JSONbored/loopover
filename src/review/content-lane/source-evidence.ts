@@ -304,6 +304,7 @@ function normalizeHostname(hostname: string): string {
 
 // Retained for parity with the reviewbot source (the allowlist is the gate's documented posture);
 // the live gate fetches any safe public host, not just an allowlist — see validateFetchableSourceUrl.
+/* v8 ignore start -- Dead parity retainer: never called (the live gate is allowlist-free); kept byte-faithful to reviewbot's documented allowlist posture. */
 function _sourceHostIsTrusted(hostname: string): boolean {
   const normalized = normalizeHostname(hostname);
   return (
@@ -312,6 +313,7 @@ function _sourceHostIsTrusted(hostname: string): boolean {
     TRUSTED_SOURCE_HOST_SUFFIXES.some((suffix) => normalized.endsWith(suffix))
   );
 }
+/* v8 ignore stop */
 void _sourceHostIsTrusted;
 
 type FetchableValidation = { ok: true; parsed: URL } | { ok: false; outcome: string; error: string };
@@ -407,6 +409,7 @@ async function fetchSourceUrl(
     });
   }
 
+  /* v8 ignore next -- Unreachable: the loop runs redirects 0..MAX inclusive and always returns (the redirects===MAX hop returns too_many_redirects); this trailing return only satisfies the type checker. */
   return withSourceDefaults(item, { status: "retryable", outcome: "too_many_redirects" });
 }
 

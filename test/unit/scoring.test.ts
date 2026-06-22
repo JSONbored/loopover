@@ -218,6 +218,30 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(unmodeled).not.toContain("TIME_DECAY_GRACE_PERIOD_HOURS"); // modeled as of #703
   });
 
+  it("excludes operational upstream constants from unmodeled scoring drift (#809)", () => {
+    const operationalOnly = findUnmodeledUpstreamConstants(`
+SECONDS_PER_DAY = 86400
+SECONDS_PER_HOUR = 3600
+GITHUB_HTTP_TIMEOUT_SECONDS = 15
+MIRROR_HTTP_TIMEOUT_SECONDS = 30
+MIRROR_MAX_ATTEMPTS = 3
+TREE_SITTER_PARSE_TIMEOUT_MICROS = 5_000_000
+SCORING_SUBPROCESS_BUDGET_S = 120
+MAX_FILE_SIZE_BYTES = 1_000_000
+RECYCLE_UID = 0
+ISSUES_TREASURY_UID = 111
+MAX_ISSUE_ID = 999_999
+`);
+    expect(operationalOnly).toEqual([]);
+
+    const withScoringGap = findUnmodeledUpstreamConstants(`
+SECONDS_PER_DAY = 86400
+GITHUB_HTTP_TIMEOUT_SECONDS = 15
+NOVELTY_BONUS_SCALAR = 3
+`);
+    expect(withScoringGap).toEqual(["NOVELTY_BONUS_SCALAR"]);
+  });
+
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
     const env = createTestEnv({
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",

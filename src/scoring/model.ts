@@ -168,6 +168,24 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
 }
 
 /**
+ * Upstream operational/infra constants gittensory intentionally does not model in score previews.
+ * They are not scoring dimensions — surfacing them as "unmodeled drift" is noise (#809).
+ */
+const NON_SCORING_UPSTREAM_CONSTANT_NAMES = new Set([
+  "SECONDS_PER_DAY",
+  "SECONDS_PER_HOUR",
+  "GITHUB_HTTP_TIMEOUT_SECONDS",
+  "MIRROR_HTTP_TIMEOUT_SECONDS",
+  "MIRROR_MAX_ATTEMPTS",
+  "TREE_SITTER_PARSE_TIMEOUT_MICROS",
+  "SCORING_SUBPROCESS_BUDGET_S",
+  "MAX_FILE_SIZE_BYTES",
+  "RECYCLE_UID",
+  "ISSUES_TREASURY_UID",
+  "MAX_ISSUE_ID",
+]);
+
+/**
  * Numeric constant names upstream gittensor defines that gittensory's scoring engine does NOT model.
  * The normal parse is `knownOnly` (it keeps only constants we already encode), which silently hides
  * upstream ADDITIONS — e.g. a newly-introduced time-decay constant. Surfacing these makes scoring
@@ -176,7 +194,7 @@ export function parsePythonNumberConstants(source: string, options: { knownOnly?
  */
 export function findUnmodeledConstantKeys(allConstants: Record<string, number>): string[] {
   return Object.keys(allConstants)
-    .filter((name) => !SCORING_CONSTANT_NAMES.has(name))
+    .filter((name) => !SCORING_CONSTANT_NAMES.has(name) && !NON_SCORING_UPSTREAM_CONSTANT_NAMES.has(name))
     .sort();
 }
 

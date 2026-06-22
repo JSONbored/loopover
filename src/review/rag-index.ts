@@ -1,0 +1,255 @@
+// Convergence (RAG / codebase index — Layer C, flag GITTENSORY_REVIEW_RAG): the INDEX-POPULATION driver. This is
+// the half that was deferred when retrieval was wired (see rag-wire.ts `INDEX_JOB_FOLLOWUP` / `populateRepoIndexStub`):
+// it fetches a repo's CODE tree, chunks + embeds it, and upserts vectors+text into the `gittensory-review-rag`
+// Vectorize index + the `repo_chunks` table (migration 0051) — so retrieval has a warm index to read from instead
+// of always seeing a cold namespace and returning "".
+//
+// It reuses the fail-safe primitives in `./rag` verbatim (chunkFile / embedTexts / upsertChunks /
+// deleteChunksForPaths / countRepoChunks / isIndexablePath / MAX_CHUNKS_PER_REPO / ragNamespace) — NO chunking or
+// embedding logic is reimplemented here. The only new I/O is fetching the repo's git tree + file contents, which
+// reuses the installation-token + raw-Contents-API pattern grounding-wire already established
+// (`makeGithubFileFetcher`); the tree fetch is the one new GitHub call.
+//
+// HARD GUARANTEES (mirroring rag.ts):
+//   1. FAIL-SAFE — every step is caught + logged; this module NEVER throws into the queue/caller. A missing
+//      Vectorize/AI binding, a GitHub error, an oversized repo, or a partial batch degrades to "indexed less /
+//      nothing" rather than failing the job. `upsertChunks` itself already no-ops to 0 when infra is absent.
+//   2. FREE-TIER — `isIndexablePath` filters the tree to CODE (not the content/data corpus), source is
+//      prioritized, and a hard MAX_CHUNKS_PER_REPO cap bounds stored vectors per repo (the same cap retrieval
+//      assumes). We stop fetching once the cap is reached.
+//
+// GATING — the caller (processors.ts) only DISPATCHES indexing when `isRagEnabled(env)` is true, and the cron
+// only ENQUEUES the fan-out under the same flag; flag-OFF (the default) this module is never invoked, makes no
+// GitHub call, and does no adapter use — the deploy is byte-identical to today.
+
+import { createInstallationToken } from "../github/app";
+import { repoParts } from "../utils/json";
+import { createReviewAdapters } from "./adapters";
+import {
+  chunkFile,
+  deleteChunksForPaths,
+  filePriority,
+  isIndexablePath,
+  MAX_CHUNKS_PER_REPO,
+  ragNamespace,
+  type RagChunk,
+  upsertChunks,
+} from "./rag";
+
+/** A single indexable entry from the repo git tree (path + size, used by isIndexablePath's size guard). */
+type TreeEntry = { path: string; size?: number | undefined };
+
+/** Cap on how many chunks we upsert per Vectorize/D1 write batch (bounds the bound-param + neuron cost per call;
+ *  embedTexts itself batches the AI calls at EMBED_BATCH internally). */
+const UPSERT_BATCH = 50;
+
+/** Resolve the read token once for a repo: installation token (private-repo read) → public token → none.
+ *  Best-effort — a token failure degrades to the next fallback, never throws. (Mirrors makeGithubFileFetcher.) */
+async function resolveReadToken(env: Env, installationId: number | null | undefined): Promise<string | undefined> {
+  let token: string | undefined;
+  if (installationId) token = await createInstallationToken(env, installationId).catch(() => undefined);
+  return token ?? env.GITHUB_PUBLIC_TOKEN;
+}
+
+/** Shared GitHub headers for the read calls (raw media type returns file bodies directly). */
+function ghHeaders(token: string | undefined, accept: string): Record<string, string> {
+  return {
+    accept,
+    "user-agent": "gittensory/0.1",
+    "x-github-api-version": "2022-11-28",
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+/**
+ * Fetch the FULL recursive git tree for a repo at `ref` and return only the blob (file) entries. Uses the
+ * Git Trees API (`?recursive=1`) — one call yields the whole tree. Returns [] on any non-OK / error response
+ * (fail-safe: a tree we can't read = nothing to index). `truncated` is honored (GitHub truncates very large
+ * trees) — we index whatever it returned; the MAX_CHUNKS cap is the real bound anyway.
+ */
+async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token: string | undefined): Promise<TreeEntry[]> {
+  try {
+    const { owner, name } = repoParts(repoFullName);
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
+    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github+json") });
+    if (!response.ok) return [];
+    const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number }> } | null;
+    const entries: TreeEntry[] = [];
+    for (const node of body?.tree ?? []) {
+      if (node.type !== "blob" || typeof node.path !== "string" || node.path.length === 0) continue;
+      entries.push(typeof node.size === "number" ? { path: node.path, size: node.size } : { path: node.path });
+    }
+    return entries;
+  } catch (error) {
+    console.log(JSON.stringify({ ev: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
+    return [];
+  }
+}
+
+/** Fetch a single file's raw text at `ref`. null on any non-OK / error (fail-safe — skip that file). */
+async function fetchFileText(env: Env, repoFullName: string, path: string, ref: string, token: string | undefined): Promise<string | null> {
+  try {
+    const { owner, name } = repoParts(repoFullName);
+    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${path
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/")}?ref=${encodeURIComponent(ref)}`;
+    const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github.raw+json") });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve the ref to index a repo at: the repo's default branch, falling back to HEAD when unknown. */
+function indexRef(defaultBranch: string | null | undefined): string {
+  const branch = (defaultBranch ?? "").trim();
+  return branch.length > 0 ? branch : "HEAD";
+}
+
+/** Upsert a set of chunks to the index in bounded batches, honoring the per-repo cap. Returns the number
+ *  actually upserted. Each batch is independent: a failed batch (upsertChunks returns 0) doesn't abort the rest. */
+async function upsertChunksCapped(env: Env, project: string, repo: string, chunks: RagChunk[], alreadyStored: number): Promise<number> {
+  const infra = createReviewAdapters(env);
+  let stored = alreadyStored;
+  let upserted = 0;
+  for (let i = 0; i < chunks.length && stored < MAX_CHUNKS_PER_REPO; i += UPSERT_BATCH) {
+    const remaining = MAX_CHUNKS_PER_REPO - stored;
+    const batch = chunks.slice(i, i + Math.min(UPSERT_BATCH, remaining));
+    if (batch.length === 0) break;
+    const n = await upsertChunks(infra, project, repo, batch);
+    upserted += n;
+    stored += n;
+  }
+  return upserted;
+}
+
+/** Split `owner/name` into the (project, repo) pair RAG namespaces on (same convention as rag-wire's splitRepo). */
+function splitRepo(repoFullName: string): [string, string] {
+  const slash = repoFullName.indexOf("/");
+  return slash === -1 ? ["", repoFullName] : [repoFullName.slice(0, slash), repoFullName.slice(slash + 1)];
+}
+
+export type IndexRepoResult = { indexed: number; files: number; capped: boolean };
+
+/**
+ * FULL (re)index of a repo's CODE into the RAG index. Fetches the git tree at the default branch, filters to
+ * indexable code/docs (isIndexablePath), prioritizes source over docs, fetches each file's content, chunks it
+ * (chunkFile), and upserts (embed + Vectorize + repo_chunks via upsertChunks) up to MAX_CHUNKS_PER_REPO.
+ *
+ * Idempotent: chunk ids are stable (namespace|path::idx) so re-running upserts (ON CONFLICT updates) the same
+ * rows rather than duplicating. Fully FAIL-SAFE — any error (no infra, GitHub down, bad file) degrades to
+ * "indexed fewer / nothing"; this NEVER throws.
+ *
+ * @param repo the RepositoryRecord (fullName + installationId + defaultBranch). installationId/defaultBranch are
+ *             read off it so the caller doesn't re-fetch.
+ */
+export async function indexRepo(
+  env: Env,
+  project: string,
+  repo: { fullName: string; installationId?: number | null | undefined; defaultBranch?: string | null | undefined },
+): Promise<IndexRepoResult> {
+  const empty: IndexRepoResult = { indexed: 0, files: 0, capped: false };
+  try {
+    const infra = createReviewAdapters(env);
+    // No vector index or no AI binding → upsert is a guaranteed no-op; don't spend any GitHub calls.
+    if (!infra.vector || !infra.inference) return empty;
+    const repoFullName = repo.fullName;
+    const [, repoName] = splitRepo(repoFullName);
+    const namespace = ragNamespace(project, repoName);
+    const token = await resolveReadToken(env, repo.installationId);
+    const ref = indexRef(repo.defaultBranch);
+
+    // 1. Fetch the tree, filter to indexable code/docs, prioritize source before docs (so the cap keeps code).
+    const tree = (await fetchRepoTree(env, repoFullName, ref, token))
+      .filter((entry) => isIndexablePath(entry.path, entry.size))
+      .sort((a, b) => filePriority(a.path) - filePriority(b.path) || a.path.localeCompare(b.path));
+    if (tree.length === 0) return empty;
+
+    // 2. Fetch + chunk + upsert, stopping once the per-repo vector cap is reached.
+    let stored = 0;
+    let upserted = 0;
+    let filesIndexed = 0;
+    let capped = false;
+    for (const entry of tree) {
+      if (stored >= MAX_CHUNKS_PER_REPO) {
+        capped = true;
+        break;
+      }
+      const text = await fetchFileText(env, repoFullName, entry.path, ref, token);
+      if (text === null) continue;
+      const chunks = chunkFile(entry.path, text, namespace);
+      if (chunks.length === 0) continue;
+      const n = await upsertChunksCapped(env, project, repoName, chunks, stored);
+      if (n > 0) {
+        upserted += n;
+        stored += n;
+        filesIndexed += 1;
+      }
+    }
+    console.log(
+      JSON.stringify({ ev: "rag_index_repo", project, repo: repoFullName, files: filesIndexed, indexed: upserted, capped }),
+    );
+    return { indexed: upserted, files: filesIndexed, capped };
+  } catch (error) {
+    console.log(JSON.stringify({ ev: "rag_index_repo_error", repo: repo.fullName, message: String(error).slice(0, 200) }));
+    return empty;
+  }
+}
+
+/**
+ * INCREMENTAL re-index of only the CHANGED paths of a repo (push / PR-merge maintenance). For the given paths:
+ * deletes their existing chunks (deleteChunksForPaths — removes both stale vectors + text), then re-fetches +
+ * re-chunks + re-upserts the indexable ones at the default branch. A path that's no longer indexable (deleted
+ * file, or now a content/data path) is simply deleted and not re-added. Fully FAIL-SAFE — NEVER throws.
+ *
+ * @param paths the changed file paths (e.g. from a push or merged-PR file list).
+ */
+export async function reindexChangedPaths(
+  env: Env,
+  project: string,
+  repo: { fullName: string; installationId?: number | null | undefined; defaultBranch?: string | null | undefined },
+  paths: string[],
+): Promise<IndexRepoResult> {
+  const empty: IndexRepoResult = { indexed: 0, files: 0, capped: false };
+  try {
+    const unique = [...new Set(paths.filter((path) => typeof path === "string" && path.length > 0))];
+    if (unique.length === 0) return empty;
+    const infra = createReviewAdapters(env);
+    if (!infra.vector || !infra.inference) return empty;
+    const repoFullName = repo.fullName;
+    const [, repoName] = splitRepo(repoFullName);
+    const namespace = ragNamespace(project, repoName);
+
+    // 1. Drop the existing chunks for EVERY changed path (deleted/renamed/no-longer-indexable files leave nothing
+    //    stale behind). deleteChunksForPaths is fail-safe + batches the IN-lists internally.
+    await deleteChunksForPaths(infra, project, repoName, unique);
+
+    // 2. Re-index the ones that are still indexable code/docs at the default branch.
+    const indexable = unique.filter((path) => isIndexablePath(path));
+    if (indexable.length === 0) return { indexed: 0, files: 0, capped: false };
+    const token = await resolveReadToken(env, repo.installationId);
+    const ref = indexRef(repo.defaultBranch);
+    let upserted = 0;
+    let filesIndexed = 0;
+    for (const path of indexable) {
+      const text = await fetchFileText(env, repoFullName, path, ref, token);
+      if (text === null) continue; // file deleted at head, or unreadable — already removed above, leave it gone
+      const chunks = chunkFile(path, text, namespace);
+      if (chunks.length === 0) continue;
+      const n = await upsertChunks(infra, project, repoName, chunks);
+      if (n > 0) {
+        upserted += n;
+        filesIndexed += 1;
+      }
+    }
+    console.log(
+      JSON.stringify({ ev: "rag_reindex_paths", project, repo: repoFullName, paths: unique.length, files: filesIndexed, indexed: upserted }),
+    );
+    return { indexed: upserted, files: filesIndexed, capped: false };
+  } catch (error) {
+    console.log(JSON.stringify({ ev: "rag_reindex_paths_error", repo: repo.fullName, message: String(error).slice(0, 200) }));
+    return empty;
+  }
+}

@@ -2,6 +2,7 @@ import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
 import { processJob } from "./queue/processors";
 import { isOpsEnabled } from "./review/ops-wire";
+import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
 import type { JobMessage } from "./types";
 
@@ -78,6 +79,12 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     jobs.push({ type: "build-contributor-evidence", requestedBy: "schedule" });
     jobs.push({ type: "build-contributor-decision-packs", requestedBy: "schedule" });
     jobs.push({ type: "file-upstream-drift-issues", requestedBy: "schedule" });
+    // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). SLOW-CADENCE full re-index: in the six-hourly
+    // full-sync window, enqueue the RAG index fan-out (the processor fans out to one per-repo job for every
+    // registered + cutover-allowlisted repo, mirroring the signal-snapshot fan-out). Enqueued ONLY when the flag
+    // is ON — flag-OFF (default) this job is never created, so the cron does ZERO new RAG work and the enqueued
+    // set is byte-identical to today.
+    if (isRagEnabled(env)) jobs.push({ type: "rag-index-repo", requestedBy: "schedule" });
   }
   await Promise.all(jobs.map((job) => env.JOBS.send(job)));
 }

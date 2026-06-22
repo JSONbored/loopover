@@ -63,12 +63,13 @@ import {
   backfillRegisteredRepositories,
   backfillRepositorySegment,
   enqueueRepositoryOpenDataBackfill,
+  fetchAndStorePullRequestFilesForReview,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
 import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
 import {
@@ -148,7 +149,10 @@ import {
   type ContributorProfile,
 } from "../signals/engine";
 import { buildClosedUnifiedCommentBody, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
-import type { MergeReadiness } from "../review/unified-comment";
+import { screenshotsAllowed } from "../review/visual-wire";
+import { isVisualPath } from "../review/visual/paths";
+import { buildCapture, type CaptureRoute } from "../review/visual/capture";
+import type { CheckFailureDetail, MergeReadiness } from "../review/unified-comment";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
@@ -158,8 +162,9 @@ import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
 import { isSafetyEnabled, secretLeakFinding } from "../review/safety";
-import { buildReviewGroundingText, isGroundingEnabled } from "../review/grounding-wire";
+import { buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
+import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { loadHardGuardrailGlobs } from "../review/guardrail-config";
@@ -334,6 +339,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // the queue (runSelfTune fails safe).
       if (isSelfTuneEnabled(env)) await runSelfTune(env);
       return;
+    case "rag-index-repo":
+      // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). Defense-in-depth: the cron + webhook only
+      // ENQUEUE this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op,
+      // so flag-OFF does zero work here too. indexRepo / reindexChangedPaths are fully fail-safe (never throw).
+      if (isRagEnabled(env)) await runRagIndexJob(env, message.requestedBy, message.repoFullName, message.paths);
+      return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);
       return;
@@ -402,6 +413,87 @@ async function fanOutAgentRegateSweepJobs(env: Env, requestedBy: "schedule" | "a
     outcome: "queued",
     metadata: { repoCount: configured.length, requestedBy },
   });
+}
+
+// Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). The dispatch for the `rag-index-repo` job.
+// Caller already gated on isRagEnabled(env).
+//   - No repoFullName → cron fan-out: enqueue one FULL re-index job per registered + cutover-allowlisted repo.
+//   - repoFullName + paths → INCREMENTAL re-index of those changed paths (the push / merged-PR path).
+//   - repoFullName + no paths → FULL re-index of that one repo's code.
+// Fully fail-safe — indexRepo / reindexChangedPaths never throw; this only delegates.
+async function runRagIndexJob(
+  env: Env,
+  requestedBy: "schedule" | "api" | "webhook" | "test",
+  repoFullName: string | undefined,
+  paths: string[] | undefined,
+): Promise<void> {
+  if (!repoFullName && requestedBy !== "test") {
+    await fanOutRagIndexJobs(env, requestedBy);
+    return;
+  }
+  if (!repoFullName) return;
+  // Defensive: a repo can drop out of the allowlist between fan-out and processing. Only index converged repos.
+  if (!isConvergenceRepoAllowed(env, repoFullName)) return;
+  const repo = await getRepository(env, repoFullName);
+  /* v8 ignore next -- defensive: a fanned-out repo is always present; the null is belt-and-suspenders. */
+  if (!repo) return;
+  const project = repoFullName;
+  if (paths && paths.length > 0) {
+    await reindexChangedPaths(env, project, repo, paths);
+    return;
+  }
+  await indexRepo(env, project, repo);
+}
+
+// Enqueue one per-repo FULL re-index job for every registered + cutover-allowlisted repo (mirrors the
+// signal-snapshot / agent-regate fan-out: a delayed per-repo queue message so each repo's index runs as its own
+// bounded, retryable job rather than one giant tick). Only allowlisted repos are indexed — retrieval is gated the
+// same way, so indexing a non-converged repo would only burn the free-tier vector budget for no benefit.
+async function fanOutRagIndexJobs(env: Env, requestedBy: "schedule" | "api" | "webhook" | "test"): Promise<void> {
+  const repositories = (await listRepositories(env)).filter((repo) => repo.isRegistered && isConvergenceRepoAllowed(env, repo.fullName));
+  await Promise.all(
+    repositories.map((repo, index) => {
+      const message: JobMessage = { type: "rag-index-repo", requestedBy, repoFullName: repo.fullName };
+      const delaySeconds = Math.min(index * 30, 900);
+      return delaySeconds > 0 ? env.JOBS.send(message, { delaySeconds }) : env.JOBS.send(message);
+    }),
+  );
+  await recordAuditEvent(env, {
+    eventType: "rag.index.fanout",
+    outcome: "queued",
+    metadata: { repoCount: repositories.length, requestedBy },
+  });
+}
+
+// Cap on changed paths fed to one incremental re-index job (a huge merge re-indexes its first N changed files;
+// the slow-cadence full re-index catches the long tail). Bounds the per-job GitHub fetch + embed cost.
+const RAG_REINDEX_MAX_PATHS = 100;
+
+/**
+ * Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). On a MERGED PR into an allowlisted repo, enqueue
+ * an incremental re-index of the PR's changed files so the index reflects the new default-branch state. No-op when
+ * the flag is off, the repo isn't allowlisted, the action isn't a merge-close, or there are no changed paths.
+ *
+ * INCREMENTAL TRIGGER NOTE: gittensory does not (yet) subscribe to raw `push` events — the merged-PR close is the
+ * available signal that "code landed on the default branch". If a `push` handler is added later, that is the
+ * stronger trigger (it also catches direct-to-default-branch commits); enqueue the same `rag-index-repo` job with
+ * the pushed paths there. The slow-cadence cron full re-index (index.ts) is the backstop that catches anything
+ * the incremental path misses.
+ */
+async function maybeEnqueueRagReindexForMergedPr(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  action: string | undefined,
+  mergedAt: string | null | undefined,
+): Promise<void> {
+  if (!isRagEnabled(env) || !isConvergenceRepoAllowed(env, repoFullName)) return;
+  // A PR that merged: closed action + a merged_at timestamp. (A closed-unmerged PR changed nothing on the base.)
+  if (!PR_GATE_CLOSED_ACTIONS.has(action ?? "") || !mergedAt) return;
+  const files = await listPullRequestFiles(env, repoFullName, pullNumber);
+  const paths = files.map((file) => file.path).filter((path) => path.length > 0).slice(0, RAG_REINDEX_MAX_PATHS);
+  if (paths.length === 0) return;
+  await env.JOBS.send({ type: "rag-index-repo", requestedBy: "webhook", repoFullName, paths });
 }
 
 // Recompute the DETERMINISTIC gate verdict for a repo's stalest open PRs and record it as an audit event —
@@ -485,8 +577,11 @@ async function maybeRunAgentMaintenance(
 
   // Convergence safety: feed the planner the PR's changed paths + the repo's hard-guardrail globs so guarded
   // paths force manual review, and flag owner-authored PRs so they are never auto-closed (standing rule).
+  // FIX B: resolve files via the shared resolver so an EMPTY stored list (the maintenance ran before the
+  // detail-sync populated pull_request_files) can't silently empty changedPaths and let a guarded PR slip the
+  // guardrail into an auto-merge — it inline-fetches the real changed paths when stored is still empty.
   const [changedFiles, hardGuardrailGlobs] = await Promise.all([
-    listPullRequestFiles(env, repoFullName, pr.number),
+    resolvePullRequestFilesForReview(env, { installationId, repoFullName, pullNumber: pr.number }),
     loadHardGuardrailGlobs(env, repoFullName),
   ]);
   const changedPaths = changedFiles.map((file) => file.path).filter((path) => path.length > 0);
@@ -1046,6 +1141,15 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
             console.error(JSON.stringify({ level: "warn", event: "reputation_record_failed", deliveryId, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
           });
         }
+        // RAG incremental index (convergence, flag-gated by GITTENSORY_REVIEW_RAG + the per-repo cutover allowlist).
+        // When a PR MERGES into an allowlisted repo, its changes have landed on the default branch — enqueue an
+        // incremental re-index of just the changed files (reindexChangedPaths) so the index stays fresh without a
+        // full re-crawl. Enqueued (not run inline) so the webhook stays fast + the index work is its own retryable
+        // job. Flag-OFF (default) is a no-op (the job is never enqueued AND the processor no-ops). Best-effort.
+        await maybeEnqueueRagReindexForMergedPr(env, repoFullName, pr.number, payload.action, payload.pull_request.merged_at).catch((error) => {
+          /* v8 ignore next -- best-effort: a RAG re-index enqueue failure is logged, never surfaced to the gate. */
+          console.error(JSON.stringify({ level: "warn", event: "rag_reindex_enqueue_failed", deliveryId, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+        });
       }
     }
 
@@ -1177,6 +1281,38 @@ async function loadGateAuthorHistory(env: Env, repoFullName: string, author: str
   }
 }
 
+/**
+ * Resolve the PR's changed files for the review path, preferring the stored rows and, when they are empty at
+ * review time, fetching them inline from GitHub (and persisting them). This fixes diff-less first reviews:
+ * the PR-opened webhook can fire the review BEFORE the async detail-sync populated `pull_request_files`, so
+ * the AI review / grounding / gate / unified comment built their diff from an EMPTY `listPullRequestFiles`
+ * → "0 files / No diff provided", and the review never re-ran. Now the FIRST review sees the real diff.
+ *
+ * Efficient: stored rows are read once; the inline GitHub fetch happens only when stored is empty, and the
+ * result is persisted so every later read in the SAME review run reuses it. Fully fail-safe — a token-mint or
+ * fetch failure degrades to the (possibly empty) stored rows, exactly as before this fix.
+ */
+async function resolvePullRequestFilesForReview(
+  env: Env,
+  args: { installationId: number; repoFullName: string; pullNumber: number },
+): Promise<Awaited<ReturnType<typeof listPullRequestFiles>>> {
+  const stored = await listPullRequestFiles(env, args.repoFullName, args.pullNumber);
+  if (stored.length > 0) return stored;
+  // Stored files are empty (the review fired before detail-sync). Fetch + persist inline from GitHub.
+  try {
+    const token = await createInstallationToken(env, args.installationId).catch(() => undefined);
+    const fetched = await fetchAndStorePullRequestFilesForReview(env, args.repoFullName, args.pullNumber, token ?? env.GITHUB_PUBLIC_TOKEN);
+    if (fetched.length > 0) {
+      console.log(JSON.stringify({ ev: "review_files_fetched_inline", repository: args.repoFullName, pullNumber: args.pullNumber, files: fetched.length }));
+      return fetched;
+    }
+  } catch (error) {
+    /* v8 ignore next -- fail-safe: an inline fetch failure degrades to the empty stored rows (byte-identical to pre-fix). */
+    console.error(JSON.stringify({ level: "warn", event: "review_files_inline_fetch_failed", repository: args.repoFullName, pullNumber: args.pullNumber, error: errorMessage(error) }));
+  }
+  return stored;
+}
+
 /** Build a bounded unified-diff string from cached PR files for the AI reviewer. Caps total size so a
  *  huge PR cannot blow the model context or the neuron budget; each file's patch is taken from the raw
  *  GitHub file payload when present. */
@@ -1216,6 +1352,10 @@ export async function runAiReviewForAdvisory(
     pr: { number: number; title: string; body?: string | null | undefined };
     author: string | null;
     confirmedContributor: boolean;
+    // Pre-resolved PR files (the caller's resolvePullRequestFilesForReview output). When provided, the AI
+    // review + grounding + RAG use these instead of re-reading the stored rows — so a review that fired before
+    // detail-sync still sees the REAL diff (FIX B). Omitted (e.g. unit tests) → fall back to the stored read.
+    files?: Awaited<ReturnType<typeof listPullRequestFiles>> | undefined;
   },
 ): Promise<{ notes: string; reviewerCount: number } | undefined> {
   const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
@@ -1243,7 +1383,9 @@ export async function runAiReviewForAdvisory(
       storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
         ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
         : null;
-    const files = await listPullRequestFiles(env, args.repoFullName, args.pr.number);
+    // FIX B: prefer the caller's pre-resolved files (real diff even on a pre-sync first review); fall back to
+    // the stored read when the caller didn't pass them (e.g. unit tests calling this function directly).
+    const files = args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pr.number));
     // Grounding (convergence, flag-gated by GITTENSORY_REVIEW_GROUNDING). Build the FINISHED CI status + the full
     // content of the changed files so the reviewer verifies its claims against reality instead of guessing.
     // Flag-OFF (default) → we take no new branch at all: NO check/repo load, NO file fetch, and `grounding`
@@ -1552,6 +1694,18 @@ async function maybePublishPrPublicSurface(
   let gateEvaluation: ReturnType<typeof evaluateGateCheck> | undefined;
   let aiReview: { notes: string; reviewerCount: number } | undefined;
   let gateFinalized = false;
+  // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
+  // scan, the check-run, and the unified comment. Resolve them AT MOST ONCE per review and share across the
+  // gate phase (inside the try) AND the publish phase (check-run + comment, after the try): memoize the first
+  // resolve so a repo that needs files anywhere pays a single resolve, and a gate-only repo that never needs
+  // them pays nothing. resolvePullRequestFilesForReview prefers the stored rows and, when they are empty at
+  // review time (the webhook beat detail-sync), fetches + persists them inline — so the FIRST review sees the
+  // real diff instead of "0 files / No diff provided" (FIX B). Fail-safe by construction.
+  let reviewFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null = null;
+  const getReviewFiles = async (): Promise<Awaited<ReturnType<typeof listPullRequestFiles>>> => {
+    if (reviewFiles === null) reviewFiles = await resolvePullRequestFilesForReview(env, { installationId, repoFullName, pullNumber: pr.number });
+    return reviewFiles;
+  };
   try {
     const [repoIssues, repoPullRequests, repoBounties] = await Promise.all([
       listIssues(env, repoFullName),
@@ -1599,11 +1753,11 @@ async function maybePublishPrPublicSurface(
     // findings as advisory context, and feed the score to the gate (it only blocks under slop: block + the
     // threshold). Loads files lazily so disabled repos pay nothing.
     let slopRisk: number | null = null;
-    // Slop (#530) and focus-manifest-policy (#555) gates both need the PR's changed files. Load ONCE and
-    // share so two opted-in gates don't double-fetch; the load is lazy so a repo with both off pays nothing.
+    // Slop (#530) and focus-manifest-policy (#555) gates both need the PR's changed files; load via the shared
+    // resolver (lazy — a repo with both off pays nothing; see getReviewFiles above).
     let gateFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null = null;
     if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
-      gateFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      gateFiles = await getReviewFiles();
     }
     if (shouldCollectSlopEvidence(settings)) {
       const slopFiles = gateFiles ?? [];
@@ -1656,13 +1810,33 @@ async function maybePublishPrPublicSurface(
 
     // AI maintainer review (opt-in via aiReviewMode). Mutates `advisory` with a consensus defect (if any)
     // BEFORE the gate evaluates, and returns advisory notes for the panel. Inside the try so any AI
-    // failure is caught and the gate is still finalized (never left in_progress).
-    aiReview = await runAiReviewForAdvisory(env, { settings, advisory, repoFullName, pr, author, confirmedContributor });
+    // failure is caught and the gate is still finalized (never left in_progress). Pass the shared resolved
+    // files so the review (+ grounding + RAG) sees the REAL diff even on a pre-detail-sync first review (FIX B);
+    // resolve only when the review will actually run (aiReviewMode !== off + a head SHA) to keep gate-only
+    // repos free of an extra file resolve.
+    const aiReviewWillRun = settings.aiReviewMode !== "off" && Boolean(advisory.headSha);
+    aiReview = await runAiReviewForAdvisory(env, {
+      settings,
+      advisory,
+      repoFullName,
+      pr,
+      author,
+      confirmedContributor,
+      ...(aiReviewWillRun ? { files: await getReviewFiles() } : {}),
+    });
 
     // Safety secrets-scan (convergence, flag-gated by GITTENSORY_REVIEW_SAFETY). Scans the diff and, on a hit,
-    // appends a critical `secret_leak` blocker BEFORE the gate evaluates. Reuses the already-loaded gate
-    // files when present. Flag-OFF (default) is an immediate no-op → the advisory/gate is byte-identical.
-    await maybeAddSecretLeakFinding(env, { advisory, repoFullName, pullNumber: pr.number, files: gateFiles });
+    // appends a critical `secret_leak` blocker BEFORE the gate evaluates. When the scan will actually run
+    // (safety flag ON + repo allowlisted), pass the shared resolved files so it scans the REAL diff (FIX B);
+    // otherwise pass the already-loaded files (or null) and let the scan early-return. Flag-OFF (default) is an
+    // immediate no-op → the advisory/gate is byte-identical.
+    const safetyWillRun = isSafetyEnabled(env) && isConvergenceRepoAllowed(env, repoFullName);
+    await maybeAddSecretLeakFinding(env, {
+      advisory,
+      repoFullName,
+      pullNumber: pr.number,
+      files: safetyWillRun ? await getReviewFiles() : reviewFiles,
+    });
 
     // First-time-contributor grace (#552): compute the author's complete per-repo PR history
     // (excluding this PR) with an aggregate DB query. Do not derive policy-enforcement history from
@@ -1756,7 +1930,9 @@ async function maybePublishPrPublicSurface(
 
   if (decision.willCheckRun && advisory.headSha) {
     try {
-      const checkRunFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      // FIX B: the check-run annotations/details need the real diff too — reuse the shared resolver (one resolve
+      // per review; inline-fetches when the stored rows are still empty from a pre-detail-sync first review).
+      const checkRunFiles = await getReviewFiles();
       const checkRunResult = await createOrUpdateCheckRun(env, installationId, repoFullName, advisory, settings.checkRunDetailLevel, {
         files: checkRunFiles,
         collisions,
@@ -1808,7 +1984,9 @@ async function maybePublishPrPublicSurface(
     //      gate signal row (which renders only the conclusion-derived status text, not the defect string).
     if (unifiedCommentAllowed && gateEvaluation) {
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation });
-      const unifiedFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      // FIX B: the unified comment's file count + visual-capture path filter need the real diff — reuse the
+      // shared resolver (one resolve per review; inline-fetches when stored is still empty pre-detail-sync).
+      const unifiedFiles = await getReviewFiles();
       // CI + merge-state readiness — a converged enrichment the legacy panel never showed. Maps each cached
       // check's conclusion to passed/failed/unverified; any failure (failure/timed_out/cancelled/action_required)
       // flips the whole PR to 'failed'. The gate decision stays authoritative for the comment's color (always
@@ -1820,11 +1998,42 @@ async function maybePublishPrPublicSurface(
       });
       const anyPassed = checkSummaries.some((check) => (check.conclusion ?? "").toLowerCase() === "success");
       const ciState: MergeReadiness["ciState"] = failedChecks.length > 0 ? "failed" : anyPassed ? "passed" : "unverified";
+      // FIX D3: per-failed-check WHY (codecov %/test/lint reason) from each check's output.title/summary or a
+      // commit-status description — the SAME extraction the grounding path uses (checkSummaryText), capped +
+      // public-safe (check name + short reason only). The renderer lists these under the CI chip.
+      const failingDetails: CheckFailureDetail[] = failedChecks.map((check) => {
+        const summary = checkFailureSummaryText(check);
+        return { name: check.name, ...(summary ? { summary } : {}), ...(check.detailsUrl ? { detailsUrl: check.detailsUrl } : {}) };
+      });
       const mergeReadiness: MergeReadiness = {
         ciState,
         ...(pr.mergeableState ? { mergeStateLabel: pr.mergeableState } : {}),
         ...(failedChecks.length > 0 ? { failingChecks: failedChecks.map((check) => check.name) } : {}),
+        ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };
+      // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo
+      // cutover gate both allow it (screenshotsAllowed) AND (2) the PR touches WEB-VISIBLE files (isVisualPath
+      // — frontend pages / public OG images; backend .ts/.md/.json PRs never qualify). Fully wrapped in
+      // try/catch + defaults to [] so a capture failure (render timeout, missing binding, GitHub hiccup) can
+      // NEVER sink the review — it just omits the "Visual preview" section. Flag-OFF (default) ⇒ this block is
+      // skipped entirely and the unified comment is byte-identical.
+      let beforeAfter: CaptureRoute[] = [];
+      const visualFiles = unifiedFiles.map((file) => file.path).filter(isVisualPath);
+      if (screenshotsAllowed(env, repoFullName) && visualFiles.length > 0) {
+        try {
+          const token = await createInstallationToken(env, installationId);
+          const capture = await buildCapture(env, token, {
+            repoFullName,
+            prNumber: pr.number,
+            ...(pr.headSha ? { headSha: pr.headSha } : {}),
+            ...(pr.headRef ? { headRef: pr.headRef } : {}),
+            previewFromChecks: true,
+          }, visualFiles);
+          beforeAfter = capture.routes;
+        } catch (error) {
+          console.log(JSON.stringify({ ev: "visual_capture_error", repoFullName, pull: pr.number, message: errorMessage(error).slice(0, 200) }));
+        }
+      }
       deterministicBody = buildUnifiedCommentBody({
         gate: gateEvaluation,
         ...(aiReview !== undefined ? { aiReview } : {}),
@@ -1852,6 +2061,7 @@ async function maybePublishPrPublicSurface(
           ...(reviewConfig?.footerText ? { customText: reviewConfig.footerText } : {}),
         }),
         reRunLabel: `${PR_PANEL_RETRIGGER_MARKER} Re-run Gittensory review`,
+        ...(beforeAfter.length > 0 ? { beforeAfter } : {}),
       });
     } else {
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);

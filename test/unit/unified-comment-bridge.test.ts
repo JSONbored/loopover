@@ -336,6 +336,219 @@ describe("single AI pass: the bridge RECOVERS the consensus defect, never re-der
   });
 });
 
+// ── FIX D: fuller blocked / CI-failing comment (gate blockers + verdictReason + failing-check details) ──────
+describe("gate blockers render in 'Why this is blocked' (FIX D1)", () => {
+  it("maps a NON-AI gate blocker into the reviewer blockers (populated list, not empty)", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "failure",
+        title: "Gittensory Gate: blocked",
+        summary: "A hard blocker was found.",
+        // A non-AI gate failure (no ai_consensus_defect anywhere) — the consensus defect alone would have left
+        // "Why this is blocked" empty. The gate blocker must now render.
+        blockers: [{ code: "missing_linked_issue", severity: "critical", title: "No linked issue", detail: "Link an issue.", action: "Add `Closes #123`." }],
+      }),
+      // no aiReview, no advisoryFindings (no consensus defect) — only the gate blocker drives the list.
+      panelRows,
+      readinessTotal: 30,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Why this is blocked");
+    expect(body).toContain("No linked issue");
+    expect(body).toContain("Add `Closes #123`."); // the finding's action is appended after " — "
+  });
+
+  it("does NOT double-list the ai_consensus_defect when it is both a gate blocker and the recovered defect", () => {
+    const title = "Use-after-free in handler";
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "failure",
+        summary: "A hard blocker was found.",
+        // The defect is present in BOTH the gate blockers AND advisory findings (as evaluateGateCheck produces).
+        blockers: [{ code: "ai_consensus_defect", severity: "critical", title, detail: "Both models agree." }],
+      }),
+      advisoryFindings: [{ code: "ai_consensus_defect", severity: "critical", title, detail: "Both models agree." }],
+      panelRows,
+      readinessTotal: 20,
+      changedFiles: 3,
+      footerMarkdown: footer,
+    });
+    // The defect surfaces exactly once (recovered via consensusDefect; excluded from the folded gate blockers).
+    expect(body.split(title).length - 1).toBe(1);
+  });
+
+  it("renders BOTH the recovered consensus defect AND a separate non-AI gate blocker", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "failure",
+        summary: "A hard blocker was found.",
+        blockers: [
+          { code: "ai_consensus_defect", severity: "critical", title: "Real bug", detail: "Both agree." },
+          { code: "slop_gate", severity: "critical", title: "Slop risk too high", detail: "Padding detected." },
+        ],
+      }),
+      advisoryFindings: [{ code: "ai_consensus_defect", severity: "critical", title: "Real bug", detail: "Both agree." }],
+      panelRows,
+      readinessTotal: 10,
+      changedFiles: 4,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Real bug"); // recovered consensus defect
+    expect(body).toContain("Slop risk too high"); // folded non-AI gate blocker
+  });
+
+  it("scrubs a private term out of a gate blocker before it reaches the public comment (privacy invariant)", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "failure",
+        summary: "A hard blocker was found.",
+        // A gate blocker whose title names a private internal must be scrubbed → "[context]", never leaked.
+        blockers: [{ code: "x", severity: "critical", title: "Your trust score is too low", detail: "...", action: "n/a" }],
+      }),
+      panelRows,
+      readinessTotal: 10,
+      changedFiles: 1,
+      footerMarkdown: footer,
+    });
+    expect(body).not.toMatch(/trust score/i);
+    expect(body).toContain("[context]");
+  });
+});
+
+describe("verdictReason on a held/blocked headline (FIX D2)", () => {
+  it("appends the gate summary to a BLOCKED (close) verdict headline", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "failure", title: "Gittensory Gate: blocked", summary: "A hard blocker was found." }),
+      panelRows,
+      readinessTotal: 30,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toMatch(/Closed|Blocked/);
+    expect(body).toContain("A hard blocker was found."); // the gate's authoritative reason on the headline
+  });
+
+  it("appends the gate summary to a HELD (manual) verdict headline", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "action_required", title: "Gittensory Gate — needs review", summary: "Manual maintainer review required." }),
+      panelRows,
+      readinessTotal: 55,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Held for maintainer review");
+    expect(body).toContain("Manual maintainer review required.");
+  });
+
+  it("falls back to the gate TITLE when the summary is empty", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "failure", title: "Gittensory Gate: blocked by policy", summary: "  " }),
+      panelRows,
+      readinessTotal: 20,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Gittensory Gate: blocked by policy");
+  });
+
+  it("does NOT overwrite the positive ready wording on a passing (merge) verdict", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "success", title: "Gittensory Gate passed", summary: "No configured hard blocker was found." }),
+      panelRows,
+      readinessTotal: 90,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Approved"); // ready headline kept its positive wording…
+    expect(body).not.toContain("No configured hard blocker was found."); // …the gate summary did NOT replace it
+  });
+});
+
+describe("failing CI checks (names + per-check WHY) render under the CI chip (FIX D3)", () => {
+  const mergeReadiness: MergeReadiness = {
+    ciState: "failed",
+    failingChecks: ["codecov/patch", "lint"],
+    failingDetails: [
+      { name: "codecov/patch", summary: "60% of diff hit (target 97%)" },
+      { name: "lint", summary: "2 errors in src/foo.ts" },
+    ],
+  };
+
+  it("lists each failing check name AND its detail", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "action_required", summary: "CI is red." }),
+      panelRows,
+      readinessTotal: 40,
+      changedFiles: 3,
+      mergeReadiness,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("CI checks failing");
+    expect(body).toContain("codecov/patch");
+    expect(body).toContain("60% of diff hit (target 97%)");
+    expect(body).toContain("lint");
+    expect(body).toContain("2 errors in src/foo.ts");
+    expect(body).toContain("`CI failing`"); // the chip is still present too
+  });
+
+  it("falls back to bare check names when no per-check details were captured", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "action_required", summary: "CI is red." }),
+      panelRows,
+      readinessTotal: 40,
+      changedFiles: 3,
+      mergeReadiness: { ciState: "failed", failingChecks: ["build", "e2e"] },
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("CI checks failing");
+    expect(body).toContain("build");
+    expect(body).toContain("e2e");
+  });
+
+  it("omits the failing-checks section entirely when CI passed", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({ conclusion: "success" }),
+      panelRows,
+      readinessTotal: 90,
+      changedFiles: 3,
+      mergeReadiness: { ciState: "passed" },
+      footerMarkdown: footer,
+    });
+    expect(body).not.toContain("CI checks failing");
+    expect(body).toContain("`CI green`");
+  });
+});
+
+describe("privacy invariant: the private 'Maintainer notes' internals never reach the public unified comment (FIX D)", () => {
+  it("never contains 'Maintainer notes', even on a fully-populated blocked + CI-failing comment", () => {
+    const body = buildUnifiedCommentBody({
+      gate: gate({
+        conclusion: "failure",
+        title: "Gittensory Gate: blocked",
+        summary: "A hard blocker was found.",
+        blockers: [
+          { code: "ai_consensus_defect", severity: "critical", title: "Real bug", detail: "Both agree." },
+          { code: "missing_linked_issue", severity: "critical", title: "No linked issue", detail: "...", action: "Add `Closes #1`." },
+        ],
+        warnings: [{ code: "w", severity: "warning", title: "Add a test", detail: "...", action: "Cover the branch." }],
+      }),
+      aiReview: { notes: "The change is risky." },
+      advisoryFindings: [{ code: "ai_consensus_defect", severity: "critical", title: "Real bug", detail: "Both agree." }],
+      panelRows,
+      readinessTotal: 10,
+      changedFiles: 6,
+      mergeReadiness: { ciState: "failed", failingChecks: ["codecov/patch"], failingDetails: [{ name: "codecov/patch", summary: "60% of diff hit (target 97%)" }] },
+      footerMarkdown: footer,
+    });
+    expect(body).not.toContain("Maintainer notes");
+    // Sanity: the new depth IS present (so this isn't passing on an empty body).
+    expect(body).toContain("Why this is blocked");
+    expect(body).toContain("CI checks failing");
+    expect(body).toContain("A hard blocker was found.");
+  });
+});
+
 describe("PR_PANEL_COMMENT_MARKER is single-sourced from github/comments", () => {
   it("re-exports the SAME marker value the upsert reads (no drift between modules)", () => {
     // The bridge re-exports the canonical marker rather than redefining it. A divergence here would post a

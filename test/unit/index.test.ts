@@ -184,6 +184,47 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
   });
 
+  it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when GITTENSORY_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {
+    const sentFor = async (ragFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(ragFlag === undefined ? {} : { GITTENSORY_REVIEW_RAG: ragFlag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil)); // full-sync window
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // Flag OFF (default) → no rag-index-repo job; the enqueued set is unchanged from today.
+    expect((await sentFor()).some((m) => m.type === "rag-index-repo")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "rag-index-repo")).toBe(false);
+    // Flag ON → exactly one rag-index-repo fan-out job, enqueued in the full-sync window.
+    const on = await sentFor("true");
+    expect(on.filter((m) => m.type === "rag-index-repo")).toEqual([{ type: "rag-index-repo", requestedBy: "schedule" }]);
+  });
+
+  it("does NOT enqueue rag-index-repo outside the full-sync window even when GITTENSORY_REVIEW_RAG is ON", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil)); // hourly but NOT full-sync
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "rag-index-repo")).toBe(false);
+  });
+
   it("enqueues weekly value report generation during the Monday report window", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

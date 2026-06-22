@@ -44,8 +44,10 @@ const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 /** Pull a one-line failure reason from a check-run payload (output.title/summary) or a commit-status
  *  description — the same fields the unified comment surfaces, so the reviewer sees WHY a check failed
- *  ("60% of diff hit (target 97%)") not just "codecov/patch failed". "" when none present. */
-function checkSummaryText(check: CheckSummaryRecord): string {
+ *  ("60% of diff hit (target 97%)") not just "codecov/patch failed". "" when none present. Exported so the
+ *  unified-comment call site populates MergeReadiness.failingDetails from the SAME extraction (FIX D3),
+ *  keeping the reviewer's grounding and the public comment consistent on each check's failure reason. */
+export function checkSummaryText(check: CheckSummaryRecord): string {
   const payload = check.payload as { output?: { title?: unknown; summary?: unknown }; description?: unknown } | undefined;
   const output = payload?.output;
   const candidates = [output?.title, output?.summary, payload?.description];

@@ -159,6 +159,48 @@ describe("renderUnifiedReviewComment", () => {
     expect(pending).toContain("`CI pending`");
   });
 
+  it("lists failing check names + per-check details under a 'CI checks failing' section (FIX D3)", () => {
+    const md = renderUnifiedReviewComment(
+      {
+        ...base,
+        readiness: {
+          ciState: "failed",
+          failingChecks: ["codecov/patch", "lint"],
+          failingDetails: [
+            { name: "codecov/patch", summary: "60% of diff hit (target 97%)" },
+            { name: "lint", summary: "2 errors in src/foo.ts" },
+          ],
+        },
+      },
+      {},
+    );
+    expect(md).toContain("CI checks failing");
+    expect(md).toContain("- codecov/patch — 60% of diff hit (target 97%)");
+    expect(md).toContain("- lint — 2 errors in src/foo.ts");
+  });
+
+  it("falls back to bare failing check names when no per-check detail is present (FIX D3)", () => {
+    const md = renderUnifiedReviewComment({ ...base, readiness: { ciState: "failed", failingChecks: ["build", "e2e"] } }, {});
+    expect(md).toContain("CI checks failing");
+    expect(md).toContain("- build");
+    expect(md).toContain("- e2e");
+  });
+
+  it("omits the failing-checks section when CI passed or is unverified (FIX D3)", () => {
+    expect(renderUnifiedReviewComment({ ...base, readiness: { ciState: "passed" } }, {})).not.toContain("CI checks failing");
+    expect(renderUnifiedReviewComment({ ...base, readiness: { ciState: "unverified", failingChecks: ["stale"] } }, {})).not.toContain("CI checks failing");
+  });
+
+  it("angle-escapes a failing check name + detail (FIX D3 public-safety)", () => {
+    const md = renderUnifiedReviewComment(
+      { ...base, readiness: { ciState: "failed", failingDetails: [{ name: "check <x>", summary: "broke </details>" }] } },
+      {},
+    );
+    expect(md).toContain("check &lt;x&gt;");
+    expect(md).toContain("broke &lt;/details&gt;");
+    expect(md).not.toContain("broke </details>");
+  });
+
   it("appends an explicit verdict reason across ready (merged + unmerged) and advisory states", () => {
     // The verdict word is bolded (`**…**`); the reason follows outside the bold, so assert each separately.
     const merged = renderUnifiedReviewComment({ ...base, decision: "merge", merged: true, verdictReason: "all checks green" }, {});

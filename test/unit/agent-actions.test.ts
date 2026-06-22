@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_READY, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
 function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateCheckConclusion }): AgentActionPlanInput {
@@ -141,9 +141,32 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(plan).not.toContain("merge");
     });
 
+    it("labels a guarded passing PR `needs-human-review` (NOT `ready-to-merge`) and still does not merge it", () => {
+      // A guardrail-hit PR that otherwise passes is withheld from auto-merge → the `ready-to-merge` label
+      // would be misleading. It must carry the distinct `needs-human-review` label instead, and never merge.
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.label).not.toBe(AGENT_LABEL_READY);
+      expect(label?.reason).toContain("guarded path");
+      expect(classes(plan)).not.toContain("merge");
+    });
+
+    it("does not re-plan the needs-human-review label when the guarded PR already carries it (idempotent)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, ...guarded, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW] } })));
+      expect(plan).not.toContain("label");
+    });
+
+    it("a guarded BLOCKING PR keeps the changes-requested label (not needs-human-review)", () => {
+      const label = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { label: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [] } })).find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+
     it("still auto-merges when the changed paths do NOT match any guardrail glob", () => {
-      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, changedPaths: ["docs/readme.md", "src/ui/button.tsx"], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
-      expect(plan).toContain("merge");
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, changedPaths: ["docs/readme.md", "src/ui/button.tsx"], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      expect(classes(plan)).toContain("merge");
+      // A clean, non-guarded passing PR keeps the `ready-to-merge` label (the auto-merge it promises happens).
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
     });
 
     it("fails SAFE on UNKNOWN paths: with guardrails configured but no changed-file set, suppress merge/close/approve", () => {

@@ -149,6 +149,21 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Convergence (RAG / codebase index — Layer C, flag-gated by GITTENSORY_REVIEW_RAG). Populate + maintain the
+      // vector index that retrieval reads.
+      //   - No `repoFullName` (the cron fan-out) → enqueue one per-repo FULL re-index job for every
+      //     registered + cutover-allowlisted repo (mirrors the agent-regate / signal-snapshot fan-out).
+      //   - `repoFullName` + no `paths` → FULL re-index of that repo's code (indexRepo).
+      //   - `repoFullName` + `paths` → INCREMENTAL re-index of only those changed paths (reindexChangedPaths),
+      //     enqueued from a push / merged-PR webhook.
+      // Enqueued + dispatched ONLY when the flag is ON; flag-OFF (default) this job is never created and the
+      // processor no-ops, so the deploy is byte-identical to today.
+      type: "rag-index-repo";
+      requestedBy: "schedule" | "api" | "webhook" | "test";
+      repoFullName?: string;
+      paths?: string[];
+    }
+  | {
       // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): fork the content repo with the
       // contributor's token + open the PR. Enqueued by the draft OAuth callback.
       type: "submit-draft";

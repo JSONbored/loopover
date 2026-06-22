@@ -16,6 +16,11 @@ const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
 // them and they never collide with project labels.
 export const AGENT_LABEL_READY = "gittensory:ready-to-merge";
 export const AGENT_LABEL_CHANGES = "gittensory:changes-requested";
+// A PR that PASSES the gate but touches a hard-guardrail path is NOT ready to auto-merge — it is withheld
+// for a human (the merge/approve/close dispositions are suppressed below). Labeling it `ready-to-merge`
+// would be misleading (the label promises an auto-merge that never happens), so a guarded passing PR gets
+// this distinct "needs a human" label instead. Blocking verdicts keep AGENT_LABEL_CHANGES.
+export const AGENT_LABEL_NEEDS_REVIEW = "gittensory:needs-human-review";
 
 // Maintainer-managed automation accounts whose PRs are never auto-closed. A recurring accumulator (e.g.
 // github-actions[bot] opening automation/readme-refresh) or a dependency PR must not be killed by a duplicate
@@ -107,11 +112,15 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
 
   // 1) label — reflect the verdict bucket. After the neutral/skipped return above, a non-blocking verdict is
-  // necessarily `success`. Idempotent: skip if the PR already carries the label.
+  // necessarily `success`. A passing PR that hit a hard guardrail is NOT auto-merge-ready (the irreversible
+  // dispositions below are all suppressed for it) — labeling it `ready-to-merge` would promise an auto-merge
+  // that never happens, so it gets `needs-human-review` instead. Idempotent: skip if the PR already carries
+  // the chosen label.
   if (acting("label")) {
-    const label = blocking ? AGENT_LABEL_CHANGES : AGENT_LABEL_READY;
+    const label = blocking ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    const reason = !blocking && guardrailHit ? `verdict=${input.conclusion}; guarded path forces human review` : `verdict=${input.conclusion}`;
     if (!hasLabel(input.pr.labels, label)) {
-      actions.push({ actionClass: "label", requiresApproval: approval("label"), reason: `verdict=${input.conclusion}`, label });
+      actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
     }
   }
 

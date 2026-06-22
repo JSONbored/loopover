@@ -61,6 +61,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
+    "@cloudflare/puppeteer": "^1.1.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@octokit/core": "^7.0.6",
     "agents": "^0.16.2",
@@ -81,8 +82,8 @@
     "github-actionlint": "^1.7.12",
     "node-addon-api": "^8.8.0",
     "node-gyp": "^12.4.0",
-    "playwright": "^1.61.0",
     "pixelmatch": "^7.2.0",
+    "playwright": "^1.61.0",
     "pngjs": "^7.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3",
@@ -104,8 +105,7 @@
     },
     "vite": {
       "esbuild": "^0.28.1"
-    },
-    "ws": "^8.21.0"
+    }
   },
   "main": "index.js",
   "directories": {

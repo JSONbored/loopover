@@ -273,6 +273,7 @@ function normalizeUrl(value: unknown): string {
 function domainFromUrl(value: string): string {
   try {
     return normalizeHostname(new URL(value).hostname);
+    /* v8 ignore next 3 -- unreachable: callers only pass already-normalized valid http(s) URLs, so new URL never throws here */
   } catch {
     return "";
   }

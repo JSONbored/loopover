@@ -475,4 +475,272 @@ describe("findRelatedContentMatches (non-blocking advisory)", () => {
     const m = findRelatedContentMatches(candidate, existing, 2);
     expect(m).toHaveLength(2); // capped at the limit even though all 5 would match
   });
+
+  it("uses the DEFAULT limit (5) when none is passed (default-param branch)", () => {
+    const candidate = extractContentDuplicateSignals({
+      filePath: "content/skills/cand.mdx",
+      content: mdx({ title: "Shared Title", slug: "cand" }),
+    });
+    const existing = Array.from({ length: 8 }, (_, n) =>
+      extractContentDuplicateSignals({
+        filePath: `content/skills/e${n}.mdx`,
+        content: mdx({ title: "Shared Title", slug: `e${n}` }),
+      }),
+    );
+    // No 3rd arg → `limit = 5` default applies, capping the 8 would-be matches at 5.
+    expect(findRelatedContentMatches(candidate, existing)).toHaveLength(5);
+  });
+
+  it("returns [] when nothing relates at all (loop completes with no push)", () => {
+    const a = extractContentDuplicateSignals({
+      filePath: "content/skills/a.mdx",
+      content: mdx({ title: "Wholly Unique A", slug: "a", websiteUrl: "https://one.example/x" }),
+    });
+    const b = extractContentDuplicateSignals({
+      filePath: "content/tools/b.mdx",
+      content: mdx({ title: "Wholly Unique B", slug: "b", websiteUrl: "https://two.example/y" }),
+    });
+    expect(findRelatedContentMatches(a, [b])).toEqual([]);
+  });
+
+  it("uses the existing-side collections phrasing when EXISTING (not candidate) is collections (|| right side)", () => {
+    // isCollectionBridge's `existing.category === "collections"` operand: candidate is a resource
+    // category, existing is collections → still bridges to the collection/resource phrasing.
+    const a = extractContentDuplicateSignals({
+      filePath: "content/skills/a.mdx",
+      content: mdx({ title: "A", slug: "a", websiteUrl: "https://x.example/app" }),
+    });
+    const b = extractContentDuplicateSignals({
+      filePath: "content/collections/b.mdx",
+      content: mdx({ title: "B", slug: "b", websiteUrl: "https://x.example/app" }),
+    });
+    const m = findRelatedContentMatches(a, [b]);
+    expect(m[0]?.reasons[0]).toContain("across collection/resource categories");
+  });
+
+  it("reports a shared catalog ROOT matched by exact equality (multiEntryCatalogRoot `url === catalogUrl`)", () => {
+    // Both URLs ARE the catalog root itself (not a subpath), exercising the `===` operand of the
+    // `url === catalogUrl || url.startsWith(...)` disjunction in multiEntryCatalogRoot.
+    const a = extractContentDuplicateSignals({
+      filePath: "content/skills/a.mdx",
+      content: mdx({ title: "Distinct A", slug: "a", githubUrl: "https://github.com/modelcontextprotocol/servers" }),
+    });
+    const b = extractContentDuplicateSignals({
+      filePath: "content/skills/b.mdx",
+      content: mdx({ title: "Distinct B", slug: "b", githubUrl: "https://github.com/modelcontextprotocol/servers" }),
+    });
+    const m = findRelatedContentMatches(a, [b]);
+    expect(m[0]?.reasons.some((r) => r.includes("same multi-entry catalog source URL"))).toBe(true);
+  });
+});
+
+describe("unquoteYamlScalar branches (via parseSimpleFrontmatter)", () => {
+  it("strips a single-quoted scalar (the `'…'` operand of the quote check)", () => {
+    const f = parseSimpleFrontmatter("---\ntitle: 'Quoted Single'\n---\n");
+    expect(f.title).toBe("Quoted Single");
+  });
+
+  it("strips a trailing ` # comment` from an unquoted inline scalar (the else/replace branch)", () => {
+    const f = parseSimpleFrontmatter("---\ntitle: Real Value  # trailing note\nslug: a\n---\n");
+    expect(f.title).toBe("Real Value");
+  });
+});
+
+describe("parseSimpleFrontmatter — falsy source guard", () => {
+  it("returns {} for an empty string (String(source || '') → no match)", () => {
+    expect(parseSimpleFrontmatter("")).toEqual({});
+  });
+
+  it("returns {} for a null source coerced via `source || ''` (defensive coercion)", () => {
+    expect(parseSimpleFrontmatter(null as unknown as string)).toEqual({});
+  });
+});
+
+describe("protectedFrontmatterChanges — absent-vs-present operand", () => {
+  it("flags a protected field that was ABSENT before and ADDED after (normalizeProtectedValue undefined → '')", () => {
+    const before = mdx({ title: "T", slug: "a" });
+    const after = mdx({ title: "T", slug: "a", author: "Newly Added" });
+    expect(protectedFrontmatterChanges(before, after)).toEqual(["author"]);
+  });
+
+  it("returns [] when every protected field is identically absent in both (the equal branch)", () => {
+    const before = mdx({ title: "T", description: "x" });
+    const after = mdx({ title: "T", description: "y" });
+    // No protected field present on either side → all comparisons equal ('' === '') → no changes.
+    expect(protectedFrontmatterChanges(before, after)).toEqual([]);
+  });
+});
+
+describe("extractContentDuplicateSignals — category/slug fallback + apostrophe + missing fields", () => {
+  it("falls back to PATH-derived category/slug when frontmatter omits them (|| right operand)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/agents/path-derived.mdx",
+      content: mdx({ title: "P" }),
+    });
+    expect(sig.category).toBe("agents");
+    expect(sig.slug).toBe("path-derived");
+  });
+
+  it("uses FRONTMATTER category/slug when present (|| left operand), normalizing the slug", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "weird/non-content-path.txt",
+      content: mdx({ title: "P", category: "Tools", slug: "My Slug" }),
+    });
+    expect(sig.category).toBe("tools");
+    expect(sig.slug).toBe("my-slug"); // normalizeText spaces → '-'
+  });
+
+  it("yields empty category/slug when neither path nor frontmatter supply them", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "weird/non-content-path.txt",
+      content: mdx({ title: "P" }),
+    });
+    expect(sig.category).toBe("");
+    expect(sig.slug).toBe("");
+  });
+
+  it("normalizes curly + straight apostrophes out of the title (the `['’]` replace branch)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/skills/x.mdx",
+      content: mdx({ title: "Bob’s Don't Tool", slug: "x" }),
+    });
+    expect(sig.normalizedTitle).toBe("bobs dont tool");
+  });
+
+  it("defaults title/normalized fields to '' when title+description are absent (String(value||'') branch)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/skills/x.mdx",
+      content: mdx({ slug: "x" }),
+    });
+    expect(sig.title).toBe("");
+    expect(sig.normalizedTitle).toBe("");
+    expect(sig.normalizedDescription).toBe("");
+  });
+
+  it("OMITS label/url keys entirely when not supplied (the conditional-spread false branch)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/skills/x.mdx",
+      content: mdx({ title: "X", slug: "x" }),
+    });
+    expect("label" in sig).toBe(false);
+    expect("url" in sig).toBe(false);
+  });
+
+  it("INCLUDES label/url keys when supplied (the conditional-spread true branch)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/skills/x.mdx",
+      content: mdx({ title: "X", slug: "x" }),
+      label: "lbl",
+      url: "https://u.example",
+    });
+    expect(sig.label).toBe("lbl");
+    expect(sig.url).toBe("https://u.example");
+  });
+});
+
+describe("normalizeUrl — github.com path variants (via extractContentDuplicateSignals)", () => {
+  it("returns the bare github root when there is NO owner/repo (the `owner && repo` false branch + pathname '|| /')", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/tools/y.mdx",
+      content: mdx({ title: "Y", slug: "y", githubUrl: "https://github.com" }),
+    });
+    // No owner/repo → skip the repoRoot return; pathname "/" → replace → "" → "|| '/'" → trailing slash stripped.
+    expect(sig.urls).toEqual(["https://github.com"]);
+  });
+
+  it("keeps an owner-only github URL (owner present, repo undefined → `owner && repo` false)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/tools/y.mdx",
+      content: mdx({ title: "Y", slug: "y", githubUrl: "https://github.com/justowner" }),
+    });
+    expect(sig.urls).toEqual(["https://github.com/justowner"]);
+  });
+
+  it("collapses a non-catalog owner/repo to the lowercased repo root (the `owner && repo` true branch)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/tools/g.mdx",
+      content: mdx({ title: "G", slug: "g", githubUrl: "https://github.com/Acme/Repo/tree/main/sub" }),
+    });
+    expect(sig.urls).toEqual(["https://github.com/acme/repo"]);
+  });
+
+  it("strips a trailing `.git` from the repo segment", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/tools/g.mdx",
+      content: mdx({ title: "G", slug: "g", githubUrl: "https://github.com/Acme/Repo.git" }),
+    });
+    expect(sig.urls).toEqual(["https://github.com/acme/repo"]);
+  });
+
+  it("returns the catalog ROOT (no subpath) when a multi-entry-catalog repo has no remaining path (`rest.length` false)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/tools/w.mdx",
+      content: mdx({ title: "W", slug: "w", githubUrl: "https://github.com/modelcontextprotocol/servers" }),
+    });
+    // Catalog repo but rest is empty → the `MULTI_ENTRY_CATALOG_URLS.has(repoRoot) && rest.length`
+    // conjunction is false → return repoRoot.
+    expect(sig.urls).toEqual(["https://github.com/modelcontextprotocol/servers"]);
+  });
+
+  it("strips a trailing-slash-only path on a non-github host (the pathname `|| '/'` branch then trailing-slash trim)", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/tools/z.mdx",
+      content: mdx({ title: "Z", slug: "z", websiteUrl: "https://example.com/" }),
+    });
+    expect(sig.urls).toEqual(["https://example.com"]);
+  });
+});
+
+describe("findContentDuplicateMatch — same-path and same-slug legacy reasons", () => {
+  it("reports `same content path` when the candidate IS an existing item (line 372)", () => {
+    const c = extractContentDuplicateSignals({
+      filePath: "content/skills/dup.mdx",
+      content: mdx({ title: "D", slug: "dup" }),
+    });
+    const m = findContentDuplicateMatch(c, [c]);
+    expect(m?.reasons.some((r) => r.includes("same content path"))).toBe(true);
+  });
+
+  it("reports `same <category> slug` for a same-category same-slug pair on DIFFERENT paths (line 375)", () => {
+    const a = extractContentDuplicateSignals({
+      filePath: "content/skills/e1.mdx",
+      content: mdx({ title: "E", slug: "sameslug" }),
+    });
+    const b = extractContentDuplicateSignals({
+      filePath: "content/skills/e2.mdx",
+      content: mdx({ title: "E Other", slug: "sameslug" }),
+    });
+    const m = findContentDuplicateMatch(a, [b]);
+    expect(m?.reasons.some((r) => r.includes("same skills slug"))).toBe(true);
+  });
+});
+
+describe("directoryIndexToSignals — array guard + empty-options defaults", () => {
+  it("returns [] for an empty array (no entries to map)", () => {
+    expect(directoryIndexToSignals([])).toEqual([]);
+  });
+
+  it("defaults siteUrl to '' and uses `${siteUrl}/entry/...` when canonicalUrl is missing (the ?? '' branch)", () => {
+    const signals = directoryIndexToSignals([{ category: "skills", slug: "nourl", title: "N" }]);
+    // No options passed → siteUrl defaults to '' → url falls back to "/entry/skills/nourl".
+    expect(signals[0]?.url).toBe("/entry/skills/nourl");
+  });
+
+  it("drops entries missing a category OR a slug (the `!category || !slug` guard, both operands)", () => {
+    const signals = directoryIndexToSignals([
+      { slug: "only-slug", title: "no category" },
+      { category: "skills", title: "no slug" },
+      { category: "skills", slug: "kept", title: "kept" },
+    ]);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.slug).toBe("kept");
+  });
+
+  it("does NOT exclude any path when currentFilePath is undefined (the filePath !== undefined keeps all)", () => {
+    const signals = directoryIndexToSignals([
+      { category: "skills", slug: "a", title: "A" },
+      { category: "skills", slug: "b", title: "B" },
+    ]);
+    expect(signals.map((s) => s.slug).sort()).toEqual(["a", "b"]);
+  });
 });

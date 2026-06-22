@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildClosedUnifiedCommentBody,
   buildDualReviewNotes,
+  buildMergeReadinessFromChecks,
   buildUnifiedCommentBody,
   consensusDefectFromFindings,
   gateConclusionToVerdict,
@@ -13,7 +14,7 @@ import {
 import { PR_PANEL_COMMENT_MARKER as MARKER_FROM_COMMENTS } from "../../src/github/comments";
 import { deriveUnifiedStatus, type MergeReadiness, type UnifiedCollapsible, type UnifiedCommentStatus } from "../../src/review/unified-comment";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
-import type { AdvisoryFinding } from "../../src/types";
+import type { AdvisoryFinding, CheckSummaryRecord } from "../../src/types";
 import type { PublicPrPanelSignalRow } from "../../src/signals/engine";
 
 function gate(over: Partial<GateCheckEvaluation> = {}): GateCheckEvaluation {
@@ -41,6 +42,48 @@ const panelRows: PublicPrPanelSignalRow[] = [
 ];
 
 const footer = "💰 **Earn for open-source contributions like this.** Checked by Gittensory.";
+
+describe("buildMergeReadinessFromChecks", () => {
+  const check = (over: Partial<CheckSummaryRecord> = {}): CheckSummaryRecord => ({
+    id: over.id ?? `${over.headSha ?? "head"}-${over.name ?? "test"}`,
+    repoFullName: "JSONbored/gittensory",
+    pullNumber: 42,
+    headSha: "current-head",
+    name: "test",
+    status: "completed",
+    conclusion: "success",
+    payload: {},
+    ...over,
+  });
+
+  it("does not report stale or partial cached CI as green", () => {
+    expect(
+      buildMergeReadinessFromChecks({
+        headSha: "current-head",
+        checks: [check({ headSha: "old-head", conclusion: "success" }), check({ name: "build", status: "in_progress", conclusion: null })],
+      }),
+    ).toEqual({ ciState: "unverified" });
+  });
+
+  it("requires every current-head check to be completed successfully before showing CI green", () => {
+    expect(
+      buildMergeReadinessFromChecks({
+        headSha: "current-head",
+        mergeableState: "clean",
+        checks: [check({ name: "test" }), check({ name: "lint" })],
+      }),
+    ).toEqual({ ciState: "passed", mergeStateLabel: "clean" });
+  });
+
+  it("reports current-head failures with failing check names", () => {
+    expect(
+      buildMergeReadinessFromChecks({
+        headSha: "current-head",
+        checks: [check({ name: "test", conclusion: "failure" }), check({ name: "lint" })],
+      }),
+    ).toEqual({ ciState: "failed", failingChecks: ["test"] });
+  });
+});
 
 describe("gateConclusionToVerdict", () => {
   it("maps every gate conclusion to its authoritative verdict", () => {

@@ -147,7 +147,7 @@ import {
   unionScopedOverlapClusters,
   type ContributorProfile,
 } from "../signals/engine";
-import { buildClosedUnifiedCommentBody, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
+import { buildClosedUnifiedCommentBody, buildMergeReadinessFromChecks, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
 import type { MergeReadiness } from "../review/unified-comment";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
@@ -1809,22 +1809,16 @@ async function maybePublishPrPublicSurface(
     if (unifiedCommentAllowed && gateEvaluation) {
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation });
       const unifiedFiles = await listPullRequestFiles(env, repoFullName, pr.number);
-      // CI + merge-state readiness — a converged enrichment the legacy panel never showed. Maps each cached
-      // check's conclusion to passed/failed/unverified; any failure (failure/timed_out/cancelled/action_required)
-      // flips the whole PR to 'failed'. The gate decision stays authoritative for the comment's color (always
-      // passed here), so these CI chips never spuriously flip the unified status to held/blocked.
+      // CI + merge-state readiness — a converged enrichment the legacy panel never showed. Only current-head
+      // check summaries can affect the chip, and pending/in-progress current-head checks remain unverified.
+      // The gate decision stays authoritative for the comment's color (always passed here), so these CI chips
+      // never spuriously flip the unified status to held/blocked.
       const checkSummaries = await listCheckSummaries(env, repoFullName, pr.number);
-      const failedChecks = checkSummaries.filter((check) => {
-        const conclusion = (check.conclusion ?? "").toLowerCase();
-        return conclusion === "failure" || conclusion === "timed_out" || conclusion === "cancelled" || conclusion === "action_required";
+      const mergeReadiness: MergeReadiness = buildMergeReadinessFromChecks({
+        checks: checkSummaries,
+        headSha: pr.headSha,
+        mergeableState: pr.mergeableState,
       });
-      const anyPassed = checkSummaries.some((check) => (check.conclusion ?? "").toLowerCase() === "success");
-      const ciState: MergeReadiness["ciState"] = failedChecks.length > 0 ? "failed" : anyPassed ? "passed" : "unverified";
-      const mergeReadiness: MergeReadiness = {
-        ciState,
-        ...(pr.mergeableState ? { mergeStateLabel: pr.mergeableState } : {}),
-        ...(failedChecks.length > 0 ? { failingChecks: failedChecks.map((check) => check.name) } : {}),
-      };
       deterministicBody = buildUnifiedCommentBody({
         gate: gateEvaluation,
         ...(aiReview !== undefined ? { aiReview } : {}),

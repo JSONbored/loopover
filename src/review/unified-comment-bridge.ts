@@ -18,7 +18,7 @@
 // comment path historically did not. This module therefore scrubs Nits itself (see `publicSafeNit` /
 // `PRIVATE_FORBIDDEN_TERMS`) as defense-in-depth before they reach a public comment.
 
-import type { AdvisoryFinding } from "../types";
+import type { AdvisoryFinding, CheckSummaryRecord } from "../types";
 import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
 import type { PublicPrPanelSignalRow } from "../signals/engine";
 // Single-source the panel marker from its canonical home (the upsert reads it there); re-export so existing
@@ -56,6 +56,37 @@ export { PR_PANEL_COMMENT_MARKER };
 // Mirrors src/rules/advisory.ts CHECK_RUN_FORBIDDEN_TERMS (scrubbed → "[context]") and
 // src/signals/engine.ts containsPrivatePublicTerm (drop if still present). Kept inline so this module
 // stays a pure, dependency-light renderer-mapping seam.
+
+const FAILED_CHECK_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required"]);
+
+function isCompletedSuccessfulCheck(check: CheckSummaryRecord): boolean {
+  return check.status.toLowerCase() === "completed" && (check.conclusion ?? "").toLowerCase() === "success";
+}
+
+/**
+ * Build public merge-readiness from cached check summaries without allowing stale or partial CI to look green.
+ * Only check summaries for the current PR head SHA are considered, and CI is green only when every current-head
+ * check is completed successfully. Pending/in-progress checks, missing checks, or an unknown head SHA are
+ * deliberately rendered as unverified.
+ */
+export function buildMergeReadinessFromChecks(input: {
+  checks: readonly CheckSummaryRecord[];
+  headSha?: string | null | undefined;
+  mergeableState?: string | null | undefined;
+}): MergeReadiness {
+  const currentHead = input.headSha?.trim();
+  const currentChecks = currentHead ? input.checks.filter((check) => check.headSha === currentHead) : [];
+  const failedChecks = currentChecks.filter((check) => FAILED_CHECK_CONCLUSIONS.has((check.conclusion ?? "").toLowerCase()));
+  const ciState: MergeReadiness["ciState"] =
+    failedChecks.length > 0 ? "failed" : currentChecks.length > 0 && currentChecks.every(isCompletedSuccessfulCheck) ? "passed" : "unverified";
+
+  return {
+    ciState,
+    ...(input.mergeableState ? { mergeStateLabel: input.mergeableState } : {}),
+    ...(failedChecks.length > 0 ? { failingChecks: failedChecks.map((check) => check.name) } : {}),
+  };
+}
+
 const PRIVATE_FORBIDDEN_TERMS =
   /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|reviewability|scoreability|private\s+signals?|likely_duplicate|reviewability\s*\d)\b/gi;
 const PRIVATE_DROP_TERMS = /\b(?:reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d)\b/i;

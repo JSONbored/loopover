@@ -123,6 +123,15 @@ declare global {
     /** AES-256-GCM secret used to encrypt the short-lived contributor OAuth token at rest. A Worker
      *  secret (`wrangler secret put`). When absent, the draft create/callback endpoints return 503. */
     DRAFT_TOKEN_ENCRYPTION_SECRET?: string;
+    /** Convergence prep (#preconv-parity): when truthy, the gittensory-native review path SHADOW-records each
+     *  finalized gate decision (source='gittensory-native') into the `review_audit` audit-source table (D1
+     *  migration 0049), and the bearer-gated `GET /v1/internal/parity` endpoint serves the pre-cutover parity
+     *  READINESS report (computeGateParity / isParityCutoverReady over the recorded data). RECORD-ONLY SHADOW
+     *  mode — recording changes NO review behavior. Default OFF — unset/false records NOTHING (no D1 write, the
+     *  review path is byte-identical) and the endpoint 404s. NOTE: this records the gittensory-native side only;
+     *  the actual COMPARISON vs reviewbot's authoritative decisions needs reviewbot's rows in the SAME table,
+     *  written by the deploy-time dual-run shadow step (out of scope here). See src/review/parity-wire.ts. */
+    REVIEWBOT_PARITY_AUDIT?: string;
   }
 }
 

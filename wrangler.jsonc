@@ -88,6 +88,12 @@
     // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
     // DRAFT_TOKEN_ENCRYPTION_SECRET worker secret + GITHUB_OAUTH_CLIENT_SECRET to be set.
     "REVIEWBOT_DRAFT": "false",
+    // Convergence prep (#preconv-parity): SHADOW-record each finalized gittensory-native gate decision
+    // (source='gittensory-native') into the review_audit audit-source table (migration 0049), and serve the
+    // pre-cutover parity readiness report at GET /v1/internal/parity. RECORD-ONLY — changes no review behavior.
+    // Default OFF — flag-OFF records nothing (no D1 write, the review path is byte-identical) and the endpoint
+    // 404s. The cross-system comparison vs reviewbot's authoritative rows is a deploy-time dual-run step.
+    "REVIEWBOT_PARITY_AUDIT": "false",
   },
   "routes": [
     {

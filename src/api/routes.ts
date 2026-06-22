@@ -222,6 +222,7 @@ import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
+import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
@@ -2830,6 +2831,19 @@ export function createApp() {
   app.get("/v1/internal/ops/stats", async (c) => {
     if (!isOpsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     return c.json(await computeOpsStats(c.env));
+  });
+
+  // Convergence prep (#preconv-parity, flag REVIEWBOT_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
+  // report: runs computeGateParity / isParityCutoverReady over the recorded review_audit rows and returns the
+  // per-project agreement rate + cutover-ready verdict (floor 0.98, min 30 paired samples, zero unsafe
+  // disagreements — all from parity.ts). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN).
+  // Flag-OFF (default) → 404, so the endpoint does not exist and the worker is byte-identical to today. Reads
+  // WHATEVER is recorded: with only gittensory-native rows (no reviewbot dual-run yet) there are no pairs, so it
+  // honestly reports no signal. The comparison becomes meaningful once reviewbot's authoritative rows land via
+  // the deploy-time dual-run shadow step. Aggregate counts only — no PR content / actor logins.
+  app.get("/v1/internal/parity", async (c) => {
+    if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    return c.json(await computeParityReadiness(c.env));
   });
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {

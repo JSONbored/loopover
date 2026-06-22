@@ -161,6 +161,7 @@ import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
+import { recordNativeGateDecision } from "../review/parity-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
@@ -1649,6 +1650,16 @@ async function maybePublishPrPublicSurface(
         outcome: "completed",
         metadata: { blockerCodes },
       });
+    }
+    // #preconv-parity (convergence prep): SHADOW-record the gittensory-native gate decision (source=
+    // 'gittensory-native') into review_audit so the pre-cutover parity harness has data to read. RECORD-ONLY,
+    // flag-gated by REVIEWBOT_PARITY_AUDIT: flag-OFF (default) is an immediate no-op (NO D1 write) so the review
+    // path is BYTE-IDENTICAL to today; flag-ON it writes one row and changes NO behavior. Best-effort. The
+    // authoritative 'reviewbot' rows it is later compared against are written by reviewbot's deploy-time dual-
+    // run, not here (see src/review/parity-wire.ts). Only a finalized gate evaluation (not skipped) is recorded.
+    if (gateEvaluation) {
+      const reasonCode = gateEvaluation.conclusion === "failure" ? (gateEvaluation.blockers[0]?.code ?? gateEvaluation.conclusion) : gateEvaluation.conclusion;
+      await recordNativeGateDecision(env, { project: repoFullName, pullNumber: pr.number, headSha: pr.headSha, conclusion: gateEvaluation.conclusion, reasonCode });
     }
     if (gateEnabled) {
       const gateCheckResult = await createOrUpdateGateCheckRun(

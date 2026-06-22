@@ -131,6 +131,13 @@ export type JobMessage =
       type: "notify-deliver";
       requestedBy: "notify-evaluate" | "test";
       deliveryId: string;
+    }
+  | {
+      // Convergence (ops / observability, flag-gated by REVIEWBOT_OPS). Scan gittensory's review-outcome data
+      // (gate-block ledger + recommendation/slop calibration) and emit a structured `ops_anomaly` log on drift.
+      // Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job never exists.
+      type: "ops-alerts";
+      requestedBy: "schedule" | "api" | "test";
     };
 
 export type GitHubWebhookPayload = {

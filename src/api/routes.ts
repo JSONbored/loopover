@@ -220,6 +220,7 @@ import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
+import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
@@ -2811,6 +2812,15 @@ export function createApp() {
   });
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
+
+  // Convergence (ops / observability, flag REVIEWBOT_OPS). Cross-repo review-OUTCOME aggregate (gate-block
+  // ledger + recommendation/slop calibration) for an operator dashboard. Bearer-gated by the `/v1/internal/*`
+  // middleware above (INTERNAL_JOB_TOKEN). Flag-OFF (default) → 404, so the endpoint does not exist and the
+  // worker is byte-identical to today. Aggregate counts only — no PR content / actor logins.
+  app.get("/v1/internal/ops/stats", async (c) => {
+    if (!isOpsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    return c.json(await computeOpsStats(c.env));
+  });
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };

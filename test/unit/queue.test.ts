@@ -19,6 +19,7 @@ import {
   listRepoSyncStates,
   listSignalSnapshots,
   persistSignalSnapshot,
+  recordGateBlockOutcome,
   recordProductUsageEvent,
   upsertAgentCommandAnswer,
   upsertIssueFromGitHub,
@@ -5096,6 +5097,37 @@ describe("queue processors", () => {
     expect(denied).toMatchObject({ event_type: "github_app.gate_override_denied", actor: "org-member", target_key: "JSONbored/gittensory#91", outcome: "denied", detail: "not_maintainer_or_pr_author" });
     const overridden = await env.DB.prepare("select id from audit_events where event_type = ?").bind("github_app.gate_overridden").first<{ id: string }>();
     expect(overridden ?? null).toBeNull();
+  });
+
+  it("ops-alerts job no-ops when REVIEWBOT_OPS is OFF (does no anomaly scan)", async () => {
+    const env = createTestEnv(); // flag unset → OFF
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
+      .bind("owner/repo", "owner", "repo")
+      .run();
+    // Seed a gate false-positive anomaly that WOULD fire if the scan ran.
+    for (let i = 1; i <= 6; i += 1) {
+      await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: i, blockerCodes: ["missing_linked_issue"] });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: i, title: `PR ${i}`, state: "closed", merged_at: i <= 4 ? "2026-06-01T00:00:00.000Z" : null } as never);
+    }
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await processJob(env, { type: "ops-alerts", requestedBy: "test" });
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly"))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it("ops-alerts job runs the anomaly scan when REVIEWBOT_OPS is ON", async () => {
+    const env = createTestEnv({ REVIEWBOT_OPS: "true" });
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
+      .bind("owner/repo", "owner", "repo")
+      .run();
+    for (let i = 1; i <= 6; i += 1) {
+      await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: i, blockerCodes: ["missing_linked_issue"] });
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: i, title: `PR ${i}`, state: "closed", merged_at: i <= 4 ? "2026-06-01T00:00:00.000Z" : null } as never);
+    }
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await processJob(env, { type: "ops-alerts", requestedBy: "test" });
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("ops_anomaly") && line.includes("owner/repo"))).toBe(true);
+    warn.mockRestore();
   });
 });
 

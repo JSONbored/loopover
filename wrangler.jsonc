@@ -63,6 +63,12 @@
     // NEVER surfaced publicly. Default OFF — flag-OFF reads nothing, records nothing, and leaves the AI-spend
     // gate byte-identical.
     "REVIEWBOT_REPUTATION": "false",
+    // Convergence (ops / observability): drive two OPERATOR surfaces off gittensory's own review-outcome data
+    // — (1) a cron-tick anomaly scan over the gate-block ledger + recommendation/slop calibration that emits a
+    // structured `ops_anomaly` log on drift, and (2) a bearer-gated GET /v1/internal/ops/stats outcome
+    // aggregate. Read-only observability; the auto-tune/config-mutation self-improve loop is NOT wired here.
+    // Default OFF — flag-OFF the cron enqueues no ops job and the endpoint 404s, byte-identical to today.
+    "REVIEWBOT_OPS": "false",
   },
   "routes": [
     {

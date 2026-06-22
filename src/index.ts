@@ -1,6 +1,7 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
 import { processJob } from "./queue/processors";
+import { isOpsEnabled } from "./review/ops-wire";
 import type { JobMessage } from "./types";
 
 const app = createApp();
@@ -52,6 +53,10 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // Agent layer (#777): re-gate stale open PRs hourly. Fans out to one job per agent-configured repo;
     // webhooks don't fire when a PR's base advances, so this is what keeps those verdicts fresh.
     jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
+    // Convergence (ops / observability, flag REVIEWBOT_OPS). Hourly anomaly scan over gittensory's own
+    // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
+    // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
+    if (isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
   }
   if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
     jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });

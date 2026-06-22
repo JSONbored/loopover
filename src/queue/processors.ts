@@ -157,6 +157,7 @@ import { runGittensoryAiReview } from "../services/ai-review";
 import { isSafetyEnabled, secretLeakFinding } from "../review/safety";
 import { buildReviewGroundingText, isGroundingEnabled } from "../review/grounding-wire";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
+import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
@@ -311,6 +312,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     }
     case "notify-deliver":
       await deliverNotification(env, message.deliveryId);
+      return;
+    case "ops-alerts":
+      // Convergence (ops / observability, flag REVIEWBOT_OPS). Defense-in-depth: the cron only ENQUEUES this
+      // when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so
+      // flag-OFF does zero work here too. Read-only telemetry — never throws into the queue.
+      if (isOpsEnabled(env)) await runOpsAlerts(env);
       return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);

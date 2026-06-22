@@ -81,6 +81,15 @@ declare global {
      *  unset/false reads NO reputation, records NOTHING, and leaves the AI-spend gate byte-identical (the new
      *  branch is unreachable when off). */
     REVIEWBOT_REPUTATION?: string;
+    /** Convergence (ops / observability): when truthy, gittensory's OWN review-outcome data drives two
+     *  operator surfaces — (1) on the cron tick, an anomaly scan over the gate-block ledger + recommendation /
+     *  slop calibration emits a structured `ops_anomaly` log when something drifts (gate false-positive spike,
+     *  slop score inverting, a recommendation negative-rate spike); and (2) a bearer-gated
+     *  `GET /v1/internal/ops/stats` endpoint serves the cross-repo outcome aggregate. Default OFF — unset/false
+     *  means the cron tick enqueues NO ops job (does no new work) and the endpoint 404s, so the worker is
+     *  byte-identical to today. NOTE: this is read-only OBSERVABILITY only; the auto-tune / config-mutation
+     *  self-improve loop (src/review/auto-apply.ts) is deliberately NOT wired here — see ops-wire.ts. */
+    REVIEWBOT_OPS?: string;
   }
 }
 

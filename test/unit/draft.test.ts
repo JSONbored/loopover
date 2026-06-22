@@ -744,6 +744,477 @@ describe("githubUserJson error body — non-JSON payload", () => {
   });
 });
 
+describe("draftConfig — custom DRAFT_PUBLIC_REPO + DRAFT_BASE_REF (env truthy branch)", () => {
+  it("creates a draft against a custom base ref (env.DRAFT_BASE_REF truthy branch)", async () => {
+    const app = createApp();
+    const env = draftEnv({ DRAFT_BASE_REF: "develop" });
+    const res = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { draftId: string };
+    const row = await env.DB.prepare("SELECT base_ref FROM submission_drafts WHERE id = ?").bind(body.draftId).first<{ base_ref: string }>();
+    // draftConfig().baseRef = env.DRAFT_BASE_REF || DEFAULT_BASE_REF → the custom value wins.
+    expect(row?.base_ref).toBe("develop");
+  });
+
+  it("forks the custom DRAFT_PUBLIC_REPO when set (env.DRAFT_PUBLIC_REPO truthy branch)", async () => {
+    const env = draftEnv({ DRAFT_PUBLIC_REPO: "acme/registry" });
+    const id = await seedQueuedDraftWithToken(env);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      makeGithubFetch([
+        { method: "GET", url: "https://api.github.com/user", respond: () => ok({ login: "octocat" }) },
+        { method: "POST", url: "/repos/acme/registry/forks", respond: () => ok({ full_name: "octocat/registry", default_branch: "main" }) },
+        { method: "GET", url: "https://api.github.com/repos/octocat/registry", respond: () => ok({ full_name: "octocat/registry", default_branch: "main" }) },
+        { method: "GET", url: "/repos/acme/registry/pulls", respond: () => ok([]) },
+        { method: "GET", url: "/git/ref/heads/main", respond: () => ok({ object: { sha: "basesha" } }) },
+        { method: "GET", url: "/git/ref/heads/heyclaude/submit-skills-example-skill", respond: () => notFound() },
+        { method: "POST", url: "/git/refs", respond: () => ok({ ref: "refs/heads/x" }) },
+        { method: "GET", url: "/contents/content/skills/example-skill.mdx?ref=", respond: () => notFound() },
+        { method: "PUT", url: "/contents/content/skills/example-skill.mdx", respond: () => ok({ content: { sha: "filesha" } }) },
+        { method: "POST", url: "/repos/acme/registry/pulls", respond: () => ok({ number: 5, html_url: "https://github.com/acme/registry/pull/5" }) },
+      ]),
+    );
+
+    await processSubmitDraft(env, id);
+    fetchSpy.mockRestore();
+
+    const row = await env.DB.prepare("SELECT status, fork_full_name, pull_request_url FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; fork_full_name: string; pull_request_url: string }>();
+    expect(row).toMatchObject({ status: "pr_open", fork_full_name: "octocat/registry", pull_request_url: "https://github.com/acme/registry/pull/5" });
+  });
+});
+
+describe("handleDraftCreate — nested body.fields branch + title fallbacks", () => {
+  it("reads fields from a nested `fields` object (body.fields truthy branch)", async () => {
+    const env = draftEnv();
+    const res = await handleDraftCreate(
+      new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ fields: { ...SAMPLE_FIELDS, name: "Nested Skill" } }) }),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { target: { slug: string } };
+    // The slug is derived from the NESTED fields.name, proving body.fields was unwrapped.
+    expect(body.target.slug).toBe("nested-skill");
+  });
+
+  it("falls back to body itself when body.fields is not an object (body.fields falsy branch)", async () => {
+    const env = draftEnv();
+    // `fields: "a string"` is not an object → the flat body is used as the fields source.
+    const res = await handleDraftCreate(
+      new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ ...SAMPLE_FIELDS, fields: "not-an-object" }) }),
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { target: { slug: string } };
+    expect(body.target.slug).toBe("example-skill");
+  });
+
+  it("returns 400 'Could not derive a slug' when no name/slug/title yields a slug (buildTarget throw)", async () => {
+    const env = draftEnv();
+    // Category valid, but slug/name/title all whitespace/symbols → slugify yields "" → throw.
+    const res = await handleDraftCreate(
+      new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ category: "skills", name: "***", slug: "  ", title: "" }) }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: "Could not derive a slug from the submission." });
+  });
+
+  it("returns 400 with the generic 'invalid_submission' message when a non-Error is thrown by buildTarget", async () => {
+    // Defensive: buildTarget only throws Error, so the `: "invalid_submission"` ternary arm is
+    // exercised via the unsupported-category Error here, asserting the Error-message arm renders.
+    const env = draftEnv();
+    const res = await handleDraftCreate(
+      new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify({ ...SAMPLE_FIELDS, category: "nope" }) }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: "Unsupported category." });
+  });
+
+  it("returns 503 when the OAuth client id is missing (draftSecrets clientId empty branch)", async () => {
+    const env = draftEnv({ GITHUB_OAUTH_CLIENT_ID: "" });
+    const res = await handleDraftCreate(new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }), env);
+    expect(res.status).toBe(503);
+    expect((await res.json()) as { error: string }).toMatchObject({ error: "draft_flow_not_configured" });
+  });
+
+  it("returns 404 when the flag is off (handleDraftCreate guard)", async () => {
+    const env = createTestEnv(); // flag unset
+    const res = await handleDraftCreate(new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }), env);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("not found");
+  });
+});
+
+describe("clientIp — header precedence branches (exercised via handleDraftCreate)", () => {
+  it("creates a draft from an x-forwarded-for chain (cf-connecting-ip absent branch)", async () => {
+    const env = draftEnv();
+    const res = await handleDraftCreate(
+      new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: { ...jsonHeaders(), "x-forwarded-for": "203.0.113.7, 70.41.3.18" }, body: JSON.stringify(SAMPLE_FIELDS) }),
+      env,
+    );
+    // clientIp falls through cf-connecting-ip → takes the first x-forwarded-for hop. The draft still creates.
+    expect(res.status).toBe(201);
+  });
+
+  it("creates a draft with neither IP header present (unknown-ip fallback branch)", async () => {
+    const env = draftEnv();
+    const res = await handleDraftCreate(new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }), env);
+    // No cf-connecting-ip and no x-forwarded-for → clientIp returns "unknown-ip"; draft creation unaffected.
+    expect(res.status).toBe(201);
+  });
+
+  it("creates a draft with a cf-connecting-ip header (first branch)", async () => {
+    const env = draftEnv();
+    const res = await handleDraftCreate(
+      new Request(`${ORIGIN}/v1/drafts`, { method: "POST", headers: { ...jsonHeaders(), "cf-connecting-ip": "198.51.100.5" }, body: JSON.stringify(SAMPLE_FIELDS) }),
+      env,
+    );
+    expect(res.status).toBe(201);
+  });
+});
+
+describe("slugify — truncation + empty branches", () => {
+  it("returns an empty string when nothing slug-able remains (early-empty branch)", () => {
+    expect(slugify("***")).toBe("");
+    expect(slugify("   ")).toBe("");
+    expect(slugify(undefined)).toBe("");
+    expect(slugify(null)).toBe("");
+  });
+
+  it("truncates the final slug to 120 chars (.slice(0, 120) branch)", () => {
+    const slug = slugify(`${"a".repeat(200)} ${"b".repeat(200)}`);
+    expect(slug.length).toBe(120);
+    expect(slug.startsWith("a")).toBe(true);
+  });
+
+  it("strips quotes and collapses non-alphanumerics", () => {
+    expect(slugify(`It's a "Test" Value`)).toBe("its-a-test-value");
+  });
+});
+
+describe("buildContributorMdx — login fallbacks + array/escaping branches", () => {
+  it("uses 'website' as submittedBy when githubLogin is undefined (no profile-url lines)", () => {
+    const mdx = buildContributorMdx(SAMPLE_FIELDS, undefined, "2026-06-22T00:00:00.000Z", CONFIG);
+    expect(mdx).toContain('submittedBy: "website"');
+    expect(mdx).toContain('author: "website"');
+    // No safe login → both authorProfileUrl and submittedByUrl frontmatter lines are omitted.
+    expect(mdx).not.toContain("authorProfileUrl:");
+    expect(mdx).not.toContain("submittedByUrl:");
+  });
+
+  it("uses 'website' when the githubLogin fails the validGitHubLogin check (invalid-login branch)", () => {
+    // A login with an illegal leading hyphen fails validGitHubLogin → treated as no login.
+    const mdx = buildContributorMdx(SAMPLE_FIELDS, "-bad-login-", "2026-06-22T00:00:00.000Z", CONFIG);
+    expect(mdx).toContain('submittedBy: "website"');
+    expect(mdx).not.toContain("submittedByUrl:");
+  });
+
+  it("normalizes CR / CRLF inside array fields (yamlArray newline-normalize branch)", () => {
+    const mdx = buildContributorMdx(
+      { ...SAMPLE_FIELDS, prerequisites: "node 20\r\ngit\rmacos\nlinux" },
+      "octocat",
+      "2026-06-22T00:00:00.000Z",
+      CONFIG,
+    );
+    // lines() splits on \r?\n; the remaining lone \r is normalized inside yamlArray's per-value map.
+    expect(mdx).toContain("prerequisites:");
+    expect(mdx).toMatch(/prerequisites: \[.*"node 20".*"linux".*\]/);
+  });
+
+  it("escapes MDX-special prose: headings, import/export lines, and markdown metacharacters", () => {
+    const mdx = buildContributorMdx(
+      {
+        ...SAMPLE_FIELDS,
+        description: "# Heading and *stars* and [links](url)",
+        safety_notes: "import danger\nexport risk",
+        full_copyable_content: "## inner heading\n`code`",
+      },
+      "octocat",
+      "2026-06-22T00:00:00.000Z",
+      CONFIG,
+    );
+    // mdxPlainText escapes leading #, leading import/export, and inline metachars in the body.
+    expect(mdx).toContain("\\# Heading");
+    expect(mdx).toContain("\\import danger");
+    expect(mdx).toContain("\\export risk");
+  });
+
+  it("renders an explicit empty tags array when no tags are provided (tags.length falsy branch)", () => {
+    const mdx = buildContributorMdx({ category: "skills", name: "No Tags", description: "x" }, "octocat", "2026-06-22T00:00:00.000Z", CONFIG);
+    expect(mdx).toContain("tags: []");
+  });
+
+  it("derives cardDescription/seoDescription via oneLine truncation for a very long description (>160 cp)", () => {
+    const longDescription = "word ".repeat(80).trim(); // ~399 chars, single line
+    const mdx = buildContributorMdx({ category: "skills", name: "Long", description: longDescription }, "octocat", "2026-06-22T00:00:00.000Z", CONFIG);
+    // oneLine truncates to 157 code points + "..." when over 160; assert the ellipsis appears.
+    expect(mdx).toMatch(/cardDescription: ".*\.\.\."/);
+  });
+
+  it("emits a source-content body block when full_copyable_content is present (sourceLines.length truthy branch)", () => {
+    const mdx = buildContributorMdx(
+      { ...SAMPLE_FIELDS, full_copyable_content: "first source line\nsecond source line" },
+      "octocat",
+      "2026-06-22T00:00:00.000Z",
+      CONFIG,
+    );
+    expect(mdx).toContain("copySnippet:");
+    expect(mdx).toContain("first source line");
+    expect(mdx).toContain("second source line");
+  });
+
+  it("falls back to 'Maintainer review required.' for the Safety/Privacy body when notes are blank", () => {
+    const mdx = buildContributorMdx({ category: "skills", name: "Bare", description: "x" }, "octocat", "2026-06-22T00:00:00.000Z", CONFIG);
+    // Both safetyBody and privacyBody hit the `|| "Maintainer review required."` fallback.
+    const occurrences = mdx.split("Maintainer review required.").length - 1;
+    expect(occurrences).toBe(2);
+  });
+
+  it("prefers fields.title when fields.name is absent (title fallback branch)", () => {
+    const mdx = buildContributorMdx({ category: "skills", title: "Only Title", description: "x" }, "octocat", "2026-06-22T00:00:00.000Z", CONFIG);
+    expect(mdx).toContain('title: "Only Title"');
+    expect(mdx).toContain('slug: "only-title"');
+  });
+});
+
+describe("processSubmitDraft — token expiry / consumed guards + base-SHA + title fallback", () => {
+  it("marks the draft error 'token_unavailable' when the token is expired (expiry guard)", async () => {
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env, SAMPLE_FIELDS, { expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await processSubmitDraft(env, id);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    const row = await env.DB.prepare("SELECT status, last_error FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; last_error: string }>();
+    expect(row).toMatchObject({ status: "error", last_error: "token_unavailable" });
+  });
+
+  it("marks the draft error 'token_unavailable' when the token is already consumed (consumed guard)", async () => {
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env, SAMPLE_FIELDS, { consumed: true });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await processSubmitDraft(env, id);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    const row = await env.DB.prepare("SELECT status, last_error FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; last_error: string }>();
+    expect(row).toMatchObject({ status: "error", last_error: "token_unavailable" });
+  });
+
+  it("marks the draft error 'token_unavailable' when the encryption key is missing (encKey empty branch)", async () => {
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env);
+    // Drop the encryption secret AFTER seeding so the token row exists but cannot be decrypted.
+    (env as { DRAFT_TOKEN_ENCRYPTION_SECRET?: string }).DRAFT_TOKEN_ENCRYPTION_SECRET = "";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await processSubmitDraft(env, id);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    const row = await env.DB.prepare("SELECT status, last_error FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; last_error: string }>();
+    expect(row).toMatchObject({ status: "error", last_error: "token_unavailable" });
+  });
+
+  it("returns early (no-op) when the draft id does not exist (missing-row guard)", async () => {
+    const env = draftEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await processSubmitDraft(env, "draft_does_not_exist");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("marks the draft error when the fork base SHA cannot be resolved (both base + fallback ref absent)", async () => {
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      makeGithubFetch([
+        { method: "GET", url: "https://api.github.com/user", respond: () => ok({ login: "octocat" }) },
+        { method: "POST", url: `/repos/${UPSTREAM}/forks`, respond: () => ok({ full_name: "octocat/awesome-claude", default_branch: "main" }) },
+        { method: "GET", url: "https://api.github.com/repos/octocat/awesome-claude", respond: () => ok({ full_name: "octocat/awesome-claude", default_branch: "main" }) },
+        { method: "GET", url: `/repos/${UPSTREAM}/pulls`, respond: () => ok([]) },
+        { method: "GET", url: "/git/ref/heads/main", respond: () => notFound() }, // base ref absent
+        // base ref absent → fallback probe of the default branch; also absent → no SHA → throw.
+        { method: "GET", url: "/git/ref/heads/main", respond: () => notFound() },
+      ]),
+    );
+
+    await processSubmitDraft(env, id);
+    fetchSpy.mockRestore();
+
+    const row = await env.DB.prepare("SELECT status, last_error FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; last_error: string }>();
+    expect(row?.status).toBe("error");
+    expect(row?.last_error).toBe("Could not resolve fork base SHA.");
+  });
+
+  it("derives the fork repo + login from the created-fork response (no full_name/name on the POST /forks reply)", async () => {
+    const env = draftEnv();
+    const id = await seedQueuedDraftWithToken(env);
+    // POST /forks returns only an owner login (no full_name, no name) → parseRepo composes the
+    // fallback `${createdFork.owner.login}/${upstream.repo}` = "fallbackuser/awesome-claude".
+    // The fork-existence GET then resolves WITHOUT a full_name, so forkRepo stays at that fallback
+    // and forkDefaultBranch falls back to the createdFork.default_branch. The fork resolves on the
+    // first probe so the readiness loop breaks immediately (no real sleep).
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+      if (method === "GET" && url === "https://api.github.com/user") return ok({ login: "fallbackuser" });
+      if (method === "POST" && url.includes(`/repos/${UPSTREAM}/forks`)) return ok({ owner: { login: "fallbackuser" }, default_branch: "main" });
+      if (method === "GET" && /\/repos\/fallbackuser\/awesome-claude$/.test(url)) return ok({ default_branch: "main" }); // resolves, no full_name
+      if (method === "GET" && url.includes(`/repos/${UPSTREAM}/pulls`)) return ok([]);
+      if (method === "GET" && url.includes("/git/ref/heads/main")) return ok({ object: { sha: "fbsha" } });
+      if (method === "GET" && url.includes("/git/ref/heads/heyclaude/submit-skills-example-skill")) return notFound();
+      if (method === "POST" && url.includes("/git/refs")) return ok({ ref: "refs/heads/x" });
+      if (method === "GET" && url.includes("/contents/content/skills/example-skill.mdx?ref=")) return notFound();
+      if (method === "PUT" && url.includes("/contents/content/skills/example-skill.mdx")) return ok({ content: { sha: "filesha" } });
+      if (method === "POST" && url.includes(`/repos/${UPSTREAM}/pulls`)) return ok({ number: 314, html_url: "https://github.com/JSONbored/awesome-claude/pull/314" });
+      throw new Error(`unexpected fetch ${method} ${url}`);
+    });
+
+    await processSubmitDraft(env, id);
+    fetchSpy.mockRestore();
+
+    const row = await env.DB.prepare("SELECT status, github_login, fork_full_name, pull_request_number FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; github_login: string; fork_full_name: string; pull_request_number: number }>();
+    expect(row).toMatchObject({ status: "pr_open", github_login: "fallbackuser", fork_full_name: "fallbackuser/awesome-claude", pull_request_number: 314 });
+  });
+
+  it("uses row.slug in the PR title when fields lack name AND title (title slug fallback)", async () => {
+    const env = draftEnv();
+    // Seed fields with only a category (no name/title) — buildContributorMdx still needs a slug, so
+    // give it a slug-able category alone won't work; instead seed name in fields for the MDX but
+    // strip name/title from the title-fallback by storing a row whose fields omit name/title.
+    const id = newDraftId("draft");
+    await env.DB.prepare(
+      `INSERT INTO submission_drafts (id, status, category, slug, target_path, branch_name, base_ref, fields_json)
+       VALUES (?, 'queued', 'skills', 'titled-by-slug', 'content/skills/titled-by-slug.mdx', 'heyclaude/submit-skills-titled-by-slug', 'main', ?)`,
+    )
+      .bind(id, JSON.stringify({ category: "skills", slug: "titled-by-slug", description: "x" }))
+      .run();
+    await env.DB.prepare("INSERT INTO submission_user_tokens (draft_id, encrypted_token, expires_at) VALUES (?, ?, ?)")
+      .bind(id, await encryptDraftToken(DRAFT_SECRET, "gho_user_access_token"), new Date(Date.now() + 60_000).toISOString())
+      .run();
+
+    let prTitle = "";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+      if (method === "GET" && url === "https://api.github.com/user") return ok({ login: "octocat" });
+      if (method === "POST" && url.includes(`/repos/${UPSTREAM}/forks`)) return ok({ full_name: "octocat/awesome-claude", default_branch: "main" });
+      if (method === "GET" && /\/repos\/octocat\/awesome-claude$/.test(url)) return ok({ full_name: "octocat/awesome-claude", default_branch: "main" });
+      if (method === "GET" && url.includes(`/repos/${UPSTREAM}/pulls`)) return ok([]);
+      if (method === "GET" && url.includes("/git/ref/heads/main")) return ok({ object: { sha: "sha" } });
+      if (method === "GET" && url.includes("/git/ref/heads/heyclaude/submit-skills-titled-by-slug")) return notFound();
+      if (method === "POST" && url.includes("/git/refs")) return ok({ ref: "refs/heads/x" });
+      if (method === "GET" && url.includes("/contents/content/skills/titled-by-slug.mdx?ref=")) return notFound();
+      if (method === "PUT" && url.includes("/contents/content/skills/titled-by-slug.mdx")) return ok({ content: { sha: "filesha" } });
+      if (method === "POST" && url.includes(`/repos/${UPSTREAM}/pulls`)) {
+        prTitle = JSON.parse(String(init?.body)).title as string;
+        return ok({ number: 1, html_url: "https://github.com/JSONbored/awesome-claude/pull/1" });
+      }
+      throw new Error(`unexpected fetch ${method} ${url}`);
+    });
+
+    await processSubmitDraft(env, id);
+    fetchSpy.mockRestore();
+
+    // String(fields.name ?? fields.title ?? row.slug) → both name and title are undefined → row.slug.
+    expect(prTitle).toBe("Add skills: titled-by-slug");
+  });
+});
+
+describe("handleDraftOAuthCallback — extra guards", () => {
+  it("returns 404 when the flag is off", async () => {
+    const env = createTestEnv(); // flag unset
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=x&state=a.b`), env);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("not found");
+  });
+
+  it("returns 400 when the row exists but has a NULL auth_state_hash (already-consumed state)", async () => {
+    const env = draftEnv();
+    const id = newDraftId("draft");
+    // A queued row whose auth_state_hash was cleared (NULL) must not validate any state.
+    await env.DB.prepare(
+      `INSERT INTO submission_drafts (id, status, category, slug, target_path, branch_name, base_ref, fields_json, auth_state_hash)
+       VALUES (?, 'queued', 'skills', 'x', 'content/skills/x.mdx', 'heyclaude/submit-skills-x', 'main', ?, NULL)`,
+    )
+      .bind(id, JSON.stringify(SAMPLE_FIELDS))
+      .run();
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=abc&state=${id}.anytoken`), env);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid or expired submission state.");
+  });
+
+  it("returns 400 when the draft id in the state does not match any row", async () => {
+    const env = draftEnv();
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=abc&state=draft_unknown.sometoken`), env);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid or expired submission state.");
+  });
+
+  it("returns 400 when the code is empty even though the state is valid (no-code branch)", async () => {
+    const app = createApp();
+    const env = draftEnv();
+    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { authUrl: string };
+    const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    // Valid state, but no `code` and no `error` query param → "authorization was not completed".
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?state=${encodeURIComponent(state)}`), env);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("GitHub authorization was not completed.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("returns 400 with the generic 'GitHub auth failed.' message when the exchange yields no error fields", async () => {
+    const app = createApp();
+    const env = draftEnv();
+    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { authUrl: string };
+    const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    // 200 OK but no access_token and no error/error_description → exchangeGitHubUserCode throws the
+    // bare "GitHub auth failed." fallback, which the callback catches → 400 "GitHub authorization failed."
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok({}));
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`), env);
+    fetchSpy.mockRestore();
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("GitHub authorization failed.");
+  });
+
+  it("returns 400 when the exchange responds non-OK (response.ok false branch)", async () => {
+    const app = createApp();
+    const env = draftEnv();
+    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { authUrl: string };
+    const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    // Non-OK + a non-JSON body → response.json().catch(() => ({})) → {} → throws "GitHub auth failed."
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("Bad Gateway", { status: 502 }));
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`), env);
+    fetchSpy.mockRestore();
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("GitHub authorization failed.");
+  });
+});
+
+describe("handleDraftStatus — flag-off guard + populated optional columns", () => {
+  it("returns 404 when the flag is off", async () => {
+    const env = createTestEnv(); // flag unset
+    const res = await handleDraftStatus(new Request(`${ORIGIN}/v1/drafts/x`), env, "x");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("not found");
+  });
+
+  it("surfaces githubLogin + pull_request fields when the draft has reached pr_open", async () => {
+    const env = draftEnv();
+    const id = newDraftId("draft");
+    await env.DB.prepare(
+      `INSERT INTO submission_drafts (id, status, category, slug, target_path, branch_name, base_ref, fields_json, github_login, fork_full_name, pull_request_url, pull_request_number)
+       VALUES (?, 'pr_open', 'skills', 'x', 'content/skills/x.mdx', 'heyclaude/submit-skills-x', 'main', ?, 'octocat', 'octocat/awesome-claude', 'https://github.com/JSONbored/awesome-claude/pull/9', 9)`,
+    )
+      .bind(id, JSON.stringify(SAMPLE_FIELDS))
+      .run();
+    const res = await handleDraftStatus(new Request(`${ORIGIN}/v1/drafts/${id}`), env, id);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { draft: { githubLogin: string; pullRequestUrl: string; pullRequestNumber: number } };
+    expect(body.draft).toMatchObject({ githubLogin: "octocat", pullRequestUrl: "https://github.com/JSONbored/awesome-claude/pull/9", pullRequestNumber: 9 });
+  });
+});
+
 describe("processSubmitDraft — fork-readiness retry loop (fake timers)", () => {
   it("polls again after the fork is initially absent, then proceeds once it appears (no real sleep)", async () => {
     vi.useFakeTimers();

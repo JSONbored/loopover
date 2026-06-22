@@ -48,34 +48,34 @@
     "ADMIN_GITHUB_LOGINS": "JSONbored",
     // Convergence (Stage D): render the public PR comment via the unified-comment bridge. Default OFF —
     // flag-OFF keeps the legacy buildPublicPrIntelligenceComment panel byte-identical.
-    "UNIFIED_REVIEW_COMMENT": "false",
+    "GITTENSORY_REVIEW_UNIFIED_COMMENT": "false",
     // Convergence (safety): run the ported safety scan in the review path — defang untrusted PR
     // title/body/diff before the AI reviewer sees it, and surface a secret-leak blocker from the diff.
     // Default OFF — flag-OFF keeps the review path byte-identical.
-    "REVIEWBOT_SAFETY": "false",
+    "GITTENSORY_REVIEW_SAFETY": "false",
     // Convergence (grounding): ground the AI reviewer prompt with the PR's finished CI status + the full
     // post-change content of the changed files, so a non-frontier model verifies claims instead of guessing.
     // Default OFF — flag-OFF keeps the reviewer prompt byte-identical and makes no extra GitHub fetch.
-    "REVIEWBOT_GROUNDING": "false",
+    "GITTENSORY_REVIEW_GROUNDING": "false",
     // Convergence (reputation): factor the INTERNAL-only ported submitter-reputation signal into the AI-spend
     // gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review (AI neurons
     // skipped), and the per-(project, submitter) outcome is recorded after the gate decides. The reputation is
     // NEVER surfaced publicly. Default OFF — flag-OFF reads nothing, records nothing, and leaves the AI-spend
     // gate byte-identical.
-    "REVIEWBOT_REPUTATION": "false",
+    "GITTENSORY_REVIEW_REPUTATION": "false",
     // Convergence (ops / observability): drive two OPERATOR surfaces off gittensory's own review-outcome data
     // — (1) a cron-tick anomaly scan over the gate-block ledger + recommendation/slop calibration that emits a
     // structured `ops_anomaly` log on drift, and (2) a bearer-gated GET /v1/internal/ops/stats outcome
     // aggregate. Read-only observability; the auto-tune/config-mutation self-improve loop is NOT wired here.
     // Default OFF — flag-OFF the cron enqueues no ops job and the endpoint 404s, byte-identical to today.
-    "REVIEWBOT_OPS": "false",
+    "GITTENSORY_REVIEW_OPS": "false",
     // Convergence (RAG retrieval): at review time, query the codebase vector index for code/docs semantically
     // related to the PR's changed files and append a RELEVANT EXISTING CODE / DOCS section to the reviewer
     // prompt — additive reference context (callers, related modules, conventions), exactly like grounding.
     // Default OFF — flag-OFF performs no retrieval, uses no adapter, makes no vector query, and keeps the
     // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
     // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
-    "REVIEWBOT_RAG": "false",
+    "GITTENSORY_REVIEW_RAG": "false",
     // Convergence (self-improve / auto-tune): run the ported self-improvement loop on the cron tick over
     // gittensory's own review-outcome data — compute tuning recommendations, SHADOW-SOAK any strictly-
     // tightening one, and AUTO-PROMOTE it to live ONLY after the soak window passes the gate; every action is
@@ -83,17 +83,24 @@
     // flag-OFF the cron enqueues no selftune job, does zero tuning work, reads/writes no override, byte-
     // identical to today. Config-application (reading a promoted override into the live gate) is a deferred
     // follow-up — see src/review/selftune-wire.ts.
-    "REVIEWBOT_SELFTUNE": "false",
+    "GITTENSORY_REVIEW_SELFTUNE": "false",
     // Convergence (port): public OAuth draft-submission flow ported from reviewbot. Default OFF — every
     // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
     // DRAFT_TOKEN_ENCRYPTION_SECRET worker secret + GITHUB_OAUTH_CLIENT_SECRET to be set.
-    "REVIEWBOT_DRAFT": "false",
+    "GITTENSORY_REVIEW_DRAFT": "false",
     // Convergence prep (#preconv-parity): SHADOW-record each finalized gittensory-native gate decision
     // (source='gittensory-native') into the review_audit audit-source table (migration 0049), and serve the
     // pre-cutover parity readiness report at GET /v1/internal/parity. RECORD-ONLY — changes no review behavior.
     // Default OFF — flag-OFF records nothing (no D1 write, the review path is byte-identical) and the endpoint
     // 404s. The cross-system comparison vs reviewbot's authoritative rows is a deploy-time dual-run step.
-    "REVIEWBOT_PARITY_AUDIT": "false",
+    "GITTENSORY_REVIEW_PARITY_AUDIT": "false",
+    // Convergence (cutover): comma-separated allowlist of repo full-names ("owner/repo") that may run the
+    // PER-PR converged review features (safety, grounding, RAG, reputation, unified comment). A feature
+    // activates for a repo ONLY when its global flag above is ON AND the repo is listed here — so the cutover
+    // rolls forward one repo at a time (e.g. "JSONbored/gittensory,JSONbored/awesome-claude"). Default "" →
+    // NO repos converged → the per-PR converged path stays dormant for every repo regardless of the global
+    // flags (byte-identical to today). The cron/endpoint flags (ops/selftune/parity/draft) stay global.
+    "GITTENSORY_REVIEW_REPOS": "",
   },
   "routes": [
     {

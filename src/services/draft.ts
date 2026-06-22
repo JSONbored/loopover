@@ -1,4 +1,4 @@
-// Public OAuth draft-submission flow (REVIEWBOT_DRAFT), ported faithfully from reviewbot
+// Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT), ported faithfully from reviewbot
 // (src/core/draft.ts + the fork-PR / OAuth-exchange primitives from src/core/github.ts).
 //
 //   POST /v1/drafts                -> store draft + return a GitHub OAuth authorize URL
@@ -7,7 +7,7 @@
 //   queue submit-draft             -> fork the upstream repo with the user's token + open the content PR
 //
 // Single-tenant (gittensory is one worker): the per-project `slug`/`AgentConfig` partitioning from
-// reviewbot is collapsed into module constants + env vars. The flow is gated by REVIEWBOT_DRAFT; when
+// reviewbot is collapsed into module constants + env vars. The flow is gated by GITTENSORY_REVIEW_DRAFT; when
 // the flag is off the router never mounts these handlers (callers see 404).
 import { decryptDraftToken, encryptDraftToken, newDraftId, randomDraftToken, sha256Hex, timingSafeEqualHex } from "../utils/crypto";
 
@@ -37,7 +37,7 @@ const SUPPORTED_CATEGORIES = [
 // ---------------------------------------------------------------------------
 
 export function draftFlowEnabled(env: Env): boolean {
-  return /^(1|true|yes|on)$/i.test(String(env.REVIEWBOT_DRAFT ?? "").trim());
+  return /^(1|true|yes|on)$/i.test(String(env.GITTENSORY_REVIEW_DRAFT ?? "").trim());
 }
 
 function draftConfig(env: Env): { publicRepo: string; baseRef: string; categories: string[]; branchPrefix: string } {

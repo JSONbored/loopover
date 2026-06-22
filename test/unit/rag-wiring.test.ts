@@ -73,11 +73,11 @@ const changedFiles = [{ path: "src/a.ts", patch: "@@\n+export const A = helper()
 describe("isRagEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isRagEnabled({})).toBe(false);
-    expect(isRagEnabled({ REVIEWBOT_RAG: "false" })).toBe(false);
-    expect(isRagEnabled({ REVIEWBOT_RAG: "true" })).toBe(true);
-    expect(isRagEnabled({ REVIEWBOT_RAG: "1" })).toBe(true);
-    expect(isRagEnabled({ REVIEWBOT_RAG: "on" })).toBe(true);
-    expect(isRagEnabled({ REVIEWBOT_RAG: "yes" })).toBe(true);
+    expect(isRagEnabled({ GITTENSORY_REVIEW_RAG: "false" })).toBe(false);
+    expect(isRagEnabled({ GITTENSORY_REVIEW_RAG: "true" })).toBe(true);
+    expect(isRagEnabled({ GITTENSORY_REVIEW_RAG: "1" })).toBe(true);
+    expect(isRagEnabled({ GITTENSORY_REVIEW_RAG: "on" })).toBe(true);
+    expect(isRagEnabled({ GITTENSORY_REVIEW_RAG: "yes" })).toBe(true);
   });
 });
 
@@ -178,7 +178,7 @@ function aiReviewEnv(over: Partial<Env> = {}) {
   });
 }
 
-describe("RAG wired into the AI reviewer (flag REVIEWBOT_RAG)", () => {
+describe("RAG wired into the AI reviewer (flag GITTENSORY_REVIEW_RAG)", () => {
   it("FLAG-ON: the user prompt gains the RELEVANT EXISTING CODE / DOCS section", async () => {
     // Retrieve the RAG block with a stubbed Vectorize/AI/DB (the retrieval seam is exercised here)…
     const retrievalEnv = createTestEnv({ DB: ragDbStub(), VECTORIZE: vectorizeStub() as unknown as Vectorize, AI: aiStub() as unknown as Ai });
@@ -203,7 +203,7 @@ describe("RAG wired into the AI reviewer (flag REVIEWBOT_RAG)", () => {
     // Drives the call site (processors.ts) so the `files.map(...)` that builds the RAG `files` arg runs —
     // including BOTH ternary sides of `typeof file.payload?.patch === "string" ? … : undefined`.
     const env = aiReviewEnv({
-      REVIEWBOT_RAG: "true",
+      GITTENSORY_REVIEW_RAG: "true",
       VECTORIZE: vectorizeStub() as unknown as Vectorize,
       AI: { run: capturingChatRun().run } as unknown as Ai,
     });
@@ -250,7 +250,7 @@ describe("RAG wired into the AI reviewer (flag REVIEWBOT_RAG)", () => {
     // Mirror the caller's flag gate: when isRagEnabled is false the call site never invokes
     // buildReviewRagContext, so no adapter is built and no query is issued.
     const vec = vectorizeStub();
-    const env = aiReviewEnv({ REVIEWBOT_RAG: "false", DB: ragDbStub(), VECTORIZE: vec as unknown as Vectorize, AI: aiStub() as unknown as Ai });
+    const env = aiReviewEnv({ GITTENSORY_REVIEW_RAG: "false", DB: ragDbStub(), VECTORIZE: vec as unknown as Vectorize, AI: aiStub() as unknown as Ai });
     const ragContext = isRagEnabled(env) ? await buildReviewRagContext(env, { repoFullName: "acme/rag-offgate", files: changedFiles }) : undefined;
     expect(ragContext).toBeUndefined();
     expect(vec.query).not.toHaveBeenCalled();

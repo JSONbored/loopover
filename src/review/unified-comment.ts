@@ -1,4 +1,4 @@
-// Unified PR review comment renderer (convergence — see docs/UNIFIED_REVIEW_COMMENT.md).
+// Unified PR review comment renderer (convergence — see docs/GITTENSORY_REVIEW_UNIFIED_COMMENT.md).
 //
 // Produces ONE in-place comment in the gittensory SHAPE (colored alert sidebar + readiness
 // signal table + collapsibles + re-run + earning footer) with reviewbot's deep review folded

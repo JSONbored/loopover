@@ -46,8 +46,8 @@ async function seedReviewbotDecision(env: Env, project: string, pr: number, head
 
 describe("isParityAuditEnabled — default OFF, truthy convention", () => {
   it("is OFF for unset / false / empty, ON for 1/true/yes/on", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isParityAuditEnabled({ REVIEWBOT_PARITY_AUDIT: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isParityAuditEnabled({ REVIEWBOT_PARITY_AUDIT: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isParityAuditEnabled({ GITTENSORY_REVIEW_PARITY_AUDIT: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isParityAuditEnabled({ GITTENSORY_REVIEW_PARITY_AUDIT: on })).toBe(true);
   });
 });
 
@@ -67,7 +67,7 @@ describe("nativeGateActionFromConclusion — gittensory gate conclusion → pari
 
 describe("recordNativeGateDecision — flag-gated SHADOW recording into review_audit (0049 round-trip)", () => {
   it("flag-ON records ONE gittensory-native gate_decision row (migration applies; round-trips via TestD1Database)", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });
 
     const rows = await rawAll(env, "SELECT * FROM review_audit");
@@ -85,7 +85,7 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
   });
 
   it("a re-run at the SAME commit REPLACES the prior decision (latest finalize wins, no duplicate)", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "failure", reasonCode: "slop_risk" });
 
@@ -95,14 +95,14 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
   });
 
   it("a new commit gets its OWN row", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "sha1", conclusion: "success" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "sha2", conclusion: "failure" });
     expect((await rawAll(env, "SELECT * FROM review_audit")).length).toBe(2);
   });
 
   it("does NOT record a non-comparable conclusion (neutral/skipped) or a decision with no head_sha", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 1, headSha: "sha", conclusion: "neutral" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 2, headSha: "sha", conclusion: "skipped" });
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 3, headSha: null, conclusion: "success" });
@@ -114,13 +114,13 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });
     expect((await rawAll(env, "SELECT * FROM review_audit")).length).toBe(0);
     // ...and explicitly false-valued flags are OFF too.
-    const envFalse = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "false" });
+    const envFalse = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "false" });
     await recordNativeGateDecision(envFalse, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "failure" });
     expect((await rawAll(envFalse, "SELECT * FROM review_audit")).length).toBe(0);
   });
 
   it("fails safe: a D1 write error is swallowed + logged (telemetry never breaks finalization)", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     // Poison the audit INSERT so .run() rejects → the catch logs parity_audit_record_error and resolves.
     const realPrepare = env.DB.prepare.bind(env.DB);
     env.DB.prepare = ((sql: string) => {
@@ -142,7 +142,7 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
 
 describe("computeParityReadiness — runs computeGateParity / isParityCutoverReady over review_audit", () => {
   it("with ONLY gittensory-native rows (no reviewbot dual-run) there are no PAIRS → empty, no signal", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     for (let i = 1; i <= 40; i += 1) {
       await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: i, headSha: `sha${i}`, conclusion: "success" });
     }
@@ -154,7 +154,7 @@ describe("computeParityReadiness — runs computeGateParity / isParityCutoverRea
   });
 
   it("PERFECT agreement over >= 30 paired commits → cutoverReady true, zero unsafe disagreements", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     const nowMs = Date.now();
     for (let i = 1; i <= 35; i += 1) {
       const sha = `sha${i}`;
@@ -176,7 +176,7 @@ describe("computeParityReadiness — runs computeGateParity / isParityCutoverRea
   });
 
   it("an UNSAFE disagreement (shadow merges where reviewbot holds) blocks cutover even at high agreement", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     const nowMs = Date.now();
     for (let i = 1; i <= 35; i += 1) {
       const sha = `sha${i}`;
@@ -198,12 +198,12 @@ describe("GET /v1/internal/parity — bearer-gated, flag-gated endpoint", () => 
 
   it("401s without the internal token (the /v1/internal/* middleware gate)", async () => {
     const app = createApp();
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     expect((await app.request("/v1/internal/parity", {}, env)).status).toBe(401);
     expect((await app.request("/v1/internal/parity", { headers: { authorization: "Bearer nope" } }, env)).status).toBe(401);
   });
 
-  it("404s when REVIEWBOT_PARITY_AUDIT is OFF — the endpoint does not exist (byte-identical to today)", async () => {
+  it("404s when GITTENSORY_REVIEW_PARITY_AUDIT is OFF — the endpoint does not exist (byte-identical to today)", async () => {
     const app = createApp();
     const env = createTestEnv(); // flag unset → OFF
     const res = await app.request("/v1/internal/parity", { headers: bearer(env) }, env);
@@ -213,7 +213,7 @@ describe("GET /v1/internal/parity — bearer-gated, flag-gated endpoint", () => 
 
   it("200s with the parity readiness report when ON and authorized", async () => {
     const app = createApp();
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true" });
     for (let i = 1; i <= 35; i += 1) {
       const sha = `sha${i}`;
       await seedReviewbotDecision(env, "owner/repo", i, sha, "merge", "slop_risk");
@@ -323,9 +323,9 @@ async function nativeRows(env: Env): Promise<Array<{ decision: string; summary: 
   return res.results;
 }
 
-describe("recordNativeGateDecision wired into the review FINALIZE path (REVIEWBOT_PARITY_AUDIT)", () => {
+describe("recordNativeGateDecision wired into the review FINALIZE path (GITTENSORY_REVIEW_PARITY_AUDIT)", () => {
   it("FLAG-ON, FAILING gate (confirmed author + linked-issue block): records a 'hold' native row whose reasonCode is the blocker code (failure ternary side)", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedGateEnabledRepo(env);
     await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: parityMinerSnapshot("contributor") }, 60_000);
     stubFinalizeFetch("contributor");
@@ -342,7 +342,7 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (REVIEWBO
   });
 
   it("FLAG-ON, NON-confirmed author → NEUTRAL gate: the call site still runs (non-failure reasonCode side) but a neutral conclusion is non-comparable → NO native row", async () => {
-    const env = createTestEnv({ REVIEWBOT_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedGateEnabledRepo(env);
     stubFinalizeFetch(null); // miner list empty → author unconfirmed → gate cannot hard-block → neutral
     try {

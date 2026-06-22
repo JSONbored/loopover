@@ -27,8 +27,8 @@ import { errorMessage, nowIso } from "../utils/json";
 /** True when the shadow-parity audit is enabled. Flag-OFF (default) → recordNativeGateDecision is a no-op and
  *  the parity endpoint 404s. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
  *  isOpsEnabled / isSelfTuneEnabled). */
-export function isParityAuditEnabled(env: { REVIEWBOT_PARITY_AUDIT?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_PARITY_AUDIT ?? "");
+export function isParityAuditEnabled(env: { GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_PARITY_AUDIT ?? "");
 }
 
 /** The `source` discriminator this writer stamps on every row — the SHADOW side computeGateParity compares
@@ -70,7 +70,7 @@ export function nativeGateActionFromConclusion(conclusion: GateCheckConclusion):
 }
 
 /** The minimal env shape the recorder needs (the D1 binding). */
-type ParityRecorderEnv = { DB: D1Database; REVIEWBOT_PARITY_AUDIT?: string | undefined };
+type ParityRecorderEnv = { DB: D1Database; GITTENSORY_REVIEW_PARITY_AUDIT?: string | undefined };
 
 /**
  * SHADOW-record one gittensory-native gate decision into `review_audit` (source='gittensory-native').

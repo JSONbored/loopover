@@ -8,7 +8,7 @@ const DRAFT_SECRET = "draft-token-encryption-secret-at-least-32b";
 
 function draftEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
-    REVIEWBOT_DRAFT: "true",
+    GITTENSORY_REVIEW_DRAFT: "true",
     GITHUB_OAUTH_CLIENT_ID: "Iv-test-client-id",
     GITHUB_OAUTH_CLIENT_SECRET: "test-oauth-client-secret",
     DRAFT_TOKEN_ENCRYPTION_SECRET: DRAFT_SECRET,
@@ -35,7 +35,7 @@ const SAMPLE_FIELDS = {
   privacy_notes: "No personal data collected.",
 };
 
-describe("draft flow — flag OFF (REVIEWBOT_DRAFT unset/false)", () => {
+describe("draft flow — flag OFF (GITTENSORY_REVIEW_DRAFT unset/false)", () => {
   it("POST /v1/drafts returns 404 when the flag is off", async () => {
     const app = createApp();
     const env = createTestEnv(); // flag unset
@@ -45,7 +45,7 @@ describe("draft flow — flag OFF (REVIEWBOT_DRAFT unset/false)", () => {
 
   it("GET /v1/drafts/:id returns 404 when the flag is off", async () => {
     const app = createApp();
-    const env = createTestEnv({ REVIEWBOT_DRAFT: "false" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_DRAFT: "false" });
     const res = await app.request("/v1/drafts/draft_does_not_exist", {}, env);
     expect(res.status).toBe(404);
   });
@@ -716,7 +716,7 @@ describe("buildContributorMdx — block-scalar branch + optional frontmatter", (
 describe("queue dispatch — submit-draft job", () => {
   it("processJob routes a submit-draft message to processSubmitDraft (flag-off → internal no-op, no fetch)", async () => {
     const { processJob } = await import("../../src/queue/processors");
-    const env = createTestEnv(); // REVIEWBOT_DRAFT unset → processSubmitDraft no-ops internally
+    const env = createTestEnv(); // GITTENSORY_REVIEW_DRAFT unset → processSubmitDraft no-ops internally
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await processJob(env, { type: "submit-draft", requestedBy: "test", draftId: "draft_anything" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -1283,7 +1283,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
     // createTestEnv never sets GITHUB_OAUTH_CLIENT_ID → property is genuinely undefined,
     // so `env.GITHUB_OAUTH_CLIENT_ID ?? ""` takes the nullish-coalescing fallback.
     const env = createTestEnv({
-      REVIEWBOT_DRAFT: "true",
+      GITTENSORY_REVIEW_DRAFT: "true",
       DRAFT_TOKEN_ENCRYPTION_SECRET: DRAFT_SECRET,
       // GITHUB_OAUTH_CLIENT_ID intentionally omitted (undefined)
     });
@@ -1294,7 +1294,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
 
   it("returns 503 when DRAFT_TOKEN_ENCRYPTION_SECRET is undefined — encKey `?? \"\"` arm", async () => {
     const env = createTestEnv({
-      REVIEWBOT_DRAFT: "true",
+      GITTENSORY_REVIEW_DRAFT: "true",
       GITHUB_OAUTH_CLIENT_ID: "Iv-test-client-id",
       // DRAFT_TOKEN_ENCRYPTION_SECRET intentionally omitted (undefined)
     });
@@ -1313,7 +1313,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
 
     // Re-point the SAME D1 instance into an env missing the client secret (undefined, not "").
     const env = createTestEnv({
-      REVIEWBOT_DRAFT: "true",
+      GITTENSORY_REVIEW_DRAFT: "true",
       GITHUB_OAUTH_CLIENT_ID: "Iv-test-client-id",
       DRAFT_TOKEN_ENCRYPTION_SECRET: DRAFT_SECRET,
       DB: fullEnv.DB,

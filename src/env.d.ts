@@ -63,24 +63,24 @@ declare global {
     /** Convergence (Stage D): when truthy, the public PR comment is rendered by the unified-comment bridge
      *  (ONE in-place comment in the converged shape) instead of the legacy `buildPublicPrIntelligenceComment`
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
-    UNIFIED_REVIEW_COMMENT?: string;
+    GITTENSORY_REVIEW_UNIFIED_COMMENT?: string;
     /** Convergence (safety): when truthy, the ported safety scan runs in the review path — (1) untrusted PR
      *  title/body/diff is defanged (prompt-injection neutralized) before it reaches the AI reviewer, and (2)
      *  the PR diff is scanned for leaked secrets, surfacing a `secret_leak` blocker. Default OFF —
      *  unset/false keeps the review path byte-identical (no new branch is taken). */
-    REVIEWBOT_SAFETY?: string;
+    GITTENSORY_REVIEW_SAFETY?: string;
     /** Convergence (grounding): when truthy, the AI reviewer prompt is GROUNDED — the PR's finished CI status
      *  + the FULL post-change content of the changed files are appended so a non-frontier model verifies its
      *  claims against reality instead of predicting CI / flagging symbols defined just outside the hunk.
      *  Default OFF — unset/false keeps the reviewer prompt byte-identical and makes no extra GitHub fetch. */
-    REVIEWBOT_GROUNDING?: string;
+    GITTENSORY_REVIEW_GROUNDING?: string;
     /** Convergence (reputation): when truthy, the INTERNAL-only ported submitter-reputation signal extends the
      *  AI-spend gate — a new / burst / low-reputation submitter is downgraded to a deterministic-only review
      *  (the AI neurons are skipped), and the per-(project, submitter) outcome is recorded after the gate
      *  decides. STRICTLY INTERNAL: the reputation never appears in any public comment/check. Default OFF —
      *  unset/false reads NO reputation, records NOTHING, and leaves the AI-spend gate byte-identical (the new
      *  branch is unreachable when off). */
-    REVIEWBOT_REPUTATION?: string;
+    GITTENSORY_REVIEW_REPUTATION?: string;
     /** Convergence (ops / observability): when truthy, gittensory's OWN review-outcome data drives two
      *  operator surfaces — (1) on the cron tick, an anomaly scan over the gate-block ledger + recommendation /
      *  slop calibration emits a structured `ops_anomaly` log when something drifts (gate false-positive spike,
@@ -89,7 +89,7 @@ declare global {
      *  means the cron tick enqueues NO ops job (does no new work) and the endpoint 404s, so the worker is
      *  byte-identical to today. NOTE: this is read-only OBSERVABILITY only; the auto-tune / config-mutation
      *  self-improve loop (src/review/auto-apply.ts) is deliberately NOT wired here — see ops-wire.ts. */
-    REVIEWBOT_OPS?: string;
+    GITTENSORY_REVIEW_OPS?: string;
     /** Convergence (RAG retrieval): when truthy, the AI reviewer prompt gains a RELEVANT EXISTING CODE / DOCS
      *  section — at review time the codebase vector index is queried for code/docs semantically related to the
      *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference
@@ -97,7 +97,7 @@ declare global {
      *  uses NO adapter, makes NO vector query, and keeps the reviewer prompt byte-identical (the new branch is
      *  unreachable when off). Even when ON, retrieval is INERT until a vector index exists for the repo (a
      *  cold/missing index degrades to no context) — the index-population job is a deploy-time follow-up. */
-    REVIEWBOT_RAG?: string;
+    GITTENSORY_REVIEW_RAG?: string;
     /** Convergence (self-improve / auto-tune): when truthy, the ported self-improvement loop
      *  (src/review/auto-tune.ts + auto-apply.ts) runs on the cron tick over gittensory's OWN review-outcome
      *  data — it computes tuning recommendations, SHADOW-SOAKS any STRICTLY-TIGHTENING recommendation in the
@@ -111,11 +111,11 @@ declare global {
      *  signal measures gate false positives, a loosening direction); the shadow-soak + audit + recommendation
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
-    REVIEWBOT_SELFTUNE?: string;
+    GITTENSORY_REVIEW_SELFTUNE?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */
-    REVIEWBOT_DRAFT?: string;
+    GITTENSORY_REVIEW_DRAFT?: string;
     /** owner/repo the draft fork PR targets (defaults to the awesome-claude content repo when unset). */
     DRAFT_PUBLIC_REPO?: string;
     /** Base branch the draft PR opens against (defaults to "main"). */
@@ -131,7 +131,16 @@ declare global {
      *  review path is byte-identical) and the endpoint 404s. NOTE: this records the gittensory-native side only;
      *  the actual COMPARISON vs reviewbot's authoritative decisions needs reviewbot's rows in the SAME table,
      *  written by the deploy-time dual-run shadow step (out of scope here). See src/review/parity-wire.ts. */
-    REVIEWBOT_PARITY_AUDIT?: string;
+    GITTENSORY_REVIEW_PARITY_AUDIT?: string;
+    /** Convergence (cutover): comma-separated allowlist of repo full-names ("owner/repo") that may run the
+     *  PER-PR converged review features (safety defang + secret-leak, grounding, RAG, reputation AI-skip/record,
+     *  unified comment). A feature activates for a repo ONLY IF its existing global flag is ON AND the repo is
+     *  in this allowlist — letting the cutover roll forward (or back) one repo at a time. Matching is
+     *  case-insensitive on the trimmed "owner/repo". Default "" (unset/empty/whitespace) → NO repos → every
+     *  per-PR converged feature stays OFF for ALL repos regardless of the global flags (byte-identical dormant
+     *  deploy). The cron/endpoint flags (ops / selftune / parity / content-lane / draft) are NOT scoped by
+     *  this allowlist — they stay global. See src/review/cutover-gate.ts. */
+    GITTENSORY_REVIEW_REPOS?: string;
   }
 }
 

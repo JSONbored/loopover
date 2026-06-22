@@ -276,6 +276,6 @@ export function buildClosedUnifiedCommentBody(args: { repoFullName: string; pull
 }
 
 /** Truthy-env flag check, matching the codebase convention (e.g. SCORING_TIME_DECAY_ENABLED). */
-export function isUnifiedReviewCommentEnabled(env: { UNIFIED_REVIEW_COMMENT?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.UNIFIED_REVIEW_COMMENT ?? "");
+export function isUnifiedReviewCommentEnabled(env: { GITTENSORY_REVIEW_UNIFIED_COMMENT?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_UNIFIED_COMMENT ?? "");
 }

@@ -2725,13 +2725,13 @@ describe("queue processors", () => {
     expect(skipped.results.map((event) => event.detail)).toEqual(expect.arrayContaining(["not_official_gittensor_miner", "missing_author"]));
   });
 
-  // #1007 convergence (Stage D): with UNIFIED_REVIEW_COMMENT on AND the gate evaluating, the public PR-panel
+  // #1007 convergence (Stage D): with GITTENSORY_REVIEW_UNIFIED_COMMENT on AND the gate evaluating, the public PR-panel
   // comment is rendered by the UNIFIED renderer (GitHub alert + synthesized "Code review" row) instead of the
   // legacy panel — while STILL leading with the same panel marker so the in-place upsert updates the same
   // comment. Mirrors the legacy panel-posting setup (confirmed miner + comment_and_label) but flips the flag
   // and enables the gate so `maybePublishPrPublicSurface` takes the flag-ON branch.
   it("renders the unified PR-review comment when the flag is on and the gate evaluates", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), UNIFIED_REVIEW_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -5234,7 +5234,7 @@ describe("queue processors", () => {
     expect(overridden ?? null).toBeNull();
   });
 
-  it("ops-alerts job no-ops when REVIEWBOT_OPS is OFF (does no anomaly scan)", async () => {
+  it("ops-alerts job no-ops when GITTENSORY_REVIEW_OPS is OFF (does no anomaly scan)", async () => {
     const env = createTestEnv(); // flag unset → OFF
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind("owner/repo", "owner", "repo")
@@ -5250,8 +5250,8 @@ describe("queue processors", () => {
     warn.mockRestore();
   });
 
-  it("ops-alerts job runs the anomaly scan when REVIEWBOT_OPS is ON", async () => {
-    const env = createTestEnv({ REVIEWBOT_OPS: "true" });
+  it("ops-alerts job runs the anomaly scan when GITTENSORY_REVIEW_OPS is ON", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind("owner/repo", "owner", "repo")
       .run();

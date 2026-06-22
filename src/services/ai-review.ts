@@ -19,6 +19,7 @@
 import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { defangReviewInput, isSafetyEnabled } from "../review/safety";
+import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 
 /**
  * The best free Workers-AI model pair for review accuracy — two different families for independence,
@@ -68,7 +69,7 @@ export type GittensoryAiReviewInput = {
   /** Present only when the repo has BYOK on AND a key configured; drives the advisory write-up. */
   providerKey?: AiReviewProviderKey | null | undefined;
   /**
-   * Convergence (grounding, flag-gated by REVIEWBOT_GROUNDING). The caller builds this from the PR's
+   * Convergence (grounding, flag-gated by GITTENSORY_REVIEW_GROUNDING). The caller builds this from the PR's
    * finished CI status + the full content of the changed files (see `review/grounding-wire`). When ABSENT
    * (the default, flag-OFF), both the system and user prompts are byte-identical to today — no section is
    * appended. `systemSuffix` carries the grounding-discipline rules; `promptSection` carries the CI STATUS
@@ -76,7 +77,7 @@ export type GittensoryAiReviewInput = {
    */
   grounding?: { systemSuffix?: string | undefined; promptSection?: string | undefined } | null | undefined;
   /**
-   * Convergence (RAG retrieval, flag-gated by REVIEWBOT_RAG). The caller builds this by querying the
+   * Convergence (RAG retrieval, flag-gated by GITTENSORY_REVIEW_RAG). The caller builds this by querying the
    * codebase vector index for code/docs semantically related to the PR's changed files (see
    * `review/rag-wire`); it is the engine's pre-formatted "RELEVANT EXISTING CODE / DOCS" block, appended to
    * the USER prompt as additive reference context (callers, related modules, existing conventions) — exactly
@@ -213,18 +214,18 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
     input.diff.slice(0, 60000),
   ];
   // Convergence (grounding): append the FINISHED CI status + FULL file content when the caller supplied them
-  // (flag REVIEWBOT_GROUNDING on). Absent/empty (the default) → the prompt is byte-identical to today.
+  // (flag GITTENSORY_REVIEW_GROUNDING on). Absent/empty (the default) → the prompt is byte-identical to today.
   const groundingSection = input.grounding?.promptSection;
   if (groundingSection) lines.push("", groundingSection);
   // Convergence (RAG retrieval): append the retrieved RELEVANT EXISTING CODE / DOCS block when the caller
-  // supplied one (flag REVIEWBOT_RAG on AND an index exists). Absent/empty (the default) → byte-identical.
+  // supplied one (flag GITTENSORY_REVIEW_RAG on AND an index exists). Absent/empty (the default) → byte-identical.
   const ragSection = input.ragContext;
   if (ragSection) lines.push("", ragSection);
   return lines.join("\n");
 }
 
 /** The effective reviewer SYSTEM prompt. Appends the grounding-discipline suffix when the caller supplied one
- *  (flag REVIEWBOT_GROUNDING on); absent/empty (default) → the base prompt, byte-identical to today. */
+ *  (flag GITTENSORY_REVIEW_GROUNDING on); absent/empty (default) → the base prompt, byte-identical to today. */
 function buildSystemPrompt(input: GittensoryAiReviewInput): string {
   const suffix = input.grounding?.systemSuffix;
   return suffix ? `${REVIEW_SYSTEM_PROMPT}${suffix}` : REVIEW_SYSTEM_PROMPT;
@@ -382,7 +383,10 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   // prompt-injection payload never reaches the model verbatim. Flag-OFF (default) passes `input` through
   // unchanged → the prompt is byte-identical to today. Only the title/body/diff fed to buildUserPrompt are
   // affected; this NEVER changes the verdict (a redaction is data, not a finding).
-  const promptInput = isSafetyEnabled(env) ? { ...input, ...defangReviewInput(input) } : input;
+  // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the defang activates for THIS PR's repo only when it
+  // is allowlisted AND the global safety flag is ON. Empty/unset allowlist → `input` passes through unchanged
+  // for every repo (the prompt is byte-identical to today) regardless of GITTENSORY_REVIEW_SAFETY.
+  const promptInput = isSafetyEnabled(env) && isConvergenceRepoAllowed(env, input.repoFullName) ? { ...input, ...defangReviewInput(input) } : input;
   const user = buildUserPrompt(promptInput);
   // Grounding-discipline SYSTEM suffix (convergence, flag-gated). When the caller supplied grounding, the
   // reviewers are told to verify claims against the attached CI/files; otherwise this is REVIEW_SYSTEM_PROMPT

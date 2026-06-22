@@ -4,7 +4,7 @@
 // (the AI neurons are skipped); a good-reputation submitter proceeds normally. After the gate decides, the
 // terminal outcome is recorded so the signal stays current.
 //
-// Single env switch: REVIEWBOT_REPUTATION. Default OFF (unset/"false") — when OFF every helper here is an
+// Single env switch: GITTENSORY_REVIEW_REPUTATION. Default OFF (unset/"false") — when OFF every helper here is an
 // immediate no-op: no reputation is read, nothing is recorded, and the AI-spend gate takes no new branch, so
 // the path is byte-identical to today. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same
 // as isSafetyEnabled / isGroundingEnabled / isEnabled).
@@ -21,8 +21,8 @@ import {
 } from "./submitter-reputation";
 
 /** True when the reputation signal is enabled. Flag-OFF (default) → every helper below is a no-op. */
-export function isReputationEnabled(env: { REVIEWBOT_REPUTATION?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_REPUTATION ?? "");
+export function isReputationEnabled(env: { GITTENSORY_REVIEW_REPUTATION?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_REPUTATION ?? "");
 }
 
 // ── Anti-abuse thresholds. GENERIC mechanism (not the gameable secret — they don't reveal any review

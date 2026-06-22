@@ -6,7 +6,7 @@
 // scope classification, and metagraphed's netuid grounding). The lane is ported as native,
 // self-contained gittensory modules under this directory.
 //
-// FLAG-GATED + DEFAULT-OFF: the lane only runs when REVIEWBOT_CONTENT_LANE is truthy in the Env.
+// FLAG-GATED + DEFAULT-OFF: the lane only runs when GITTENSORY_REVIEW_CONTENT_LANE is truthy in the Env.
 // Flag-off, the host never reaches these modules, so the live behavior is byte-identical. At
 // cutover the host flips the flag and routes awesome-claude + metagraphed PRs through the lane.
 
@@ -14,14 +14,14 @@
  *  testable without the whole binding (pass a plain object). */
 export interface ContentLaneEnv {
   /** When truthy ("1"/"true"/"on"/"yes"), the content lane is enabled. Default OFF. */
-  REVIEWBOT_CONTENT_LANE?: string;
+  GITTENSORY_REVIEW_CONTENT_LANE?: string;
 }
 
 const TRUTHY = new Set(["1", "true", "on", "yes"]);
 
 /** Is the content lane enabled? Default OFF — only a recognized truthy flag turns it on. */
 export function isContentLaneEnabled(env: ContentLaneEnv | undefined | null): boolean {
-  const raw = env?.REVIEWBOT_CONTENT_LANE;
+  const raw = env?.GITTENSORY_REVIEW_CONTENT_LANE;
   if (typeof raw !== "string") return false;
   return TRUTHY.has(raw.trim().toLowerCase());
 }

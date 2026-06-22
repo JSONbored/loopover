@@ -906,7 +906,7 @@ export function createApp() {
     }
   });
 
-  // Public OAuth draft-submission flow (REVIEWBOT_DRAFT), ported from reviewbot. When the flag is OFF
+  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT), ported from reviewbot. When the flag is OFF
   // every handler returns 404, so the endpoints are effectively absent (the router still registers them
   // but they short-circuit). The static `/auth/callback` route is registered before the `:id` param
   // route so it is not captured as a draft id. These are public (unauthenticated) by design — submission
@@ -2824,7 +2824,7 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
-  // Convergence (ops / observability, flag REVIEWBOT_OPS). Cross-repo review-OUTCOME aggregate (gate-block
+  // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
   // ledger + recommendation/slop calibration) for an operator dashboard. Bearer-gated by the `/v1/internal/*`
   // middleware above (INTERNAL_JOB_TOKEN). Flag-OFF (default) → 404, so the endpoint does not exist and the
   // worker is byte-identical to today. Aggregate counts only — no PR content / actor logins.
@@ -2833,7 +2833,7 @@ export function createApp() {
     return c.json(await computeOpsStats(c.env));
   });
 
-  // Convergence prep (#preconv-parity, flag REVIEWBOT_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
+  // Convergence prep (#preconv-parity, flag GITTENSORY_REVIEW_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
   // report: runs computeGateParity / isParityCutoverReady over the recorded review_audit rows and returns the
   // per-project agreement rate + cutover-ready verdict (floor 0.98, min 30 paired samples, zero unsafe
   // disagreements — all from parity.ts). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN).
@@ -4764,7 +4764,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/public/subnet-interface") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
-  // Public OAuth draft-submission flow (REVIEWBOT_DRAFT): the submission entry points are unauthenticated
+  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): the submission entry points are unauthenticated
   // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;

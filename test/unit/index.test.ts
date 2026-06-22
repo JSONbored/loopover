@@ -143,11 +143,11 @@ describe("worker entrypoint", () => {
     ]);
   });
 
-  it("enqueues the ops-alerts job hourly ONLY when REVIEWBOT_OPS is ON (flag-OFF is byte-identical)", async () => {
+  it("enqueues the ops-alerts job hourly ONLY when GITTENSORY_REVIEW_OPS is ON (flag-OFF is byte-identical)", async () => {
     const sentFor = async (opsFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(opsFlag === undefined ? {} : { REVIEWBOT_OPS: opsFlag }),
+        ...(opsFlag === undefined ? {} : { GITTENSORY_REVIEW_OPS: opsFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -168,10 +168,10 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "ops-alerts")).toEqual([{ type: "ops-alerts", requestedBy: "schedule" }]);
   });
 
-  it("does NOT enqueue ops-alerts outside the hourly window even when REVIEWBOT_OPS is ON", async () => {
+  it("does NOT enqueue ops-alerts outside the hourly window even when GITTENSORY_REVIEW_OPS is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      REVIEWBOT_OPS: "true",
+      GITTENSORY_REVIEW_OPS: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);

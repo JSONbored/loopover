@@ -429,15 +429,15 @@ describe("buildClosedUnifiedCommentBody (closed/skipped PR through the unified r
 describe("isUnifiedReviewCommentEnabled (flag-OFF selects the legacy path)", () => {
   it("is OFF (legacy buildPublicPrIntelligenceComment path) when the flag is unset or falsy", () => {
     expect(isUnifiedReviewCommentEnabled({})).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ UNIFIED_REVIEW_COMMENT: undefined })).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ UNIFIED_REVIEW_COMMENT: "false" })).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ UNIFIED_REVIEW_COMMENT: "0" })).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ UNIFIED_REVIEW_COMMENT: "" })).toBe(false);
+    expect(isUnifiedReviewCommentEnabled({ GITTENSORY_REVIEW_UNIFIED_COMMENT: undefined })).toBe(false);
+    expect(isUnifiedReviewCommentEnabled({ GITTENSORY_REVIEW_UNIFIED_COMMENT: "false" })).toBe(false);
+    expect(isUnifiedReviewCommentEnabled({ GITTENSORY_REVIEW_UNIFIED_COMMENT: "0" })).toBe(false);
+    expect(isUnifiedReviewCommentEnabled({ GITTENSORY_REVIEW_UNIFIED_COMMENT: "" })).toBe(false);
   });
 
   it("is ON only for an explicit truthy value", () => {
     for (const value of ["1", "true", "yes", "on", "TRUE", "On"]) {
-      expect(isUnifiedReviewCommentEnabled({ UNIFIED_REVIEW_COMMENT: value })).toBe(true);
+      expect(isUnifiedReviewCommentEnabled({ GITTENSORY_REVIEW_UNIFIED_COMMENT: value })).toBe(true);
     }
   });
 });

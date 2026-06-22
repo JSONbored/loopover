@@ -632,7 +632,7 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   if (code === "ai_consensus_defect") return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
   // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
   // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
-  // (REVIEWBOT_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
+  // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
   // gate verdict is byte-identical to today.
   if (code === "secret_leak") return true;
   // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer

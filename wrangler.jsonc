@@ -79,7 +79,7 @@
     // Default OFF — flag-OFF performs no retrieval, uses no adapter, makes no vector query, and keeps the
     // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
     // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
-    "GITTENSORY_REVIEW_RAG": "false",
+    "GITTENSORY_REVIEW_RAG": "true",
     // Convergence (self-improve / auto-tune): run the ported self-improvement loop on the cron tick over
     // gittensory's own review-outcome data — compute tuning recommendations, SHADOW-SOAK any strictly-
     // tightening one, and AUTO-PROMOTE it to live ONLY after the soak window passes the gate; every action is

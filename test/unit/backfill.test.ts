@@ -31,6 +31,7 @@ import {
   buildInstallationRepairDiagnostics,
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
+  fetchAndStorePullRequestFilesForReview,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -2593,6 +2594,46 @@ describe("GitHub backfill", () => {
         expect.objectContaining({ segment: "open_issues", status: "capped", nextCursor: "2" }),
       ]),
     );
+  });
+
+  // FIX B: the review path uses this to fetch + persist a PR's files inline when the stored rows are still
+  // empty (the PR-opened webhook beat the async detail-sync), so the FIRST AI review/grounding/comment sees
+  // the real diff instead of "0 files".
+  describe("fetchAndStorePullRequestFilesForReview", () => {
+    it("fetches the PR's files from GitHub, persists them, and returns the records", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/pulls/42/files")) {
+          return Response.json([
+            { filename: "src/foo.ts", status: "modified", additions: 9, deletions: 2, changes: 11, patch: "@@ -1 +1 @@\n-old\n+new" },
+            { filename: "README.md", status: "added", additions: 1, deletions: 0, changes: 1 },
+          ]);
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const records = await fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 42, "public-token");
+      expect(records.map((r) => r.path)).toEqual(["src/foo.ts", "README.md"]);
+      expect(records[0]).toMatchObject({ path: "src/foo.ts", additions: 9, deletions: 2, status: "modified" });
+      // Persisted: a subsequent stored read returns them (so the rest of the review run reuses them).
+      const stored = await listPullRequestFiles(env, "JSONbored/gittensory", 42);
+      expect(stored.map((r) => r.path).sort()).toEqual(["README.md", "src/foo.ts"]);
+    });
+
+    it("returns [] (and persists nothing) when GitHub returns no files — never throws", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () => Response.json([]));
+      const records = await fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 7, "public-token");
+      expect(records).toEqual([]);
+      expect(await listPullRequestFiles(env, "JSONbored/gittensory", 7)).toEqual([]);
+    });
+
+    it("is fail-safe: a failed REST+GraphQL fetch returns [] rather than throwing", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () => new Response("boom", { status: 500 }));
+      await expect(fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 99, "public-token")).resolves.toEqual([]);
+    });
   });
 });
 

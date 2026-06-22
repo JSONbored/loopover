@@ -11,7 +11,7 @@ import {
 } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
-// Drives the REVIEWBOT_SAFETY secrets-scan WIRING through the live review finalize path
+// Drives the GITTENSORY_REVIEW_SAFETY secrets-scan WIRING through the live review finalize path
 // (processGitHubWebhook → maybePublishPrPublicSurface → `await maybeAddSecretLeakFinding(...)` at the gate
 // build). The helper itself is unit-tested elsewhere; here we prove the flag-ON call site appends a critical
 // `secret_leak` blocker that FAILS the finalized gate end-to-end, and that flag-OFF is byte-identical.
@@ -113,9 +113,9 @@ function prWebhook(deliveryId: string) {
   };
 }
 
-describe("REVIEWBOT_SAFETY secrets-scan wired into the review FINALIZE path (processors.ts call site)", () => {
+describe("GITTENSORY_REVIEW_SAFETY secrets-scan wired into the review FINALIZE path (processors.ts call site)", () => {
   it("FLAG-ON: a leaked secret in the PR's changed files FAILS the finalized gate (secret_leak blocker appended before evaluateGateCheck)", async () => {
-    const env = createTestEnv({ REVIEWBOT_SAFETY: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedGateEnabledRepo(env);
     await seedLeakedSecretFile(env);
     const seen: { conclusion?: string | undefined } = {};
@@ -130,7 +130,7 @@ describe("REVIEWBOT_SAFETY secrets-scan wired into the review FINALIZE path (pro
   });
 
   it("FLAG-OFF (default): the SAME leaked secret produces NO blocker — the finalized gate is byte-identical (not failed on the secret)", async () => {
-    const env = createTestEnv({ REVIEWBOT_SAFETY: "false", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedGateEnabledRepo(env);
     await seedLeakedSecretFile(env);
     const seen: { conclusion?: string | undefined } = {};
@@ -145,7 +145,7 @@ describe("REVIEWBOT_SAFETY secrets-scan wired into the review FINALIZE path (pro
   });
 
   it("UNSET behaves identically to explicit-false (the flag-OFF branch is the default — no new branch taken)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() }); // REVIEWBOT_SAFETY unset
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() }); // GITTENSORY_REVIEW_SAFETY unset
     await seedGateEnabledRepo(env);
     await seedLeakedSecretFile(env);
     const seen: { conclusion?: string | undefined } = {};

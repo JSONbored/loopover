@@ -30,7 +30,7 @@ function capturingAiEnv(safety: boolean | undefined) {
     AI_SUMMARIES_ENABLED: "true",
     AI_PUBLIC_COMMENTS_ENABLED: "true",
     AI_DAILY_NEURON_BUDGET: "100000",
-    ...(safety === undefined ? {} : { REVIEWBOT_SAFETY: safety ? "true" : "false" }),
+    ...(safety === undefined ? {} : { GITTENSORY_REVIEW_SAFETY: safety ? "true" : "false" }),
   });
   return { env, seenPrompts, run };
 }
@@ -66,10 +66,10 @@ function advisory(findings: AdvisoryFinding[] = []): Advisory {
 describe("isSafetyEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isSafetyEnabled({})).toBe(false);
-    expect(isSafetyEnabled({ REVIEWBOT_SAFETY: "false" })).toBe(false);
-    expect(isSafetyEnabled({ REVIEWBOT_SAFETY: "true" })).toBe(true);
-    expect(isSafetyEnabled({ REVIEWBOT_SAFETY: "1" })).toBe(true);
-    expect(isSafetyEnabled({ REVIEWBOT_SAFETY: "on" })).toBe(true);
+    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "false" })).toBe(false);
+    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "true" })).toBe(true);
+    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "1" })).toBe(true);
+    expect(isSafetyEnabled({ GITTENSORY_REVIEW_SAFETY: "on" })).toBe(true);
   });
 });
 
@@ -110,7 +110,7 @@ describe("defangReviewInput (helper)", () => {
 
 describe("secret-leak finding in the advisory build", () => {
   it("FLAG-ON: a leaked secret in the diff surfaces a critical secret_leak finding", async () => {
-    const env = createTestEnv({ REVIEWBOT_SAFETY: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
     const adv = advisory();
     const files = [{ repoFullName: "acme/widgets", pullNumber: 7, path: "src/config.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: '@@\n+const token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";' } }];
     await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 7, files });
@@ -121,7 +121,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-OFF (default): no secret_leak finding is produced — the advisory is unchanged", async () => {
-    const env = createTestEnv({ REVIEWBOT_SAFETY: "false" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false" });
     const adv = advisory();
     const files = [{ repoFullName: "acme/widgets", pullNumber: 7, path: "src/config.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: '@@\n+const token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";' } }];
     await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 7, files });
@@ -129,7 +129,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-ON + files=null: lazily loads the changed files from D1 and still finds the leaked secret", async () => {
-    const env = createTestEnv({ REVIEWBOT_SAFETY: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
     // Seed a changed-file row so the lazy `listPullRequestFiles` load (args.files ?? …) returns a real diff.
     await env.DB.prepare(
       "INSERT INTO pull_request_files (repo_full_name, pull_number, path, status, additions, deletions, changes, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -142,7 +142,7 @@ describe("secret-leak finding in the advisory build", () => {
   });
 
   it("FLAG-ON + files=null with no changed files: lazy load yields a clean diff, no finding", async () => {
-    const env = createTestEnv({ REVIEWBOT_SAFETY: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
     const adv = advisory();
     // No seeded rows → listPullRequestFiles returns [] → buildAiReviewDiff('') → secretLeakFinding null
     await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 999, files: null });

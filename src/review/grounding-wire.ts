@@ -2,7 +2,7 @@
 // content of the changed files, so a non-frontier model stops hallucinating CI outcomes ("this breaks the
 // build" on a green PR) and undefined symbols (flagged because they're defined just outside the visible hunk).
 //
-// Single env switch: REVIEWBOT_GROUNDING. Default OFF (unset/"false") — when OFF this module gathers nothing,
+// Single env switch: GITTENSORY_REVIEW_GROUNDING. Default OFF (unset/"false") — when OFF this module gathers nothing,
 // the reviewer prompt is byte-identical to today, and no extra GitHub fetch is made. Truthy follows the
 // codebase convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled / isEnabled).
 //
@@ -25,13 +25,13 @@ import {
 } from "./review-grounding";
 
 /** True when grounding is enabled. Flag-OFF (default) → no grounding is gathered and the prompt is unchanged. */
-export function isGroundingEnabled(env: { REVIEWBOT_GROUNDING?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_GROUNDING ?? "");
+export function isGroundingEnabled(env: { GITTENSORY_REVIEW_GROUNDING?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_GROUNDING ?? "");
 }
 
 /** When ON, both grounding inputs (CI + full files) are gathered; OFF gathers neither. One switch keeps the
  *  flag-OFF path provably byte-identical (no partial grounding). */
-function groundingFlags(env: { REVIEWBOT_GROUNDING?: string | undefined }): GroundingFlags {
+function groundingFlags(env: { GITTENSORY_REVIEW_GROUNDING?: string | undefined }): GroundingFlags {
   const on = isGroundingEnabled(env);
   return { ciGrounding: on, fullFileContext: on };
 }
@@ -44,8 +44,10 @@ const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 /** Pull a one-line failure reason from a check-run payload (output.title/summary) or a commit-status
  *  description — the same fields the unified comment surfaces, so the reviewer sees WHY a check failed
- *  ("60% of diff hit (target 97%)") not just "codecov/patch failed". "" when none present. */
-function checkSummaryText(check: CheckSummaryRecord): string {
+ *  ("60% of diff hit (target 97%)") not just "codecov/patch failed". "" when none present. Exported so the
+ *  unified-comment call site populates MergeReadiness.failingDetails from the SAME extraction (FIX D3),
+ *  keeping the reviewer's grounding and the public comment consistent on each check's failure reason. */
+export function checkSummaryText(check: CheckSummaryRecord): string {
   const payload = check.payload as { output?: { title?: unknown; summary?: unknown }; description?: unknown } | undefined;
   const output = payload?.output;
   const candidates = [output?.title, output?.summary, payload?.description];

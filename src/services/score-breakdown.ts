@@ -138,19 +138,23 @@ function reviewPenaltyBreakdown(preview: ScorePreviewResult): ScoreMultiplierBre
 
 function labelMultiplierBreakdown(preview: ScorePreviewResult): ScoreMultiplierBreakdown {
   const { labelMultiplier } = preview.scoreEstimate;
-  const band = labelMultiplier > 1 ? "full" : "neutral";
+  const band: ScoreMultiplierBand = labelMultiplier > 1 ? "full" : labelMultiplier < 1 ? "reduced" : "neutral";
   return {
     component: "labelMultiplier",
     band,
     summary:
       labelMultiplier > 1
         ? "A configured trusted label multiplier is applied."
-        : "No trusted label multiplier is applied beyond the default.",
+        : labelMultiplier < 1
+          ? "A configured penalty label multiplier is reducing the preview."
+          : "No trusted label multiplier is applied beyond the default.",
     lever:
       labelMultiplier > 1
         ? "Ensure the label match is legitimate and documented for maintainers."
-        : "Check whether the change legitimately matches a configured trusted label before submission.",
-    leverageScore: labelMultiplier > 1 ? 12 : 25,
+        : labelMultiplier < 1
+          ? "Confirm the penalty label is accurate; substantive changes may warrant a different label."
+          : "Check whether the change legitimately matches a configured trusted label before submission.",
+    leverageScore: labelMultiplier > 1 ? 12 : labelMultiplier < 1 ? 40 : 25,
   };
 }
 

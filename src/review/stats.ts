@@ -147,7 +147,7 @@ function readSecret(env: Env, name: string): string {
 
 // ── Stats config (byte-faithful from reviewbot src/core/stats.ts) ────────────────────────────────
 
-const STATS_TOKEN_SECRET = "REVIEWBOT_STATS_TOKEN";
+const STATS_TOKEN_SECRET = "GITTENSORY_REVIEW_STATS_TOKEN";
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",

@@ -116,6 +116,30 @@ describe("runAiReviewForAdvisory", () => {
     expect(result?.notes).toContain("Likely crash.");
   });
 
+  it("uses the caller's pre-resolved files (FIX B) instead of the stored read, so the model sees the real diff", async () => {
+    // FIX B: the processor passes `files` (its resolvePullRequestFilesForReview output). With no rows ever
+    // written to the test DB, a stored read would yield an EMPTY diff; passing files proves the model gets the
+    // real diff anyway — the diff-less-first-review failure mode.
+    const prompts: string[] = [];
+    const env = aiEnv(async (...args: unknown[]) => {
+      prompts.push(JSON.stringify(args));
+      return { response: notesOnlyJson() };
+    });
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      files: [fileRecord({ path: "src/resolved.ts", status: "modified", payload: { patch: "@@\n+const fixed = true;" } })],
+    });
+    expect(result?.notes).toContain("Looks fine.");
+    // The pre-resolved file's path + patch reached the model prompt (i.e. the diff was non-empty).
+    expect(prompts.join("\n")).toContain("src/resolved.ts");
+    expect(prompts.join("\n")).toContain("const fixed = true;");
+  });
+
   it("returns advisory notes without a finding in advisory mode", async () => {
     const adv = advisory();
     const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: notesOnlyJson() })), {

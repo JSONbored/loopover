@@ -133,14 +133,14 @@ export type JobMessage =
       deliveryId: string;
     }
   | {
-      // Convergence (ops / observability, flag-gated by REVIEWBOT_OPS). Scan gittensory's review-outcome data
+      // Convergence (ops / observability, flag-gated by GITTENSORY_REVIEW_OPS). Scan gittensory's review-outcome data
       // (gate-block ledger + recommendation/slop calibration) and emit a structured `ops_anomaly` log on drift.
       // Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job never exists.
       type: "ops-alerts";
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Convergence (self-improve / auto-tune, flag-gated by REVIEWBOT_SELFTUNE). Run the ported
+      // Convergence (self-improve / auto-tune, flag-gated by GITTENSORY_REVIEW_SELFTUNE). Run the ported
       // self-improvement loop over gittensory's review-outcome data — compute tuning recommendations,
       // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes
       // the gate; every action is audited. TIGHTENING-ONLY. Enqueued hourly by the cron ONLY when the flag is
@@ -149,7 +149,22 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Public OAuth draft-submission flow (REVIEWBOT_DRAFT): fork the content repo with the
+      // Convergence (RAG / codebase index — Layer C, flag-gated by GITTENSORY_REVIEW_RAG). Populate + maintain the
+      // vector index that retrieval reads.
+      //   - No `repoFullName` (the cron fan-out) → enqueue one per-repo FULL re-index job for every
+      //     registered + cutover-allowlisted repo (mirrors the agent-regate / signal-snapshot fan-out).
+      //   - `repoFullName` + no `paths` → FULL re-index of that repo's code (indexRepo).
+      //   - `repoFullName` + `paths` → INCREMENTAL re-index of only those changed paths (reindexChangedPaths),
+      //     enqueued from a push / merged-PR webhook.
+      // Enqueued + dispatched ONLY when the flag is ON; flag-OFF (default) this job is never created and the
+      // processor no-ops, so the deploy is byte-identical to today.
+      type: "rag-index-repo";
+      requestedBy: "schedule" | "api" | "webhook" | "test";
+      repoFullName?: string;
+      paths?: string[];
+    }
+  | {
+      // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): fork the content repo with the
       // contributor's token + open the PR. Enqueued by the draft OAuth callback.
       type: "submit-draft";
       requestedBy: "api" | "test";

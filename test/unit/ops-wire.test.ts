@@ -44,8 +44,8 @@ const healthySnapshot: RepoOutcomeSnapshot = {
 
 describe("isOpsEnabled — default OFF, truthy convention", () => {
   it("is OFF for unset / false / empty, ON for 1/true/yes/on", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isOpsEnabled({ REVIEWBOT_OPS: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isOpsEnabled({ REVIEWBOT_OPS: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isOpsEnabled({ GITTENSORY_REVIEW_OPS: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isOpsEnabled({ GITTENSORY_REVIEW_OPS: on })).toBe(true);
   });
 });
 
@@ -239,12 +239,12 @@ describe("GET /v1/internal/ops/stats — bearer-gated, flag-gated endpoint", () 
 
   it("401s without the internal token (the /v1/internal/* middleware gate)", async () => {
     const app = createApp();
-    const env = createTestEnv({ REVIEWBOT_OPS: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
     expect((await app.request("/v1/internal/ops/stats", {}, env)).status).toBe(401);
     expect((await app.request("/v1/internal/ops/stats", { headers: { authorization: "Bearer nope" } }, env)).status).toBe(401);
   });
 
-  it("404s when REVIEWBOT_OPS is OFF — the endpoint does not exist (byte-identical to today)", async () => {
+  it("404s when GITTENSORY_REVIEW_OPS is OFF — the endpoint does not exist (byte-identical to today)", async () => {
     const app = createApp();
     const env = createTestEnv(); // flag unset → OFF
     const res = await app.request("/v1/internal/ops/stats", { headers: bearer(env) }, env);
@@ -252,9 +252,9 @@ describe("GET /v1/internal/ops/stats — bearer-gated, flag-gated endpoint", () 
     expect(((await res.json()) as { error: string }).error).toBe("not_found");
   });
 
-  it("200s with the aggregate when REVIEWBOT_OPS is ON and authorized", async () => {
+  it("200s with the aggregate when GITTENSORY_REVIEW_OPS is ON and authorized", async () => {
     const app = createApp();
-    const env = createTestEnv({ REVIEWBOT_OPS: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
     await seedRegisteredRepo(env, "owner/repo");
     await seedGateFalsePositiveAnomaly(env, "owner/repo");
     const res = await app.request("/v1/internal/ops/stats", { headers: bearer(env) }, env);

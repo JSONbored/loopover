@@ -55,10 +55,10 @@ const baseArgs = { settings: { aiReviewMode: "advisory" } as RepositorySettings,
 describe("isReputationEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isReputationEnabled({})).toBe(false);
-    expect(isReputationEnabled({ REVIEWBOT_REPUTATION: "false" })).toBe(false);
-    expect(isReputationEnabled({ REVIEWBOT_REPUTATION: "true" })).toBe(true);
-    expect(isReputationEnabled({ REVIEWBOT_REPUTATION: "1" })).toBe(true);
-    expect(isReputationEnabled({ REVIEWBOT_REPUTATION: "on" })).toBe(true);
+    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "false" })).toBe(false);
+    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "true" })).toBe(true);
+    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "1" })).toBe(true);
+    expect(isReputationEnabled({ GITTENSORY_REVIEW_REPUTATION: "on" })).toBe(true);
   });
 });
 
@@ -79,7 +79,7 @@ describe("shouldDowngradeToDeterministic (pure)", () => {
 
 describe("AI-spend gate: reputation downgrade", () => {
   it("FLAG-ON: a low-reputation / burst submitter is downgraded to deterministic-only (no AI spend)", async () => {
-    const { env, run } = aiEnv({ REVIEWBOT_REPUTATION: "true" });
+    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     const adv = advisory();
     const result = await runAiReviewForAdvisory(env, { ...baseArgs, advisory: adv });
@@ -90,7 +90,7 @@ describe("AI-spend gate: reputation downgrade", () => {
   });
 
   it("FLAG-ON: a good-reputation submitter proceeds to the normal AI review", async () => {
-    const { env, run } = aiEnv({ REVIEWBOT_REPUTATION: "true" });
+    const { env, run } = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 20, merged: 18, closed: 2, manual: 0 });
     const adv = advisory();
     const result = await runAiReviewForAdvisory(env, { ...baseArgs, advisory: adv });
@@ -100,7 +100,7 @@ describe("AI-spend gate: reputation downgrade", () => {
 
   it("FLAG-OFF (default): the AI-spend path is UNCHANGED even for a burst submitter — no reputation read", async () => {
     // Same burst seed as the flag-ON downgrade case, but the flag is OFF: the AI review runs exactly as today.
-    const off = aiEnv({ REVIEWBOT_REPUTATION: "false" });
+    const off = aiEnv({ GITTENSORY_REVIEW_REPUTATION: "false" });
     await seedSubmitter(off.env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     const offResult = await runAiReviewForAdvisory(off.env, { ...baseArgs, advisory: advisory() });
     expect(offResult?.notes).toContain("Add a test.");
@@ -117,12 +117,12 @@ describe("AI-spend gate: reputation downgrade", () => {
 
 describe("shouldSkipAiForReputation (helper)", () => {
   it("FLAG-OFF: returns false immediately without reading the DB (broken DB still yields false)", async () => {
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "false", DB: undefined as unknown as D1Database });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "false", DB: undefined as unknown as D1Database });
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(false);
   });
 
   it("FLAG-ON: true for a seeded burst submitter, false for an unseen one", async () => {
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     await seedSubmitter(env, { project: "acme/widgets", submitter: "burster", submissions: 12, merged: 0, closed: 12, manual: 0 });
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "burster" })).toBe(true);
     expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "newcomer" })).toBe(false);
@@ -133,8 +133,8 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
   it("FLAG-ON: a closed+merged PR webhook records a 'merged' outcome for the submitter", async () => {
     const { processJob } = await import("../../src/queue/processors");
     const { upsertRepositorySettings } = await import("../../src/db/repositories");
-    // UNIFIED_REVIEW_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true", UNIFIED_REVIEW_COMMENT: "true" });
+    // GITTENSORY_REVIEW_UNIFIED_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true", GITTENSORY_REVIEW_UNIFIED_COMMENT: "true" });
     // Gate enabled so the closing-PR public-surface path (skipped-gate + unified closed comment) executes.
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "enabled" });
     // External calls (token/miner/github) are best-effort + caught; stub them so nothing throws.
@@ -176,7 +176,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
 
   it("FLAG-ON: a closed PR with no author login records against a null submitter (authorLogin ?? null)", async () => {
     const { processJob } = await import("../../src/queue/processors");
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -209,7 +209,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     const { processJob } = await import("../../src/queue/processors");
     // Flag unset → `isReputationEnabled(env) ? … : undefined` is undefined → the `if (reputationOutcome)`
     // body never runs → submitter_stats stays empty (byte-identical to today).
-    const env = createTestEnv(); // REVIEWBOT_REPUTATION unset → OFF
+    const env = createTestEnv(); // GITTENSORY_REVIEW_REPUTATION unset → OFF
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -239,7 +239,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
     const { processJob } = await import("../../src/queue/processors");
     const { upsertRepositorySettings } = await import("../../src/db/repositories");
     // Reputation ON, but the PR is still OPEN and the gate does not route it to manual → undefined outcome.
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     // Gate OFF for this repo so the open PR's gate is `undefined` (not failure/action_required) → no "manual".
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", gateCheckMode: "off", publicSurface: "off", commentMode: "off" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -272,7 +272,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
 
 describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
   it("FLAG-OFF (default): records NOTHING — the table stays empty", async () => {
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "false" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "false" });
     await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "closed" });
     // The migration applied (the table exists and is queryable) but nothing was written.
     const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM submitter_stats").first<{ n: number }>();
@@ -280,7 +280,7 @@ describe("recordReputationOutcome + the 0046 submitter_stats migration", () => {
   });
 
   it("FLAG-ON: records the outcome and a round-trip read reflects the counts (migration applied)", async () => {
-    const env = createTestEnv({ REVIEWBOT_REPUTATION: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPUTATION: "true" });
     await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "merged" });
     await recordReputationOutcome(env, { project: "acme/widgets", submitter: "alice", outcome: "closed" });
     const stats = await getSubmitterReputation(env, "acme/widgets", "alice");

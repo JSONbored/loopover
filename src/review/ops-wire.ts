@@ -1,5 +1,5 @@
 // Convergence (ops / observability) — wires the ported alerts + stats observability into gittensory, behind
-// the default-OFF `REVIEWBOT_OPS` flag. Flag-OFF every export here is a no-op / 404, so the worker is
+// the default-OFF `GITTENSORY_REVIEW_OPS` flag. Flag-OFF every export here is a no-op / 404, so the worker is
 // byte-identical to today (the cron enqueues no ops job; the endpoint short-circuits).
 //
 // ADAPTED TO GITTENSORY'S OWN OUTCOME DATA — NOT reviewbot's `review_targets`/`review_audit` (those tables are
@@ -33,8 +33,8 @@ import { errorMessage, nowIso } from "../utils/json";
 
 /** True when the ops observability surface is enabled. Flag-OFF (default) → every export below is a no-op /
  *  404. Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled). */
-export function isOpsEnabled(env: { REVIEWBOT_OPS?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_OPS ?? "");
+export function isOpsEnabled(env: { GITTENSORY_REVIEW_OPS?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_OPS ?? "");
 }
 
 // ── Anomaly thresholds (gittensory-native; conservative so a handful of samples never cries wolf) ──────────

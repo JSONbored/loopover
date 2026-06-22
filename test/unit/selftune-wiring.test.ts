@@ -63,8 +63,8 @@ async function seedRecommendationOutcomes(env: Env, repoFullName: string, positi
 
 describe("isSelfTuneEnabled — default OFF, truthy convention", () => {
   it("is OFF for unset / false / empty, ON for 1/true/yes/on", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isSelfTuneEnabled({ REVIEWBOT_SELFTUNE: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isSelfTuneEnabled({ REVIEWBOT_SELFTUNE: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isSelfTuneEnabled({ GITTENSORY_REVIEW_SELFTUNE: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isSelfTuneEnabled({ GITTENSORY_REVIEW_SELFTUNE: on })).toBe(true);
   });
 });
 
@@ -140,7 +140,7 @@ const ACTING_AUTONOMY = JSON.stringify({ review: "auto" }); // opts the repo int
 
 describe("runSelfTune — shadow-soak over gittensory's own outcome data", () => {
   it("FLAG-ON: a low-precision repo gets a TIGHTENING override SHADOW-SOAKED (not live yet) + audited", async () => {
-    const env = createTestEnv({ REVIEWBOT_SELFTUNE: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     // 5 positive / 10 negative = 33% precision over 15 decided → a clear tightening signal.
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
@@ -155,7 +155,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("FLAG-ON: promotes a SOAKED tightening shadow override to live on a later tick (tightening + evidence + soaked)", async () => {
-    const env = createTestEnv({ REVIEWBOT_SELFTUNE: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
     // Pre-seed a shadow override whose soak deadline is already in the past → eligible to promote this tick.
@@ -174,7 +174,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("a LOOSENING change is NEVER applied — only tightening auto-applies", async () => {
-    const env = createTestEnv({ REVIEWBOT_SELFTUNE: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
     // Pre-seed a LIVE floor of 0.99 and a SOAKED shadow override of 0.80 (a DROP = loosening). Even though the
@@ -198,7 +198,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("FLAG-OFF (default): runSelfTune does ZERO tuning work — no shadow, no override, no audit", async () => {
-    const env = createTestEnv({ REVIEWBOT_SELFTUNE: "false" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "false" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
 
@@ -211,7 +211,7 @@ describe("runSelfTune — shadow-soak over gittensory's own outcome data", () =>
   });
 
   it("FLAG-ON via the processor: a stale in-flight selftune job runs the tick (defense-in-depth gate)", async () => {
-    const env = createTestEnv({ REVIEWBOT_SELFTUNE: "true" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
     await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
 

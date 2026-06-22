@@ -1,4 +1,4 @@
-// Unified PR review comment renderer (convergence — see docs/UNIFIED_REVIEW_COMMENT.md).
+// Unified PR review comment renderer (convergence — see docs/GITTENSORY_REVIEW_UNIFIED_COMMENT.md).
 //
 // Produces ONE in-place comment in the gittensory SHAPE (colored alert sidebar + readiness
 // signal table + collapsibles + re-run + earning footer) with reviewbot's deep review folded
@@ -313,6 +313,29 @@ function bullets(items: string[]): string {
     .join("\n");
 }
 
+/** Render the failing CI checks as a bullet list of `name — reason` (reason only when the check carried one),
+ *  preferring failingDetails (which pairs each name with its WHY: codecov %/test/lint reason) and falling back
+ *  to the bare failingChecks names. Public-safe: only check names + their already-public short summary, both
+ *  angle-escaped. "" when there is nothing to list, so the caller omits the section entirely. */
+function failingChecksBlock(readiness: MergeReadiness | undefined): string {
+  if (!readiness || readiness.ciState !== "failed") return "";
+  const details = readiness.failingDetails ?? [];
+  if (details.length > 0) {
+    const lines = details
+      .map((detail) => {
+        const name = escapePublicHtmlAngles(detail.name.trim());
+        if (!name) return "";
+        const reason = detail.summary?.trim() ? ` — ${escapePublicHtmlAngles(detail.summary.trim())}` : "";
+        return `- ${name}${reason}`;
+      })
+      .filter((line) => line.length > 0);
+    if (lines.length) return lines.join("\n");
+  }
+  const names = (readiness.failingChecks ?? []).map((name) => name.trim()).filter((name) => name.length > 0);
+  if (names.length === 0) return "";
+  return [...new Set(names)].map((name) => `- ${escapePublicHtmlAngles(name)}`).join("\n");
+}
+
 function signalTable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   const blockerCount = (input.blockers ?? []).length;
   const codeRow: UnifiedSignalRow = {
@@ -371,6 +394,12 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
     const heading = status === "blocked" ? "Why this is blocked" : "Concerns raised — review before merging";
     blocks.push(`**${heading}**\n${bullets(blockers)}`);
   }
+
+  // Failing CI checks — list WHICH checks failed and WHY (codecov %/test/lint reason) under the "CI failing"
+  // chip, instead of leaving the chip as the only signal. Only when CI actually failed (failingChecksBlock
+  // guards on ciState === "failed"); public-safe (names + short reasons only).
+  const failingChecks = failingChecksBlock(input.readiness);
+  if (failingChecks) blocks.push(`**CI checks failing**\n${failingChecks}`);
 
   blocks.push(signalTable(input, ctx));
 

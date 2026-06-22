@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_READY, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
 function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateCheckConclusion }): AgentActionPlanInput {
@@ -8,6 +8,10 @@ function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateChec
     autonomy: {},
     autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
     slopGateMinScore: 60,
+    changedPaths: [],
+    hardGuardrailGlobs: [],
+    authorIsOwner: false,
+    authorIsAutomationBot: false,
     pr: { labels: [] },
     ...overrides,
   };
@@ -73,11 +77,11 @@ describe("planAgentMaintenanceActions (#778)", () => {
 
   it("applies conservative defaults when autoMaintain / slopGateMinScore are omitted", () => {
     // no autoMaintain → requireApprovals defaults to 1 → a clean passing PR without APPROVED does NOT merge
-    expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
     // no slopGateMinScore → defaults to 60 → slopRisk 70 counts as noise and closes
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, pr: { labels: [], slopRisk: 70 } }))).toContain("close");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], slopRisk: 70 } }))).toContain("close");
     // ...and slopRisk 50 is below the default → no close
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, pr: { labels: [], slopRisk: 50 } }))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], slopRisk: 50 } }))).not.toContain("close");
   });
 
   it("closes clear noise (high slop or duplicate) on a non-passing verdict, and never closes a passing PR", () => {
@@ -111,5 +115,103 @@ describe("planAgentMaintenanceActions (#778)", () => {
       input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean" } }),
     );
     expect(classes(plan)).toEqual(["label", "approve", "merge"]);
+  });
+
+  describe("hard-guardrail: a changed path matching a guardrail glob forces manual review", () => {
+    const guarded = { changedPaths: ["src/scoring/model.ts"], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"] };
+
+    it("does NOT auto-merge a clean+approved+passing PR that touches a guarded path", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).not.toContain("merge");
+    });
+
+    it("does NOT auto-close a noisy failing PR that touches a guarded path", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("does NOT auto-approve a passing PR that touches a guarded path (so it can't later satisfy a merge)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto" }, ...guarded, pr: { labels: [] } })));
+      expect(plan).not.toContain("approve");
+    });
+
+    it("still labels a guarded PR (the reversible action is unaffected — it just falls to a human)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("label");
+      expect(plan).not.toContain("merge");
+    });
+
+    it("labels a guarded passing PR `needs-human-review` (NOT `ready-to-merge`) and still does not merge it", () => {
+      // A guardrail-hit PR that otherwise passes is withheld from auto-merge → the `ready-to-merge` label
+      // would be misleading. It must carry the distinct `needs-human-review` label instead, and never merge.
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const label = plan.find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(label?.label).not.toBe(AGENT_LABEL_READY);
+      expect(label?.reason).toContain("guarded path");
+      expect(classes(plan)).not.toContain("merge");
+    });
+
+    it("does not re-plan the needs-human-review label when the guarded PR already carries it (idempotent)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, ...guarded, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW] } })));
+      expect(plan).not.toContain("label");
+    });
+
+    it("a guarded BLOCKING PR keeps the changes-requested label (not needs-human-review)", () => {
+      const label = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { label: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [] } })).find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+
+    it("still auto-merges when the changed paths do NOT match any guardrail glob", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", merge: "auto" }, changedPaths: ["docs/readme.md", "src/ui/button.tsx"], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      expect(classes(plan)).toContain("merge");
+      // A clean, non-guarded passing PR keeps the `ready-to-merge` label (the auto-merge it promises happens).
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
+    });
+  });
+
+  describe("owner-PR guard: never auto-close the repo owner's own PRs", () => {
+    it("does NOT auto-close a noisy failing PR authored by the repo owner", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: true, pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("DOES auto-close the same noisy PR when the author is not the owner", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], slopRisk: 95 } })));
+      expect(plan).toContain("close");
+    });
+
+    it("still auto-merges a clean+approved owner PR (the guard blocks only close, never merge)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, authorIsOwner: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
+    });
+  });
+
+  describe("automation-bot guard: never auto-close maintainer-managed accumulator/dependency PRs", () => {
+    it("does NOT auto-close a noisy failing PR authored by an automation bot (e.g. the readme-refresh accumulator)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsAutomationBot: true, pr: { labels: [], slopRisk: 95, linkedDuplicateCount: 3 } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("still auto-merges a clean+approved automation-bot PR (the guard blocks only close, never merge)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, authorIsAutomationBot: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
+    });
+  });
+});
+
+describe("isProtectedAutomationAuthor", () => {
+  it("matches the maintainer-managed automation accounts (case-insensitive)", () => {
+    expect(isProtectedAutomationAuthor("github-actions[bot]")).toBe(true);
+    expect(isProtectedAutomationAuthor("GitHub-Actions[bot]")).toBe(true);
+    expect(isProtectedAutomationAuthor("dependabot[bot]")).toBe(true);
+    expect(isProtectedAutomationAuthor("renovate[bot]")).toBe(true);
+  });
+
+  it("does not match human authors or null", () => {
+    expect(isProtectedAutomationAuthor("JSONbored")).toBe(false);
+    expect(isProtectedAutomationAuthor("some-contributor")).toBe(false);
+    expect(isProtectedAutomationAuthor(null)).toBe(false);
+    expect(isProtectedAutomationAuthor(undefined)).toBe(false);
   });
 });

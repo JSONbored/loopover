@@ -1,5 +1,5 @@
 // Convergence (#self-improve) — wires the ported self-improvement loop (src/review/auto-tune.ts +
-// src/review/auto-apply.ts) into gittensory's cron behind the default-OFF `REVIEWBOT_SELFTUNE` flag.
+// src/review/auto-apply.ts) into gittensory's cron behind the default-OFF `GITTENSORY_REVIEW_SELFTUNE` flag.
 //
 // SAFETY CONTRACT (must hold under every path):
 //   • flag-OFF (default) → the cron enqueues NO selftune job and this module is never reached; ZERO tuning
@@ -44,8 +44,8 @@ import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
 
 /** True when the self-improvement loop is enabled. Flag-OFF (default) → every export below is a no-op. Truthy
  *  follows the codebase convention (`/^(1|true|yes|on)$/i`, same as isOpsEnabled / isReputationEnabled). */
-export function isSelfTuneEnabled(env: { REVIEWBOT_SELFTUNE?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_SELFTUNE ?? "");
+export function isSelfTuneEnabled(env: { GITTENSORY_REVIEW_SELFTUNE?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SELFTUNE ?? "");
 }
 
 /** The project's base confidence floor the tightening direction is judged against. Gittensory has no live

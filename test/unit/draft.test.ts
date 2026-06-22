@@ -8,7 +8,7 @@ const DRAFT_SECRET = "draft-token-encryption-secret-at-least-32b";
 
 function draftEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
-    REVIEWBOT_DRAFT: "true",
+    GITTENSORY_REVIEW_DRAFT: "true",
     GITHUB_OAUTH_CLIENT_ID: "Iv-test-client-id",
     GITHUB_OAUTH_CLIENT_SECRET: "test-oauth-client-secret",
     DRAFT_TOKEN_ENCRYPTION_SECRET: DRAFT_SECRET,
@@ -39,7 +39,7 @@ const SAMPLE_FIELDS = {
   privacy_notes: "No personal data collected.",
 };
 
-describe("draft flow — flag OFF (REVIEWBOT_DRAFT unset/false)", () => {
+describe("draft flow — flag OFF (GITTENSORY_REVIEW_DRAFT unset/false)", () => {
   it("POST /v1/drafts returns 404 when the flag is off", async () => {
     const app = createApp();
     const env = createTestEnv(); // flag unset
@@ -49,7 +49,7 @@ describe("draft flow — flag OFF (REVIEWBOT_DRAFT unset/false)", () => {
 
   it("GET /v1/drafts/:id returns 404 when the flag is off", async () => {
     const app = createApp();
-    const env = createTestEnv({ REVIEWBOT_DRAFT: "false" });
+    const env = createTestEnv({ GITTENSORY_REVIEW_DRAFT: "false" });
     const res = await app.request("/v1/drafts/draft_does_not_exist", {}, env);
     expect(res.status).toBe(404);
   });
@@ -735,7 +735,7 @@ describe("buildContributorMdx — block-scalar branch + optional frontmatter", (
 describe("queue dispatch — submit-draft job", () => {
   it("processJob routes a submit-draft message to processSubmitDraft (flag-off → internal no-op, no fetch)", async () => {
     const { processJob } = await import("../../src/queue/processors");
-    const env = createTestEnv(); // REVIEWBOT_DRAFT unset → processSubmitDraft no-ops internally
+    const env = createTestEnv(); // GITTENSORY_REVIEW_DRAFT unset → processSubmitDraft no-ops internally
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await processJob(env, { type: "submit-draft", requestedBy: "test", draftId: "draft_anything" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -1240,9 +1240,17 @@ describe("handleDraftStatus — flag-off guard + populated optional columns", ()
   });
 });
 
-describe("processSubmitDraft — fork-readiness retry loop (fake timers)", () => {
+describe("processSubmitDraft — fork-readiness retry loop (instant backoff)", () => {
   it("polls again after the fork is initially absent, then proceeds once it appears (no real sleep)", async () => {
-    vi.useFakeTimers();
+    // The fork-readiness backoff is sleep(3000) = setTimeout(resolve, 3000). Make it INSTANT (fire on a real
+    // 0ms tick) so the whole flow runs to completion on the real event loop — no 3s wait, and no fake-timer
+    // pump to race the interleaved real async (WebCrypto token-decrypt + the async D1/fetch mocks). The old
+    // fake-timer drive intermittently HUNG under CI coverage load (a real macrotask lagged the microtask flush
+    // the pump relied on, so the scheduled sleep was never fired and the test timed out).
+    const realSetTimeout = globalThis.setTimeout;
+    const timerSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((cb: (...a: unknown[]) => void, _ms?: number, ...args: unknown[]) => realSetTimeout(cb, 0, ...args)) as unknown as typeof globalThis.setTimeout);
     try {
       const env = draftEnv();
       const id = await seedQueuedDraftWithToken(env);
@@ -1273,24 +1281,16 @@ describe("processSubmitDraft — fork-readiness retry loop (fake timers)", () =>
         return routes(input, init);
       });
 
-      let settled = false;
-      const done = processSubmitDraft(env, id).then(() => {
-        settled = true;
-      });
-      // The loop interleaves real-async D1/fetch work with the one fake setTimeout(sleep 3000).
-      // Pump fake timers repeatedly (flushing pending real microtasks each pass) until the whole
-      // flow settles, so the sleep advances the instant it is scheduled — and never runs for real.
-      for (let i = 0; i < 50 && !settled; i += 1) {
-        await vi.advanceTimersByTimeAsync(3000);
-      }
-      await done;
+      // sleep() is now instant, so the flow runs straight through (probe 404 → instant backoff → probe 200 →
+      // open the PR). Just await it — no pump loop, no fake-timer race.
+      await processSubmitDraft(env, id);
       fetchSpy.mockRestore();
 
       expect(forkProbe).toBe(2); // probed once (absent), slept, probed again (present)
       const row = await env.DB.prepare("SELECT status, pull_request_number FROM submission_drafts WHERE id = ?").bind(id).first<{ status: string; pull_request_number: number }>();
       expect(row).toMatchObject({ status: "pr_open", pull_request_number: 808 });
     } finally {
-      vi.useRealTimers();
+      timerSpy.mockRestore();
     }
   });
 });
@@ -1308,7 +1308,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
     // createTestEnv never sets GITHUB_OAUTH_CLIENT_ID → property is genuinely undefined,
     // so `env.GITHUB_OAUTH_CLIENT_ID ?? ""` takes the nullish-coalescing fallback.
     const env = createTestEnv({
-      REVIEWBOT_DRAFT: "true",
+      GITTENSORY_REVIEW_DRAFT: "true",
       DRAFT_TOKEN_ENCRYPTION_SECRET: DRAFT_SECRET,
       // GITHUB_OAUTH_CLIENT_ID intentionally omitted (undefined)
     });
@@ -1319,7 +1319,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
 
   it("returns 503 when DRAFT_TOKEN_ENCRYPTION_SECRET is undefined — encKey `?? \"\"` arm", async () => {
     const env = createTestEnv({
-      REVIEWBOT_DRAFT: "true",
+      GITTENSORY_REVIEW_DRAFT: "true",
       GITHUB_OAUTH_CLIENT_ID: "Iv-test-client-id",
       // DRAFT_TOKEN_ENCRYPTION_SECRET intentionally omitted (undefined)
     });
@@ -1340,7 +1340,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
 
     // Re-point the SAME D1 instance into an env missing the client secret (undefined, not "").
     const env = createTestEnv({
-      REVIEWBOT_DRAFT: "true",
+      GITTENSORY_REVIEW_DRAFT: "true",
       GITHUB_OAUTH_CLIENT_ID: "Iv-test-client-id",
       DRAFT_TOKEN_ENCRYPTION_SECRET: DRAFT_SECRET,
       DB: fullEnv.DB,

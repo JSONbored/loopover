@@ -1,7 +1,7 @@
 // Convergence (safety) feature flag + helpers that wire the ported safety modules
 // (`./prompt-injection` + `./secrets-scan`) into gittensory's review path.
 //
-// Single env switch: REVIEWBOT_SAFETY. Default OFF (unset/"false") — when OFF none of the helpers here
+// Single env switch: GITTENSORY_REVIEW_SAFETY. Default OFF (unset/"false") — when OFF none of the helpers here
 // alter inputs or findings, so the review path is byte-identical to today. Truthy follows the codebase
 // convention (`/^(1|true|yes|on)$/i`, same as isUnifiedReviewCommentEnabled / isEnabled).
 
@@ -10,8 +10,8 @@ import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";
 import { scanForSecrets } from "./secrets-scan";
 
 /** True when the safety scan is enabled. Flag-OFF (default) → every helper below is a no-op pass-through. */
-export function isSafetyEnabled(env: { REVIEWBOT_SAFETY?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.REVIEWBOT_SAFETY ?? "");
+export function isSafetyEnabled(env: { GITTENSORY_REVIEW_SAFETY?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_SAFETY ?? "");
 }
 
 /** The untrusted, author-controlled fields fed to the AI reviewer. */

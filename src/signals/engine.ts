@@ -28,6 +28,7 @@ import { sanitizePublicComment } from "../queue-intelligence";
 import { projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
+import type { UnifiedCollapsible } from "../review/unified-comment";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -3923,6 +3924,146 @@ function footerEarnUrl(repo: RepositoryRecord | null, repoFullName: string): str
   return repo?.isRegistered ? gittensorRepoEarnUrl(repoFullName) : undefined;
 }
 
+// ── Public-safe collapsible bodies (ONE source: legacy panel + unified-comment bridge) ──────────────
+//
+// The public PR comment carries a fixed set of collapsed `<details>` sections. Their BODIES are built
+// here as line arrays from the SAME inputs the panel already has, so the legacy `<details>` markup and
+// the converged renderer's `UnifiedCollapsible[]` never diverge on content. EXCLUDES "Maintainer notes"
+// — that section is PRIVATE (advisory findings) and must never appear in the converged public comment;
+// the legacy builder still renders it inline below, but no shared helper produces it.
+//
+// Byte-identity: `buildPublicPrIntelligenceComment` splices these exact arrays into its existing
+// `<details>` wrappers, so flag-OFF output is unchanged. The unified bridge consumes
+// `buildPublicSafeCollapsibles` (which joins the same lines) as `extraCollapsibles`.
+
+/** Inputs the public-safe collapsible bodies are built from — the subset of the panel's `args` they read.
+ *  `collisions`/`preflight`/`queueHealth` reuse the SAME types `buildPublicPrIntelligenceComment` takes so
+ *  the bodies derive identically to the legacy panel. */
+type PublicSafeCollapsibleArgs = {
+  repo: RepositoryRecord | null;
+  pr: PullRequestRecord;
+  profile: ContributorProfile;
+  detection: ContributorDetection;
+  settings: RepositorySettings;
+  collisions: CollisionReport;
+  preflight: PreflightResult;
+  queueHealth: QueueHealth;
+  review?: FocusManifestReviewConfig | undefined;
+  aiReview?: { notes: string } | undefined;
+};
+
+/** "Signal definitions" body — a static legend for the readiness signals. No inputs. */
+function signalDefinitionsBody(): string[] {
+  return [
+    "- Related work = same linked issue, overlapping active PRs, or title/path similarity.",
+    "- Review load = cached public PR metadata such as size labels, changed paths, and preflight status.",
+    "- Open PR queue = repo-wide review pressure; it is not a PR quality failure.",
+    "- Contributor context = public GitHub/Gittensor identity context; non-Gittensor status is not a blocker.",
+  ];
+}
+
+/** "Review context" body — public author/role/lane/profile context plus any PR-specific overlap detail. */
+function reviewContextBody(args: PublicSafeCollapsibleArgs): string[] {
+  const roleContext = buildRoleContext({
+    login: args.pr.authorLogin ?? args.profile.login,
+    repo: args.repo,
+    repoFullName: args.pr.repoFullName,
+    pullRequests: [args.pr],
+    issues: [],
+    profile: args.profile,
+  });
+  const confirmedMiner = isOfficialContributorDetection(args.detection);
+  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
+  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
+  return [
+    `- Author: \`${sanitizePanelText(args.pr.authorLogin ?? "unknown")}\``,
+    `- Role context: ${sanitizePanelText(roleContext.role)}${roleContext.maintainerLane ? " (maintainer lane)" : ""}`,
+    `- Public audience mode: ${args.settings.publicAudienceMode.replace(/_/g, " ")}`,
+    `- Lane context: ${sanitizePanelText(buildLaneAdvice(args.repo, args.pr.repoFullName).summary)}`,
+    `- Public profile languages: ${args.profile.github.topLanguages.length > 0 ? sanitizePanelText(args.profile.github.topLanguages.join(", ")) : "not available"}`,
+    ...(confirmedMiner ? [`- Official Gittensor activity: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s).`] : ["- Contributor context: Public profile only; not a blocker."]),
+    ...relatedWorkDetails(args.pr, scopedOverlapClusters),
+    // `prCollisionClusters` is referenced only to keep this body's derivation identical to the panel's
+    // (the panel computes both cluster sets); the overlap detail uses the scoped set.
+    ...(prCollisionClusters.length === 0 ? [] : []),
+  ];
+}
+
+/** "Contributor next steps" body — the deduped actionable steps (or a fallback when none). */
+function contributorNextStepsBody(nextSteps: string[]): string[] {
+  return nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."];
+}
+
+/** "Review details" body — the optional AI maintainer-review notes (already public-safe upstream). Returns
+ *  `[]` when there is no AI review, so the section is omitted entirely. Angle brackets are escaped as a final
+ *  guard (a stray tag cannot break the panel) and the notes are length-capped, matching the legacy panel. */
+function reviewDetailsBody(aiReview: { notes: string } | undefined): string[] {
+  if (!aiReview) return [];
+  return [
+    "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
+    "",
+    aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
+  ];
+}
+
+/**
+ * The public-safe collapsibles for the CONVERGED comment, as `UnifiedCollapsible[]`. Built from the SAME
+ * bodies the legacy panel renders (above) so the two never diverge. Order mirrors the legacy panel's
+ * (Review context · Contributor next steps · Signal definitions · Review details). Excludes "Maintainer
+ * notes" (PRIVATE). "Review details" is omitted when there is no AI review (empty body → the renderer skips it).
+ */
+export function buildPublicSafeCollapsibles(args: PublicSafeCollapsibleArgs): UnifiedCollapsible[] {
+  const collapsibles: UnifiedCollapsible[] = [
+    { title: "Review context", body: reviewContextBody(args).join("\n") },
+    { title: "Contributor next steps", body: contributorNextStepsBody(publicSafeNextSteps(args)).join("\n") },
+    { title: "Signal definitions", body: signalDefinitionsBody().join("\n") },
+  ];
+  const reviewDetails = reviewDetailsBody(args.aiReview);
+  if (reviewDetails.length > 0) collapsibles.push({ title: "Review details", body: reviewDetails.join("\n") });
+  return collapsibles;
+}
+
+/** The deduped, public-safe "next steps" list — extracted so both the legacy panel and the converged
+ *  comment compute it identically (maintainer-lane note, readiness actions, public-finding actions). */
+function publicSafeNextSteps(args: PublicSafeCollapsibleArgs): string[] {
+  const roleContext = buildRoleContext({
+    login: args.pr.authorLogin ?? args.profile.login,
+    repo: args.repo,
+    repoFullName: args.pr.repoFullName,
+    pullRequests: [args.pr],
+    issues: [],
+    profile: args.profile,
+  });
+  const readiness = buildPublicReadinessScore({
+    pr: args.pr,
+    preflight: args.preflight,
+    queueHealth: args.queueHealth,
+    linkedDuplicatePrs: linkedIssueDuplicatePullRequests(args.pr, pullRequestSpecificCollisionClusters(args.collisions, args.pr)),
+    scopedOverlapCount: unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions).length,
+  });
+  const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
+  return [
+    ...(roleContext.maintainerLane ? ["Treat this as maintainer-lane context rather than normal contributor-lane activity."] : []),
+    ...readiness.components.map((component) => component.action).filter((action) => action !== "No action."),
+    /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
+    ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
+  ].filter((step) => !containsPrivatePublicTerm(step));
+}
+
+/** The public-safe subset of preflight findings — extracted so the legacy panel and the converged comment
+ *  filter identically (single source). Drops: critical-severity findings; the linked-issue finding when the
+ *  linked-issue gate is fully off; private bounty-lifecycle findings; and any finding whose text trips the
+ *  private-term backstop. Then slices to the configured public signal level (2 minimal / 5 otherwise). The
+ *  filter chain + slice bounds are byte-identical to the prior inline computation in the legacy builder. */
+function publicSafePreflightFindings(preflight: PreflightResult, settings: RepositorySettings): SignalFinding[] {
+  return preflight.findings
+    .filter((finding) => finding.severity !== "critical")
+    .filter((finding) => settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
+    .filter((finding) => !isPrivateBountyLifecycleFinding(finding.code))
+    .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
+    .slice(0, settings.publicSignalLevel === "minimal" ? 2 : 5);
+}
+
 export function buildPublicPrIntelligenceComment(args: {
   repo: RepositoryRecord | null;
   pr: PullRequestRecord;
@@ -3937,12 +4078,7 @@ export function buildPublicPrIntelligenceComment(args: {
   /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
   aiReview?: { notes: string } | undefined;
 }): string {
-  const publicFindings = args.preflight.findings
-    .filter((finding) => finding.severity !== "critical")
-    .filter((finding) => args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
-    .filter((finding) => !isPrivateBountyLifecycleFinding(finding.code))
-    .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
-    .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
+  const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
   const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);

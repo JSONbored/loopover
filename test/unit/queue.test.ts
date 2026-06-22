@@ -22,6 +22,7 @@ import {
   recordGateBlockOutcome,
   recordProductUsageEvent,
   upsertAgentCommandAnswer,
+  upsertCheckSummary,
   upsertIssueFromGitHub,
   upsertRepoSyncSegment,
   upsertInstallation,
@@ -2725,13 +2726,13 @@ describe("queue processors", () => {
     expect(skipped.results.map((event) => event.detail)).toEqual(expect.arrayContaining(["not_official_gittensor_miner", "missing_author"]));
   });
 
-  // #1007 convergence (Stage D): with UNIFIED_REVIEW_COMMENT on AND the gate evaluating, the public PR-panel
+  // #1007 convergence (Stage D): with GITTENSORY_REVIEW_UNIFIED_COMMENT on AND the gate evaluating, the public PR-panel
   // comment is rendered by the UNIFIED renderer (GitHub alert + synthesized "Code review" row) instead of the
   // legacy panel — while STILL leading with the same panel marker so the in-place upsert updates the same
   // comment. Mirrors the legacy panel-posting setup (confirmed miner + comment_and_label) but flips the flag
   // and enables the gate so `maybePublishPrPublicSurface` takes the flag-ON branch.
   it("renders the unified PR-review comment when the flag is on and the gate evaluates", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), UNIFIED_REVIEW_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -2857,6 +2858,157 @@ describe("queue processors", () => {
     // …and the renderer's synthesized "Code review" signal row (bold first table label).
     expect(postedBody).toContain("**Code review**");
     // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
+    expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
+  });
+
+  // FIX B + FIX D3 at the processor call site: a unified comment for a PR whose CI has a FAILED check, with the
+  // PR's files only available from GitHub (stored rows empty) — proves (B) the inline file fetch populates the
+  // real diff/changed-file count on the first review, and (D3) the failing check name + its per-check WHY render
+  // under a "CI checks failing" section (not just a bare "CI failing" chip).
+  it("inline-fetches the PR files and renders failing CI check names + reasons in the unified comment (FIX B + D3)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_UNIFIED_COMMENT: "1" });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "detected_contributors_only",
+      publicAudienceMode: "gittensor_only",
+      publicSignalLevel: "standard",
+      publicSurface: "comment_and_label",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      checkRunDetailLevel: "minimal",
+      gateCheckMode: "enabled",
+      backfillEnabled: true,
+      privateTrustEnabled: true,
+    });
+    // Seed a FAILED check summary with a per-check WHY (codecov-style) so listCheckSummaries returns it and the
+    // unified site populates failingDetails. (The PR row + headSha must match for the check to associate.)
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 3,
+      title: "Fix webhook duplicate delivery again",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "unified123" },
+      labels: [{ name: "bug" }],
+      body: "Fixes #1\n\nValidation: npm test",
+    });
+    await upsertCheckSummary(env, {
+      id: "JSONbored/gittensory#unified123#codecov/patch",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 3,
+      headSha: "unified123",
+      name: "codecov/patch",
+      status: "completed",
+      conclusion: "failure",
+      detailsUrl: "https://codecov.io/report",
+      payload: { output: { summary: "60% of diff hit (target 97%)" } },
+    });
+    let postedBody = "";
+    let filesFetched = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        return Response.json([
+          {
+            uid: 7,
+            githubUsername: "oktofeesh1",
+            githubId: "123",
+            totalPrs: 4,
+            totalMergedPrs: 3,
+            totalOpenPrs: 1,
+            totalClosedPrs: 0,
+            totalOpenIssues: 0,
+            totalClosedIssues: 0,
+            totalSolvedIssues: 0,
+            totalValidSolvedIssues: 0,
+            isEligible: true,
+            credibility: 1,
+            eligibleRepoCount: 1,
+            hotkey: "must-not-leak",
+          },
+        ]);
+      }
+      if (url === "https://api.gittensor.io/miners/123") {
+        return Response.json({
+          repositories: [
+            {
+              repositoryFullName: "JSONbored/gittensory",
+              totalPrs: "4",
+              totalMergedPrs: "3",
+              totalOpenPrs: "1",
+              totalClosedPrs: "0",
+              totalOpenIssues: "0",
+              totalClosedIssues: "0",
+              isEligible: true,
+              credibility: "1.000000",
+            },
+          ],
+        });
+      }
+      if (url === "https://api.gittensor.io/miners/123/prs") return Response.json([]);
+      if (url === "https://mirror.gittensor.io/api/v1/miners/123/issues") return Response.json({ issues: [] });
+      if (url.endsWith("/users/oktofeesh1")) return Response.json({ login: "oktofeesh1", public_repos: 2, followers: 1 });
+      if (url.includes("/users/oktofeesh1/repos")) return Response.json([{ language: "TypeScript" }]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // FIX B: stored pull_request_files is empty, so the review path inline-fetches from GitHub here.
+      if (url.includes("/pulls/3/files")) {
+        filesFetched += 1;
+        return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified", patch: "@@\n+const x = 1;" }]);
+      }
+      if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 902 }, { status: 201 });
+      if (url.includes("/check-runs/902") && method === "PATCH") return Response.json({ id: 902 });
+      if (url.includes("/issues/3/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/3/comments") && method === "POST") {
+        postedBody = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        return Response.json({ id: 1, html_url: "https://github.com/comment/1" }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "pr-unified-ci-failing",
+      eventName: "pull_request",
+      payload: {
+        action: "synchronize",
+        installation: {
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write", checks: "write" },
+          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 3,
+          title: "Fix webhook duplicate delivery again",
+          state: "open",
+          user: { login: "oktofeesh1" },
+          head: { sha: "unified123" },
+          labels: [{ name: "bug" }],
+          body: "Fixes #1\n\nValidation: npm test",
+        },
+      },
+    });
+
+    // FIX B: the files were fetched inline from GitHub (stored rows were empty) and the changed-file count is real.
+    expect(filesFetched).toBeGreaterThan(0);
+    expect(postedBody).toContain("`1 file`");
+    // FIX D3: the failing check name + its WHY render under a "CI checks failing" section, plus the chip.
+    expect(postedBody).toContain("`CI failing`");
+    expect(postedBody).toContain("CI checks failing");
+    expect(postedBody).toContain("codecov/patch");
+    expect(postedBody).toContain("60% of diff hit (target 97%)");
+    // Still public-safe.
     expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
   });
 
@@ -5234,7 +5386,7 @@ describe("queue processors", () => {
     expect(overridden ?? null).toBeNull();
   });
 
-  it("ops-alerts job no-ops when REVIEWBOT_OPS is OFF (does no anomaly scan)", async () => {
+  it("ops-alerts job no-ops when GITTENSORY_REVIEW_OPS is OFF (does no anomaly scan)", async () => {
     const env = createTestEnv(); // flag unset → OFF
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind("owner/repo", "owner", "repo")
@@ -5250,8 +5402,8 @@ describe("queue processors", () => {
     warn.mockRestore();
   });
 
-  it("ops-alerts job runs the anomaly scan when REVIEWBOT_OPS is ON", async () => {
-    const env = createTestEnv({ REVIEWBOT_OPS: "true" });
+  it("ops-alerts job runs the anomaly scan when GITTENSORY_REVIEW_OPS is ON", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_OPS: "true" });
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)")
       .bind("owner/repo", "owner", "repo")
       .run();

@@ -86,6 +86,22 @@ OSS_EMISSION_SHARE = 0.90
     expect(parsed.OSS_EMISSION_SHARE).toBe(0.9);
   });
 
+  it("parses underscore separators in the fractional part of upstream constants (#992)", () => {
+    const parsed = parsePythonNumberConstants(
+      `
+RATE = 0.000_001
+SCALE = 3.14_15
+VAL = 1_000.000_5
+BARE = .5_0
+`,
+      { knownOnly: false },
+    );
+    expect(parsed.RATE).toBe(0.000001);
+    expect(parsed.SCALE).toBe(3.1415);
+    expect(parsed.VAL).toBe(1000.0005);
+    expect(parsed.BARE).toBe(0.5);
+  });
+
   it("flags only scoring snapshots older than the freshness window as stale (#810)", () => {
     const now = Date.parse("2026-06-21T12:00:00.000Z");
     const justFresh = new Date(now - SCORING_SNAPSHOT_STALE_MS + 60_000).toISOString();
@@ -369,6 +385,38 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     });
 
     expect(preview.scoreEstimate.labelMultiplier).toBe(1);
+  });
+
+  it("applies penalty label multipliers instead of flooring them to 1 (#994)", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    const penaltyOnly = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["refactor"] } });
+    const unmatched = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["unmatched"] } });
+    const bonusAndPenalty = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["bug", "refactor"] } });
+    const bonusOnly = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["bug"] } });
+    const customFallback = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier: 1.05, labelMultipliers: { bug: 1.2 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["unmatched"] },
+    });
+
+    expect(penaltyOnly.scoreEstimate.labelMultiplier).toBe(0.5);
+    expect(unmatched.scoreEstimate.labelMultiplier).toBe(1);
+    expect(bonusAndPenalty.scoreEstimate.labelMultiplier).toBe(1.2);
+    expect(bonusOnly.scoreEstimate.labelMultiplier).toBe(1.2);
+    expect(customFallback.scoreEstimate.labelMultiplier).toBe(1.05);
+    expect(penaltyOnly.scoreEstimate.estimatedMergedScore).toBeLessThan(bonusOnly.scoreEstimate.estimatedMergedScore);
+    expect(penaltyOnly.scoreEstimate.estimatedMergedScore).toBeCloseTo(
+      bonusOnly.scoreEstimate.estimatedMergedScore * (0.5 / 1.2),
+      5,
+    );
   });
 
   it("gates linked-issue assumptions with branch eligibility evidence", () => {

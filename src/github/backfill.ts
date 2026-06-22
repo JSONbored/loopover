@@ -48,6 +48,7 @@ import type {
   InstallationRecord,
   JsonValue,
   PullRequestDetailSyncStateRecord,
+  PullRequestFileRecord,
   PullRequestRecord,
   RecentMergedPullRequestRecord,
   RepoGithubTotalsSnapshotRecord,
@@ -1810,6 +1811,53 @@ async function fetchPullRequestFiles(
   if (fallback) return fallback.files;
   warnings.push(`File sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);
   return [];
+}
+
+/** Map a raw GitHub file payload to the stored {@link PullRequestFileRecord} shape (the same mapping
+ *  `fetchAndStorePullRequestDetails` does when it persists a synced PR's files). */
+function toPullRequestFileRecordFromGitHub(repoFullName: string, pullNumber: number, file: GitHubFilePayload): PullRequestFileRecord {
+  return {
+    repoFullName,
+    pullNumber,
+    path: file.filename,
+    status: file.status,
+    additions: file.additions ?? 0,
+    deletions: file.deletions ?? 0,
+    changes: file.changes ?? 0,
+    previousFilename: file.previous_filename,
+    payload: file as unknown as Record<string, JsonValue>,
+  };
+}
+
+/**
+ * Inline, best-effort file fetch for the REVIEW path (convergence). The PR-opened webhook can fire the review
+ * BEFORE the async detail-sync has populated `pull_request_files`, leaving the AI review + grounding + unified
+ * comment with an EMPTY diff ("0 files / No diff provided"). When `listPullRequestFiles` is empty at review
+ * time, the caller falls back here: fetch the PR's files straight from GitHub (REST → GraphQL, same paths the
+ * detail-sync uses), persist them (so the rest of the same review run + any later read reuse them), and return
+ * them mapped to the stored record shape.
+ *
+ * Fail-safe by construction: a fetch failure returns `[]` (never throws), so the review degrades to the same
+ * empty-diff state it has today rather than breaking. The persist is best-effort and only runs when the fetch
+ * actually returned files (a failed REST+GraphQL fetch must not wipe a row another sync just wrote).
+ */
+export async function fetchAndStorePullRequestFilesForReview(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  token: string | undefined,
+): Promise<PullRequestFileRecord[]> {
+  const warnings: string[] = [];
+  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings).catch(() => [] as GitHubFilePayload[]);
+  if (files.length === 0) return [];
+  const records = files.map((file) => toPullRequestFileRecordFromGitHub(repoFullName, pullNumber, file));
+  // Persist so the AI review, grounding, gate, check-run, and unified-comment reads in THIS run (and any later
+  // read) reuse the synced files. Best-effort: a write hiccup must never sink the review — we still return the
+  // freshly-fetched records the caller needs.
+  for (const record of records) {
+    await upsertPullRequestFile(env, record).catch(() => undefined);
+  }
+  return records;
 }
 
 async function fetchPullRequestReviews(

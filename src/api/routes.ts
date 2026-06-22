@@ -3,6 +3,8 @@ import { z } from "zod";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
+import { handleShot } from "../review/visual/shot";
+import { isScreenshotsEnabled } from "../review/visual-wire";
 import {
   BROWSER_SESSION_COOKIE,
   GITHUB_OAUTH_STATE_COOKIE,
@@ -854,6 +856,24 @@ export function createApp() {
     return c.json(buildShieldsBadge(quality, 600));
   });
 
+  // Visual before/after screenshot endpoint (visual-capture port). PUBLIC + UNAUTHENTICATED by design: it
+  // lives OUTSIDE the /v1/ prefix, so requiresApiToken (which only gates path.startsWith('/v1/')) never
+  // touches it — GitHub's camo image proxy must fetch it without a bearer token. The handler itself enforces
+  // every security choke-point: ?key= validates the R2 prefix + rejects '..'; ?url= keeps the host allowlist
+  // (*.workers.dev / *.pages.dev / PUBLIC_SITE_ORIGIN) AND the isSafeHttpUrl SSRF guard. Inert flag-OFF: with
+  // GITTENSORY_REVIEW_SCREENSHOTS off nothing ever writes shots to R2, so ?key= 404s and ?url= still requires
+  // an allowlisted public host. The route's own Cache-Control headers (per mode) are set inside handleShot;
+  // the rate-limit middleware classifies it as 'normal' (a sane public class) via routeClassForPath.
+  // Flag-OFF = TRULY inert: when GITTENSORY_REVIEW_SCREENSHOTS is off nothing references this route (no comment
+  // carries a /gittensory/shot URL), so 404 it outright — that removes the on-demand `?url=` render surface
+  // entirely until the feature is deliberately enabled, rather than relying on the host allowlist alone.
+  app.get("/gittensory/shot", (c) => {
+    if (!isScreenshotsEnabled(c.env)) return c.notFound();
+    return handleShot(c.req.raw, c.env, {
+      ...(c.env.PUBLIC_SITE_ORIGIN ? { productionUrl: c.env.PUBLIC_SITE_ORIGIN } : {}),
+    });
+  });
+
   app.get("/v1/auth/github/start", async (c) => {
     try {
       const start = await startGitHubWebOAuth(c.env, c.req.url, c.req.query("returnTo"));
@@ -906,7 +926,7 @@ export function createApp() {
     }
   });
 
-  // Public OAuth draft-submission flow (REVIEWBOT_DRAFT), ported from reviewbot. When the flag is OFF
+  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT), ported from reviewbot. When the flag is OFF
   // every handler returns 404, so the endpoints are effectively absent (the router still registers them
   // but they short-circuit). The static `/auth/callback` route is registered before the `:id` param
   // route so it is not captured as a draft id. These are public (unauthenticated) by design — submission
@@ -2824,7 +2844,7 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
-  // Convergence (ops / observability, flag REVIEWBOT_OPS). Cross-repo review-OUTCOME aggregate (gate-block
+  // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
   // ledger + recommendation/slop calibration) for an operator dashboard. Bearer-gated by the `/v1/internal/*`
   // middleware above (INTERNAL_JOB_TOKEN). Flag-OFF (default) → 404, so the endpoint does not exist and the
   // worker is byte-identical to today. Aggregate counts only — no PR content / actor logins.
@@ -2833,7 +2853,7 @@ export function createApp() {
     return c.json(await computeOpsStats(c.env));
   });
 
-  // Convergence prep (#preconv-parity, flag REVIEWBOT_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
+  // Convergence prep (#preconv-parity, flag GITTENSORY_REVIEW_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
   // report: runs computeGateParity / isParityCutoverReady over the recorded review_audit rows and returns the
   // per-project agreement rate + cutover-ready verdict (floor 0.98, min 30 paired samples, zero unsafe
   // disagreements — all from parity.ts). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN).
@@ -4764,7 +4784,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/public/subnet-interface") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
-  // Public OAuth draft-submission flow (REVIEWBOT_DRAFT): the submission entry points are unauthenticated
+  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): the submission entry points are unauthenticated
   // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;

@@ -15,6 +15,8 @@
 // params instead of reviewbot's RunContext/ReviewTarget/github helpers, so fetchFullFileContents is
 // self-contained and unit-testable. The host wires a real GitHub-backed FileFetcher at the call site.
 
+import { neutralizePromptInjection } from "./prompt-injection";
+
 // ── Inlined minimal types (ported from reviewbot src/core/types.ts) ──────────────────────────────
 
 /** Compact, prompt-ready CI summary fed to the reviewer (the FINISHED state of a commit's checks). */
@@ -174,8 +176,16 @@ function formatCiSection(c: ReviewCiSummary): string {
 }
 
 function formatFilesSection(files: ChangedFileContent[]): string {
-  const blocks = files.map((file) =>
-    file.truncated ? `### ${file.path}\n(omitted — too large to inline; review this file from the diff)` : `### ${file.path}\n\`\`\`\n${file.text}\n\`\`\``,
-  );
+  const blocks = files.map((file) => {
+    if (file.truncated) return `### ${file.path}\n(omitted — too large to inline; review this file from the diff)`;
+    const text = neutralizePromptInjection(file.text).text;
+    const fence = safeMarkdownFence(text);
+    return `### ${file.path}\n${fence}\n${text}\n${fence}`;
+  });
   return ["FULL FILE CONTENT (post-change, head ref — check here before claiming any symbol is undefined/unused):", "", blocks.join("\n\n")].join("\n");
+}
+
+function safeMarkdownFence(text: string): string {
+  const longestBacktickRun = Math.max(0, ...Array.from(text.matchAll(/`+/g), (match) => match[0].length));
+  return "`".repeat(Math.max(3, longestBacktickRun + 1));
 }

@@ -98,6 +98,20 @@ declare global {
      *  unreachable when off). Even when ON, retrieval is INERT until a vector index exists for the repo (a
      *  cold/missing index degrades to no context) — the index-population job is a deploy-time follow-up. */
     REVIEWBOT_RAG?: string;
+    /** Convergence (self-improve / auto-tune): when truthy, the ported self-improvement loop
+     *  (src/review/auto-tune.ts + auto-apply.ts) runs on the cron tick over gittensory's OWN review-outcome
+     *  data — it computes tuning recommendations, SHADOW-SOAKS any STRICTLY-TIGHTENING recommendation in the
+     *  `tunables_overrides_shadow` table, and AUTO-PROMOTES it to `tunables_overrides` ONLY after the soak
+     *  window passes the gate (tightening + evidence + soaked). Every action is recorded to `override_audit`.
+     *  It can ONLY EVER tighten the gate — a loosening recommendation carries no payload and is never applied
+     *  (isStrictlyTightening + evaluateShadowPromotion enforce the direction). Default OFF — unset/false means
+     *  the cron enqueues NO selftune job (does ZERO tuning work, reads/writes NO override), so the worker is
+     *  byte-identical to today. NOTE: config-application is DEFERRED — a promoted override is NOT yet read by
+     *  the live gate-config resolution (gittensory has no confidenceFloor/scopeCap tunable and its native
+     *  signal measures gate false positives, a loosening direction); the shadow-soak + audit + recommendation
+     *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
+     *  risk loosening the gate. See src/review/selftune-wire.ts. */
+    REVIEWBOT_SELFTUNE?: string;
   }
 }
 

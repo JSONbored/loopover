@@ -159,6 +159,7 @@ import { buildReviewGroundingText, isGroundingEnabled } from "../review/groundin
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
+import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
@@ -319,6 +320,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // when the flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so
       // flag-OFF does zero work here too. Read-only telemetry — never throws into the queue.
       if (isOpsEnabled(env)) await runOpsAlerts(env);
+      return;
+    case "selftune":
+      // Convergence (self-improve / auto-tune, flag REVIEWBOT_SELFTUNE). Defense-in-depth: the cron only
+      // ENQUEUES this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still
+      // no-op, so flag-OFF does zero work here too. TIGHTENING-ONLY + shadow-soak + audited; never throws into
+      // the queue (runSelfTune fails safe).
+      if (isSelfTuneEnabled(env)) await runSelfTune(env);
       return;
     case "github-webhook":
       await processGitHubWebhook(env, message.deliveryId, message.eventName, message.payload);

@@ -138,6 +138,15 @@ export type JobMessage =
       // Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job never exists.
       type: "ops-alerts";
       requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      // Convergence (self-improve / auto-tune, flag-gated by REVIEWBOT_SELFTUNE). Run the ported
+      // self-improvement loop over gittensory's review-outcome data — compute tuning recommendations,
+      // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes
+      // the gate; every action is audited. TIGHTENING-ONLY. Enqueued hourly by the cron ONLY when the flag is
+      // ON (index.ts), so flag-OFF this job never exists.
+      type: "selftune";
+      requestedBy: "schedule" | "api" | "test";
     };
 
 export type GitHubWebhookPayload = {

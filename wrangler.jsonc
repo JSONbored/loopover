@@ -76,6 +76,14 @@
     // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
     // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
     "REVIEWBOT_RAG": "false",
+    // Convergence (self-improve / auto-tune): run the ported self-improvement loop on the cron tick over
+    // gittensory's own review-outcome data — compute tuning recommendations, SHADOW-SOAK any strictly-
+    // tightening one, and AUTO-PROMOTE it to live ONLY after the soak window passes the gate; every action is
+    // audited. It can ONLY EVER tighten the gate (a loosening recommendation is never applied). Default OFF —
+    // flag-OFF the cron enqueues no selftune job, does zero tuning work, reads/writes no override, byte-
+    // identical to today. Config-application (reading a promoted override into the live gate) is a deferred
+    // follow-up — see src/review/selftune-wire.ts.
+    "REVIEWBOT_SELFTUNE": "false",
   },
   "routes": [
     {

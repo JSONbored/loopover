@@ -437,7 +437,7 @@ async function runRagIndexJob(
   const repo = await getRepository(env, repoFullName);
   /* v8 ignore next -- defensive: a fanned-out repo is always present; the null is belt-and-suspenders. */
   if (!repo) return;
-  const project = repoFullName;
+  const [project] = splitRepoForRag(repoFullName);
   if (paths && paths.length > 0) {
     await reindexChangedPaths(env, project, repo, paths);
     return;
@@ -3113,4 +3113,10 @@ function authoritativeContributorRepoStats(
 ) {
   const officialRepoStats = contributorRepoStatsFromGittensor(gittensorSnapshot);
   return officialRepoStats.length > 0 ? officialRepoStats : cachedRepoStats;
+}
+
+/** Split `owner/name` into the project/repo key shape shared by RAG indexing and retrieval. */
+function splitRepoForRag(repoFullName: string): [string, string] {
+  const slash = repoFullName.indexOf("/");
+  return slash === -1 ? ["", repoFullName] : [repoFullName.slice(0, slash), repoFullName.slice(slash + 1)];
 }

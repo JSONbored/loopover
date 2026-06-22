@@ -51,6 +51,7 @@ function indexEnv(over: { vec?: ReturnType<typeof vectorizeStub>; ai?: ReturnTyp
 
 const REPO = { fullName: "JSONbored/gittensory", installationId: null, defaultBranch: "main" };
 const PROJECT = "JSONbored/gittensory";
+const QUEUE_PROJECT = "JSONbored";
 
 /** Stub global fetch for the git-tree + raw-contents calls the populator makes. */
 function stubGithub(opts: {
@@ -306,7 +307,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     await registerRepo(env, "JSONbored/gittensory");
     stubGithub({ tree: [{ path: "src/a.ts", size: 30 }], files: { "src/a.ts": "export const a = 1;\n" } });
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
-    expect(await countChunks(env, PROJECT, "gittensory")).toBe(1);
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(1);
   });
 
   it("per-repo dispatch SKIPS a non-allowlisted repo (no indexing)", async () => {
@@ -321,7 +322,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     vi.stubGlobal("fetch", fetchSpy);
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(await countChunks(env, PROJECT, "gittensory")).toBe(0);
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(0);
   });
 
   it("per-repo INCREMENTAL dispatch (with paths) runs reindexChangedPaths", async () => {
@@ -329,7 +330,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     await registerRepo(env, "JSONbored/gittensory");
     stubGithub({ files: { "src/a.ts": "export const a = 1;\n" } });
     await processJob(env, { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts"] });
-    expect(await pathsFor(env, PROJECT, "gittensory")).toEqual(["src/a.ts"]);
+    expect(await pathsFor(env, QUEUE_PROJECT, "gittensory")).toEqual(["src/a.ts"]);
   });
 
   it("FLAG-OFF per-repo dispatch is a no-op", async () => {
@@ -343,7 +344,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     vi.stubGlobal("fetch", fetchSpy);
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(await countChunks(env, PROJECT, "gittensory")).toBe(0);
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(0);
   });
 });
 

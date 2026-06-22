@@ -94,7 +94,7 @@ export type GittensoryAiReviewResult =
   | { status: "disabled"; reason: string }
   | { status: "unavailable"; reason: string }
   | { status: "quota_exceeded"; estimatedNeurons: number; remainingBudget: number }
-  | { status: "ok"; advisoryNotes: string | null; consensusDefect: AiConsensusDefect | null; estimatedNeurons: number };
+  | { status: "ok"; advisoryNotes: string | null; consensusDefect: AiConsensusDefect | null; estimatedNeurons: number; reviewerCount: number };
 
 type ModelReview = {
   assessment: string;
@@ -449,7 +449,7 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
     consensus: Boolean(consensusDefect),
     ...(byokFailure ? { byokFailure } : {}),
   });
-  return { status: "ok", advisoryNotes, consensusDefect, estimatedNeurons };
+  return { status: "ok", advisoryNotes, consensusDefect, estimatedNeurons, reviewerCount: reviewsForNotes.length };
 }
 
 async function record(

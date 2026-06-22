@@ -139,6 +139,7 @@ import {
   buildPublicPrIntelligenceComment,
   buildPublicPrPanelSignalRows,
   buildPublicReadinessScore,
+  buildPublicSafeCollapsibles,
   buildQueueHealth,
   buildRoleContext,
   detectGittensorContributor,
@@ -147,6 +148,7 @@ import {
   type ContributorProfile,
 } from "../signals/engine";
 import { buildClosedUnifiedCommentBody, buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
+import type { MergeReadiness } from "../review/unified-comment";
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
@@ -1198,7 +1200,7 @@ export async function runAiReviewForAdvisory(
     author: string | null;
     confirmedContributor: boolean;
   },
-): Promise<{ notes: string } | undefined> {
+): Promise<{ notes: string; reviewerCount: number } | undefined> {
   const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
   if (args.settings.aiReviewMode === "off" || (!args.confirmedContributor && !packAllowsAnyAuthorBlockingReview) || !args.advisory.headSha) return undefined;
   // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the converged review features (reputation AI-skip,
@@ -1271,7 +1273,7 @@ export async function runAiReviewForAdvisory(
       };
       args.advisory.findings.push(defect);
     }
-    return result.advisoryNotes ? { notes: result.advisoryNotes } : undefined;
+    return result.advisoryNotes ? { notes: result.advisoryNotes, reviewerCount: result.reviewerCount } : undefined;
   } catch (error) {
     console.error(JSON.stringify({ level: "warn", event: "ai_review_failed", repository: args.repoFullName, pullNumber: args.pr.number, error: errorMessage(error) }));
     return undefined;
@@ -1531,7 +1533,7 @@ async function maybePublishPrPublicSurface(
   let queueHealth!: ReturnType<typeof buildQueueHealth>;
   let preflight!: ReturnType<typeof buildPreflightResult>;
   let gateEvaluation: ReturnType<typeof evaluateGateCheck> | undefined;
-  let aiReview: { notes: string } | undefined;
+  let aiReview: { notes: string; reviewerCount: number } | undefined;
   let gateFinalized = false;
   try {
     const [repoIssues, repoPullRequests, repoBounties] = await Promise.all([
@@ -1790,6 +1792,22 @@ async function maybePublishPrPublicSurface(
     if (unifiedCommentAllowed && gateEvaluation) {
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation });
       const unifiedFiles = await listPullRequestFiles(env, repoFullName, pr.number);
+      // CI + merge-state readiness — a converged enrichment the legacy panel never showed. Maps each cached
+      // check's conclusion to passed/failed/unverified; any failure (failure/timed_out/cancelled/action_required)
+      // flips the whole PR to 'failed'. The gate decision stays authoritative for the comment's color (always
+      // passed here), so these CI chips never spuriously flip the unified status to held/blocked.
+      const checkSummaries = await listCheckSummaries(env, repoFullName, pr.number);
+      const failedChecks = checkSummaries.filter((check) => {
+        const conclusion = (check.conclusion ?? "").toLowerCase();
+        return conclusion === "failure" || conclusion === "timed_out" || conclusion === "cancelled" || conclusion === "action_required";
+      });
+      const anyPassed = checkSummaries.some((check) => (check.conclusion ?? "").toLowerCase() === "success");
+      const ciState: MergeReadiness["ciState"] = failedChecks.length > 0 ? "failed" : anyPassed ? "passed" : "unverified";
+      const mergeReadiness: MergeReadiness = {
+        ciState,
+        ...(pr.mergeableState ? { mergeStateLabel: pr.mergeableState } : {}),
+        ...(failedChecks.length > 0 ? { failingChecks: failedChecks.map((check) => check.name) } : {}),
+      };
       deterministicBody = buildUnifiedCommentBody({
         gate: gateEvaluation,
         ...(aiReview !== undefined ? { aiReview } : {}),
@@ -1798,6 +1816,20 @@ async function maybePublishPrPublicSurface(
         ...(reviewConfig?.fields !== undefined ? { reviewFields: reviewConfig.fields } : {}),
         readinessTotal,
         changedFiles: unifiedFiles.length,
+        ...(aiReview?.reviewerCount !== undefined ? { reviewerCount: aiReview.reviewerCount } : {}),
+        mergeReadiness,
+        extraCollapsibles: buildPublicSafeCollapsibles({
+          repo,
+          pr,
+          profile,
+          detection,
+          settings,
+          collisions,
+          preflight,
+          queueHealth,
+          ...(reviewConfig !== undefined ? { review: reviewConfig } : {}),
+          ...(aiReview !== undefined ? { aiReview } : {}),
+        }),
         footerMarkdown: gittensoryFooter({
           earnUrl: repo?.isRegistered ? gittensorRepoEarnUrl(repoFullName) : undefined,
           ...(reviewConfig?.footerText ? { customText: reviewConfig.footerText } : {}),

@@ -755,3 +755,128 @@ describe("registry-logic branch coverage (gap-filling)", () => {
     expect(surfaceMatchesRegistryIdentity("https://cacheon.ai", ["cacheon"])).toBe(true);
   });
 });
+
+describe("registry-logic branch coverage (second pass)", () => {
+  // ── registrableDomain: empty-host return-null branch (line 218) ────────────
+  it("registrableDomain returns null when the host strips to empty (www.)", () => {
+    // "www." is not a URL → bare host "www." → strip www. → "" → !host → null.
+    expect(registrableDomain("www.")).toBeNull();
+    expect(registrableDomain("WWW.")).toBeNull();
+  });
+
+  // ── registrableDomain: empty tenant → returns the bare suffix (line 227) ───
+  it("registrableDomain returns the bare multi-tenant suffix when the tenant label is empty", () => {
+    // ".github.io" endsWith ".github.io" but !== suffix → tenant slice is "" → falsy → return suffix.
+    expect(registrableDomain(".github.io")).toBe("github.io");
+    expect(registrableDomain(".pages.dev")).toBe("pages.dev");
+  });
+
+  // ── ownerTokens (via deriveRegistryIdentityTokens): github seg guards ───────
+  it("deriveRegistryIdentityTokens tolerates a code host with NO path segments", () => {
+    // github.com host matched but pathname empty → seg[0] falsy (line 245) and seg[1] falsy (line 246):
+    // no owner/repo token harvested, only the name survives.
+    const tokens = deriveRegistryIdentityTokens({ name: "Helios", source_repo: "https://github.com" });
+    expect(tokens).toEqual(["helios"]);
+  });
+  it("deriveRegistryIdentityTokens harvests only the owner when a github URL has no repo segment", () => {
+    // seg[0] present (owner) but seg[1] absent (no repo) → only the owner token is pushed (line 246 false).
+    const tokens = deriveRegistryIdentityTokens({ name: "Orion", source_repo: "https://github.com/orionlabs" });
+    expect(tokens).toContain("orionlabs");
+    expect(tokens).toContain("orion");
+    expect(tokens).toHaveLength(2);
+  });
+
+  // ── ownerTokens (via deriveRegistryIdentityTokens): huggingface seg guards ──
+  it("deriveRegistryIdentityTokens strips a datasets/models/spaces prefix on huggingface URLs", () => {
+    // seg[0] === "datasets" → rest = seg.slice(1) (the ternary's TRUE side, line 248) → owner+name harvested.
+    const tokens = deriveRegistryIdentityTokens({
+      name: "Nimbus",
+      source_repo: "https://huggingface.co/datasets/nimbuslabs/the-dataset",
+    });
+    expect(tokens).toContain("nimbuslabs");
+    expect(tokens).toContain("thedataset"); // normIdent strips the hyphen from "the-dataset"
+  });
+  it("deriveRegistryIdentityTokens tolerates a huggingface URL with NO path (empty rest)", () => {
+    // seg empty → seg[0] is undefined → `?? ""` fallback (line 248) → not a prefix → rest = seg = [] →
+    // rest[0] falsy (line 249) and rest[1] falsy (line 250): only the name survives.
+    const tokens = deriveRegistryIdentityTokens({ name: "Vega-net", source_repo: "https://huggingface.co" });
+    expect(tokens).toEqual(["veganet"]);
+  });
+  it("deriveRegistryIdentityTokens harvests only the owner when a huggingface URL has one segment", () => {
+    // rest[0] present, rest[1] absent (line 250 false) → only the owner token is pushed.
+    const tokens = deriveRegistryIdentityTokens({ name: "Lyra", source_repo: "https://huggingface.co/lyralabs" });
+    expect(tokens).toContain("lyralabs");
+    expect(tokens).toHaveLength(2);
+  });
+
+  // ── domainLabel: empty first label → returns null (line 355) ───────────────
+  it("deriveRegistryIdentityTokens drops a website URL whose registrable label is empty", () => {
+    // registrableDomain(".x") === ".x" → split(".")[0] === "" → label falsy → domainLabel returns null.
+    // No identity token is contributed by website_url; only the (≥4-char) name survives.
+    const tokens = deriveRegistryIdentityTokens({ name: "Quark", website_url: ".x" });
+    expect(tokens).toEqual(["quark"]);
+  });
+
+  // ── usableIdentityToken guard on an owner token (line 377) ─────────────────
+  it("deriveRegistryIdentityTokens drops an owner token that is a known aggregator/social label", () => {
+    // ownerTokens(github.com/discord/repo) → ["discord","repo"]; "discord" is a NON_IDENTITY label →
+    // usableIdentityToken false (line 377) so it is NOT added; "repo" is <4 chars and also dropped.
+    const tokens = deriveRegistryIdentityTokens({ name: "Byzantium", source_repo: "https://github.com/discord/repo" });
+    expect(tokens).not.toContain("discord");
+    expect(tokens).toContain("byzantium");
+  });
+
+  // ── registryDedupKeys: a field that does not normalize is skipped (line 471) ─
+  it("registryDedupKeys skips a non-normalizable field but keeps the valid one", () => {
+    // url normalizes (added); schema_url is junk → normalizePublicUrl null → `if(normalized)` false branch.
+    const keys = registryDedupKeys({ netuid: 1, kind: "website", url: "https://a.com/x", schema_url: "not-a-url" });
+    expect([...keys]).toEqual(["1|website|https://a.com/x"]);
+  });
+
+  // ── assessCandidateDocument: url ?? "" fallbacks (lines 541, 542) ──────────
+  it("assessCandidateDocument treats a missing base-layer url as unsafe (url ?? '' fallback)", () => {
+    // baseLayer true (subtensor-rpc) + url undefined → String(undefined ?? "") === "" → isSafeEndpointUrl false.
+    const r = assessCandidateDocument({ candidate: { netuid: 1, kind: "subtensor-rpc", source_url: "https://github.com/a/b" } });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("HTTPS or WSS");
+  });
+  it("assessCandidateDocument treats a missing content-kind url as unsafe (url ?? '' fallback)", () => {
+    // baseLayer false (website) + url undefined → String(undefined ?? "") === "" → isSafeHttpUrl false.
+    const r = assessCandidateDocument({ candidate: { netuid: 1, kind: "website", source_url: "https://github.com/a/b" } });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("public HTTPS URL");
+  });
+
+  // ── assessCandidateDocument: source_url || source_urls?.[0] right side (550) ─
+  it("assessCandidateDocument falls back to source_urls[0] when source_url is absent", () => {
+    // source_url falsy → the `|| source_urls?.[0]` right side supplies the source URL.
+    const r = assessCandidateDocument({
+      candidate: { netuid: 1, kind: "website", url: "https://x.example", source_urls: ["https://github.com/a/b"], public_safe: true },
+    });
+    expect(r.verdict).toBe("merged");
+  });
+
+  // ── assessCandidateDocument: sourceUrl ?? "" fallback when no source at all (551) ─
+  it("assessCandidateDocument with NO source url is unsafe (sourceUrl ?? '' fallback)", () => {
+    // source_url and source_urls both absent → sourceUrl undefined → String(undefined ?? "") === "" → unsafe.
+    const r = assessCandidateDocument({ candidate: { netuid: 1, kind: "website", url: "https://x.example", public_safe: true } });
+    expect(r.reason).toBe("unsafe-url");
+    expect(r.summary).toContain("source URL");
+  });
+
+  // ── assessProviderDocument: website_url ?? "" fallback (line 618) ──────────
+  it("assessProviderDocument with a missing website_url is unsafe-url (website_url ?? '' fallback)", () => {
+    // website_url undefined → String(undefined ?? "") === "" → isSafeHttpUrl false.
+    const r = assessProviderDocument({ provider: { id: "acme", name: "Acme" } });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("unsafe-url");
+  });
+
+  // ── probeFunctionalSurface: sse with an EMPTY content-type → ct || "none" (664) ─
+  it("probeFunctionalSurface: an unserved sse with an empty content-type reports 'none'", () => {
+    // served false AND ct === "" → the `ct || "none"` fallback fires in the detail string.
+    const r = probeFunctionalSurface("sse", "", "data: hi\n\n");
+    expect(r.served).toBe(false);
+    expect(r.detail).toContain("content-type:none");
+  });
+});

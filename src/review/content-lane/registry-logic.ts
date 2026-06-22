@@ -141,6 +141,7 @@ export function normalizePublicUrl(value: unknown): string | null {
     url.hash = "";
     url.hostname = url.hostname.replace(/^www\./i, "");
     const defaultPort = url.protocol === "https:" || url.protocol === "wss:" ? "443" : "80";
+    /* v8 ignore next -- the WHATWG URL constructor already drops default ports for special schemes (http/https/ws/wss), so url.port is "" here and this guard never fires; kept as defense-in-depth. */
     if (url.port === defaultPort) url.port = "";
     url.pathname = url.pathname.replace(/\/index\.html?$/i, "/");
     if (url.pathname !== "/") url.pathname = url.pathname.replace(/\/+$/, "");
@@ -486,6 +487,7 @@ export function registryUrls(value: CandidateLike | null | undefined): Set<strin
 
 function fail(reason: string, summary: string, candidate: CandidateLike | null = null): Assessment {
   return {
+    /* v8 ignore next -- every fail() call site passes a REVIEWER_CLOSE_REASONS member, so the "manual-review" alternative is unreachable; kept so a future non-close reason degrades to manual rather than closing. */
     verdict: REVIEWER_CLOSE_REASONS.has(reason) ? "closed" : "manual-review",
     summary,
     candidate,
@@ -694,9 +696,14 @@ export function classifyPrScope(changedFiles: string[]): ScopeResult {
     (f) => !CANDIDATE_PATTERN.test(f) && !PROVIDER_ANY_PATTERN.test(f) && !ARTIFACT_PATTERN.test(f),
   );
   if (forbidden.length > 0) return { scope: "mixed-files", directFile: null, isProvider: false };
+  // isProviderPr ⇒ providerFiles.length === 1 and isCandidatePr ⇒ candidateFiles.length === 1 (guarded
+  // by the early return above), so [0] is always defined here; the `?? null` fallbacks exist only to
+  // satisfy noUncheckedIndexedAccess and can never fire at runtime.
+  /* v8 ignore start */
   return isProviderPr
     ? { scope: "direct-provider", directFile: providerFiles[0] ?? null, isProvider: true }
     : { scope: "direct-candidate", directFile: candidateFiles[0] ?? null, isProvider: false };
+  /* v8 ignore stop */
 }
 
 export function isDirectSubmissionScope(scope: PrScope): boolean {

@@ -38,8 +38,8 @@
     "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
     "PUBLIC_API_ORIGIN": "https://gittensory-api.aethereal.dev",
     "PUBLIC_SITE_ORIGIN": "https://gittensory.aethereal.dev",
-    "AI_SUMMARIES_ENABLED": "false",
-    "AI_PUBLIC_COMMENTS_ENABLED": "false",
+    "AI_SUMMARIES_ENABLED": "true",
+    "AI_PUBLIC_COMMENTS_ENABLED": "true",
     "WORKERS_AI_SUMMARY_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
     "AI_DAILY_NEURON_BUDGET": "10000",
     "AI_BYOK_DAILY_REPO_LIMIT": "25",
@@ -100,7 +100,7 @@
     // rolls forward one repo at a time (e.g. "JSONbored/gittensory,JSONbored/awesome-claude"). Default "" →
     // NO repos converged → the per-PR converged path stays dormant for every repo regardless of the global
     // flags (byte-identical to today). The cron/endpoint flags (ops/selftune/parity/draft) stay global.
-    "GITTENSORY_REVIEW_REPOS": "JSONbored/gittensory",
+    "GITTENSORY_REVIEW_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
   },
   "routes": [
     {

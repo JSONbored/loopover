@@ -13,6 +13,13 @@ import type { JsonValue } from "../types";
 // these, it never opens the gate wide.
 export const DEFAULT_CRUCIAL_GUARDRAIL_GLOBS = [".github/workflows/**", "scripts/**"];
 
+// A KV READ FAULT (binding present but the read threw — an outage/transient error) must fail CLOSED, NOT fall
+// back to the narrow default: a config-read fault correlated with a contributor flood would otherwise silently
+// shrink the guarded surface to CI+scripts and let crown-jewel edits (scoring/auth/rules/the gate) auto-merge.
+// "**" matches every path (the glob engine maps ** -> .*), so this holds ALL PRs for human review until the
+// config read recovers — fail-safe for the surface a flood most threatens. (#flood-readiness)
+export const FAIL_CLOSED_GUARDRAIL_GLOBS = ["**"];
+
 function asNonEmptyStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   const out = value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
@@ -20,9 +27,10 @@ function asNonEmptyStringArray(value: unknown): string[] | null {
 }
 
 /**
- * Resolve a repo's hard-guardrail path globs from the shared REVIEW_CONFIG KV (key = repo slug). Falls back to
- * DEFAULT_CRUCIAL_GUARDRAIL_GLOBS when the binding / key / field is absent or malformed — fail-SAFE and never
- * throws (the auto-maintain trigger is best-effort and must not be sunk by a config read).
+ * Resolve a repo's hard-guardrail path globs from the shared REVIEW_CONFIG KV (key = repo slug). Never throws
+ * (the auto-maintain trigger is best-effort). A legitimately-absent binding/key/field falls back to the narrow
+ * DEFAULT_CRUCIAL_GUARDRAIL_GLOBS so a freshly-installed repo can still operate; but a THROWN read (KV outage)
+ * fails CLOSED to FAIL_CLOSED_GUARDRAIL_GLOBS so a config fault can never open the gate during a flood.
  */
 export async function loadHardGuardrailGlobs(env: Env, repoFullName: string): Promise<string[]> {
   const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
@@ -31,6 +39,6 @@ export async function loadHardGuardrailGlobs(env: Env, repoFullName: string): Pr
     const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { hardGuardrailGlobs?: JsonValue } | null;
     return asNonEmptyStringArray(config?.hardGuardrailGlobs) ?? DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
   } catch {
-    return DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
+    return FAIL_CLOSED_GUARDRAIL_GLOBS;
   }
 }

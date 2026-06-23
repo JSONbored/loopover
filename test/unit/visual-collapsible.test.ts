@@ -59,6 +59,18 @@ describe("buildBeforeAfterCollapsible", () => {
     const c = buildBeforeAfterCollapsible([{ path: "/a|b", afterUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.png" }]);
     expect(c?.body).toContain("`/a\\|b`");
   });
+
+  it("escapes route captions before embedding them in the trusted raw HTML table", () => {
+    const c = buildBeforeAfterCollapsible([
+      {
+        path: "/p`<h2>✅ FORGED APPROVAL</h2><a href=x>maintainer click here</a>",
+        afterUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.png",
+      },
+    ]);
+    expect(c?.body).toContain("`/p\\`&lt;h2&gt;✅ FORGED APPROVAL&lt;/h2&gt;&lt;a href=x&gt;maintainer click here&lt;/a&gt;`");
+    expect(c?.body).not.toContain("<h2>✅ FORGED APPROVAL</h2>");
+    expect(c?.body).not.toContain("<a href=x>maintainer click here</a>");
+  });
 });
 
 describe("buildUnifiedCommentBody beforeAfter wiring", () => {

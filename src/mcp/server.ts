@@ -8,15 +8,22 @@ import { authenticatePrivateToken, extractBearerToken, type AuthIdentity } from 
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
+  countPendingAgentActions,
   countOpenPullRequests,
+  createPendingAgentActionIfAbsent,
   getBounty,
   listBountiesByRepo,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
+  getInstallation,
   getIssue,
+  getPendingAgentAction,
   getRepository,
+  getRepositorySettings,
   getRepoQueueTrendSnapshot,
+  listAgentAuditEvents,
   listCheckSummaries,
+  listPendingAgentActions,
   listContributorRepoStats,
   listContributorIssues,
   listContributorPullRequests,
@@ -37,8 +44,11 @@ import {
   markNotificationDeliveriesRead,
   recordProductUsageEvent,
 } from "../db/repositories";
+import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { buildNotificationFeed } from "../notifications/service";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
+import { getRepositoryCollaboratorPermission } from "../github/app";
+import { sanitizePublicComment } from "../github/commands";
 import { fetchPublicContributorProfile } from "../github/public";
 import { listLatestRegistrySnapshots } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
@@ -87,6 +97,20 @@ import {
 } from "../signals/engine";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
+import { computeLocalScorerTokens } from "../signals/local-scorer";
+import {
+  buildApplyLabelsSpec,
+  buildCreateBranchSpec,
+  buildDeleteBranchSpec,
+  buildFileIssueSpec,
+  buildOpenPrSpec,
+  buildPostEligibilityCommentSpec,
+  type LocalWriteActionSpec,
+} from "./local-write-tools";
+import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
+import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
+import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
+import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment, buildSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
@@ -181,6 +205,252 @@ const branchEligibilityShape = {
   stale: z.boolean().optional(),
 };
 
+const callerBranchEligibilitySchema = z
+  .object(branchEligibilityShape)
+  .strict()
+  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
+
+// Changed-file metadata + local validation results — shared by the local-branch analysis and the #782 local
+// scorer. METADATA ONLY (paths + line counts), never source content, so the no-upload boundary holds.
+const changedFileSchema = z
+  .object({
+    path: z.string().min(1),
+    previousPath: z.string().min(1).optional(),
+    additions: z.number().int().min(0).optional(),
+    deletions: z.number().int().min(0).optional(),
+    status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
+    binary: z.boolean().optional(),
+  })
+  .strict();
+
+const validationEntrySchema = z
+  .object({
+    command: z.string().min(1),
+    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
+    summary: z.string().optional(),
+    durationMs: z.number().int().min(0).optional(),
+    exitCode: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+// #782 run_local_scorer input — changed-file metadata + the local validation results.
+const runLocalScorerShape = {
+  changedFiles: z.array(changedFileSchema).min(1).max(500),
+  validation: z.array(validationEntrySchema).max(50).optional(),
+};
+
+const runLocalScorerOutputSchema = {
+  tokenScores: z
+    .object({
+      mode: z.string(),
+      activeModel: z.string().optional(),
+      sourceTokenScore: z.number().optional(),
+      totalTokenScore: z.number().optional(),
+      sourceLines: z.number().optional(),
+      testTokenScore: z.number().optional(),
+      nonCodeTokenScore: z.number().optional(),
+      warnings: z.array(z.string()).optional(),
+    })
+    .optional(),
+  usage: z.string().optional(),
+};
+
+// #780 miner write-tools. Inputs are content/targets; the OUTPUT is an action spec the LOCAL harness runs with
+// its own creds — gittensory never performs the write.
+const WRITE_TOOL_TITLE_MAX = 400;
+const WRITE_TOOL_BODY_MAX = 60000;
+const WRITE_TOOL_BRANCH_MAX = 255;
+const openPrShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  base: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
+  head: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
+  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
+  body: z.string().max(WRITE_TOOL_BODY_MAX),
+  draft: z.boolean().optional(),
+};
+const fileIssueShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
+  body: z.string().max(WRITE_TOOL_BODY_MAX),
+  labels: z.array(z.string().min(1).max(100)).max(20).optional(),
+};
+const applyLabelsShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  number: z.number().int().positive(),
+  labels: z.array(z.string().min(1).max(100)).min(1).max(20),
+};
+const postEligibilityCommentShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  number: z.number().int().positive(),
+  body: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
+};
+const createBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), base: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX).optional() };
+const deleteBranchShape = { branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX), remote: z.boolean().optional() };
+const localWriteActionOutputSchema = {
+  action: z.string(),
+  description: z.string(),
+  inputs: z.record(z.string(), z.unknown()),
+  command: z.string(),
+  boundary: z.string(),
+};
+
+// #783 plan DAG — STATELESS: the harness holds the plan and passes it back each call; these tools only advance
+// the state machine, so gittensory keeps no record of the miner's plan.
+const planStepStatusEnum = z.enum(["pending", "running", "completed", "failed", "skipped"]);
+const rawPlanStepSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    title: z.string().min(1).max(300),
+    actionClass: z.string().min(1).max(60).optional(),
+    dependsOn: z.array(z.string().min(1).max(100)).max(50).optional(),
+    maxAttempts: z.number().int().min(1).max(10).optional(),
+  })
+  .strict();
+const planStepSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    title: z.string().min(1).max(300),
+    actionClass: z.string().min(1).max(60).optional(),
+    dependsOn: z.array(z.string().min(1).max(100)).max(50),
+    status: planStepStatusEnum,
+    attempts: z.number().int().min(0),
+    maxAttempts: z.number().int().min(1).max(10),
+    lastError: z.string().max(2000).nullable().optional(),
+  })
+  .strict();
+const planDagSchema = z.object({ steps: z.array(planStepSchema).max(100) }).strict();
+const buildPlanShape = { steps: z.array(rawPlanStepSchema).min(1).max(100) };
+const planStatusShape = { plan: planDagSchema };
+const recordStepResultShape = {
+  plan: planDagSchema,
+  stepId: z.string().min(1).max(100),
+  outcome: z.enum(["completed", "failed", "skipped"]),
+  error: z.string().max(2000).optional(),
+};
+const planViewOutputSchema = {
+  plan: planDagSchema.optional(),
+  progress: z
+    .object({ total: z.number(), completed: z.number(), failed: z.number(), running: z.number(), pending: z.number(), skipped: z.number(), status: z.string() })
+    .optional(),
+  readySteps: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
+  validation: z.object({ valid: z.boolean(), errors: z.array(z.string()) }).optional(),
+};
+
+// #784 (MCP slice) — propose-action: a maintainer stages an action into the approval queue (#779).
+const proposeActionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  pullNumber: z.number().int().positive(),
+  actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label"]),
+  reason: z.string().max(500).optional(),
+  label: z.string().min(1).max(100).optional(),
+  reviewBody: z.string().max(60000).optional(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+  closeComment: z.string().max(60000).optional(),
+};
+
+// GitHub permissions that imply real write access to a repo. Cached PR author_association can report
+// MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
+const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+
+const proposeActionOutputSchema = {
+  created: z.boolean().optional(),
+  action: z
+    .object({ id: z.string(), actionClass: z.string(), pullNumber: z.number(), status: z.string(), reason: z.string().nullable() })
+    .optional(),
+};
+
+// #784 (MCP slice) — the read side of the agent automation control surface for a repo.
+const automationStateOutputSchema = {
+  repoFullName: z.string().optional(),
+  configured: z.boolean().optional(),
+  autonomy: z.record(z.string(), z.string()).optional(),
+  autoMaintain: z.object({ requireApprovals: z.number(), mergeMethod: z.string() }).optional(),
+  agentPaused: z.boolean().optional(),
+  agentDryRun: z.boolean().optional(),
+  mode: z.string().optional(),
+  permissionReadiness: z.string().optional(),
+  actingActionClasses: z.array(z.string()).optional(),
+  pendingActionCount: z.number().optional(),
+};
+
+// #784 (MCP slice) — surface + decide the approval queue, so an MCP client can do the full loop it can
+// already propose into: list staged actions, then accept (execute) or reject one.
+const listPendingActionsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  status: z.enum(["pending", "accepted", "rejected"]).optional(),
+};
+
+const pendingActionEntrySchema = z.object({
+  id: z.string(),
+  actionClass: z.string(),
+  pullNumber: z.number(),
+  status: z.string(),
+  autonomyLevel: z.string(),
+  reason: z.string().nullable(),
+  decidedBy: z.string().nullable(),
+  decidedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const listPendingActionsOutputSchema = {
+  repoFullName: z.string().optional(),
+  status: z.string().optional(),
+  pendingActions: z.array(pendingActionEntrySchema).optional(),
+};
+
+const decidePendingActionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  id: z.string().min(1),
+  decision: z.enum(["accept", "reject"]),
+};
+
+const decidePendingActionOutputSchema = {
+  status: z.string().optional(),
+  executionOutcome: z.string().optional(),
+  action: pendingActionEntrySchema.optional(),
+};
+
+// #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
+const auditFeedShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  since: z.string().datetime({ offset: true }).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+};
+
+const auditFeedOutputSchema = {
+  repoFullName: z.string().optional(),
+  events: z
+    .array(
+      z.object({
+        eventType: z.string(),
+        pullNumber: z.number().nullable(),
+        outcome: z.string(),
+        actor: z.string().nullable(),
+        detail: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    )
+    .optional(),
+};
+
+const focusManifestInputSchema = z
+  .record(z.string(), z.unknown())
+  .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
+    message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
+  });
+
+function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maxBytes;
+  } catch {
+    return false;
+  }
+}
+
 const localBranchAnalysisShape = {
   login: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
   repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
@@ -192,35 +462,8 @@ const localBranchAnalysisShape = {
   mergeBaseSha: z.string().min(1).optional(),
   remoteTrackingSha: z.string().min(1).optional(),
   commitMessages: z.array(z.string()).max(30).optional(),
-  changedFiles: z
-    .array(
-      z
-        .object({
-          path: z.string().min(1),
-          previousPath: z.string().min(1).optional(),
-          additions: z.number().int().min(0).optional(),
-          deletions: z.number().int().min(0).optional(),
-          status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
-          binary: z.boolean().optional(),
-        })
-        .strict(),
-    )
-    .max(500)
-    .optional(),
-  validation: z
-    .array(
-      z
-        .object({
-          command: z.string().min(1),
-          status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-          summary: z.string().optional(),
-          durationMs: z.number().int().min(0).optional(),
-          exitCode: z.number().int().min(0).optional(),
-        })
-        .strict(),
-    )
-    .max(50)
-    .optional(),
+  changedFiles: z.array(changedFileSchema).max(500).optional(),
+  validation: z.array(validationEntrySchema).max(50).optional(),
   linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
   labels: z.array(z.string()).optional(),
   title: z.string().min(1).optional(),
@@ -231,8 +474,8 @@ const localBranchAnalysisShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
-  focusManifest: z.record(z.string(), z.unknown()).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
+  focusManifest: focusManifestInputSchema.optional(),
+  branchEligibility: callerBranchEligibilitySchema.optional(),
   localScorer: z
     .object({
       mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
@@ -270,6 +513,11 @@ const agentPlanShape = {
   repoFullName: z.string().min(3).optional(),
 };
 
+function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
+  const targetRepo = repoFullName.toLowerCase();
+  return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
+}
+
 const linkedIssueContextShape = {
   status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
   source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
@@ -305,7 +553,7 @@ const scorePreviewShape = {
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
   scenarioNotes: z.array(z.string()).max(20).optional(),
-  branchEligibility: z.object(branchEligibilityShape).strict().optional(),
+  branchEligibility: callerBranchEligibilitySchema.optional(),
 };
 
 const variantsShape = {
@@ -407,6 +655,9 @@ const checkSlopRiskShape = {
   description: z.string().max(20000).optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
+  hasLinkedIssue: z.boolean().optional(),
+  issueDiscoveryLane: z.boolean().optional(),
 };
 
 const checkSlopRiskOutputSchema = {
@@ -758,7 +1009,7 @@ export class GittensoryMcp {
     server.registerTool(
       "gittensory_get_burden_forecast",
       {
-        description: "Return the cached or freshly-computed maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
+        description: "Return the cached maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
         inputSchema: ownerRepoShape,
         outputSchema: freshnessResponseOutputSchema,
       },
@@ -994,6 +1245,123 @@ export class GittensoryMcp {
         outputSchema: scorePreviewRecordOutputSchema,
       },
       async (input) => this.toolResult(await this.previewScore(input)),
+    );
+
+    server.registerTool(
+      "gittensory_run_local_scorer",
+      {
+        description:
+          "Run Gittensory's deterministic local token scorer over changed-file metadata + local validation results (no source content). Returns token scores to pass back as the `localScorer` field of the score-preview / analyze tools (external_command mode), so the miner never runs the gittensor-root scorer by hand.",
+        inputSchema: runLocalScorerShape,
+        outputSchema: runLocalScorerOutputSchema,
+      },
+      async (input) => this.toolResult(this.runLocalScorer(input)),
+    );
+
+    // #780 miner write-tools — each returns a LOCAL-execution action spec; gittensory never performs the write.
+    server.registerTool(
+      "gittensory_open_pr",
+      { description: "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; gittensory never performs the write).", inputSchema: openPrShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildOpenPrSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_file_issue",
+      { description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; gittensory never performs the write).", inputSchema: fileIssueShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildFileIssueSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_apply_labels",
+      { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; gittensory never performs the write).", inputSchema: applyLabelsShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildApplyLabelsSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_post_eligibility_comment",
+      { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; gittensory never performs the write).", inputSchema: postEligibilityCommentShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildPostEligibilityCommentSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_create_branch",
+      { description: "Build a LOCAL-execution spec to create a branch (run it locally; gittensory never performs the write).", inputSchema: createBranchShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildCreateBranchSpec(input))),
+    );
+    server.registerTool(
+      "gittensory_delete_branch",
+      { description: "Build a LOCAL-execution spec to delete a branch (run it locally; gittensory never performs the write).", inputSchema: deleteBranchShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildDeleteBranchSpec(input))),
+    );
+
+    // #783 multi-step plan DAG — stateless: pass the plan back each call.
+    server.registerTool(
+      "gittensory_build_plan",
+      { description: "Normalize raw steps into a validated multi-step plan DAG (per-step state + retries). Returns the plan to hold and pass back to the other plan tools.", inputSchema: buildPlanShape, outputSchema: planViewOutputSchema },
+      async (input) => this.toolResult(this.buildPlan(input)),
+    );
+    server.registerTool(
+      "gittensory_plan_status",
+      { description: "Return a plan's progress, validation, and the steps ready to run now (all dependencies met).", inputSchema: planStatusShape, outputSchema: planViewOutputSchema },
+      async (input) => this.toolResult(this.planStatusTool(input)),
+    );
+    server.registerTool(
+      "gittensory_record_step_result",
+      { description: "Record a step's outcome (completed / failed / skipped). A failure retries until maxAttempts is exhausted. Returns the advanced plan + the next ready steps.", inputSchema: recordStepResultShape, outputSchema: planViewOutputSchema },
+      async (input) => this.toolResult(this.recordStepResult(input)),
+    );
+
+    // #784 (MCP control surface, read side): a repo's agent automation posture — autonomy dial, kill-switch /
+    // dry-run mode, write-permission readiness, and the pending-approval count. Repo-access scoped.
+    server.registerTool(
+      "gittensory_get_automation_state",
+      {
+        description:
+          "Return a repo's agent automation state: the per-action autonomy levels, kill-switch / dry-run mode, GitHub write-permission readiness, and how many auto_with_approval actions are awaiting a maintainer decision.",
+        inputSchema: ownerRepoShape,
+        outputSchema: automationStateOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getAutomationState(input)),
+    );
+
+    server.registerTool(
+      "gittensory_propose_action",
+      {
+        description:
+          "Stage a PR action (label / request_changes / approve / merge / close) into the repo's approval queue for a maintainer to accept or reject. Maintainer access required; the action is NOT executed until approved.",
+        inputSchema: proposeActionShape,
+        outputSchema: proposeActionOutputSchema,
+      },
+      async (input) => this.toolResult(await this.proposeAction(input)),
+    );
+
+    server.registerTool(
+      "gittensory_list_pending_actions",
+      {
+        description:
+          "List the agent actions staged in a repo's approval queue (default status=pending), so a maintainer can review what is awaiting a decision. Maintainer access required.",
+        inputSchema: listPendingActionsShape,
+        outputSchema: listPendingActionsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.listPendingActions(input)),
+    );
+
+    server.registerTool(
+      "gittensory_decide_pending_action",
+      {
+        description:
+          "Accept (execute) or reject a staged approval-queue action by id. Accept runs it through the live executor gates; reject cancels it. Idempotent and scoped to this repo. Maintainer access required.",
+        inputSchema: decidePendingActionShape,
+        outputSchema: decidePendingActionOutputSchema,
+      },
+      async (input) => this.toolResult(await this.decidePendingAction(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_agent_audit_feed",
+      {
+        description:
+          "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
+        inputSchema: auditFeedShape,
+        outputSchema: auditFeedOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getAgentAuditFeed(input)),
     );
 
     server.registerTool(
@@ -1282,6 +1650,55 @@ export class GittensoryMcp {
     throw new Error("Forbidden: session cannot access this repository.");
   }
 
+  // Stricter than requireRepoAccess (read): a maintainer-MANAGE gate for write actions (#784 propose-action).
+  // A session must own/maintain the repo (or be an operator); private-token / static identities are trusted.
+  private async requireRepoManageAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind !== "session") return;
+    const scope = await this.loadSessionAccessScope();
+    if (scope.operator) return;
+
+    const repo = await getRepository(this.env, repoFullName);
+    const installationId = repo?.installationId ?? null;
+    let permission: string | null = null;
+    if (installationId !== null) {
+      try {
+        permission = await getRepositoryCollaboratorPermission(this.env, installationId, repoFullName, this.identity.actor);
+      } catch {
+        permission = null;
+      }
+    }
+    if (permission && REPO_WRITE_PERMISSIONS.has(permission)) return;
+    throw new Error("Forbidden: write access is required to propose an action on this repository.");
+  }
+
+  // Approval-queue list/decide mirrors the HTTP requireRepoWriteAccess gate:
+  // first require repo-scoped Gittensory maintainer/owner/operator authority, then verify live GitHub write.
+  private async requireRepoApprovalQueueAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind !== "session") return;
+    const scope = await this.loadSessionAccessScope();
+    if (scope.operator) return;
+
+    const repo = await getRepository(this.env, repoFullName);
+    const requestedRepo = repoFullName.toLowerCase();
+    const repoScoped = scope.repositoryFullNames.some((name) => name.toLowerCase() === requestedRepo);
+    const accountScoped = Boolean(repo && scope.accountLogins.some((login) => login.toLowerCase() === repo.owner.toLowerCase()));
+    if (!repoScoped && !accountScoped) {
+      throw new Error("Forbidden: maintainer access is required for this repository.");
+    }
+
+    const installationId = repo?.installationId ?? null;
+    let permission: string | null = null;
+    if (installationId !== null) {
+      try {
+        permission = await getRepositoryCollaboratorPermission(this.env, installationId, repoFullName, this.identity.actor);
+      } catch {
+        permission = null;
+      }
+    }
+    if (permission && REPO_WRITE_PERMISSIONS.has(permission)) return;
+    throw new Error("Forbidden: write access is required to manage this repository's approval queue.");
+  }
+
   // Issue-watch gate (#699 path B). Sessions may only watch repos they can SEE: any gittensory-tracked PUBLIC
   // repo (the miner use case) or a PRIVATE repo they can access — never an arbitrary/private repo they cannot,
   // so private-repo issues never fan out to them. Non-session (private-token) identities are trusted.
@@ -1335,10 +1752,7 @@ export class GittensoryMcp {
       };
     }
     return {
-      summary:
-        response.source === "snapshot"
-          ? `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`
-          : `Gittensory burden forecast for ${fullName} (computed from cached metadata).`,
+      summary: `Gittensory burden forecast for ${fullName} (cached, ${response.freshness}).`,
       data: response as unknown as Record<string, unknown>,
     };
   }
@@ -1724,13 +2138,15 @@ export class GittensoryMcp {
   private async previewScore(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       input.contributorLogin ? getContributorEvidence(this.env, input.contributorLogin) : Promise.resolve(null),
+      input.contributorLogin ? listContributorIssues(this.env, input.contributorLogin) : Promise.resolve([]),
     ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, input.repoFullName);
     // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
-    const scoreInput = { ...input, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const scoreInput = { ...input, openIssueCount, applyTimeDecay: isTimeDecayEnabled(this.env) };
     const result = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     return {
       summary: `Private Gittensory scoring preview for ${input.repoFullName}.`,
@@ -1738,16 +2154,208 @@ export class GittensoryMcp {
     };
   }
 
+  // #782 — pure deterministic token scorer over caller-supplied changed-file metadata. No repo/contributor
+  // access required: it reveals nothing beyond a computation on the caller's own diff stats.
+  private runLocalScorer(input: z.infer<z.ZodObject<typeof runLocalScorerShape>>): ToolPayload {
+    const tokenScores = computeLocalScorerTokens({ changedFiles: input.changedFiles, validation: input.validation });
+    return {
+      summary: `Local token scores — ${tokenScores.sourceTokenScore} source / ${tokenScores.testTokenScore} test / ${tokenScores.nonCodeTokenScore} non-code (total ${tokenScores.totalTokenScore}).`,
+      data: {
+        tokenScores: tokenScores as unknown as Record<string, unknown>,
+        usage: "Pass `tokenScores` as the `localScorer` field of gittensory_preview_local_pr_score or the analyze tools to score this branch in external_command mode (off metadata-only).",
+      },
+    };
+  }
+
+  // #780 — wrap a local write-action spec for return. gittensory never executes it; the harness runs `command`
+  // (or reconstructs from `inputs`) with the miner's own credentials.
+  private localWriteSpec(spec: LocalWriteActionSpec): ToolPayload {
+    return { summary: `${spec.action}: ${spec.description} ${spec.boundary}`, data: spec as unknown as Record<string, unknown> };
+  }
+
+  // #783 plan DAG — pure, stateless transforms over the caller's plan.
+  private planView(plan: PlanDag): Record<string, unknown> {
+    return {
+      plan: plan as unknown as Record<string, unknown>,
+      progress: planProgress(plan),
+      readySteps: nextReadySteps(plan).map((step) => ({ id: step.id, title: step.title })),
+      validation: validatePlanDag(plan),
+    };
+  }
+
+  private buildPlan(input: z.infer<z.ZodObject<typeof buildPlanShape>>): ToolPayload {
+    const plan = buildPlanDag(input.steps);
+    const validation = validatePlanDag(plan);
+    return { summary: `Built a ${plan.steps.length}-step plan (${validation.valid ? "valid DAG" : `INVALID: ${validation.errors.join("; ")}`}).`, data: this.planView(plan) };
+  }
+
+  private planStatusTool(input: z.infer<z.ZodObject<typeof planStatusShape>>): ToolPayload {
+    const plan = input.plan as PlanDag;
+    return { summary: `Plan status: ${planProgress(plan).status}.`, data: this.planView(plan) };
+  }
+
+  private recordStepResult(input: z.infer<z.ZodObject<typeof recordStepResultShape>>): ToolPayload {
+    const plan = applyStepResult(input.plan as PlanDag, input.stepId, { outcome: input.outcome, ...(input.error !== undefined ? { error: input.error } : {}) });
+    return { summary: `Recorded ${input.outcome} for step ${input.stepId}; plan is now ${planProgress(plan).status}.`, data: this.planView(plan) };
+  }
+
+  // #784 — read the agent automation state for a repo. Repo-access scoped; surfaces the count (not the
+  // details) of the approval queue — the full queue + accept/reject stay behind the maintainer-authed REST API.
+  private async getAutomationState(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const [repo, settings, pendingActionCount] = await Promise.all([
+      getRepository(this.env, fullName),
+      getRepositorySettings(this.env, fullName),
+      countPendingAgentActions(this.env, { repoFullName: fullName, status: "pending" }),
+    ]);
+    const autonomy = settings.autonomy;
+    const actingActionClasses = AGENT_ACTION_CLASSES.filter((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
+    const installation = repo?.installationId ? await getInstallation(this.env, repo.installationId) : null;
+    const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(this.env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+    const permissionReadiness = resolveAgentPermissionReadiness({ autonomy, installationPermissions: installation?.permissions ?? null });
+    return {
+      summary: `Agent automation for ${fullName}: mode=${mode}, ${actingActionClasses.length} acting class(es), ${pendingActionCount} pending approval(s).`,
+      data: {
+        repoFullName: fullName,
+        configured: actingActionClasses.length > 0,
+        autonomy,
+        autoMaintain: settings.autoMaintain,
+        agentPaused: settings.agentPaused === true,
+        agentDryRun: settings.agentDryRun === true,
+        mode,
+        permissionReadiness,
+        actingActionClasses,
+        pendingActionCount,
+      },
+    };
+  }
+
+  // #784 — stage a proposed PR action into the approval queue (#779) for a maintainer to accept/reject. The
+  // action is auto_with_approval (never auto-executes); maintainer-manage access required.
+  private async proposeAction(input: z.infer<z.ZodObject<typeof proposeActionShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const repo = await getRepository(this.env, fullName);
+    if (!repo?.installationId) throw new Error("Cannot propose an action: the Gittensory App is not installed on this repository.");
+    const params = {
+      ...(input.label !== undefined ? { label: input.label } : {}),
+      ...(input.reviewBody !== undefined ? { reviewBody: input.reviewBody } : {}),
+      ...(input.mergeMethod !== undefined ? { mergeMethod: input.mergeMethod } : {}),
+      ...(input.closeComment !== undefined ? { closeComment: input.closeComment } : {}),
+    };
+    const { action, created } = await createPendingAgentActionIfAbsent(this.env, {
+      repoFullName: fullName,
+      pullNumber: input.pullNumber,
+      installationId: repo.installationId,
+      actionClass: input.actionClass,
+      autonomyLevel: "auto_with_approval",
+      params,
+      reason: input.reason ?? null,
+    });
+    return {
+      summary: `${created ? "Staged" : "Already staged"} a ${input.actionClass} on ${fullName}#${input.pullNumber} for maintainer approval.`,
+      data: { created, action: { id: action.id, actionClass: action.actionClass, pullNumber: action.pullNumber, status: action.status, reason: action.reason } },
+    };
+  }
+
+  // #784 — surface the approval queue an MCP client can already propose into. Maintainer-manage scoped
+  // (the full queue with reasons is more sensitive than the bare count in get_automation_state).
+  private async listPendingActions(input: z.infer<z.ZodObject<typeof listPendingActionsShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoApprovalQueueAccess(fullName);
+    const status = input.status ?? "pending";
+    const actions = await listPendingAgentActions(this.env, { repoFullName: fullName, status });
+    return {
+      summary: `${actions.length} ${status} action(s) in the ${fullName} approval queue.`,
+      data: {
+        repoFullName: fullName,
+        status,
+        pendingActions: actions.map((action) => ({
+          id: action.id,
+          actionClass: action.actionClass,
+          pullNumber: action.pullNumber,
+          status: action.status,
+          autonomyLevel: action.autonomyLevel,
+          reason: action.reason,
+          decidedBy: action.decidedBy,
+          decidedAt: action.decidedAt,
+          createdAt: action.createdAt,
+        })),
+      },
+    };
+  }
+
+  // #784 — accept (execute) or reject a staged action. Mirrors the HTTP decision route: maintainer-manage
+  // access, repo-scoped (a guessed id from another repo's queue cannot be decided), idempotent.
+  private async decidePendingAction(input: z.infer<z.ZodObject<typeof decidePendingActionShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoApprovalQueueAccess(fullName);
+    const pending = await getPendingAgentAction(this.env, input.id);
+    // Scope to THIS repo so a maintainer cannot decide another repo's queue via a guessed id.
+    if (!pending || pending.repoFullName !== fullName) {
+      return { summary: `No pending action ${input.id} on ${fullName}.`, data: { status: "not_found" } };
+    }
+    const result = await decidePendingAgentAction(this.env, { id: pending.id, decision: input.decision, decidedBy: this.identity.actor });
+    const action = result.action;
+    /* v8 ignore next 2 -- not_found is returned above; accepted/rejected/already_decided always carry the action. */
+    if (!action) return { summary: `Action ${input.id} was already decided.`, data: { status: result.status } };
+    return {
+      summary:
+        result.status === "accepted"
+          ? `Accepted ${pending.actionClass} on ${fullName}#${pending.pullNumber} (execution: ${result.executionOutcome}).`
+          : result.status === "rejected"
+            ? `Rejected ${pending.actionClass} on ${fullName}#${pending.pullNumber}.`
+            : `Action ${input.id} was already decided.`,
+      data: {
+        status: result.status,
+        ...(result.executionOutcome !== undefined ? { executionOutcome: result.executionOutcome } : {}),
+        action: {
+          id: action.id,
+          actionClass: action.actionClass,
+          pullNumber: action.pullNumber,
+          status: action.status,
+          autonomyLevel: action.autonomyLevel,
+          reason: action.reason,
+          decidedBy: action.decidedBy,
+          decidedAt: action.decidedAt,
+          createdAt: action.createdAt,
+        },
+      },
+    };
+  }
+
+  // #784 — the agent audit feed: executed actions + approval decisions for a repo, newest first.
+  // Maintainer-manage scoped; read-only and public-safe (action posture only — no trust/score metadata).
+  private async getAgentAuditFeed(input: z.infer<z.ZodObject<typeof auditFeedShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const events = await listAgentAuditEvents(this.env, {
+      repoFullName: fullName,
+      ...(input.since !== undefined ? { sinceIso: input.since } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+    });
+    return {
+      summary: `${events.length} recent agent audit event(s) for ${fullName}.`,
+      // Defense-in-depth: scrub the only free-form field (`detail`) before it leaves on a public-safe tool result.
+      data: { repoFullName: fullName, events: events.map((event) => ({ ...event, detail: event.detail === null ? null : sanitizePublicComment(event.detail) })) },
+    };
+  }
+
   private async explainScoreBreakdown(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
     if (!input.contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
     this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
-    const [repo, snapshot, evidence] = await Promise.all([
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
       getRepository(this.env, input.repoFullName),
       getOrCreateScoringModelSnapshot(this.env),
       getContributorEvidence(this.env, input.contributorLogin),
+      listContributorIssues(this.env, input.contributorLogin),
     ]);
-    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, input.repoFullName);
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const scoreInput = { ...input, openIssueCount, applyTimeDecay: isTimeDecayEnabled(this.env) };
+    const preview = buildScorePreview({ input: scoreInput, repo, snapshot, contributorEvidence: evidence });
     const breakdown = explainScoreBreakdown(preview);
     return {
       summary: `Private Gittensory score breakdown for ${input.contributorLogin} in ${input.repoFullName}. Highest leverage: ${breakdown.highestLeverageLever.component}.`,
@@ -1956,7 +2564,7 @@ export class GittensoryMcp {
     const draft = buildPublicPrBodyDraft(analysis);
     // Human-readable summary carries the rendered markdown body; structured draft is returned as JSON.
     return {
-      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; private scoreability excluded).\n\n${draft.markdown}`,
+      summary: `Public-safe PR body draft for ${analysis.repoFullName} (metadata only; internal analysis context omitted).\n\n${draft.markdown}`,
       data: draft as unknown as Record<string, unknown>,
     };
   }

@@ -57,6 +57,34 @@ const DEPENDENCY_MANIFEST_NAMES: ReadonlySet<string> = new Set([
 
 const DOCS_EXTENSIONS: ReadonlySet<string> = new Set(["md", "mdx", "markdown", "rst", "adoc", "asciidoc"]);
 
+// Exact basenames (lowercased) that are unambiguously build/CI config files regardless of directory.
+const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
+  "dockerfile",
+  "makefile",
+  ".editorconfig",
+  ".nvmrc",
+  ".npmrc",
+  ".browserslistrc",
+]);
+
+// Filename prefixes that identify build, lint, test-runner, and environment config files.
+const CONFIG_FILE_PREFIXES: readonly string[] = [
+  "tsconfig",
+  "jsconfig",
+  "jest.config",
+  "vitest.config",
+  "vite.config",
+  "webpack.config",
+  "rollup.config",
+  "postcss.config",
+  "tailwind.config",
+  "next.config",
+  ".env",
+  ".eslint",
+  ".prettier",
+  ".babel",
+];
+
 /** Machine-generated output (codegen, protobuf, source maps, typegen). */
 export function isGeneratedFile(path: string): boolean {
   const norm = normalize(path);
@@ -98,6 +126,20 @@ export function isDependencyManifestFile(path: string): boolean {
 }
 
 /**
+ * Build, lint, test-runner, and environment configuration files. Distinct from dependency manifests
+ * (which declare external dependencies) and source code. Config-only diffs are lower-effort than
+ * genuine source changes, so slop signals can weight them differently (#561).
+ */
+export function isConfigFile(path: string): boolean {
+  const base = basename(path);
+  if (CONFIG_FILE_NAMES.has(base)) return true;
+  if (CONFIG_FILE_PREFIXES.some((prefix) => base.startsWith(prefix))) return true;
+  if (/\.(config|rc)\.[a-z0-9]+$/i.test(base)) return true;
+  // `.stylelintrc`-style: dot-prefixed name with no extension after "rc"; `custom.rc`: dotted rc extension.
+  return base.endsWith(".rc") || /^\.[^.]+rc$/i.test(base);
+}
+
+/**
  * Files that masquerade as substantive source/work but are machine-produced or imported — the set a
  * padded diff inflates its size with. Lockfiles, dependency manifests, and docs are legitimate change
  * categories and are deliberately excluded here (they have their own matchers for reuse).
@@ -112,6 +154,7 @@ export type ChangedFileCategory =
   | "vendored"
   | "lockfile"
   | "dependency_manifest"
+  | "config"
   | "test"
   | "docs"
   | "source"
@@ -128,6 +171,7 @@ export function classifyChangedFile(path: string): ChangedFileCategory {
   if (isVendoredFile(path)) return "vendored";
   if (isLockfile(path)) return "lockfile";
   if (isDependencyManifestFile(path)) return "dependency_manifest";
+  if (isConfigFile(path)) return "config";
   if (isTestFile(path) || isTestPath(path)) return "test";
   if (isDocsFile(path)) return "docs";
   if (isCodeFile(path)) return "source";

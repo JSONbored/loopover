@@ -335,7 +335,7 @@ function buildAskPublicAnswerCard(args: {
   ];
   const sourceEvidence = contributingSources.slice(0, 3).map((source) => {
     const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
-    return `Connected source ${source.label} (${source.origin}): freshness ${source.freshness}${observed}.`;
+    return `Connected source ${source.label}: freshness ${source.freshness}${observed}.`;
   });
   return {
     title,
@@ -737,7 +737,7 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
           origin: kind,
           generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : graphGeneratedAt,
           freshness: typeof record.freshness === "string" ? record.freshness : "unknown",
-          detail: typeof record.detail === "string" ? record.detail : "Connected contributor evidence graph source.",
+          detail: publicContextSnapshotSourceDetail(kind),
         });
       }
     }
@@ -762,16 +762,6 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
       generatedAt,
       freshness: branchEligibility.stale === true ? "stale" : branchEligibility.evidence === "missing" ? "missing" : "fresh",
       detail: "Branch eligibility metadata from connected local/GitHub context.",
-    });
-  }
-  if (typeof payload.scoreabilityStatus === "string") {
-    sources.push({
-      key: "scoreability_status",
-      label: "contribution readiness metadata",
-      origin: "metadata_only",
-      generatedAt,
-      freshness: snapshotFreshnessFromWarnings(snapshot),
-      detail: `Contribution readiness status: ${payload.scoreabilityStatus}.`,
     });
   }
   const dataQuality = readRecord(payload.dataQuality);
@@ -802,7 +792,7 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
       origin: "contributor_decision_pack",
       generatedAt: generatedAt ?? snapshot.decisionPackVersion ?? null,
       freshness: snapshotFreshnessFromWarnings(snapshot),
-      detail: `Contributor decision pack (${payload.source}).`,
+      detail: "Contributor decision-pack metadata was available for this cached agent run.",
     });
   }
   const openPrMonitor = readRecord(payload.openPrMonitor);
@@ -819,7 +809,17 @@ function askSourcesFromContextSnapshot(snapshot: AgentRunBundle["contextSnapshot
   return sources;
 }
 
-const PRIVATE_ASK_ACTION_EVIDENCE_SOURCES = new Set(["repo_decision"]);
+function publicContextSnapshotSourceDetail(name: string): string {
+  const details: Record<string, string> = {
+    computed: "Computed contributor-signal metadata was available for this cached agent run.",
+    mirror: "Gittensor mirror registry metadata was available for this cached agent run.",
+    repo_focus_manifest: "Repo focus manifest metadata was available for this cached agent run.",
+    open_pr_monitor: "Cached open PR and issue queue metadata was available for this cached agent run.",
+  };
+  return details[name] ?? "Connected contributor evidence metadata was available for this cached agent run.";
+}
+
+const PRIVATE_ASK_ACTION_EVIDENCE_SOURCES = new Set(["repo_decision", "score_preview"]);
 
 function askSourcesFromActionEvidence(action: AgentActionRecord): AskContributingSource[] {
   const evidence = readRecord(action.payload.recommendationEvidence);
@@ -854,7 +854,7 @@ function publicActionEvidenceSourceDetail(name: string): string {
 }
 
 function formatAskCitation(source: AskContributingSource): string {
-  const header = `Source: ${source.label}; origin: ${source.origin}; freshness: ${source.freshness}`;
+  const header = `Source: ${source.label}; freshness: ${source.freshness}`;
   const observed = source.generatedAt ? ` as of ${source.generatedAt}` : "";
   const detail = source.detail ? ` — ${publicBlockerDetail(source.detail)}` : "";
   return `- ${header}${observed}${detail}.`;
@@ -966,11 +966,6 @@ function duplicateCheckSections(bundle: AgentRunBundle | null | undefined): stri
     for (const code of action.blockedBy.slice(0, 3)) {
       lines.push(`- ${publicBlockerLabel(code)}`);
     }
-    const caution = [...action.why, action.riskImpact ?? ""]
-      .filter(isPublicDuplicateCautionLine)
-      .slice(0, 3)
-      .map((item) => `- ${publicBlockerDetail(item)}`);
-    lines.push(...caution);
   }
   return dedupeBulletLines(lines);
 }
@@ -1422,7 +1417,7 @@ function formatActionBullets(
 }
 
 function mentionsDuplicateRisk(action: AgentActionRecord): boolean {
-  return [action.publicSafeSummary, action.recommendation, action.riskImpact ?? "", ...action.why, ...action.blockedBy].some(isPublicDuplicateCautionLine);
+  return [action.publicSafeSummary, ...action.blockedBy].some(isPublicDuplicateCautionLine);
 }
 
 function mentionsDuplicateRiskText(value: string): boolean {
@@ -1486,13 +1481,19 @@ function sanitizeFeedbackAnswerId(answerId: string): string {
 
 export function sanitizePublicComment(value: string): string {
   const sanitized = value
-    .replace(/\bprojected score changes?\b(?:\s+from)?\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
+    .replace(/\bopen pr count\s+\d+\s+exceeds threshold\s+\d+\b\.?/gi, "private context")
+    .replace(/\bopen pr count is at or below\s+\d+\b/gi, "private context")
+    .replace(/\bcredibility\s+[-+]?\d+(?:\.\d+)?\s+is below floor\s+[-+]?\d+(?:\.\d+)?\b\.?/gi, "private context")
+    .replace(/\b(?:effective|projected|estimated) score(?: changes?)?\b(?:\s+from)?\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
     .replace(/\b(raw trust score|trust score|wallet|hotkey|coldkey|seed phrase|mnemonic)\b/gi, "private context")
-    .replace(/\b(public score estimate|estimated score|score estimate|reward estimates?|payout|farming|scoreability|score preview|projected score changes?)\b/gi, "private context")
+    .replace(/\b(public score estimate|estimated score|score estimate|estimated rewards?|rewards?|reward estimates?|payout|farming|scoreability|score preview|projected score changes?)\b/gi, "private context")
     .replace(/\b(private reviewability|reviewability internals?)\b/gi, "private context")
-    .replace(/\b(private ranking|private rankings)\b/gi, "private context")
+    .replace(/\b(private rankings?|rankings?)\b/gi, "private context")
     .replace(/\b(?:open_pr_pressure|closed_pr_credibility|low_credibility|maintainer_lane|inactive_or_unknown_lane|issue_discovery_only)\b/gi, "private context")
     .replace(/\b(?:credibility(?: updates?)?|closed pr credibility|low credibility|open pr pressure)\b/gi, "private context")
+    // Catch-all: a phrase replacement above (e.g. "score estimate"/"score preview") can leave a bare
+    // numeric score transition behind ("private context 32.5 -> 41.2"); redact those residual numbers too.
+    .replace(/\bprivate context\b\s+[-+]?\d+(?:\.\d+)?\s*(?:->|→|to)\s*[-+]?\d+(?:\.\d+)?/gi, "private context")
     .replace(/\blikely_duplicate\b/gi, "possible overlap with existing work");
   return sanitizeReviewabilityTerm(sanitized).replace(/private context(?:,\s*private context)+/gi, "private context");
 }

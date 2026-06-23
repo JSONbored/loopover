@@ -40,10 +40,9 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    // First-party proxy for the self-hosted Umami tracker (/stats/*). Runs ahead
-    // of SSR and returns undefined for every other path. Only active in the
-    // deployed Worker; `vite dev` uses TanStack's default server entry, so local
-    // /stats/script.js 404s and analytics simply doesn't load in dev (intended).
+    // First-party proxy for cookieless analytics event collection (/stats/api/send).
+    // Runs ahead of SSR and returns undefined for every other path. The remote
+    // Umami tracker script is intentionally not proxied as same-origin JavaScript.
     const analytics = await handleAnalyticsProxy(request);
     if (analytics) return analytics;
 

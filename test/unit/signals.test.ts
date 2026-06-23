@@ -28,7 +28,9 @@ import {
   buildRegistryChangeReport,
   buildRepoFitRecommendation,
   detectGittensorContributor,
+  isPullRequestInDuplicateCluster,
   shouldPublishPrIntelligenceComment,
+  type CollisionReport,
 } from "../../src/signals/engine";
 import { GITTENSOR_HOME_URL } from "../../src/github/footer";
 import type {
@@ -758,6 +760,50 @@ describe("world-class backend signals", () => {
     const ambiguousPreflight = buildPreflightResult({ repoFullName: repo.fullName, title: "Fix cache", body: "Fixes #7" }, repo, [openIssue], [], [ambiguousStatus]);
     expect(stalePreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_unverified");
     expect(ambiguousPreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_unverified");
+
+    const currentPr: PullRequestRecord = { ...pullRequests[0]!, body: "Fixes #7", linkedIssues: [7] };
+    const publicPreflight = buildPreflightResult({ repoFullName: repo.fullName, title: currentPr.title, body: currentPr.body ?? undefined, linkedIssues: [7] }, repo, [openIssue], [], [completed]);
+    const publicComment = buildPublicPrIntelligenceComment({
+      repo,
+      pr: currentPr,
+      profile: buildContributorProfile("oktofeesh1", { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" }, [currentPr], []),
+      detection: { ...detectGittensorContributor("oktofeesh1", currentPr, [currentPr], []), detected: true, source: "official_gittensor_api", reason: "Official Gittensor API confirms this GitHub user." },
+      queueHealth: buildQueueHealth(repo, [openIssue], [currentPr], buildCollisionReport(repo.fullName, [openIssue], [currentPr])),
+      collisions: buildCollisionReport(repo.fullName, [openIssue], [currentPr]),
+      preflight: publicPreflight,
+      settings: {
+        repoFullName: repo.fullName,
+        commentMode: "all_prs",
+        publicAudienceMode: "gittensor_only",
+        publicSignalLevel: "standard",
+        checkRunMode: "off",
+        checkRunDetailLevel: "minimal",
+        gateCheckMode: "off",
+        gatePack: "gittensor",
+        linkedIssueGateMode: "advisory",
+        duplicatePrGateMode: "advisory",
+        qualityGateMode: "advisory",
+        slopGateMode: "off",
+        mergeReadinessGateMode: "off",
+        manifestPolicyGateMode: "off",
+        firstTimeContributorGrace: false,
+        slopAiAdvisory: false,
+        qualityGateMinScore: null,
+        autoLabelEnabled: true,
+        gittensorLabel: "gittensor",
+        createMissingLabel: true,
+        publicSurface: "comment_and_label",
+        includeMaintainerAuthors: false,
+        requireLinkedIssue: false,
+        backfillEnabled: true,
+        privateTrustEnabled: true,
+        aiReviewMode: "off",
+        aiReviewByok: false,
+      },
+    });
+    expect(publicPreflight.findings.map((finding) => finding.code)).toContain("linked_issue_bounty_historical");
+    expect(publicComment).not.toContain("Linked issue bounty is historical");
+    expect(publicComment).not.toContain("Issue #7 has a completed bounty");
   });
 
   it("includes linked PR validity when PR records are available", () => {
@@ -1290,3 +1336,27 @@ function registrySnapshot(id: string, repositories: RegistrySnapshot["repositori
     repositories,
   };
 }
+
+describe("isPullRequestInDuplicateCluster (#563)", () => {
+  // Typed fixtures: the CollisionReport shape is compile-checked, so it cannot drift from the real type.
+  const report = (clusters: CollisionReport["clusters"]): CollisionReport => ({
+    repoFullName: "owner/repo",
+    generatedAt: "2026-06-18T00:00:00.000Z",
+    summary: { clusterCount: clusters.length, highRiskCount: clusters.filter((cluster) => cluster.risk === "high").length, itemsReviewed: clusters.reduce((total, cluster) => total + cluster.items.length, 0) },
+    clusters,
+  });
+  type Item = CollisionReport["clusters"][number]["items"][number];
+  const prItem = (number: number): Item => ({ type: "pull_request", number, title: `PR ${number}` });
+  const issueItem = (number: number): Item => ({ type: "issue", number, title: `issue ${number}` });
+
+  it("is true only for a high-risk cluster with 2+ pull requests that includes the PR", () => {
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "high", reason: "overlap", items: [prItem(7), prItem(8), issueItem(3)] }]), 7)).toBe(true);
+  });
+
+  it("is false for missing, insufficient, or non-matching clusters", () => {
+    expect(isPullRequestInDuplicateCluster(report([]), 7)).toBe(false); // no clusters
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "high", reason: "r", items: [prItem(7), issueItem(3)] }]), 7)).toBe(false); // only 1 PR (healthy issue↔PR pair)
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "medium", reason: "r", items: [prItem(7), prItem(8)] }]), 7)).toBe(false); // not high-risk
+    expect(isPullRequestInDuplicateCluster(report([{ id: "c", risk: "high", reason: "r", items: [prItem(8), prItem(9)] }]), 7)).toBe(false); // PR not a member
+  });
+});

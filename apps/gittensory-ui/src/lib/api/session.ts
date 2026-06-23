@@ -64,6 +64,13 @@ function emitSessionChanged() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));
 }
 
+// The synthetic local-preview session is available in `vite dev` (DEV) AND on dedicated preview deploys
+// built with VITE_PREVIEW=1 (the per-PR `ui-preview.yml` build sets it; production builds never do, so this
+// escape hatch is dead-code-eliminated from prod). It writes no real token and grants only a client-side
+// demo session — it lets the reviewbot screenshot pipeline render the authenticated /app/* UI instead of a
+// screenshot of the sign-in wall. (#authed-route-preview)
+export const PREVIEW_SESSION_ALLOWED = import.meta.env.DEV || import.meta.env.VITE_PREVIEW === "1";
+
 export function useSession() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -96,7 +103,7 @@ export function useSession() {
   };
 
   const signInPreview = () => {
-    if (!import.meta.env.DEV) return;
+    if (!PREVIEW_SESSION_ALLOWED) return;
     setSession({
       login: "local-preview",
       roles: ["miner", "maintainer", "owner", "operator"],
@@ -104,8 +111,8 @@ export function useSession() {
     });
     setHydrated(true);
     setAuth({ status: "idle" });
-    toast.success("Local preview session started", {
-      description: "This exists only in dev mode and never writes a production token.",
+    toast.success("Preview session started", {
+      description: "A demo session for dev + preview deploys — it never writes a production token.",
     });
   };
 

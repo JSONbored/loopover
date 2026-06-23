@@ -10,12 +10,13 @@ import { createTestEnv } from "../helpers/d1";
 
 const { parseModelReview, coerceAiText, composeAdvisoryNotes, consensusDefectOf, toPublicSafe, runWorkersOpinion } = __aiReviewInternals;
 
-function reviewJson(over: Partial<{ assessment: string; suggestions: string[]; risks: string[]; present: boolean; confidence: number; title: string; detail: string }> = {}): string {
+function reviewJson(over: Partial<{ assessment: string; suggestions: string[]; nits: string[]; blockers: string[]; present: boolean; confidence: number; title: string; detail: string }> = {}): string {
   return JSON.stringify({
     assessment: over.assessment ?? "The change looks reasonable and focused.",
+    // `present`/`title` retained for call-site compat: a "present" critical defect maps to one blocker.
+    blockers: over.blockers ?? (over.present ? [over.title || over.detail || "Unhandled null dereference in src/a.ts."] : []),
+    nits: over.nits ?? ["Edge case on empty input is untested."],
     suggestions: over.suggestions ?? ["Add a unit test for the new branch."],
-    risks: over.risks ?? ["Edge case on empty input is untested."],
-    criticalDefect: { present: over.present ?? false, confidence: over.confidence ?? 0, title: over.title ?? "", detail: over.detail ?? "" },
   });
 }
 
@@ -115,7 +116,7 @@ describe("runGittensoryAiReview advisory mode", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
     expect(result.consensusDefect).toBeNull();
-    expect(result.advisoryNotes).toContain("Suggestions");
+    expect(result.advisoryNotes).toContain("Nits");
     expect(result.advisoryNotes).toContain("Add a unit test");
     // Advisory mode runs a single opinion (primary model).
     expect(run).toHaveBeenCalledTimes(1);
@@ -128,7 +129,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     return createTestEnv({ AI: { run: vi.fn(run) } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
   }
 
-  it("reports a consensus defect only when BOTH models agree at/above the floor", async () => {
+  it("reports a consensus defect only when BOTH models name a concrete blocker", async () => {
     const env = envWith(async () => ({ response: reviewJson({ present: true, confidence: 0.95, title: "Unhandled null", detail: "Crashes on empty list." }) }));
     const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
     expect(result.status).toBe("ok");
@@ -147,8 +148,9 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     expect(result.status === "ok" && result.consensusDefect).toBeNull();
   });
 
-  it("does NOT report a defect when both agree but below the confidence floor", async () => {
-    const env = envWith(async () => ({ response: reviewJson({ present: true, confidence: 0.6, title: "Maybe bug", detail: "Unsure." }) }));
+  it("does NOT report a defect when both models flag only nits (no blocker)", async () => {
+    // Severity discipline: nits never block. Both reviewers return nits but zero blockers → no consensus defect.
+    const env = envWith(async () => ({ response: reviewJson({ present: false, nits: ["Consider renaming the helper."] }) }));
     const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
     expect(result.status === "ok" && result.consensusDefect).toBeNull();
   });
@@ -242,9 +244,12 @@ describe("Workers AI fallback + degraded output", () => {
 });
 
 describe("pure helpers", () => {
-  it("toPublicSafe drops forbidden public text and keeps safe text", () => {
+  it("toPublicSafe drops forbidden public text and neutralizes markdown, mentions, links, and control characters", () => {
     expect(toPublicSafe("This change is solid.")).toBe("This change is solid.");
     expect(toPublicSafe("Boost your reward payout")).toBeNull();
+    expect(toPublicSafe("Ping @octo-team about [urgent update](https://evil.example/p) ![pixel](https://evil.example/i.png)\n- injected")).toBe(
+      "Ping @\u200Bocto-team about \\[urgent update\\]\\(https:\u200B//evil.example/p\\) \\!\\[pixel\\]\\(https:\u200B//evil.example/i.png\\) - injected",
+    );
     expect(toPublicSafe("")).toBeNull();
     expect(toPublicSafe(null)).toBeNull();
     expect(toPublicSafe(undefined)).toBeNull();
@@ -264,40 +269,41 @@ describe("pure helpers", () => {
     expect(coerceAiText(42)).toBe("");
   });
 
-  it("parseModelReview returns null on junk, on brace-but-invalid JSON, on empty objects, and clamps confidence", () => {
+  it("parseModelReview returns null on junk / invalid JSON / empty objects; parses blockers + nits", () => {
     expect(parseModelReview("not json")).toBeNull();
     expect(parseModelReview("{ not: valid json }")).toBeNull(); // matches the brace regex but JSON.parse throws
-    expect(parseModelReview('{"foo":1}')).toBeNull(); // no assessment, no defect, no suggestions
-    const parsed = parseModelReview(reviewJson({ present: true, confidence: 5, title: "X", detail: "Y" }));
-    expect(parsed?.criticalDefect.confidence).toBe(1);
+    expect(parseModelReview('{"foo":1}')).toBeNull(); // no assessment, no blockers/nits/suggestions
+    const parsed = parseModelReview(reviewJson({ present: true, title: "Null deref in src/a.ts" }));
+    expect(parsed?.blockers).toContain("Null deref in src/a.ts");
   });
 
   it("parseModelReview coerces non-string/non-array fields to safe defaults", () => {
-    const parsed = parseModelReview('{"assessment":"ok","suggestions":"not-an-array","risks":7,"criticalDefect":{"present":true,"confidence":0.9,"title":5,"detail":null}}');
+    const parsed = parseModelReview('{"assessment":"ok","suggestions":"not-an-array","blockers":7,"nits":null}');
     expect(parsed).not.toBeNull();
     expect(parsed?.suggestions).toEqual([]); // non-array → []
-    expect(parsed?.risks).toEqual([]);
-    expect(parsed?.criticalDefect.title).toBe(""); // non-string → ""
-    expect(parsed?.criticalDefect.detail).toBe("");
+    expect(parsed?.blockers).toEqual([]);
+    expect(parsed?.nits).toEqual([]);
   });
 
-  it("consensusDefectOf requires both present and at/above the floor and drops unsafe titles", () => {
-    const defect = (present: boolean, confidence: number, title = "Null deref", detail = "boom") => ({ assessment: "", suggestions: [], risks: [], criticalDefect: { present, confidence, title, detail } });
-    expect(consensusDefectOf(defect(true, 0.95), defect(true, 0.95), AI_CONSENSUS_FLOOR)).not.toBeNull();
-    expect(consensusDefectOf(defect(true, 0.8), defect(true, 0.95), AI_CONSENSUS_FLOOR)).toBeNull();
-    expect(consensusDefectOf(defect(false, 0.95), defect(true, 0.95), AI_CONSENSUS_FLOOR)).toBeNull(); // one not present
-    expect(consensusDefectOf(defect(true, 0.95, "Boost your reward payout"), defect(true, 0.95, "Boost your reward payout"), AI_CONSENSUS_FLOOR)).toBeNull();
+  it("consensusDefectOf requires a concrete blocker in BOTH reviews and drops unsafe titles", () => {
+    const r = (blockers: string[]) => ({ assessment: "", suggestions: [], nits: [], blockers });
+    expect(consensusDefectOf(r(["Null deref in src/a.ts"]), r(["Null deref in src/a.ts"]), AI_CONSENSUS_FLOOR)).not.toBeNull();
+    expect(consensusDefectOf(r([]), r(["Null deref"]), AI_CONSENSUS_FLOOR)).toBeNull(); // one has no blocker → split, not consensus
+    expect(consensusDefectOf(r(["Null deref"]), r([]), AI_CONSENSUS_FLOOR)).toBeNull();
+    expect(consensusDefectOf(r(["Boost your reward payout"]), r(["Boost your reward payout"]), AI_CONSENSUS_FLOOR)).toBeNull(); // unsafe → dropped
   });
 
-  it("consensusDefectOf falls back to b's title and a default detail when a is blank", () => {
-    const a = { assessment: "", suggestions: [], risks: [], criticalDefect: { present: true, confidence: 0.95, title: "", detail: "" } };
-    const b = { assessment: "", suggestions: [], risks: [], criticalDefect: { present: true, confidence: 0.93, title: "Race condition", detail: "" } };
-    const out = consensusDefectOf(a, b, AI_CONSENSUS_FLOOR);
-    expect(out?.title).toBe("Race condition");
-    expect(out?.detail).toMatch(/independently flagged/);
-    // both titles blank → default title string is used
-    const blank = { ...a, criticalDefect: { ...a.criticalDefect } };
-    expect(consensusDefectOf(blank, { ...blank, criticalDefect: { ...blank.criticalDefect } }, AI_CONSENSUS_FLOOR)?.title).toContain("AI reviewers agree");
+  it("consensusDefectOf falls back to b's blocker when a's is blank", () => {
+    const a = { assessment: "", suggestions: [], nits: [], blockers: [""] };
+    const b = { assessment: "", suggestions: [], nits: [], blockers: ["Race condition in src/x.ts"] };
+    expect(consensusDefectOf(a, b, AI_CONSENSUS_FLOOR)?.title).toBe("Race condition in src/x.ts");
+  });
+
+  it("consensusDefectOf uses the default title + detail when BOTH reviewers' blockers are blank", () => {
+    const blank = { assessment: "", suggestions: [], nits: [], blockers: [""] };
+    const out = consensusDefectOf(blank, { ...blank, blockers: [""] }, AI_CONSENSUS_FLOOR);
+    expect(out?.title).toContain("AI reviewers agree"); // both blockers[0] falsy → default title
+    expect(out?.detail).toContain("independently flagged"); // joined detail empty → default detail
   });
 
   it("runWorkersOpinion returns null without a binding and handles a single-model (no distinct fallback) list", async () => {
@@ -318,19 +324,33 @@ describe("pure helpers", () => {
   });
 
   it("composeAdvisoryNotes returns null when nothing is public-safe", () => {
-    expect(composeAdvisoryNotes([{ assessment: "reward payout farming", suggestions: ["payout"], risks: ["reward"], criticalDefect: { present: false, confidence: 0, title: "", detail: "" } }])).toBeNull();
+    expect(composeAdvisoryNotes([{ assessment: "reward payout farming", suggestions: ["payout"], nits: ["reward"], blockers: [] }])).toBeNull();
   });
 
   it("composeAdvisoryNotes renders only the sections that have public-safe content", () => {
-    const review = (over: Partial<{ assessment: string; suggestions: string[]; risks: string[] }>) => ({ assessment: over.assessment ?? "", suggestions: over.suggestions ?? [], risks: over.risks ?? [], criticalDefect: { present: false, confidence: 0, title: "", detail: "" } });
+    const review = (over: Partial<{ assessment: string; suggestions: string[]; nits: string[]; blockers: string[] }>) => ({ assessment: over.assessment ?? "", suggestions: over.suggestions ?? [], nits: over.nits ?? [], blockers: over.blockers ?? [] });
     const assessmentOnly = composeAdvisoryNotes([review({ assessment: "Looks good." })]);
     expect(assessmentOnly).toBe("Looks good.");
-    const suggestionsOnly = composeAdvisoryNotes([review({ suggestions: ["Add a test."] })]);
-    expect(suggestionsOnly).toContain("**Suggestions**");
-    expect(suggestionsOnly).not.toContain("**Risks**");
-    const risksOnly = composeAdvisoryNotes([review({ risks: ["Edge case."] })]);
-    expect(risksOnly).toContain("**Risks**");
-    expect(risksOnly).not.toContain("**Suggestions**");
+    const nitsOnly = composeAdvisoryNotes([review({ nits: ["Add a test."] })]);
+    expect(nitsOnly).toContain("<summary>Nits");
+    expect(nitsOnly).not.toContain("**Blockers**");
+    const blockersOnly = composeAdvisoryNotes([review({ blockers: ["Null deref in src/a.ts."] })]);
+    expect(blockersOnly).toContain("**Blockers**");
+    expect(blockersOnly).not.toContain("<summary>Nits");
+  });
+
+  it("composeAdvisoryNotes merges + dedupes blockers/nits across two reviewers and renders both sections", () => {
+    const a = { assessment: "Solid change.", suggestions: ["Add a test."], nits: ["Rename x."], blockers: ["Null deref in src/a.ts."] };
+    const b = { assessment: "Second look.", suggestions: ["Add a test."], nits: ["Rename x.", "Tighten the type."], blockers: ["Null deref in src/a.ts.", "Off-by-one in the loop bound."] };
+    const out = composeAdvisoryNotes([a, b]) ?? "";
+    expect(out).toContain("Solid change."); // first reviewer's assessment wins
+    expect(out).toContain("**Blockers**");
+    expect(out).toContain("Off-by-one in the loop bound.");
+    expect(out).toContain("<summary>Nits");
+    expect(out).toContain("Tighten the type."); // nits + suggestions merged
+    // the shared blocker + the shared nit/suggestion each appear exactly once (dedupe across reviewers)
+    expect(out.match(/Null deref in src\/a\.ts\./g)?.length).toBe(1);
+    expect(out.match(/Rename x\./g)?.length).toBe(1);
   });
 
   it("runGittensoryAiReview is disabled when neither flag is set", async () => {

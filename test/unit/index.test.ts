@@ -65,7 +65,7 @@ describe("worker entrypoint", () => {
     expect(waitUntil).toHaveLength(1);
   });
 
-  it("enqueues light scheduled work outside hourly and full-sync windows", async () => {
+  it("enqueues only the light auto-maintain sweep on a regular tick (not :00 or :30)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
       JOBS: {
@@ -76,14 +76,12 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
     await Promise.all(waitUntil);
 
-    expect(sent).toEqual([
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
-      { type: "repair-data-fidelity", requestedBy: "schedule" },
-      { type: "refresh-installation-health", requestedBy: "schedule" },
-    ]);
+    // A regular */2 tick (not :00, not :30) enqueues ONLY the light auto-maintain sweep — the heavier sync/health
+    // jobs are gated to :00/:30, so the tight cadence stays cheap while merges/closes fire promptly.
+    expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
   });
 
   it("enqueues hourly refreshes without full detail work outside the six-hour window", async () => {
@@ -101,6 +99,7 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
@@ -126,6 +125,7 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "full" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
@@ -139,6 +139,88 @@ describe("worker entrypoint", () => {
       { type: "build-contributor-decision-packs", requestedBy: "schedule" },
       { type: "file-upstream-drift-issues", requestedBy: "schedule" },
     ]);
+  });
+
+  it("enqueues the ops-alerts job hourly ONLY when GITTENSORY_REVIEW_OPS is ON (flag-OFF is byte-identical)", async () => {
+    const sentFor = async (opsFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(opsFlag === undefined ? {} : { GITTENSORY_REVIEW_OPS: opsFlag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // Flag OFF (default) → no ops-alerts job; the enqueued set is unchanged from today.
+    expect((await sentFor()).some((m) => m.type === "ops-alerts")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "ops-alerts")).toBe(false);
+    // Flag ON → exactly one ops-alerts job, enqueued in the hourly window.
+    const on = await sentFor("true");
+    expect(on.filter((m) => m.type === "ops-alerts")).toEqual([{ type: "ops-alerts", requestedBy: "schedule" }]);
+  });
+
+  it("does NOT enqueue ops-alerts outside the hourly window even when GITTENSORY_REVIEW_OPS is ON", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_OPS: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
+  });
+
+  it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when GITTENSORY_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {
+    const sentFor = async (ragFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(ragFlag === undefined ? {} : { GITTENSORY_REVIEW_RAG: ragFlag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil)); // full-sync window
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // Flag OFF (default) → no rag-index-repo job; the enqueued set is unchanged from today.
+    expect((await sentFor()).some((m) => m.type === "rag-index-repo")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "rag-index-repo")).toBe(false);
+    // Flag ON → exactly one rag-index-repo fan-out job, enqueued in the full-sync window.
+    const on = await sentFor("true");
+    expect(on.filter((m) => m.type === "rag-index-repo")).toEqual([{ type: "rag-index-repo", requestedBy: "schedule" }]);
+  });
+
+  it("does NOT enqueue rag-index-repo outside the full-sync window even when GITTENSORY_REVIEW_RAG is ON", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      GITTENSORY_REVIEW_RAG: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil)); // hourly but NOT full-sync
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "rag-index-repo")).toBe(false);
   });
 
   it("enqueues weekly value report generation during the Monday report window", async () => {

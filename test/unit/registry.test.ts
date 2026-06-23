@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getRepository, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
+import { DEFAULT_ISSUE_DISCOVERY_SHARE } from "../../src/scoring/model";
 import { getLatestRegistrySnapshot, persistRegistrySnapshot, refreshRegistry } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 
@@ -122,8 +123,15 @@ describe("registry normalization", () => {
       trustedLabelPipeline: true,
     });
     expect(fromObjectMap.repositories.map((repo) => repo.repo)).toEqual(["JSONbored/gittensory"]);
+    expect(fromObjectMap.repositories[0]).toMatchObject({
+      repo: "JSONbored/gittensory",
+      issueDiscoveryShare: DEFAULT_ISSUE_DISCOVERY_SHARE,
+    });
     expect(fromArray.repositories.map((repo) => repo.repo)).toEqual(["JSONbored/gittensory", "bad/numbers"]);
-    expect(fromArray.repositories.find((repo) => repo.repo === "bad/numbers")).toMatchObject({ emissionShare: 0, issueDiscoveryShare: 0.5 });
+    expect(fromArray.repositories.find((repo) => repo.repo === "bad/numbers")).toMatchObject({
+      emissionShare: 0,
+      issueDiscoveryShare: DEFAULT_ISSUE_DISCOVERY_SHARE,
+    });
     expect(empty.repoCount).toBe(0);
   });
 

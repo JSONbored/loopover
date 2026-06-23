@@ -90,6 +90,37 @@ export const PublicRepoStatsSchema = z
   })
   .openapi("PublicRepoStats");
 
+export const PublicStatsSchema = z
+  .object({
+    generatedAt: z.string(),
+    updatedAt: z.string(),
+    totals: z.object({
+      handled: z.number(),
+      reviewed: z.number(),
+      merged: z.number(),
+      closed: z.number(),
+      commented: z.number(),
+      ignored: z.number(),
+      manual: z.number(),
+      error: z.number(),
+      reversed: z.number(),
+      filteredPct: z.number().nullable(),
+      accuracyPct: z.number().nullable(),
+      minutesSaved: z.number(),
+    }),
+    weekly: z.object({ reviewed: z.number(), merged: z.number() }),
+    byProject: z.array(
+      z.object({
+        project: z.string(),
+        reviewed: z.number(),
+        merged: z.number(),
+        closed: z.number(),
+        accuracyPct: z.number().nullable(),
+      }),
+    ),
+  })
+  .openapi("PublicStats");
+
 export const WorkboardItemSchema = z
   .object({
     repoFullName: z.string(),
@@ -581,6 +612,12 @@ export const RepositorySettingsSchema = z
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
       commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
     }),
+    autonomy: z
+      .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
+      .optional(),
+    autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
+    agentPaused: z.boolean().optional(),
+    agentDryRun: z.boolean().optional(),
     createdAt: z.string().nullable().optional(),
     updatedAt: z.string().nullable().optional(),
   })
@@ -1225,6 +1262,7 @@ const ScoreGatesSchema = z.object({
   openPrThreshold: z.number(),
   openPrCount: z.number(),
   collateralFraction: z.number(),
+  reviewCollateralMultiplier: z.number(),
   credibilityFloor: z.number(),
   credibilityObserved: z.number(),
 });

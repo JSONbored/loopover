@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
+  clearInstallationTokenCacheForTest,
   createInstallationToken,
   createOrUpdateCheckRun,
   createOrUpdateGateCheckRun,
@@ -12,6 +13,8 @@ import {
 } from "../../src/github/app";
 import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+
+beforeEach(() => clearInstallationTokenCacheForTest());
 
 describe("GitHub check runs", () => {
   afterEach(() => {
@@ -80,6 +83,50 @@ describe("GitHub check runs", () => {
     });
 
     await expect(createInstallationToken(createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey }), 123)).resolves.toBe("installation-token");
+  });
+
+  it("caches an installation token and reuses it within the validity window", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mints = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({ token: `installation-token-${mints}`, expires_at: new Date(Date.now() + 60 * 60_000).toISOString() });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const first = await createInstallationToken(env, 555);
+    const second = await createInstallationToken(env, 555);
+
+    expect(first).toBe("installation-token-1");
+    expect(second).toBe("installation-token-1");
+    expect(mints).toBe(1);
+  });
+
+  it("re-mints an installation token once the cached one is within the expiry safety margin", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mints = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        // First mint expires almost immediately (inside the 2-minute safety margin) → must not be reused.
+        const expiresInMs = mints === 1 ? 30_000 : 60 * 60_000;
+        return Response.json({ token: `installation-token-${mints}`, expires_at: new Date(Date.now() + expiresInMs).toISOString() });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const first = await createInstallationToken(env, 777);
+    const second = await createInstallationToken(env, 777);
+
+    expect(first).toBe("installation-token-1");
+    expect(second).toBe("installation-token-2");
+    expect(mints).toBe(2);
   });
 
   it("fetches repository collaborator permissions with installation credentials", async () => {
@@ -399,6 +446,51 @@ describe("GitHub check runs", () => {
 
     expect(contextBody.output?.annotations?.[0]).toMatchObject({ path: "src/api/routes.ts", title: "Missing test evidence" });
     expect(gateBody.output?.annotations).toBeUndefined();
+  });
+
+  it("omits annotations when updating an existing Context check run", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let patchedBody: { output?: { annotations?: Array<{ path: string; title: string }>; text?: string } } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 1, check_runs: [{ id: 77, name: "Gittensory Context" }] });
+      if (url.includes("/check-runs/77")) {
+        patchedBody = JSON.parse(String(init?.body)) as { output?: { annotations?: Array<{ path: string; title: string }>; text?: string } };
+        return Response.json({ id: 77 }, { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const advisory: Advisory = {
+      id: "advisory-annot-update",
+      targetType: "pull_request",
+      targetKey: "JSONbored/gittensory#9",
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 9,
+      headSha: "bbb999",
+      conclusion: "neutral",
+      severity: "warning",
+      title: "Gittensory advisory available",
+      summary: "1 advisory finding generated.",
+      findings: [],
+      generatedAt: "2026-05-22T00:00:00.000Z",
+    };
+
+    await createOrUpdateCheckRun(env, 123, "JSONbored/gittensory", advisory, "standard", {
+      pullNumber: 9,
+      files: [{ repoFullName: "JSONbored/gittensory", pullNumber: 9, path: "src/api/routes.ts", additions: 4, deletions: 0, changes: 4, payload: {} }],
+      collisions: {
+        repoFullName: "JSONbored/gittensory",
+        generatedAt: "2026-06-10T00:00:00.000Z",
+        summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 },
+        clusters: [],
+      },
+    });
+
+    expect(patchedBody.output?.text).toBe("No detailed findings are published in check runs.");
+    expect(patchedBody.output?.annotations).toBeUndefined();
   });
 
   it("publishes check run with standard detail level and includes public-safe finding text", async () => {

@@ -6,6 +6,7 @@ export const PR_INTELLIGENCE_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
 export const AGENT_COMMAND_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
 const LEGACY_PR_INTELLIGENCE_COMMENT_MARKER = "<!-- gittensory-pr-intelligence -->";
 const LEGACY_AGENT_COMMAND_COMMENT_MARKER = "<!-- gittensory-agent-command -->";
+const COMMENT_SEARCH_PAGE_LIMIT = 3;
 
 type IssueComment = {
   id: number;
@@ -52,15 +53,21 @@ async function createOrUpdateIssueCommentWithMarker(
 
   const token = await createInstallationToken(env, installationId);
   const octokit = new Octokit({ auth: token });
-  const comments = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
-    owner,
-    repo,
-    issue_number: issueNumber,
-    per_page: 100,
-  });
   const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
   const markers = markerAliases(marker);
-  const existing = (comments.data as IssueComment[]).find((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate)));
+  let existing: IssueComment | undefined;
+  for (let page = 1; !existing && page <= COMMENT_SEARCH_PAGE_LIMIT; page += 1) {
+    const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
+      owner,
+      repo,
+      issue_number: issueNumber,
+      per_page: 100,
+      page,
+    });
+    const batch = response.data as IssueComment[];
+    existing = batch.find((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate)));
+    if (batch.length < 100) break;
+  }
   if (existing) {
     const response = await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
       owner,

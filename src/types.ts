@@ -9,6 +9,17 @@ export type JobMessage =
       payload: GitHubWebhookPayload;
     }
   | {
+      // Delayed self-poll to re-capture a PR's before/after preview once its preview deploy is live — the first
+      // review captures a "loading" placeholder when the deploy isn't ready yet (capture.previewPending). Each
+      // recapture re-reviews the PR; bounded by `attempt` so a never-resolving preview can't loop forever.
+      type: "recapture-preview";
+      deliveryId: string;
+      repoFullName: string;
+      prNumber: number;
+      installationId: number;
+      attempt: number;
+    }
+  | {
       type: "refresh-registry";
       requestedBy: "schedule" | "api" | "test";
     }
@@ -111,6 +122,13 @@ export type JobMessage =
       days?: number;
     }
   | {
+      // Scheduled re-gate sweep (#777). No `repoFullName` = fan-out: enqueue one per agent-configured repo.
+      // With `repoFullName` = recompute the gate verdict for that repo's stale open PRs (advisory/audit only).
+      type: "agent-regate-sweep";
+      requestedBy: "schedule" | "api" | "test";
+      repoFullName?: string;
+    }
+  | {
       type: "run-agent";
       requestedBy: "api" | "mcp" | "github_comment" | "test";
       runId: string;
@@ -124,6 +142,44 @@ export type JobMessage =
       type: "notify-deliver";
       requestedBy: "notify-evaluate" | "test";
       deliveryId: string;
+    }
+  | {
+      // Convergence (ops / observability, flag-gated by GITTENSORY_REVIEW_OPS). Scan gittensory's review-outcome data
+      // (gate-block ledger + recommendation/slop calibration) and emit a structured `ops_anomaly` log on drift.
+      // Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job never exists.
+      type: "ops-alerts";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      // Convergence (self-improve / auto-tune, flag-gated by GITTENSORY_REVIEW_SELFTUNE). Run the ported
+      // self-improvement loop over gittensory's review-outcome data — compute tuning recommendations,
+      // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes
+      // the gate; every action is audited. TIGHTENING-ONLY. Enqueued hourly by the cron ONLY when the flag is
+      // ON (index.ts), so flag-OFF this job never exists.
+      type: "selftune";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
+      // Convergence (RAG / codebase index — Layer C, flag-gated by GITTENSORY_REVIEW_RAG). Populate + maintain the
+      // vector index that retrieval reads.
+      //   - No `repoFullName` (the cron fan-out) → enqueue one per-repo FULL re-index job for every
+      //     registered + cutover-allowlisted repo (mirrors the agent-regate / signal-snapshot fan-out).
+      //   - `repoFullName` + no `paths` → FULL re-index of that repo's code (indexRepo).
+      //   - `repoFullName` + `paths` → INCREMENTAL re-index of only those changed paths (reindexChangedPaths),
+      //     enqueued from a push / merged-PR webhook.
+      // Enqueued + dispatched ONLY when the flag is ON; flag-OFF (default) this job is never created and the
+      // processor no-ops, so the deploy is byte-identical to today.
+      type: "rag-index-repo";
+      requestedBy: "schedule" | "api" | "webhook" | "test";
+      repoFullName?: string;
+      paths?: string[];
+    }
+  | {
+      // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): fork the content repo with the
+      // contributor's token + open the PR. Enqueued by the draft OAuth callback.
+      type: "submit-draft";
+      requestedBy: "api" | "test";
+      draftId: string;
     };
 
 export type GitHubWebhookPayload = {
@@ -356,6 +412,12 @@ export type PullRequestRecord = {
    *  the repo opted into slop. `null`/absent = not assessed (slop off, or PR not yet processed). */
   slopRisk?: number | null | undefined;
   slopBand?: string | null | undefined;
+  /** RC3 terminal-fail merges: failed auto-merge attempt count, and the head SHA at which the merge is
+   *  terminally blocked (with a human-readable reason). When mergeBlockedSha === headSha the planner suppresses
+   *  the `merge` disposition (held for a human); a new commit clears the block. */
+  mergeAttemptCount?: number | null | undefined;
+  mergeBlockedSha?: string | null | undefined;
+  mergeBlockedReason?: string | null | undefined;
 };
 
 export type IssueRecord = {
@@ -458,6 +520,19 @@ export type RepositorySettings = {
    *  (default false); optional so existing settings fixtures/callers need not be touched. */
   badgeEnabled?: boolean | undefined;
   commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
+  /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
+   *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
+   *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */
+  autonomy?: AutonomyPolicy | undefined;
+  /** Auto-maintain policy (#774): merge method + approval count. Always populated by the DB layer with
+   *  defaults (squash / 1 approval); optional so existing settings fixtures/callers need not be touched. */
+  autoMaintain?: AutoMaintainPolicy | undefined;
+  /** Per-repo agent kill-switch (#776): when true, the action layer takes NO action on this repo (the
+   *  global env switch overrides this too). Default false. */
+  agentPaused?: boolean | undefined;
+  /** Per-repo dry-run/shadow mode (#776): when true, the action layer records what it WOULD do without
+   *  performing any GitHub mutation. Default false. */
+  agentDryRun?: boolean | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };
@@ -467,6 +542,57 @@ export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_autho
 export type RepositoryCommandAuthorizationPolicy = {
   default: CommandAuthorizationRole[];
   commands: Record<string, CommandAuthorizationRole[]>;
+};
+
+/** Agent-layer graduated autonomy (#773), least → most autonomous. `observe` is the deny-by-default floor:
+ *  gittensory watches but never acts. `suggest`/`propose` surface guidance/concrete proposals without
+ *  executing; `auto_with_approval` executes behind a human approval gate (#779); `auto` executes directly. */
+export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_approval" | "auto";
+
+/** The write-action classes the maintainer auto-maintain layer (#778) can take on a PR. */
+export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label";
+
+/** Per-action-class autonomy. An unset class resolves to `observe` (deny-by-default). */
+export type AutonomyPolicy = Partial<Record<AgentActionClass, AutonomyLevel>>;
+
+/** How the agent merges when it auto-merges (#774). */
+export type AutoMergeMethod = "merge" | "squash" | "rebase";
+
+/** Auto-maintain policy (#774): the "how" once an action is at an acting autonomy level. `requireApprovals`
+ *  is the human approval count an `auto_with_approval` action waits for (#779); `mergeMethod` is how an
+ *  auto-merge merges. Always populated by the DB layer with defaults. */
+export type AutoMaintainPolicy = {
+  requireApprovals: number;
+  mergeMethod: AutoMergeMethod;
+};
+
+/** The payload needed to execute a staged action when a maintainer accepts it (#779). Only the field for the
+ *  action's class is set, mirroring PlannedAgentAction. */
+export type AgentPendingActionParams = {
+  label?: string;
+  reviewBody?: string;
+  mergeMethod?: AutoMergeMethod;
+  closeComment?: string;
+};
+
+export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";
+
+/** Approval-queue row (#779): an `auto_with_approval` action the write-actions layer staged for a one-tap
+ *  maintainer accept (→ execute) or reject (→ cancel). */
+export type AgentPendingActionRecord = {
+  id: string;
+  repoFullName: string;
+  pullNumber: number;
+  installationId: number;
+  actionClass: AgentActionClass;
+  autonomyLevel: AutonomyLevel;
+  params: AgentPendingActionParams;
+  reason: string | null;
+  status: AgentPendingActionStatus;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type RepoSyncStateRecord = {
@@ -631,6 +757,8 @@ export type PullRequestFileRecord = {
   previousFilename?: string | null | undefined;
   payload: Record<string, JsonValue>;
 };
+
+export type PullRequestFilePathRecord = Pick<PullRequestFileRecord, "repoFullName" | "pullNumber" | "path">;
 
 export type PullRequestReviewRecord = {
   id: string;

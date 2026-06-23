@@ -71,6 +71,10 @@ export const repositorySettings = sqliteTable("repository_settings", {
   privateTrustEnabled: integer("private_trust_enabled", { mode: "boolean" }).notNull().default(true),
   badgeEnabled: integer("badge_enabled", { mode: "boolean" }).notNull().default(false),
   commandAuthorizationJson: text("command_authorization_json").notNull().default("{}"),
+  autonomyJson: text("autonomy_json").notNull().default("{}"),
+  autoMaintainJson: text("auto_maintain_json").notNull().default("{}"),
+  agentPaused: integer("agent_paused", { mode: "boolean" }).notNull().default(false),
+  agentDryRun: integer("agent_dry_run", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
@@ -272,6 +276,12 @@ export const pullRequests = sqliteTable(
     // Latest deterministic slop assessment (gittensory-computed; written separately from the GitHub sync).
     slopRisk: integer("slop_risk"),
     slopBand: text("slop_band"),
+    // RC3 terminal-fail merges: failed-merge attempt count + the head SHA at which the merge is terminally
+    // blocked (perms/required-check/conflict) so the planner stops planning a merge. Keyed to head SHA → a new
+    // commit auto-clears it. gittensory-computed (executor-written), omitted from the GitHub-sync SET clause.
+    mergeAttemptCount: integer("merge_attempt_count").notNull().default(0),
+    mergeBlockedSha: text("merge_blocked_sha"),
+    mergeBlockedReason: text("merge_blocked_reason"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },
@@ -578,6 +588,33 @@ export const gateOutcomes = sqliteTable(
   (table) => ({
     pr: uniqueIndex("gate_outcomes_pr_unique").on(table.repoFullName, table.pullNumber),
     repoUpdated: index("gate_outcomes_repo_updated_idx").on(table.repoFullName, table.updatedAt),
+  }),
+);
+
+// Agent-layer approval queue (#779). An `auto_with_approval` action the write-actions layer (#778) staged for
+// a one-tap maintainer accept/reject. At most one row per (repo, pull, action_class).
+export const agentPendingActions = sqliteTable(
+  "agent_pending_actions",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    installationId: integer("installation_id").notNull(),
+    actionClass: text("action_class").notNull(),
+    autonomyLevel: text("autonomy_level").notNull(),
+    // JSON of the action payload (label / reviewBody / mergeMethod / closeComment) needed to execute on accept.
+    paramsJson: text("params_json").notNull().default("{}"),
+    reason: text("reason"),
+    // pending → accepted | rejected. A decided row is sticky (re-evaluation never re-stages it).
+    status: text("status").notNull().default("pending"),
+    decidedBy: text("decided_by"),
+    decidedAt: text("decided_at"),
+    createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
+    updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
+  },
+  (table) => ({
+    target: uniqueIndex("agent_pending_actions_target_unique").on(table.repoFullName, table.pullNumber, table.actionClass),
+    repoStatus: index("agent_pending_actions_repo_status_idx").on(table.repoFullName, table.status, table.createdAt),
   }),
 );
 

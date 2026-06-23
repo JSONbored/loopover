@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, run } from "./support/mcp-cli-harness";
+import { closeFixtureServer, createPacketRepo, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
 describe("gittensory-mcp CLI — basics", () => {
   let tempDir: string | null = null;
@@ -75,6 +75,30 @@ describe("gittensory-mcp CLI — basics", () => {
     }
   });
 
+  it("prints the gate-throttled miner-auto-dev profile with a plan→implement→push driving loop (#781)", () => {
+    const payload = JSON.parse(run(["init-client", "--print", "codex", "--agent-profile", "miner-auto-dev", "--json"])) as {
+      agentProfile: { id: string; title: string; recommendedTools: string[]; drivingLoop: string[]; boundaries: string[]; whenNotToUse: string };
+      notes: string[];
+    };
+    expect(payload.agentProfile.id).toBe("miner-auto-dev");
+    // the new Phase-2 tools are wired in
+    expect(payload.agentProfile.recommendedTools).toEqual(
+      expect.arrayContaining(["gittensory_run_local_scorer", "gittensory_build_plan", "gittensory_record_step_result", "gittensory_open_pr", "gittensory_check_slop_risk"]),
+    );
+    // the driving loop is present and gate-throttled, with a local-execution push step
+    expect(payload.agentProfile.drivingLoop.length).toBeGreaterThanOrEqual(4);
+    expect(payload.agentProfile.drivingLoop.join("\n")).toMatch(/anti-slop|gate-ready|preflight/i);
+    expect(payload.agentProfile.boundaries.join("\n")).toMatch(/run by YOUR harness with YOUR credentials|never performs the write/i);
+    // the note reflects local execution after the gate (NOT the human-approved framing of the other profiles)
+    expect(payload.notes.join("\n")).toMatch(/runs LOCALLY|after the Gittensory gate/i);
+    expect(payload.notes.join("\n")).not.toMatch(/keep all GitHub writes human-approved/i);
+    // the rendered markdown carries the driving loop too
+    const plain = run(["init-client", "--print", "claude", "--agent-profile", "miner-auto-dev"]);
+    expect(plain).toContain("Gittensory agent profile: Miner auto-dev");
+    expect(plain).toMatch(/Driving loop/);
+    expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|PRIVATE_KEY=/);
+  });
+
   it("rejects unsupported client snippets", () => {
     expect(() => run(["init-client", "--print", "other"])).toThrow(/Unsupported client/);
   });
@@ -103,6 +127,26 @@ describe("gittensory-mcp CLI — basics", () => {
     expect(payload.version).toBe("0.6.0");
     expect(payload.apiVersion).toBe("0.1.0");
     expect(payload.node).toBe(process.version);
+  });
+
+  it("redacts private account-state workspace intelligence from preflight output", async () => {
+    tempDir = createPacketRepo();
+    const url = await startFixtureServer();
+
+    const env = {
+      GITTENSORY_API_URL: url,
+      GITTENSORY_TOKEN: "session-token",
+      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+    };
+    const jsonOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env);
+    const payload = JSON.parse(jsonOutput) as { workspaceIntelligence: { blockers: { accountState: string[] }; rerunWhen: string } };
+    expect(payload.workspaceIntelligence.blockers.accountState).toEqual([]);
+    expect(payload.workspaceIntelligence.rerunWhen).toBe("Rerun after any branch, base, or PR state changes before opening/submitting.");
+    expect(jsonOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
+
+    const humanOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory"], env);
+    expect(humanOutput).not.toContain("Account/queue blockers:");
+    expect(humanOutput).not.toMatch(/Open PR count|Credibility|account\/queue maturity|projected score/i);
   });
 
   it("guides unknown commands to --help", () => {

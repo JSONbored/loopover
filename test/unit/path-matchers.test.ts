@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyChangedFile,
   isDependencyManifestFile,
+  isConfigFile,
   isDocsFile,
   isGeneratedFile,
   isLockfile,
@@ -140,6 +141,38 @@ describe("isNonSubstantivePaddingFile", () => {
   });
 });
 
+describe("isConfigFile", () => {
+  it("matches config files by exact basename (case-insensitive)", () => {
+    for (const path of ["Dockerfile", "frontend/Makefile", ".editorconfig", "ci/.nvmrc", ".npmrc"]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("matches config files by known filename prefix", () => {
+    for (const path of ["tsconfig.build.json", "vitest.config.ts", ".env.local", ".eslintrc.json", ".prettierrc.js"]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("matches config files by the .config.ext or .rc.ext pattern", () => {
+    for (const path of ["babel.config.cjs", "stylelint.config.mjs", "lint-staged.rc.js"]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("matches bare .rc suffix config files", () => {
+    for (const path of [".stylelintrc", ".huskyrc", "config/custom.rc"]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("does not classify source, test, doc, or lockfiles as config", () => {
+    for (const path of ["src/app.ts", "README.md", "package.json", "package-lock.json", "test/unit/app.test.ts"]) {
+      expect(isConfigFile(path)).toBe(false);
+    }
+  });
+});
+
 describe("classifyChangedFile", () => {
   it("classifies each representative path into its category", () => {
     const cases: Array<[string, ReturnType<typeof classifyChangedFile>]> = [
@@ -148,6 +181,8 @@ describe("classifyChangedFile", () => {
       ["vendor/lib.go", "vendored"],
       ["package-lock.json", "lockfile"],
       ["package.json", "dependency_manifest"],
+      ["tsconfig.json", "config"],
+      ["vitest.config.ts", "config"],
       ["test/unit/app.test.ts", "test"],
       ["README.md", "docs"],
       ["src/app.ts", "source"],
@@ -158,9 +193,10 @@ describe("classifyChangedFile", () => {
     }
   });
 
-  it("prioritizes padding categories over test/source so they are never counted as effort", () => {
+  it("prioritizes padding categories over config/test/source so they are never counted as effort", () => {
     expect(classifyChangedFile("__generated__/schema.test.ts")).toBe("generated");
     expect(classifyChangedFile("vendor/pkg/index.test.js")).toBe("vendored");
     expect(classifyChangedFile("dist/bundle.min.js")).toBe("minified");
+    expect(classifyChangedFile("vendor/tsconfig.json")).toBe("vendored");
   });
 });

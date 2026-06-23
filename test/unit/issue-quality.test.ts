@@ -4,6 +4,7 @@ import {
   buildContributorOpportunities,
   buildIssueDiscoveryLifecycleReport,
   buildIssueQualityReport,
+  type CollisionReport,
   type ContributorProfile,
   type IssueQualityReport,
 } from "../../src/signals/engine";
@@ -144,6 +145,45 @@ describe("issue quality reports", () => {
     expect(report.issues[0]?.status).toBe("do_not_use");
     expect(report.issues[0]?.linkage).toMatchObject({ status: "plausible", source: "github_cache", solvedByPullRequests: [] });
     expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/already reference this issue/i)]));
+  });
+
+  // #perf: the per-issue PR scan is now a prebuilt Map<issueNumber, PR[]> index. These guard the index against
+  // (a) two PRs sharing one issue bucket and (b) a metadata back-reference that is already a forward link.
+  it("counts multiple PRs linking the same issue without double-counting a symmetric back-reference", () => {
+    const repo = directPrRepo("owner/multi-linked");
+    const report = buildIssueQualityReport(
+      repo,
+      // Issue back-references PR 30; PR 30 forward-links the issue (symmetric); PR 31 also links the issue.
+      [issue(repo.fullName, 20, "Two PRs already in flight", { body: "x".repeat(220), linkedPrs: [30] })],
+      [pr(repo.fullName, 30, "First attempt", { linkedIssues: [20] }), pr(repo.fullName, 31, "Second attempt", { linkedIssues: [20] })],
+      repo.fullName,
+    );
+    expect(report.issues[0]?.status).toBe("do_not_use");
+    expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/2 active PR\(s\) already reference this issue/i)]));
+  });
+
+  it("merges multiple high/medium collision clusters that reference the same issue (prebuilt collisions)", () => {
+    const repo = issueDiscoveryRepo("owner/two-clusters");
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: now(),
+      summary: { clusterCount: 2, highRiskCount: 1, itemsReviewed: 3 },
+      clusters: [
+        { id: "c1", risk: "high", reason: "duplicate", items: [{ type: "issue", number: 40, title: "dup" }, { type: "pull_request", number: 50, title: "pr" }] },
+        { id: "c2", risk: "medium", reason: "overlap", items: [{ type: "issue", number: 40, title: "dup" }, { type: "issue", number: 41, title: "other" }] },
+      ],
+    };
+    const report = buildIssueQualityReport(
+      repo,
+      [issue(repo.fullName, 40, "Referenced by two clusters", { body: "x".repeat(220) })],
+      [],
+      repo.fullName,
+      [],
+      collisions,
+    );
+    // A high-risk cluster on the issue → do_not_use, and the overlap warning fires once.
+    expect(report.issues[0]?.status).toBe("do_not_use");
+    expect(report.issues[0]?.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/duplicate or overlapping issue\/PR context/i)]));
   });
 
   it("marks issues as do_not_use when cached issue or merged PR metadata already links work", () => {

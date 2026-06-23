@@ -11,3 +11,20 @@ export function isTestPath(file: string): boolean {
 export function hasLocalTestEvidence(input: { tests?: string[] | undefined; testFiles?: string[] | undefined }): boolean {
   return (input.tests ?? []).length > 0 || (input.testFiles ?? []).some((file) => isTestPath(file));
 }
+
+/**
+ * Coarse classification of how much test coverage accompanies a set of changed paths.
+ * Used by slop signals to weight diffs that touch source but include no tests differently
+ * from those with proportionally strong test changes.
+ */
+export type TestCoverageClassification = "strong" | "adequate" | "weak" | "absent";
+
+export function classifyTestCoverage(changedPaths: string[]): TestCoverageClassification {
+  if (changedPaths.length === 0) return "absent";
+  const testCount = changedPaths.filter(isTestPath).length;
+  if (testCount === 0) return "absent";
+  const ratio = testCount / changedPaths.length;
+  if (ratio >= 0.4) return "strong";
+  if (ratio >= 0.2) return "adequate";
+  return "weak";
+}

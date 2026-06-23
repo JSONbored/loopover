@@ -152,6 +152,39 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("budgets Workers AI slop retry and fallback attempts before calling the model", async () => {
+    const run = vi.fn(async () => ({ response: "not json" }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "1",
+    });
+
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+
+    expect(result).toMatchObject({ status: "quota_exceeded" });
+    expect(run).not.toHaveBeenCalled();
+    if (result.status !== "quota_exceeded") throw new Error("unreachable");
+    expect(result.estimatedNeurons).toBeGreaterThan(result.remainingBudget);
+  });
+
+  it("records the pre-budgeted retry and fallback estimate when all Workers AI outputs are unusable", async () => {
+    const run = vi.fn(async () => ({ response: "not json" }));
+    const env = enabledEnv(run);
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(run).toHaveBeenCalledTimes(6);
+
+    const row = await env.DB.prepare("select estimated_neurons from ai_usage_events where feature = ? order by rowid desc limit 1")
+      .bind("ai_slop_pr")
+      .first<{ estimated_neurons: number }>();
+    expect(row?.estimated_neurons).toBe(result.estimatedNeurons);
+    expect(result.estimatedNeurons).toBeGreaterThanOrEqual(6);
+  });
+
   it("returns an advisory finding when the model flags an elevated band", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
     const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);

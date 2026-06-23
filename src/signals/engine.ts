@@ -28,6 +28,7 @@ import { sanitizePublicComment } from "../queue-intelligence";
 import { projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
+import type { UnifiedCollapsible } from "../review/unified-comment";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -878,6 +879,21 @@ export function buildCollisionReport(
   };
   collisionReportTermCache.set(report, itemTerms);
   return report;
+}
+
+/**
+ * True when an open PR sits in a HIGH-risk collision cluster that holds 2+ pull requests — i.e. genuine
+ * overlapping/duplicate work (#563). The 2+-pull-request bar is deliberate: buildCollisionReport also marks a
+ * healthy issue↔its-own-linking-PR pair high-risk, so requiring two pull-request items keeps callers (the
+ * deterministic slop gate) false-positive-averse. Pure.
+ */
+export function isPullRequestInDuplicateCluster(collisions: CollisionReport, pullNumber: number): boolean {
+  return collisions.clusters.some(
+    (cluster) =>
+      cluster.risk === "high" &&
+      cluster.items.filter((item) => item.type === "pull_request").length >= 2 &&
+      cluster.items.some((item) => item.type === "pull_request" && item.number === pullNumber),
+  );
 }
 
 export function buildQueueHealth(
@@ -2771,6 +2787,65 @@ export function buildPullRequestReviewIntelligence(args: {
   };
 }
 
+// Index PRs by each issue number they link, ONCE and in original array order, so a per-issue lookup is O(1)
+// instead of re-scanning the whole PR list for every issue. Duplicate linked-issue numbers on a single PR are
+// de-duplicated so the PR lands in each bucket at most once — matching `.filter(pr => pr.linkedIssues.includes(n))`.
+function indexPullRequestsByLinkedIssue<T extends { number: number; linkedIssues: number[] }>(pullRequests: T[]): Map<number, T[]> {
+  const byIssue = new Map<number, T[]>();
+  for (const pr of pullRequests) {
+    for (const issueNumber of new Set(pr.linkedIssues)) {
+      const bucket = byIssue.get(issueNumber);
+      if (bucket) bucket.push(pr);
+      else byIssue.set(issueNumber, [pr]);
+    }
+  }
+  return byIssue;
+}
+
+// Index collision clusters by the issue numbers they reference, ONCE and preserving cluster order — replaces a
+// per-issue `clusters.filter(c => c.items.some(i => i.type === "issue" && i.number === n))` full scan. A cluster
+// is bucketed once per distinct issue number it contains, matching the `.some(...)` membership test exactly.
+function indexCollisionClustersByIssue(clusters: CollisionCluster[]): Map<number, CollisionCluster[]> {
+  const byIssue = new Map<number, CollisionCluster[]>();
+  for (const cluster of clusters) {
+    const issueNumbers = new Set<number>();
+    for (const item of cluster.items) if (item.type === "issue") issueNumbers.add(item.number);
+    for (const issueNumber of issueNumbers) {
+      const bucket = byIssue.get(issueNumber);
+      if (bucket) bucket.push(cluster);
+      else byIssue.set(issueNumber, [cluster]);
+    }
+  }
+  return byIssue;
+}
+
+// Resolve the PRs "linked" to an issue using the prebuilt index instead of scanning every PR: a PR counts if it
+// links the issue (`pr.linkedIssues`) OR the issue's cached metadata back-references it (`issue.linkedPrs`).
+// Byte-identical to the previous
+// `pullRequests.filter(pr => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number))`,
+// and always a fresh array so callers may safely sort/mutate it. The common cases (no back-reference, or one that
+// adds nothing new) skip the full scan; only a genuinely new back-reference falls back to a single ordered filter
+// over the PR list to reproduce exact array order.
+function resolveLinkedPullRequests<T extends { number: number }>(
+  issue: IssueRecord,
+  pullRequests: T[],
+  byLinkedIssue: Map<number, T[]>,
+  byNumber: Map<number, T>,
+): T[] {
+  const linkingPrs = byLinkedIssue.get(issue.number) ?? [];
+  if (issue.linkedPrs.length === 0) return [...linkingPrs];
+  const matchedNumbers = new Set<number>(linkingPrs.map((pr) => pr.number));
+  let addedBackReference = false;
+  for (const prNumber of issue.linkedPrs) {
+    if (byNumber.has(prNumber) && !matchedNumbers.has(prNumber)) {
+      matchedNumbers.add(prNumber);
+      addedBackReference = true;
+    }
+  }
+  if (!addedBackReference) return [...linkingPrs];
+  return pullRequests.filter((pr) => matchedNumbers.has(pr.number));
+}
+
 export function buildIssueQualityReport(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
@@ -2783,14 +2858,21 @@ export function buildIssueQualityReport(
   const lane = buildLaneAdvice(repo, fullName);
   const collisions = prebuiltCollisions ?? buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
   const bountyByIssue = indexBountiesByIssue(bounties);
+  // Build per-issue indexes ONCE: the loop below runs over up to 100 open issues, and each previously re-scanned
+  // the full PR list (up to 10k) twice plus every collision cluster. O(issues·PRs) → O(issues + PRs).
+  const prsByLinkedIssue = indexPullRequestsByLinkedIssue(pullRequests);
+  const prByNumber = new Map(pullRequests.map((pr) => [pr.number, pr] as const));
+  const mergedPrsByLinkedIssue = indexPullRequestsByLinkedIssue(recentMergedPullRequests);
+  const mergedPrByNumber = new Map(recentMergedPullRequests.map((pr) => [pr.number, pr] as const));
+  const clustersByIssue = indexCollisionClustersByIssue(collisions.clusters);
   const lifecycleByIssue = new Map(buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests).states.map((entry) => [entry.number, entry]));
   const reports = issues
     .filter((issue) => issue.state === "open")
     .slice(0, 100)
     .map((issue) => {
-      const linkedPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-      const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-      const issueCollisions = collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "issue" && item.number === issue.number));
+      const linkedPrs = resolveLinkedPullRequests(issue, pullRequests, prsByLinkedIssue, prByNumber);
+      const linkedMergedPrs = resolveLinkedPullRequests(issue, recentMergedPullRequests, mergedPrsByLinkedIssue, mergedPrByNumber);
+      const issueCollisions = clustersByIssue.get(issue.number) ?? [];
       /* v8 ignore next -- Missing issue dates normalize to zero age; issue-quality status tests cover age-driven behavior. */
       const age = daysSince(issue.updatedAt ?? issue.createdAt);
       /* v8 ignore next -- Lifecycle map is built from the same issue set; fallback protects malformed external issue-quality payloads. */
@@ -2860,9 +2942,14 @@ export function buildIssueDiscoveryLifecycleReport(
   recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
 ): IssueDiscoveryLifecycleReport {
   const lane = buildLaneAdvice(repo, fullName);
+  // One-time PR-by-issue index so each per-issue classification is an O(1) lookup, not a full PR rescan.
+  const linkedIndex = {
+    open: indexPullRequestsByLinkedIssue(pullRequests),
+    merged: indexPullRequestsByLinkedIssue(recentMergedPullRequests),
+  };
   const states = issues
     .slice(0, 300)
-    .map((issue) => classifyIssueDiscoveryLifecycle(issue, pullRequests, recentMergedPullRequests, lane))
+    .map((issue) => classifyIssueDiscoveryLifecycle(issue, pullRequests, recentMergedPullRequests, lane, linkedIndex))
     .sort((left, right) => lifecycleRank(left.state) - lifecycleRank(right.state) || left.number - right.number);
   return {
     repoFullName: fullName,
@@ -3223,9 +3310,12 @@ function classifyIssueDiscoveryLifecycle(
   pullRequests: PullRequestRecord[],
   recentMergedPullRequests: RecentMergedPullRequestRecord[],
   lane: LaneAdvice,
+  linkedIndex?: { open: Map<number, PullRequestRecord[]>; merged: Map<number, RecentMergedPullRequestRecord[]> },
 ): IssueDiscoveryLifecycleReport["states"][number] {
-  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
-  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  // With a prebuilt index (the per-repo lifecycle report) look up this issue's linked PRs in O(1); ad-hoc
+  // single-issue callers pass no index and fall back to the original filter. Both yield array-order results.
+  const linkedOpenPrs = linkedIndex ? (linkedIndex.open.get(issue.number) ?? []) : pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  const linkedMergedPrs = linkedIndex ? (linkedIndex.merged.get(issue.number) ?? []) : recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
   const mergedSolverPrs = [...linkedOpenPrs.filter((pr) => pr.mergedAt || pr.state === "merged"), ...linkedMergedPrs];
   const solvedByPullRequests = [...new Set(mergedSolverPrs.map((pr) => pr.number))].sort((left, right) => left - right);
   const issueAuthorLogin = issue.authorLogin;
@@ -3908,6 +3998,146 @@ function footerEarnUrl(repo: RepositoryRecord | null, repoFullName: string): str
   return repo?.isRegistered ? gittensorRepoEarnUrl(repoFullName) : undefined;
 }
 
+// ── Public-safe collapsible bodies (ONE source: legacy panel + unified-comment bridge) ──────────────
+//
+// The public PR comment carries a fixed set of collapsed `<details>` sections. Their BODIES are built
+// here as line arrays from the SAME inputs the panel already has, so the legacy `<details>` markup and
+// the converged renderer's `UnifiedCollapsible[]` never diverge on content. EXCLUDES "Maintainer notes"
+// — that section is PRIVATE (advisory findings) and must never appear in the converged public comment;
+// the legacy builder still renders it inline below, but no shared helper produces it.
+//
+// Byte-identity: `buildPublicPrIntelligenceComment` splices these exact arrays into its existing
+// `<details>` wrappers, so flag-OFF output is unchanged. The unified bridge consumes
+// `buildPublicSafeCollapsibles` (which joins the same lines) as `extraCollapsibles`.
+
+/** Inputs the public-safe collapsible bodies are built from — the subset of the panel's `args` they read.
+ *  `collisions`/`preflight`/`queueHealth` reuse the SAME types `buildPublicPrIntelligenceComment` takes so
+ *  the bodies derive identically to the legacy panel. */
+type PublicSafeCollapsibleArgs = {
+  repo: RepositoryRecord | null;
+  pr: PullRequestRecord;
+  profile: ContributorProfile;
+  detection: ContributorDetection;
+  settings: RepositorySettings;
+  collisions: CollisionReport;
+  preflight: PreflightResult;
+  queueHealth: QueueHealth;
+  review?: FocusManifestReviewConfig | undefined;
+  aiReview?: { notes: string } | undefined;
+};
+
+/** "Signal definitions" body — a static legend for the readiness signals. No inputs. */
+function signalDefinitionsBody(): string[] {
+  return [
+    "- Related work = same linked issue, overlapping active PRs, or title/path similarity.",
+    "- Review load = cached public PR metadata such as size labels, changed paths, and preflight status.",
+    "- Open PR queue = repo-wide review pressure; it is not a PR quality failure.",
+    "- Contributor context = public GitHub/Gittensor identity context; non-Gittensor status is not a blocker.",
+  ];
+}
+
+/** "Review context" body — public author/role/lane/profile context plus any PR-specific overlap detail. */
+function reviewContextBody(args: PublicSafeCollapsibleArgs): string[] {
+  const roleContext = buildRoleContext({
+    login: args.pr.authorLogin ?? args.profile.login,
+    repo: args.repo,
+    repoFullName: args.pr.repoFullName,
+    pullRequests: [args.pr],
+    issues: [],
+    profile: args.profile,
+  });
+  const confirmedMiner = isOfficialContributorDetection(args.detection);
+  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
+  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
+  return [
+    `- Author: \`${sanitizePanelText(args.pr.authorLogin ?? "unknown")}\``,
+    `- Role context: ${sanitizePanelText(roleContext.role)}${roleContext.maintainerLane ? " (maintainer lane)" : ""}`,
+    `- Public audience mode: ${args.settings.publicAudienceMode.replace(/_/g, " ")}`,
+    `- Lane context: ${sanitizePanelText(buildLaneAdvice(args.repo, args.pr.repoFullName).summary)}`,
+    `- Public profile languages: ${args.profile.github.topLanguages.length > 0 ? sanitizePanelText(args.profile.github.topLanguages.join(", ")) : "not available"}`,
+    ...(confirmedMiner ? [`- Official Gittensor activity: ${args.detection.priorPullRequests} PR(s), ${args.detection.priorIssues} issue(s).`] : ["- Contributor context: Public profile only; not a blocker."]),
+    ...relatedWorkDetails(args.pr, scopedOverlapClusters),
+    // `prCollisionClusters` is referenced only to keep this body's derivation identical to the panel's
+    // (the panel computes both cluster sets); the overlap detail uses the scoped set.
+    ...(prCollisionClusters.length === 0 ? [] : []),
+  ];
+}
+
+/** "Contributor next steps" body — the deduped actionable steps (or a fallback when none). */
+function contributorNextStepsBody(nextSteps: string[]): string[] {
+  return nextSteps.length > 0 ? [...new Set(nextSteps)].map((step) => `- ${step}`) : ["- Keep the PR focused and include validation evidence before maintainer review."];
+}
+
+/** "Review details" body — the optional AI maintainer-review notes (already public-safe upstream). Returns
+ *  `[]` when there is no AI review, so the section is omitted entirely. Angle brackets are escaped as a final
+ *  guard (a stray tag cannot break the panel) and the notes are length-capped, matching the legacy panel. */
+function reviewDetailsBody(aiReview: { notes: string } | undefined): string[] {
+  if (!aiReview) return [];
+  return [
+    "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
+    "",
+    aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
+  ];
+}
+
+/**
+ * The public-safe collapsibles for the CONVERGED comment, as `UnifiedCollapsible[]`. Built from the SAME
+ * bodies the legacy panel renders (above) so the two never diverge. Order mirrors the legacy panel's
+ * (Review context · Contributor next steps · Signal definitions · Review details). Excludes "Maintainer
+ * notes" (PRIVATE). "Review details" is omitted when there is no AI review (empty body → the renderer skips it).
+ */
+export function buildPublicSafeCollapsibles(args: PublicSafeCollapsibleArgs): UnifiedCollapsible[] {
+  const collapsibles: UnifiedCollapsible[] = [
+    { title: "Review context", body: reviewContextBody(args).join("\n") },
+    { title: "Contributor next steps", body: contributorNextStepsBody(publicSafeNextSteps(args)).join("\n") },
+    { title: "Signal definitions", body: signalDefinitionsBody().join("\n") },
+  ];
+  const reviewDetails = reviewDetailsBody(args.aiReview);
+  if (reviewDetails.length > 0) collapsibles.push({ title: "Review details", body: reviewDetails.join("\n") });
+  return collapsibles;
+}
+
+/** The deduped, public-safe "next steps" list — extracted so both the legacy panel and the converged
+ *  comment compute it identically (maintainer-lane note, readiness actions, public-finding actions). */
+function publicSafeNextSteps(args: PublicSafeCollapsibleArgs): string[] {
+  const roleContext = buildRoleContext({
+    login: args.pr.authorLogin ?? args.profile.login,
+    repo: args.repo,
+    repoFullName: args.pr.repoFullName,
+    pullRequests: [args.pr],
+    issues: [],
+    profile: args.profile,
+  });
+  const readiness = buildPublicReadinessScore({
+    pr: args.pr,
+    preflight: args.preflight,
+    queueHealth: args.queueHealth,
+    linkedDuplicatePrs: linkedIssueDuplicatePullRequests(args.pr, pullRequestSpecificCollisionClusters(args.collisions, args.pr)),
+    scopedOverlapCount: unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions).length,
+  });
+  const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
+  return [
+    ...(roleContext.maintainerLane ? ["Treat this as maintainer-lane context rather than normal contributor-lane activity."] : []),
+    ...readiness.components.map((component) => component.action).filter((action) => action !== "No action."),
+    /* v8 ignore next -- Public findings may omit actions; public comment tests cover sanitized action inclusion. */
+    ...(publicFindings.length > 0 ? publicFindings.flatMap((finding) => (finding.action ? [finding.action] : [])) : []),
+  ].filter((step) => !containsPrivatePublicTerm(step));
+}
+
+/** The public-safe subset of preflight findings — extracted so the legacy panel and the converged comment
+ *  filter identically (single source). Drops: critical-severity findings; the linked-issue finding when the
+ *  linked-issue gate is fully off; private bounty-lifecycle findings; and any finding whose text trips the
+ *  private-term backstop. Then slices to the configured public signal level (2 minimal / 5 otherwise). The
+ *  filter chain + slice bounds are byte-identical to the prior inline computation in the legacy builder. */
+function publicSafePreflightFindings(preflight: PreflightResult, settings: RepositorySettings): SignalFinding[] {
+  return preflight.findings
+    .filter((finding) => finding.severity !== "critical")
+    .filter((finding) => settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
+    .filter((finding) => !isPrivateBountyLifecycleFinding(finding.code))
+    .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
+    .slice(0, settings.publicSignalLevel === "minimal" ? 2 : 5);
+}
+
 export function buildPublicPrIntelligenceComment(args: {
   repo: RepositoryRecord | null;
   pr: PullRequestRecord;
@@ -3922,11 +4152,7 @@ export function buildPublicPrIntelligenceComment(args: {
   /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
   aiReview?: { notes: string } | undefined;
 }): string {
-  const publicFindings = args.preflight.findings
-    .filter((finding) => finding.severity !== "critical")
-    .filter((finding) => args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off" || finding.code !== "missing_linked_issue")
-    .filter((finding) => !containsPrivatePublicTerm([finding.code, finding.title, finding.detail, finding.publicText, finding.action].filter(Boolean).join(" ")))
-    .slice(0, args.settings.publicSignalLevel === "minimal" ? 2 : 5);
+  const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
   const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
@@ -4088,9 +4314,9 @@ export function buildPublicPrIntelligenceComment(args: {
           "",
           "_Generated from public PR metadata and the diff. Advisory only; deterministic signals remain authoritative._",
           "",
-          // Notes are already public-safe (built via toPublicSafe upstream). Escape angle brackets so a
-          // stray tag (e.g. </details> or an HTML comment marker) cannot break the panel structure, while
-          // preserving the markdown bullet/line layout that sanitizePanelText would otherwise flatten.
+          // Notes are already public-safe and markdown-neutralized (built via toPublicSafe upstream). Escape
+          // angle brackets as a final guard so a stray tag (e.g. </details> or an HTML comment marker) cannot
+          // break the panel structure while preserving the section/bullet layout we add ourselves.
           args.aiReview.notes.replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;")).slice(0, 4000),
           "",
           "</details>",
@@ -4127,6 +4353,59 @@ type PublicPrPanelGateEvaluation = {
   conclusion: "success" | "failure" | "action_required" | "neutral" | "skipped";
   summary: string;
 };
+
+/** One readiness signal row of the public PR panel, with the cells the legacy table renders. The
+ *  unified-comment bridge (convergence) consumes these — `result` carries the leading ✅/⚠️/❌ icon so
+ *  the bridge can derive an ok/warn/fail state without re-running the readiness math. */
+export type PublicPrPanelSignalRow = { key: ReviewFieldKey; cells: [string, string, string, string] };
+
+/**
+ * Build the public PR panel's readiness signal rows (the `allRows` table) as a PURE function, from the
+ * SAME inputs `buildPublicPrIntelligenceComment` uses. It calls the same private panel helpers, so the rows
+ * are byte-identical to the legacy panel's. Exposed for the unified-comment bridge (convergence) so the
+ * converged comment surfaces gittensory's exact signals; the legacy path is unchanged. The `key` lets the
+ * caller honor `.gittensory.yml review.fields` visibility the same way the legacy renderer does.
+ */
+export function buildPublicPrPanelSignalRows(args: {
+  repo: RepositoryRecord | null;
+  pr: PullRequestRecord;
+  profile: ContributorProfile;
+  detection: ContributorDetection;
+  queueHealth: QueueHealth;
+  collisions: CollisionReport;
+  preflight: PreflightResult;
+  settings: RepositorySettings;
+  gate?: PublicPrPanelGateEvaluation | undefined;
+}): { rows: PublicPrPanelSignalRow[]; readinessTotal: number } {
+  const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
+  const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
+  const scopedOverlapClusters = unionScopedOverlapClusters(args.collisions, args.pr, args.preflight.collisions);
+  const scopedOverlapCount = scopedOverlapClusters.length;
+  const readiness = buildPublicReadinessScore({ pr: args.pr, preflight: args.preflight, queueHealth: args.queueHealth, linkedDuplicatePrs, scopedOverlapCount });
+  const linkedIssueResult = linkedIssuePanelResult(args.pr);
+  const relatedWorkResult = relatedWorkPanelResult(linkedDuplicatePrs, scopedOverlapCount);
+  const gateEnabled = args.settings.gateCheckMode === "enabled";
+  const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
+  const hardDuplicateBlock = args.settings.duplicatePrGateMode === "block" && linkedDuplicatePrs.length > 0;
+  const fallbackGateConclusion = !gateEnabled ? "success" : !args.repo ? "neutral" : hardLinkedIssueBlock || hardDuplicateBlock ? "failure" : "success";
+  const gateConclusion = args.gate?.conclusion ?? fallbackGateConclusion;
+  const confirmedMiner = isOfficialContributorDetection(args.detection);
+  const readinessByKey = new Map(readiness.components.map((component) => [component.key, component]));
+  const validationComponent = readinessByKey.get("validation");
+  const changeScopeComponent = readinessByKey.get("change_scope");
+  const queueComponent = readinessByKey.get("queue_pressure");
+  const contributorContext = contributorContextPanelResult(args.pr, args.profile, args.detection, confirmedMiner);
+  const rows: PublicPrPanelSignalRow[] = [
+    { key: "linkedIssue", cells: ["Linked issue", linkedIssueResult.result, linkedIssueResult.evidence, linkedIssueResult.action] },
+    { key: "relatedWork", cells: ["Related work", relatedWorkResult.result, relatedWorkResult.evidence, relatedWorkResult.action] },
+    { key: "reviewLoad", cells: ["Review load", scoreResultIcon(changeScopeComponent), changeScopeComponent?.evidence ?? "No public scope metadata found.", changeScopeComponent?.action ?? "No action."] },
+    { key: "validationEvidence", cells: ["Validation evidence", scoreResultIcon(validationComponent), validationComponent?.evidence ?? "No validation signal found.", validationComponent?.action ?? "Add validation note."] },
+    { key: "openPrQueue", cells: ["Open PR queue", scoreResultIcon(queueComponent), queueComponent?.evidence ?? "Open PR queue unavailable.", queueComponent?.action ?? "No action."] },
+    { key: "contributorContext", cells: ["Contributor context", contributorContext.result, contributorContext.evidence, contributorContext.action] },
+    { key: "gateResult", cells: ["Gate result", gateStatus(gateEnabled, gateConclusion), gateEnabled ? gateAction(gateConclusion) : "Advisory only.", gateEnabled ? gateNextAction(gateConclusion) : "No action."] },
+  ];
+  return { rows, readinessTotal: readiness.total };
+}
 
 function isOfficialContributorDetection(detection: ContributorDetection): boolean {
   return detection.source === "official_gittensor_api";
@@ -4333,7 +4612,9 @@ export type PrTextLintReport = {
   summary: string;
 };
 
-const GENERIC_COMMIT_PATTERN = /^(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+|\.+)\b[\s.!]*$/i;
+// Exported so the deterministic slop signal (#564) and the #549 lint tool share ONE definition of a
+// "generic" commit subject — a single low-effort word (wip / fix / update / "." …) that is the whole subject.
+export const GENERIC_COMMIT_PATTERN = /^(?:(?:wip|fix(?:es|ed|ing)?|updat(?:e|es|ed|ing)|change[sd]?|edit[sd]?|patch|minor|tweak[sd]?|misc|cleanup|chore|stuff|temp|tmp|test|final|done|commit|asdf+)\b|\.+)[\s.!]*$/i;
 // Conventional Commit subject: one of CONTRIBUTING's allowed types, optional `(scope)`, optional `!`,
 // then `: ` and a non-empty summary (e.g. `feat(api): add cursor pagination`). Single source of truth
 // with CONTRIBUTING.md "Commit And PR Titles".
@@ -4452,8 +4733,10 @@ export function buildPrTextLint(input: PrTextLintInput): PrTextLintReport {
   };
 }
 
-function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
-  return /\b(no issue\s*(?:because|:)|no linked issue\s*(?:because|:)|no ticket\s*(?:because|:)|maintenance|docs? only|typo|chore|cleanup)\b/i.test([pr.title, pr.body ?? ""].join(" "));
+// Exported so the deterministic no-linked-issue slop signal (#562) and the public PR-panel traceability check
+// share ONE definition of a "clear no-issue rationale" (maintenance / docs-only / "no issue: …" in the PR text).
+export function hasClearNoIssueRationale(pr: Pick<PullRequestRecord, "title" | "body">): boolean {
+  return /\b(?:no issue\s*(?:because\b|:)|no linked issue\s*(?:because\b|:)|no ticket\s*(?:because\b|:)|(?:maintenance|docs? only|typo|chore|cleanup)\b)/i.test([pr.title, pr.body ?? ""].join(" "));
 }
 
 function hasValidationNote(value: string): boolean {
@@ -4524,6 +4807,10 @@ function formatCollisionItemRef(item: CollisionItem): string {
 
 function formatAlertBlock(lines: string[]): string[] {
   return lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+}
+
+function isPrivateBountyLifecycleFinding(code: string): boolean {
+  return code === "linked_issue_bounty_historical" || code === "linked_issue_bounty_unverified";
 }
 
 function containsPrivatePublicTerm(value: string): boolean {

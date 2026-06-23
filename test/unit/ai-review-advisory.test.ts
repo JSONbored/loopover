@@ -49,10 +49,10 @@ function advisory(over: Partial<Advisory> = {}): Advisory {
 const pr = { number: 3, title: "Add helper", body: "Adds a helper." };
 
 function defectJson() {
-  return JSON.stringify({ assessment: "Likely crash.", suggestions: ["Guard null."], risks: ["Null deref."], criticalDefect: { present: true, confidence: 0.97, title: "Null deref", detail: "Dereferences null." } });
+  return JSON.stringify({ assessment: "Likely crash.", blockers: ["Null dereference of a possibly-null value in src/a.ts."], nits: ["Guard null."], suggestions: ["Guard null."] });
 }
 function notesOnlyJson() {
-  return JSON.stringify({ assessment: "Looks fine.", suggestions: ["Add a test."], risks: [], criticalDefect: { present: false, confidence: 0, title: "", detail: "" } });
+  return JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: ["Add a test."], suggestions: ["Add a test."] });
 }
 
 function aiEnv(run: () => Promise<unknown>, flags = true) {
@@ -78,13 +78,27 @@ describe("runAiReviewForAdvisory", () => {
     expect(adv.findings).toEqual([]);
   });
 
-  it("no-ops for a non-confirmed contributor and when there is no head SHA", async () => {
+  it("no-ops for a non-confirmed contributor under the gittensor pack and when there is no head SHA", async () => {
     const env = aiEnv(async () => ({ response: defectJson() }));
-    const base = { settings: { aiReviewMode: "block" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "alice" };
+    const base = { settings: { aiReviewMode: "block", gatePack: "gittensor" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "alice" };
     expect(await runAiReviewForAdvisory(env, { ...base, advisory: advisory(), confirmedContributor: false })).toBeUndefined();
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
     expect(await runAiReviewForAdvisory(env, { ...base, advisory: noSha, confirmedContributor: true })).toBeUndefined();
+  });
+
+  it("runs a blocking AI review for a non-confirmed contributor under oss-anti-slop", async () => {
+    const adv = advisory();
+    const result = await runAiReviewForAdvisory(aiEnv(async () => ({ response: defectJson() })), {
+      settings: { aiReviewMode: "block", gatePack: "oss-anti-slop" } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: false,
+    });
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
+    expect(result?.notes).toContain("Likely crash.");
   });
 
   it("appends an ai_consensus_defect finding in block mode when the models agree", async () => {
@@ -100,6 +114,30 @@ describe("runAiReviewForAdvisory", () => {
     expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
     expect(adv.findings[0]?.title).toContain("Null deref");
     expect(result?.notes).toContain("Likely crash.");
+  });
+
+  it("uses the caller's pre-resolved files (FIX B) instead of the stored read, so the model sees the real diff", async () => {
+    // FIX B: the processor passes `files` (its resolvePullRequestFilesForReview output). With no rows ever
+    // written to the test DB, a stored read would yield an EMPTY diff; passing files proves the model gets the
+    // real diff anyway — the diff-less-first-review failure mode.
+    const prompts: string[] = [];
+    const env = aiEnv(async (...args: unknown[]) => {
+      prompts.push(JSON.stringify(args));
+      return { response: notesOnlyJson() };
+    });
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "advisory" } as RepositorySettings,
+      advisory: advisory(),
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: true,
+      files: [fileRecord({ path: "src/resolved.ts", status: "modified", payload: { patch: "@@\n+const fixed = true;" } })],
+    });
+    expect(result?.notes).toContain("Looks fine.");
+    // The pre-resolved file's path + patch reached the model prompt (i.e. the diff was non-empty).
+    expect(prompts.join("\n")).toContain("src/resolved.ts");
+    expect(prompts.join("\n")).toContain("const fixed = true;");
   });
 
   it("returns advisory notes without a finding in advisory mode", async () => {
@@ -140,6 +178,35 @@ describe("runAiReviewForAdvisory", () => {
       confirmedContributor: true,
     });
     expect(result).toBeUndefined();
+  });
+
+  it("does not use the maintainer's BYOK key for non-confirmed oss-anti-slop blocking reviews", async () => {
+    const run = vi.fn(async () => ({ response: defectJson() }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+      TOKEN_ENCRYPTION_SECRET: "advisory-test-encryption-secret-32bytes",
+    });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-byok-key-9999", model: null });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: notesOnlyJson() }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = advisory();
+
+    const result = await runAiReviewForAdvisory(env, {
+      settings: { aiReviewMode: "block", gatePack: "oss-anti-slop", aiReviewByok: true } as RepositorySettings,
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pr,
+      author: "alice",
+      confirmedContributor: false,
+    });
+
+    expect(result?.notes).toContain("Likely crash.");
+    expect(adv.findings.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalled();
   });
 
   it("uses the maintainer's BYOK provider key when aiReviewByok is on and a key is configured", async () => {

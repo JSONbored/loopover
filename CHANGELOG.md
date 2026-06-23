@@ -55,6 +55,18 @@
 
 - Detect stale installs and API compatibility in doctor and status
 
+- Add gittensory review safety scan (prompt-injection defang + secret-leak detection)
+
+- Ground the AI reviewer with finished CI status and full changed-file content
+
+- Add codebase RAG context for related callers, modules, and conventions
+
+- Add submitter-reputation spend control (internal-only deterministic downgrade)
+
+- Render the public PR feedback as one unified review comment
+
+- Gate per-PR review capabilities behind per-repo activation (GITTENSORY_REVIEW_* flags)
+
 
 
 ### Fixes

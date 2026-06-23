@@ -9,6 +9,7 @@ import { AnimatedTerminal } from "@/components/site/animated-terminal";
 import { ScoreabilityStory } from "@/components/site/home/scoreability-story";
 import { PrQuietCompare } from "@/components/site/home/pr-quiet-compare";
 import { NpmInstall } from "@/components/site/npm-install";
+import { ProofOfPowerStats } from "@/components/site/proof-of-power-stats";
 import { TrustStrip } from "@/components/site/trust-strip";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
 import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/lib/mcp-package";
@@ -43,6 +44,7 @@ function Home() {
   return (
     <div className="w-full">
       <Hero />
+      <ProofOfPowerStats />
       <MetaStrip />
       <AudienceSection />
       <ScoreabilitySection />

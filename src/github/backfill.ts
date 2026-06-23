@@ -1,9 +1,11 @@
 import {
   getRepositorySettings,
   getRepository,
+  getPullRequest,
   countOpenIssues,
   countOpenPullRequests,
   countRecentMergedPullRequests,
+  deletePullRequestFiles,
   countRepoLabels,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -45,6 +47,8 @@ import type {
   InstallationHealthRecord,
   InstallationRecord,
   JsonValue,
+  PullRequestDetailSyncStateRecord,
+  PullRequestFileRecord,
   PullRequestRecord,
   RecentMergedPullRequestRecord,
   RepoGithubTotalsSnapshotRecord,
@@ -558,6 +562,34 @@ export async function backfillOpenPullRequestDetails(
     ...(nextCursor === undefined ? {} : { nextCursor }),
     warnings,
   };
+}
+
+export async function refreshPullRequestDetails(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+): Promise<{ ok: true; repoFullName: string; pullNumber: number; status: PullRequestDetailSyncStateRecord["status"]; warnings: string[] }> {
+  const [repo, pr] = await Promise.all([getRepository(env, repoFullName), getPullRequest(env, repoFullName, pullNumber)]);
+  if (!repo || !pr) {
+    return { ok: true, repoFullName, pullNumber, status: "partial", warnings: ["Repository or pull request was not found."] };
+  }
+  const token = await tokenForRepo(env, repo);
+  const warnings: string[] = [];
+  await upsertPullRequestDetailSyncState(env, { repoFullName, pullNumber, status: "running" });
+  await fetchAndStorePullRequestDetails(env, repoFullName, pr, token, warnings);
+  const syncedAt = nowIso();
+  const status: PullRequestDetailSyncStateRecord["status"] = warnings.length > 0 ? "partial" : "complete";
+  await upsertPullRequestDetailSyncState(env, {
+    repoFullName,
+    pullNumber,
+    status,
+    filesSyncedAt: syncedAt,
+    reviewsSyncedAt: syncedAt,
+    checksSyncedAt: syncedAt,
+    lastSyncedAt: syncedAt,
+    errorSummary: warnings.at(-1),
+  });
+  return { ok: true, repoFullName, pullNumber, status, warnings };
 }
 
 export async function refreshContributorActivity(
@@ -1698,20 +1730,25 @@ async function fetchAndStorePullRequestDetails(
   token: string | undefined,
   warnings: string[],
 ): Promise<void> {
+  const warningStart = warnings.length;
   const [files, reviews, checks] = await Promise.all([fetchPullRequestFiles(env, repoFullName, pr.number, token, warnings), fetchPullRequestReviews(env, repoFullName, pr.number, token, warnings), fetchPullRequestChecks(env, repoFullName, pr, token, warnings)]);
+  const fileSyncFailed = warnings.slice(warningStart).some((warning) => warning.startsWith(`File sync failed for #${pr.number}:`));
 
-  for (const file of files) {
-    await upsertPullRequestFile(env, {
-      repoFullName,
-      pullNumber: pr.number,
-      path: file.filename,
-      status: file.status,
-      additions: file.additions ?? 0,
-      deletions: file.deletions ?? 0,
-      changes: file.changes ?? 0,
-      previousFilename: file.previous_filename,
-      payload: file as unknown as Record<string, JsonValue>,
-    });
+  if (!fileSyncFailed) {
+    await deletePullRequestFiles(env, repoFullName, pr.number);
+    for (const file of files) {
+      await upsertPullRequestFile(env, {
+        repoFullName,
+        pullNumber: pr.number,
+        path: file.filename,
+        status: file.status,
+        additions: file.additions ?? 0,
+        deletions: file.deletions ?? 0,
+        changes: file.changes ?? 0,
+        previousFilename: file.previous_filename,
+        payload: file as unknown as Record<string, JsonValue>,
+      });
+    }
   }
   for (const review of reviews) {
     await upsertPullRequestReview(env, {
@@ -1742,6 +1779,25 @@ async function fetchAndStorePullRequestDetails(
   }
 }
 
+// GitHub caps list endpoints at 100 items/page, so a single `per_page=100` fetch silently truncates a
+// large PR's files/reviews/checks — which then undercounts churn/size and the slop padding detector.
+// Walk the `Link` header instead, bounded so a pathological PR can't spin. A page-1 failure returns
+// undefined (the caller can fall back to GraphQL); a later-page failure keeps the pages already fetched
+// rather than dropping a successful first page.
+const PR_DETAIL_MAX_PAGES = 10;
+
+async function githubPaginatedList<T>(env: Env, repoFullName: string, path: string, token: string | undefined): Promise<T[] | undefined> {
+  const items: T[] = [];
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    // Callers pass query-less resource paths (/pulls/N/files, /pulls/N/reviews), so the page params start the query.
+    const result = await githubJsonWithHeaders<T[]>(env, repoFullName, `${path}?per_page=100&page=${page}`, token).catch(() => undefined);
+    if (!result) return page === 1 ? undefined : items;
+    items.push(...result.data);
+    if (!hasNextPage(result.link)) break;
+  }
+  return items;
+}
+
 async function fetchPullRequestFiles(
   env: Env,
   repoFullName: string,
@@ -1749,12 +1805,59 @@ async function fetchPullRequestFiles(
   token: string | undefined,
   warnings: string[],
 ): Promise<GitHubFilePayload[]> {
-  const files = await githubJson<GitHubFilePayload[]>(env, repoFullName, `/pulls/${pullNumber}/files?per_page=100`, token).catch(() => undefined);
+  const files = await githubPaginatedList<GitHubFilePayload>(env, repoFullName, `/pulls/${pullNumber}/files`, token);
   if (files) return files;
   const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
   if (fallback) return fallback.files;
   warnings.push(`File sync failed for #${pullNumber}: GitHub REST and GraphQL detail fetches failed.`);
   return [];
+}
+
+/** Map a raw GitHub file payload to the stored {@link PullRequestFileRecord} shape (the same mapping
+ *  `fetchAndStorePullRequestDetails` does when it persists a synced PR's files). */
+function toPullRequestFileRecordFromGitHub(repoFullName: string, pullNumber: number, file: GitHubFilePayload): PullRequestFileRecord {
+  return {
+    repoFullName,
+    pullNumber,
+    path: file.filename,
+    status: file.status,
+    additions: file.additions ?? 0,
+    deletions: file.deletions ?? 0,
+    changes: file.changes ?? 0,
+    previousFilename: file.previous_filename,
+    payload: file as unknown as Record<string, JsonValue>,
+  };
+}
+
+/**
+ * Inline, best-effort file fetch for the REVIEW path (convergence). The PR-opened webhook can fire the review
+ * BEFORE the async detail-sync has populated `pull_request_files`, leaving the AI review + grounding + unified
+ * comment with an EMPTY diff ("0 files / No diff provided"). When `listPullRequestFiles` is empty at review
+ * time, the caller falls back here: fetch the PR's files straight from GitHub (REST → GraphQL, same paths the
+ * detail-sync uses), persist them (so the rest of the same review run + any later read reuse them), and return
+ * them mapped to the stored record shape.
+ *
+ * Fail-safe by construction: a fetch failure returns `[]` (never throws), so the review degrades to the same
+ * empty-diff state it has today rather than breaking. The persist is best-effort and only runs when the fetch
+ * actually returned files (a failed REST+GraphQL fetch must not wipe a row another sync just wrote).
+ */
+export async function fetchAndStorePullRequestFilesForReview(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  token: string | undefined,
+): Promise<PullRequestFileRecord[]> {
+  const warnings: string[] = [];
+  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings).catch(() => [] as GitHubFilePayload[]);
+  if (files.length === 0) return [];
+  const records = files.map((file) => toPullRequestFileRecordFromGitHub(repoFullName, pullNumber, file));
+  // Persist so the AI review, grounding, gate, check-run, and unified-comment reads in THIS run (and any later
+  // read) reuse the synced files. Best-effort: a write hiccup must never sink the review — we still return the
+  // freshly-fetched records the caller needs.
+  for (const record of records) {
+    await upsertPullRequestFile(env, record).catch(() => undefined);
+  }
+  return records;
 }
 
 async function fetchPullRequestReviews(
@@ -1764,7 +1867,7 @@ async function fetchPullRequestReviews(
   token: string | undefined,
   warnings: string[],
 ): Promise<GitHubReviewPayload[]> {
-  const reviews = await githubJson<GitHubReviewPayload[]>(env, repoFullName, `/pulls/${pullNumber}/reviews?per_page=100`, token).catch(() => undefined);
+  const reviews = await githubPaginatedList<GitHubReviewPayload>(env, repoFullName, `/pulls/${pullNumber}/reviews`, token);
   if (reviews) return reviews;
   const fallback = token ? await fetchPullRequestDetailsFromGraphQl(env, repoFullName, pullNumber, token).catch(() => undefined) : undefined;
   if (fallback) return fallback.reviews;
@@ -1780,10 +1883,180 @@ async function fetchPullRequestChecks(
   warnings: string[],
 ): Promise<{ check_runs?: GitHubCheckRunPayload[] }> {
   if (!pr.headSha) return { check_runs: [] };
-  const checks = await githubJson<{ check_runs?: GitHubCheckRunPayload[] }>(env, repoFullName, `/commits/${pr.headSha}/check-runs?per_page=100`, token).catch(() => undefined);
-  if (checks) return checks;
-  warnings.push(`Check sync failed for #${pr.number}: GitHub REST check-run fetch failed.`);
-  return { check_runs: [] };
+  // Same pagination as files/reviews, but the check-runs endpoint wraps the list in { check_runs }.
+  const checkRuns: GitHubCheckRunPayload[] = [];
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    const result = await githubJsonWithHeaders<{ check_runs?: GitHubCheckRunPayload[] }>(
+      env,
+      repoFullName,
+      `/commits/${pr.headSha}/check-runs?per_page=100&page=${page}`,
+      token,
+    ).catch(() => undefined);
+    if (!result) {
+      if (page === 1) {
+        warnings.push(`Check sync failed for #${pr.number}: GitHub REST check-run fetch failed.`);
+        return { check_runs: [] };
+      }
+      break;
+    }
+    checkRuns.push(...(result.data.check_runs ?? []));
+    if (!hasNextPage(result.link)) break;
+  }
+  return { check_runs: checkRuns };
+}
+
+const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
+const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+
+export type LiveCiAggregate = {
+  ciState: "passed" | "failed" | "pending" | "unverified";
+  // Checks that FAIL the gate: every failing check when required contexts are unknown, else only the failing
+  // REQUIRED contexts. These drive ciState === "failed" and the disposition (no-merge / close / request-changes).
+  failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
+  // RC2: checks that are RED but NOT in branch-protection's required set (e.g. codecov/patch, codecov/project).
+  // Surfaced to the contributor but they do NOT fail the gate, block merge/approve, or force request_changes.
+  // Empty when required contexts are unknown (best-effort fetch failed / no protection) — then every red check
+  // stays in failingDetails (byte-identical to pre-RC2).
+  nonRequiredFailingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
+};
+
+/**
+ * RC2 best-effort fetch of the base branch's branch-protection REQUIRED status-check contexts. Returns the set
+ * of required context names (covering both the legacy `contexts` array and the newer `checks[].context` shape),
+ * or `null` when none can be determined — a 404 (no protection / no required checks), a 403 (token lacks
+ * admin:repo, common for installations/forks), or any other error. `null`/empty makes fetchLiveCiAggregate fall
+ * back to folding ALL red checks into the gate, so a fetch failure can never silently pass a required red check.
+ */
+export async function fetchRequiredStatusContexts(env: Env, repoFullName: string, baseRef: string | null | undefined, token: string | undefined): Promise<Set<string> | null> {
+  if (!baseRef) return null;
+  const result = await githubJsonWithHeaders<{ contexts?: Array<string | null> | null; checks?: Array<{ context?: string | null }> | null }>(
+    env,
+    repoFullName,
+    `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`,
+    token,
+  ).catch(() => undefined);
+  if (!result) return null; // 404 (no protection) / 403 (no admin) — treat as "unknown".
+  const names = new Set<string>();
+  for (const ctx of result.data.contexts ?? []) {
+    if (typeof ctx === "string" && ctx.trim().length > 0) names.add(ctx);
+  }
+  for (const check of result.data.checks ?? []) {
+    if (typeof check?.context === "string" && check.context.trim().length > 0) names.add(check.context);
+  }
+  return names;
+}
+
+/**
+ * Fetch the head SHA's LIVE CI aggregate over BOTH GitHub Check-runs AND classic commit-statuses. This is the
+ * reviewbot `getAllChecksState` parity that the converged auto-maintain path needs: codecov (codecov/patch,
+ * codecov/project) and many other tools post a classic COMMIT-STATUS, not a check-run — fetching only
+ * `/check-runs` (what the backfill sync does) misses them entirely, which is why a red codecov was reported as
+ * "CI green". When branch-protection required contexts are known, only those trusted contexts gate review or
+ * automation; non-required failures are reported separately. When required contexts cannot be determined, we
+ * conservatively fold all checks/statuses into the gate so required red checks are not silently ignored.
+ * Best-effort: a fetch error degrades that source to empty.
+ */
+export async function fetchLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  // Branch-protection REQUIRED contexts are the trust boundary for CI gate authority. Non-required checks may be
+  // influenced by PR authors or third-party actors, so they are surfaced as advisory details but must not defer
+  // review, fail the merge gate, or drive automated close decisions. If required contexts are unavailable, fall
+  // back to gating on all contexts to avoid silently passing an unknown required failure.
+  requiredContexts?: ReadonlySet<string> | null,
+): Promise<LiveCiAggregate> {
+  if (!headSha) return { ciState: "unverified", failingDetails: [], nonRequiredFailingDetails: [] };
+  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
+  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
+  const failingDetails: LiveCiAggregate["failingDetails"] = [];
+  const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
+  let total = 0;
+  let anyPending = false;
+
+  // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown } }> }>(
+      env,
+      repoFullName,
+      `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
+      token,
+    ).catch(() => undefined);
+    if (!result) break;
+    for (const run of result.data.check_runs ?? []) {
+      total += 1;
+      const conclusion = (run.conclusion ?? "").toLowerCase();
+      const status = (run.status ?? "").toLowerCase();
+      if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
+        const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
+        const detail = { name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) };
+        (isRequired(run.name) ? failingDetails : nonRequiredFailingDetails).push(detail);
+      } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
+        // concluded and not failing → passing
+      } else if (isRequired(run.name)) {
+        anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
+      }
+    }
+    if (!hasNextPage(result.link)) break;
+  }
+
+  // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context). The
+  // combined endpoint returns the LATEST status per context, so a context that flipped red→green is counted
+  // once at its current state.
+  const statusResult = await githubJsonWithHeaders<{ statuses?: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> }>(
+    env,
+    repoFullName,
+    `/commits/${headSha}/status?per_page=100`,
+    token,
+  ).catch(() => undefined);
+  for (const ctx of statusResult?.data.statuses ?? []) {
+    total += 1;
+    const state = (ctx.state ?? "").toLowerCase();
+    const name = ctx.context ?? "status";
+    if (state === "failure" || state === "error") {
+      const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
+      const detail = { name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) };
+      (isRequired(name) ? failingDetails : nonRequiredFailingDetails).push(detail);
+    } else if (state === "success") {
+      // passing
+    } else if (isRequired(name)) {
+      anyPending = true; // pending — only a REQUIRED context holds the gate
+    }
+  }
+
+  // ciState reflects ONLY gate-failing (required, or all-when-unknown) checks. A repo whose only red check is a
+  // non-required codecov/* therefore reports "passed" and is eligible to merge/approve, with the codecov
+  // failure riding along in nonRequiredFailingDetails for the contributor to see.
+  const ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
+  return { ciState, failingDetails, nonRequiredFailingDetails };
+}
+
+/**
+ * Fetch a PR's LIVE `mergeable_state` (clean / dirty / blocked / unstable / behind / has_hooks / unknown). The
+ * STORED value lags GitHub's async recompute — e.g. right after gittensory[bot]'s own APPROVE flips a `blocked`
+ * PR to `clean`, the stored row is still `blocked`, which stops an otherwise-eligible PR from auto-merging
+ * (observed: green+approved PRs stuck OPEN at `mergeState=CLEAN`). The auto-maintain planner uses this so the
+ * merge decision sees the CURRENT state. `unknown` (GitHub still computing) ⇒ caller treats as not-yet-clean and
+ * a later trigger / the sweep retries. Best-effort: a fetch error returns undefined (caller falls back to stored).
+ */
+export async function fetchLivePullRequestMergeState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+  return result?.data.mergeable_state ?? undefined;
+}
+
+/** RC1 (idempotent reviews): the PR's LIVE reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED) via
+ *  GraphQL. The STORED reviewDecision is only written by the open-PR backfill and goes stale, so the action
+ *  planner's approve/request-changes dedup was blind and re-posted a review every cycle — the re-review loop.
+ *  Refreshing it live makes the dedup accurate. Best-effort: returns undefined on any error (caller falls back
+ *  to the stored value). */
+export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  if (!token) return undefined;
+  const [owner, name] = repoFullName.split("/");
+  if (!owner || !name) return undefined;
+  const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
+  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(env, query, token).catch(() => undefined);
+  return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
 }
 
 async function fetchPullRequestDetailsFromGraphQl(
@@ -1918,8 +2191,13 @@ async function syncLabels(
 ): Promise<{ items: GitHubLabelPayload[]; warnings: string[]; segment: RepoSyncSegmentRecord }> {
   const startedAt = nowIso();
   await markSegmentRunning(env, repo, "labels", sourceKind, mode, startedAt);
+  const items: GitHubLabelPayload[] = [];
   try {
-    const items = await githubJson<GitHubLabelPayload[]>(env, repo.fullName, "/labels?per_page=100", token);
+    for (let page = 1; ; page += 1) {
+      const result = await githubJsonWithHeaders<GitHubLabelPayload[]>(env, repo.fullName, `/labels?per_page=100&page=${page}`, token);
+      items.push(...result.data);
+      if (!hasNextPage(result.link)) break;
+    }
     const segment = await completeSegment(env, repo, "labels", sourceKind, mode, startedAt, {
       status: "complete",
       fetchedCount: items.length,
@@ -1931,12 +2209,12 @@ async function syncLabels(
     const warning = `Label sync failed: ${errorMessage(error)}`;
     const segment = await completeSegment(env, repo, "labels", sourceKind, mode, startedAt, {
       status: error instanceof GitHubApiError && error.rateLimited ? "rate_limited" : "partial",
-      fetchedCount: 0,
+      fetchedCount: items.length,
       warnings: [warning],
       errorSummary: warning,
       rateLimitResetAt: error instanceof GitHubApiError ? error.rateLimitResetAt : undefined,
     });
-    return { items: [], warnings: [warning], segment };
+    return { items, warnings: [warning], segment };
   }
 }
 

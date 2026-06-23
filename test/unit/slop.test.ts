@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDuplicateClusterFinding,
+  buildEmptyDescriptionFinding,
   buildEmptyIssueBodyFinding,
   buildIssueSlopAssessment,
+  buildLowQualityCommitMessageFinding,
   buildMissingTestEvidenceFinding,
+  buildNoLinkedIssueRationaleFinding,
   buildNonSubstantivePaddingFinding,
   buildSlopAssessment,
   buildTrivialWhitespaceChurnFinding,
   buildUnfilledIssueTemplateFinding,
+  type SlopAssessmentInput,
+  type SlopBand,
   ISSUE_SLOP_WEIGHTS,
   SLOP_RUBRIC_MARKDOWN,
   SLOP_WEIGHTS,
@@ -20,10 +26,94 @@ describe("buildSlopAssessment", () => {
     expect(SLOP_RUBRIC_MARKDOWN).toContain("clean");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("missing test evidence");
     expect(SLOP_RUBRIC_MARKDOWN).toContain("trivial / whitespace-only churn");
+    expect(SLOP_RUBRIC_MARKDOWN).toContain("generic or empty commit message");
+    expect(SLOP_RUBRIC_MARKDOWN).toContain("no linked issue and no rationale");
 
     const clean = buildSlopAssessment({});
     expect(clean).toEqual({ slopRisk: 0, band: "clean", findings: [] });
     expect(buildSlopAssessment({})).toEqual(clean);
+  });
+
+  it("raises low-quality-commit-message slop for a generic primary commit subject (#564)", () => {
+    const result = buildSlopAssessment({ commitMessages: ["wip"] });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.lowQualityCommitMessage);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "low_quality_commit_message", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("raises low-quality-commit-message slop for dot-only commit subjects (#564)", () => {
+    for (const message of [".", "..", "..."]) {
+      expect(buildLowQualityCommitMessageFinding({ commitMessages: [message] })).toMatchObject({
+        code: "low_quality_commit_message",
+        severity: "warning",
+      });
+    }
+  });
+
+  it("does not raise commit-message slop for a specific subject or when no commit data is supplied (#564)", () => {
+    expect(buildSlopAssessment({ commitMessages: ["feat(api): add cursor pagination to labels endpoint"] }).findings).toEqual([]);
+    expect(buildSlopAssessment({ commitMessages: [] }).findings).toEqual([]);
+    expect(buildSlopAssessment({}).findings).toEqual([]);
+  });
+
+  it("flags supplied-but-all-blank commit messages as empty, and uses the first non-blank as the primary subject (#564)", () => {
+    const empty = buildLowQualityCommitMessageFinding({ commitMessages: ["   ", ""] });
+    expect(empty).toMatchObject({ code: "low_quality_commit_message" });
+    expect(empty?.detail).toMatch(/empty/i);
+    // leading blanks are skipped; the first real subject ("update") is what gets judged.
+    expect(buildLowQualityCommitMessageFinding({ commitMessages: ["", "update"] })?.detail).toMatch(/generic/i);
+  });
+
+  it("raises no-linked-issue-without-rationale slop when there is no issue and no rationale (#562)", () => {
+    const result = buildSlopAssessment({ hasLinkedIssue: false });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.noLinkedIssueWithoutRationale);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "no_linked_issue_without_rationale", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise no-linked-issue slop when an issue is linked, a rationale is present, the lane is issue-discovery, or no data is supplied (#562)", () => {
+    expect(buildSlopAssessment({ hasLinkedIssue: true }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "Docs only: fix a typo in the README." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "No issue: refactor the parser." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "No linked issue: internal maintenance." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, description: "No ticket: docs cleanup." }).findings).toEqual([]);
+    expect(buildSlopAssessment({ hasLinkedIssue: false, issueDiscoveryLane: true }).findings).toEqual([]);
+    expect(buildSlopAssessment({}).findings).toEqual([]);
+  });
+
+  it("reuses the shared no-issue rationale helper and treats absent linked-issue data as no signal (#562)", () => {
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: undefined })).toBeNull();
+    // a maintenance/cleanup rationale in the body clears the signal even with no linked issue
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: false, description: "Routine maintenance; no issue needed." })).toBeNull();
+    expect(buildNoLinkedIssueRationaleFinding({ hasLinkedIssue: false, description: "" })).toMatchObject({ code: "no_linked_issue_without_rationale" });
+  });
+
+  it("raises duplicate-cluster slop when the PR is flagged as in a duplicate cluster (#563)", () => {
+    const result = buildSlopAssessment({ inDuplicateCluster: true });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("low");
+    expect(result.findings).toEqual([expect.objectContaining({ code: "duplicate_cluster_membership", severity: "warning" })]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not raise duplicate-cluster slop when not flagged (false or omitted) (#563)", () => {
+    expect(buildDuplicateClusterFinding({})).toBeNull();
+    expect(buildDuplicateClusterFinding({ inDuplicateCluster: false })).toBeNull();
+  });
+
+  it("stacks the duplicate-cluster weight with another signal into the expected band (#563)", () => {
+    const result = buildSlopAssessment({
+      // code file with no test evidence → missing_test_evidence (30); non-empty description suppresses empty_description.
+      changedFiles: [{ path: "src/parser.ts", additions: 10, deletions: 1 }],
+      description: "Refactor the parser.",
+      inDuplicateCluster: true, // → duplicate_cluster_membership (15)
+    });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence + SLOP_WEIGHTS.duplicateClusterMembership);
+    expect(result.band).toBe("elevated");
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual(["duplicate_cluster_membership", "missing_test_evidence"]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
   it("raises missing-test-evidence slop for code-only diffs without tests", () => {
@@ -158,6 +248,27 @@ describe("buildSlopAssessment", () => {
   });
 });
 
+describe("buildEmptyDescriptionFinding — single-pass code-file detection", () => {
+  it("ignores empty-path entries and non-code files when counting changed code files", () => {
+    // blank path and docs/markdown files must not count toward the code-file total
+    expect(buildEmptyDescriptionFinding({ changedFiles: [{ path: "" }, { path: "README.md" }, { path: "docs/guide.mdx" }], description: "" })).toBeNull();
+  });
+
+  it("fires for a real code change with an empty description and reports the code-file count", () => {
+    const finding = buildEmptyDescriptionFinding({
+      changedFiles: [{ path: "" }, { path: "src/a.ts" }, { path: "README.md" }, { path: "src/b.ts" }],
+      description: "   ",
+    });
+    expect(finding).toMatchObject({ code: "empty_pr_description", severity: "warning" });
+    expect(finding?.detail).toContain("2 code file(s)");
+    expect(JSON.stringify(finding)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not fire when the code change has a non-empty description", () => {
+    expect(buildEmptyDescriptionFinding({ changedFiles: [{ path: "src/a.ts" }], description: "Real change." })).toBeNull();
+  });
+});
+
 describe("buildMissingTestEvidenceFinding", () => {
   it("keeps public reason strings sanitized", () => {
     const finding = buildMissingTestEvidenceFinding({
@@ -232,6 +343,12 @@ describe("buildIssueSlopAssessment (#533 issue-side triage)", () => {
     expect(buildUnfilledIssueTemplateFinding({ body: "Real prose explaining the bug." })).toBeNull();
     expect(buildEmptyIssueBodyFinding({ body: "has content" })).toBeNull();
   });
+
+  it("handles repeated unterminated HTML comment openers without excessive scanning", () => {
+    const maliciousBody = "<!--".repeat(30_000);
+
+    expect(buildUnfilledIssueTemplateFinding({ body: maliciousBody })).toBeNull();
+  }, 1_000);
 });
 
 describe("buildNonSubstantivePaddingFinding (#561 path-matcher signal)", () => {
@@ -313,5 +430,48 @@ describe("buildNonSubstantivePaddingFinding (#561 path-matcher signal)", () => {
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.nonSubstantivePadding);
     expect(result.band).toBe("elevated");
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN);
+  });
+});
+
+describe("slop golden fixtures & determinism (#565)", () => {
+  const goldenFixtures: Array<{ name: string; input: SlopAssessmentInput; slopRisk: number; band: SlopBand; codes: string[] }> = [
+    { name: "clean — no metadata", input: {}, slopRisk: 0, band: "clean", codes: [] },
+    { name: "low — generic commit subject", input: { commitMessages: ["wip"] }, slopRisk: 15, band: "low", codes: ["low_quality_commit_message"] },
+    { name: "low — no linked issue and no rationale", input: { hasLinkedIssue: false }, slopRisk: 15, band: "low", codes: ["no_linked_issue_without_rationale"] },
+    {
+      name: "elevated — code change without test evidence",
+      input: { changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }], description: "Add retry logic to the sync client." },
+      slopRisk: 30,
+      band: "elevated",
+      codes: ["missing_test_evidence"],
+    },
+    {
+      name: "elevated — untested code change inside a duplicate cluster",
+      input: { changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }], description: "Add retry logic to the sync client.", inDuplicateCluster: true },
+      slopRisk: 45,
+      band: "elevated",
+      codes: ["duplicate_cluster_membership", "missing_test_evidence"],
+    },
+    {
+      name: "high — whitespace churn, untested code, and empty description",
+      input: { changedFiles: [{ path: "src/x.ts", additions: 2, deletions: 1 }, { path: "src/state.snap", additions: 60, deletions: 40 }], description: "" },
+      slopRisk: 75,
+      band: "high",
+      codes: ["empty_pr_description", "missing_test_evidence", "trivial_whitespace_churn"],
+    },
+  ];
+
+  it.each(goldenFixtures)("scores the $name fixture to its documented band", (fixture) => {
+    const result = buildSlopAssessment(fixture.input);
+    expect(result.slopRisk).toBe(fixture.slopRisk);
+    expect(result.band).toBe(fixture.band);
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual(fixture.codes);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("returns identical slopRisk and findings for identical metadata (determinism)", () => {
+    for (const fixture of goldenFixtures) {
+      expect(buildSlopAssessment(fixture.input)).toEqual(buildSlopAssessment(fixture.input));
+    }
   });
 });

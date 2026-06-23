@@ -10,7 +10,8 @@ import {
   upsertUpstreamDriftReport,
 } from "../db/repositories";
 import { normalizeRegistryPayload } from "../registry/normalize";
-import { detectActiveModel, parsePythonNumberConstants } from "../scoring/model";
+import { detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
+import { syncUnmodeledScoringConstantDrift } from "./unmodeled-scoring-drift";
 import type {
   JsonValue,
   RegistryDriftSurface,
@@ -201,6 +202,14 @@ export async function refreshUpstreamDrift(env: Env): Promise<{ sources: Upstrea
   const ruleset = await buildUpstreamRulesetSnapshot(env, sources);
   const drift = await buildUpstreamDriftReport(ruleset, (await listLatestUpstreamRulesetSnapshots(env, 2))[1] ?? null);
   if (drift) await upsertUpstreamDriftReport(env, drift);
+  const constantsSource = sources.find((source) => source.sourceKey === "constants");
+  if (constantsSource && constantsSource.status !== "error") {
+    await syncUnmodeledScoringConstantDrift(env, {
+      unmodeledConstants: findUnmodeledConstantKeys(numericRecord(constantsSource.parsed.constants)),
+      currentRulesetId: ruleset.id,
+      source: { repo: ruleset.sourceRepo, ref: ruleset.sourceRef, commitSha: ruleset.commitSha ?? null },
+    });
+  }
   await recordAuditEvent(env, {
     eventType: "upstream.drift_detected",
     outcome: drift ? "completed" : "success",
@@ -986,13 +995,16 @@ function publicDriftReport(report: UpstreamDriftReportRecord): Record<string, Js
 async function findGitHubIssueForFingerprint(repo: string, token: string, fingerprint: string): Promise<{ number: number; url: string } | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name) return null;
-  const url = `https://api.github.com/repos/${owner}/${name}/issues?state=open&labels=signals&per_page=50`;
   try {
-    const response = await fetch(url, { headers: githubHeaders(token, "application/vnd.github+json") });
-    if (!response.ok) return null;
-    const issues = (await response.json()) as Array<{ number?: number; html_url?: string; body?: string | null }>;
-    const match = issues.find((issue) => issue.body?.includes(`gittensory-upstream-drift:${fingerprint}`));
-    return match?.number && match.html_url ? { number: match.number, url: match.html_url } : null;
+    for (let page = 1; ; page += 1) {
+      const url = `https://api.github.com/repos/${owner}/${name}/issues?state=open&labels=signals&per_page=100&page=${page}`;
+      const response = await fetch(url, { headers: githubHeaders(token, "application/vnd.github+json") });
+      if (!response.ok) return null;
+      const issues = (await response.json()) as Array<{ number?: number; html_url?: string; body?: string | null }>;
+      const match = issues.find((issue) => issue.body?.includes(`gittensory-upstream-drift:${fingerprint}`));
+      if (match?.number && match.html_url) return { number: match.number, url: match.html_url };
+      if (!response.headers.get("link")?.includes('rel="next"')) return null;
+    }
   } catch {
     return null;
   }

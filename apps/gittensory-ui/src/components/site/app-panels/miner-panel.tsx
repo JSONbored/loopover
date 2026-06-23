@@ -1,11 +1,20 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Download, History, Loader2, RefreshCw } from "lucide-react";
 
 import { KeyValueGrid, StatusPill, type Status } from "@/components/site/control-primitives";
 import { McpVersionBadge } from "@/components/site/mcp-version-badge";
 import { StatCard } from "@/components/site/primitives";
 import { StateBoundary } from "@/components/site/state-views";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { apiFetch } from "@/lib/api/request";
+import { getApiOrigin } from "@/lib/api/origin";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { useSession } from "@/lib/api/session";
 import {
@@ -100,8 +109,58 @@ export function MinerPanel() {
     repoFullName: data ? minerCommandRepoCandidate(data) : null,
   });
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+
+  const refreshPack = async () => {
+    if (!login || refreshing) return;
+    setRefreshing(true);
+    setRefreshNote(null);
+    const result = await apiFetch<{ status: string }>(
+      `${getApiOrigin().replace(/\/$/, "")}/v1/app/miner-dashboard/refresh?login=${encodeURIComponent(login)}`,
+      { method: "POST", label: "Refresh decision pack", credentials: "include" },
+    );
+    if (result.ok) {
+      // The rebuild runs as a queued job, so wait briefly then re-fetch the freshly persisted pack.
+      setRefreshNote("Rebuild queued — refreshing shortly…");
+      window.setTimeout(() => {
+        void dashboard.reload();
+        setRefreshing(false);
+        setRefreshNote(null);
+      }, 4000);
+    } else {
+      setRefreshNote(result.message);
+      setRefreshing(false);
+    }
+  };
+
+  const exportPack = () => {
+    if (!data || typeof document === "undefined") return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `decision-pack-${login || "miner"}-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const changelog = data ? collectChangelog(data) : { changes: [], reasons: [] };
+  const hasChangelog = changelog.changes.length > 0 || changelog.reasons.length > 0;
+
   return (
     <div className="space-y-6">
+      <MinerPanelActions
+        canRefresh={Boolean(login)}
+        canExport={Boolean(data)}
+        hasChangelog={hasChangelog}
+        refreshing={refreshing}
+        refreshNote={refreshNote}
+        onRefresh={() => void refreshPack()}
+        onExport={exportPack}
+        onChangelog={() => setChangelogOpen(true)}
+      />
       <MinerCommandActions commands={commandActions} />
       <StateBoundary
         isLoading={dashboard.status === "loading"}
@@ -315,7 +374,212 @@ export function MinerPanel() {
           </div>
         ) : null}
       </StateBoundary>
+      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} changelog={changelog} />
     </div>
+  );
+}
+
+type ChangelogEntry = { label: string; change: RecommendationChange };
+type Changelog = { changes: ChangelogEntry[]; reasons: RerunReasonGroup[] };
+
+// Aggregate the per-recommendation old-vs-new diffs and re-run reasons the API already attaches to each
+// next-action / repo-fit row into one changelog view. The inline cards truncate (2 reasons); the modal shows
+// everything. `unchanged` rows are skipped from the diff list — only new/changed recommendations are news.
+function collectChangelog(data: MinerDashboard): Changelog {
+  const changes: ChangelogEntry[] = [];
+  const reasonsByGroup = new Map<string, RerunReasonGroup>();
+  const ingest = (
+    label: string,
+    change?: RecommendationChange,
+    rerunReasons?: RerunReasonGroup[],
+  ) => {
+    if (change && change.status !== "unchanged") changes.push({ label, change });
+    for (const group of rerunReasons ?? []) {
+      if (group.reasons.length === 0) continue;
+      const existing = reasonsByGroup.get(group.group);
+      if (existing) {
+        existing.reasons = [...new Set([...existing.reasons, ...group.reasons])];
+      } else {
+        reasonsByGroup.set(group.group, { ...group, reasons: [...group.reasons] });
+      }
+    }
+  };
+  for (const action of data.nextActions) {
+    ingest(stringField(action, "actionKind", "Next action"), action.change, action.rerunReasons);
+  }
+  for (const repo of data.repoFit) {
+    ingest(stringField(repo, "repoFullName", "Repo"), repo.change, repo.rerunReasons);
+  }
+  return { changes, reasons: [...reasonsByGroup.values()] };
+}
+
+function MinerPanelActions({
+  canRefresh,
+  canExport,
+  hasChangelog,
+  refreshing,
+  refreshNote,
+  onRefresh,
+  onExport,
+  onChangelog,
+}: {
+  canRefresh: boolean;
+  canExport: boolean;
+  hasChangelog: boolean;
+  refreshing: boolean;
+  refreshNote: string | null;
+  onRefresh: () => void;
+  onExport: () => void;
+  onChangelog: () => void;
+}) {
+  const buttonClass =
+    "inline-flex items-center gap-2 rounded-token border-hairline bg-card px-3 py-2 text-token-xs font-medium text-foreground transition-colors hover:border-strong disabled:cursor-not-allowed disabled:opacity-50";
+  return (
+    <section
+      className="flex flex-wrap items-center justify-between gap-3"
+      aria-label="Decision pack actions"
+    >
+      <div>
+        <h2 className="font-display text-token-lg font-semibold">Decision pack</h2>
+        <div className="mt-1 text-token-xs text-muted-foreground">
+          Rebuild from the web, review what changed, or export the pack.
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onChangelog}
+          disabled={!hasChangelog}
+          className={buttonClass}
+          title={
+            hasChangelog ? "View the recommendation changelog" : "No changes since the last pack"
+          }
+        >
+          <History className="size-3.5" /> Changelog
+        </button>
+        <button type="button" onClick={onExport} disabled={!canExport} className={buttonClass}>
+          <Download className="size-3.5" /> Export
+        </button>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={!canRefresh || refreshing}
+          aria-busy={refreshing}
+          className={buttonClass}
+        >
+          {refreshing ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+        <span
+          role="status"
+          aria-live="polite"
+          className={`w-full text-right text-token-2xs sm:w-auto ${refreshNote ? "text-muted-foreground" : "sr-only"}`}
+        >
+          {refreshNote ?? ""}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function ChangelogDialog({
+  open,
+  onOpenChange,
+  changelog,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  changelog: Changelog;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Recommendation changelog</DialogTitle>
+          <DialogDescription>
+            What changed since the previous decision pack, and why it re-ran. Deterministic signals
+            only — no payout or reward estimates.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-5">
+          <div>
+            <h3 className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+              Old vs new ({changelog.changes.length})
+            </h3>
+            {changelog.changes.length === 0 ? (
+              <p className="mt-2 text-token-sm text-muted-foreground">
+                No recommendations changed since the last pack.
+              </p>
+            ) : (
+              <ul className="mt-2 space-y-3">
+                {changelog.changes.map((entry, index) => (
+                  <li
+                    key={`${entry.label}-${index}`}
+                    className="rounded-token border-hairline bg-background/40 p-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusPill status={CHANGE_TONE[entry.change.status]}>
+                        {entry.change.status}
+                      </StatusPill>
+                      <span className="break-all font-mono text-token-xs text-foreground/90">
+                        {entry.label}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-token-xs text-muted-foreground">
+                      {entry.change.summary}
+                    </p>
+                    {entry.change.labels.length > 0 && (
+                      <dl className="mt-2 grid gap-x-4 gap-y-1 text-token-2xs sm:grid-cols-2">
+                        {entry.change.labels.map((label) => (
+                          <div key={`${label.kind}-${label.label}`} className="min-w-0">
+                            <dt className="font-mono uppercase tracking-wider text-muted-foreground">
+                              {label.label}
+                            </dt>
+                            <dd className="break-words text-foreground/80">
+                              {label.before ? `${label.before} -> ` : ""}
+                              {label.after ?? "changed"}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {changelog.reasons.length > 0 && (
+            <div>
+              <h3 className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                Why it re-ran
+              </h3>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                {changelog.reasons.map((group) => (
+                  <div key={group.group} className="min-w-0">
+                    <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                      {group.title}
+                    </div>
+                    <ul className="mt-1 space-y-1 text-token-2xs text-muted-foreground">
+                      {group.reasons.map((reason) => (
+                        <li key={reason} className="break-words">
+                          {reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -19,6 +19,7 @@ import {
   contributorScoringProfiles,
   contributors,
   digestSubscriptions,
+  agentPendingActions,
   gateOutcomes,
   githubAgentCommandAnswers,
   githubAgentCommandFeedback,
@@ -61,6 +62,8 @@ import type {
   AgentActionRecord,
   AgentActionStatus,
   AgentActionType,
+  AutonomyPolicy,
+  AutoMaintainPolicy,
   AgentCommandAnswerRecord,
   AgentCommandFeedbackRecord,
   AgentContextSnapshotRecord,
@@ -70,6 +73,11 @@ import type {
   AgentRecommendationOutcomeState,
   AgentRecommendationOutcomeSummary,
   AgentRecommendationOutcomeTargetType,
+  AgentActionClass,
+  AgentPendingActionParams,
+  AgentPendingActionRecord,
+  AgentPendingActionStatus,
+  AutonomyLevel,
   GateOutcomeRecord,
   AgentMode,
   AgentRunRecord,
@@ -121,6 +129,7 @@ import type {
   ProductUsageSurface,
   ProductUsageSurfaceActivationFunnel,
   ProductUsageSurfaceRetention,
+  PullRequestFilePathRecord,
   PullRequestFileRecord,
   PullRequestDetailSyncStateRecord,
   PullRequestRecord,
@@ -150,6 +159,7 @@ import type {
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
+import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
@@ -421,7 +431,11 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       backfillEnabled: true,
       privateTrustEnabled: true,
       badgeEnabled: false,
+      agentPaused: false,
+      agentDryRun: false,
       commandAuthorization: normalizeCommandAuthorizationPolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).policy,
+      autonomy: {},
+      autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
     };
   }
   return {
@@ -456,7 +470,11 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     backfillEnabled: row.backfillEnabled,
     privateTrustEnabled: row.privateTrustEnabled,
     badgeEnabled: row.badgeEnabled,
+    agentPaused: row.agentPaused,
+    agentDryRun: row.agentDryRun,
     commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
+    autonomy: parseAutonomyPolicy(row.autonomyJson),
+    autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -495,7 +513,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     backfillEnabled: settings.backfillEnabled ?? true,
     privateTrustEnabled: settings.privateTrustEnabled ?? true,
     badgeEnabled: settings.badgeEnabled ?? false,
+    agentPaused: settings.agentPaused ?? false,
+    agentDryRun: settings.agentDryRun ?? false,
     commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
+    autonomy: normalizeAutonomyPolicy(settings.autonomy),
+    autoMaintain: normalizeAutoMaintainPolicy(settings.autoMaintain),
   };
   const db = getDb(env.DB);
   await db
@@ -532,7 +554,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       backfillEnabled: resolved.backfillEnabled,
       privateTrustEnabled: resolved.privateTrustEnabled,
       badgeEnabled: resolved.badgeEnabled,
+      agentPaused: resolved.agentPaused,
+      agentDryRun: resolved.agentDryRun,
       commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+      autonomyJson: jsonString(resolved.autonomy),
+      autoMaintainJson: jsonString(resolved.autoMaintain),
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -570,7 +596,11 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         backfillEnabled: resolved.backfillEnabled,
         privateTrustEnabled: resolved.privateTrustEnabled,
         badgeEnabled: resolved.badgeEnabled,
+        agentPaused: resolved.agentPaused,
+        agentDryRun: resolved.agentDryRun,
         commandAuthorizationJson: jsonString(resolved.commandAuthorization),
+        autonomyJson: jsonString(resolved.autonomy),
+        autoMaintainJson: jsonString(resolved.autoMaintain),
         updatedAt: nowIso(),
       },
     });
@@ -914,22 +944,16 @@ export async function listRepoGithubTotalsSnapshotHistory(
 
 export async function listLatestRepoGithubTotalsSnapshots(env: Env): Promise<RepoGithubTotalsSnapshotRecord[]> {
   const db = getDb(env.DB);
-  const latestRows = await db
-    .select({
-      repoFullName: repoGithubTotalsSnapshots.repoFullName,
-      fetchedAt: sql<string>`max(${repoGithubTotalsSnapshots.fetchedAt})`,
-    })
+  const rows = await db
+    .select()
     .from(repoGithubTotalsSnapshots)
-    .groupBy(repoGithubTotalsSnapshots.repoFullName);
-  const rows = [];
-  for (const latest of latestRows) {
-    const [row] = await db
-      .select()
-      .from(repoGithubTotalsSnapshots)
-      .where(and(eq(repoGithubTotalsSnapshots.repoFullName, latest.repoFullName), eq(repoGithubTotalsSnapshots.fetchedAt, latest.fetchedAt)))
-      .limit(1);
-    if (row) rows.push(row);
-  }
+    .where(
+      sql`${repoGithubTotalsSnapshots.fetchedAt} = (
+        select max(latest.fetched_at)
+        from repo_github_totals_snapshots latest
+        where latest.repo_full_name = ${repoGithubTotalsSnapshots.repoFullName}
+      )`,
+    );
   return rows.map(toRepoGithubTotalsSnapshotRecord).sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
 }
 
@@ -1364,10 +1388,8 @@ export async function listIssueWatchSubscriptionsForLogin(env: Env, login: strin
 export async function deleteIssueWatchSubscription(env: Env, login: string, repoFullName: string): Promise<boolean> {
   const db = getDb(env.DB);
   const where = and(eq(issueWatchSubscriptions.login, login.toLowerCase()), eq(issueWatchSubscriptions.repoFullName, repoFullName.toLowerCase()));
-  const existing = await db.select({ id: issueWatchSubscriptions.id }).from(issueWatchSubscriptions).where(where);
-  if (existing.length === 0) return false;
-  await db.delete(issueWatchSubscriptions).where(where);
-  return true;
+  const deleted = await db.delete(issueWatchSubscriptions).where(where).returning({ id: issueWatchSubscriptions.id });
+  return deleted.length > 0;
 }
 
 /** All miners watching a repo — the candidate recipients when a new grabbable issue opens there. */
@@ -2002,6 +2024,49 @@ export async function listPrVisibilitySkipAuditEvents(
   return { limit, hasMore: items.length > limit, items: items.slice(0, limit) };
 }
 
+// #784 audit feed: the agent's own action history for a repo — both executed actions (`agent.action.<class>`)
+// and approval-queue decisions (`agent.pending_action.accepted|rejected`). Repo-scoped via the `repo#pr`
+// targetKey prefix range (mirrors listPrVisibilitySkipAuditEvents). Read-only; private trust/score metadata
+// is never selected, only the public-safe action posture.
+export type AgentAuditEvent = {
+  eventType: string;
+  pullNumber: number | null;
+  outcome: string;
+  actor: string | null;
+  detail: string | null;
+  createdAt: string;
+};
+
+export async function listAgentAuditEvents(
+  env: Env,
+  options: { repoFullName: string; sinceIso?: string | undefined; limit?: number | undefined },
+): Promise<AgentAuditEvent[]> {
+  const limit = clampInteger(options.limit ?? 50, 1, 200);
+  // Match exactly `repo#<...>` keys: lower bound `repo#`, upper bound `repo#` + the max code point, which
+  // sorts past any value that can follow the `#` — robust against delimiter-adjacent edge cases.
+  const prefix = `${options.repoFullName.toLowerCase()}#`;
+  const upperBound = `${options.repoFullName.toLowerCase()}#\uffff`;
+  const conditions: SQL[] = [
+    sql`(${auditEvents.eventType} like 'agent.action.%' or ${auditEvents.eventType} like 'agent.pending_action.%')`,
+    sql`lower(${auditEvents.targetKey}) >= ${prefix} and lower(${auditEvents.targetKey}) < ${upperBound}`,
+  ];
+  if (options.sinceIso) conditions.push(gte(auditEvents.createdAt, options.sinceIso));
+  const rows = await getDb(env.DB)
+    .select({ eventType: auditEvents.eventType, targetKey: auditEvents.targetKey, outcome: auditEvents.outcome, actor: auditEvents.actor, detail: auditEvents.detail, createdAt: auditEvents.createdAt })
+    .from(auditEvents)
+    .where(and(...conditions))
+    .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    eventType: row.eventType,
+    pullNumber: parsePullRequestTargetKey(row.targetKey)?.pullNumber ?? null,
+    outcome: row.outcome,
+    actor: row.actor,
+    detail: row.detail,
+    createdAt: row.createdAt,
+  }));
+}
+
 export async function getFreshOfficialMinerDetection(env: Env, login: string, now = nowIso()): Promise<OfficialGittensorMinerDetection | null> {
   const [row] = await getDb(env.DB).select().from(officialMinerDetections).where(and(eq(officialMinerDetections.login, login.toLowerCase()), gte(officialMinerDetections.expiresAt, now))).limit(1);
   return row ? toOfficialMinerDetection(row) : null;
@@ -2430,6 +2495,36 @@ export async function getPullRequest(env: Env, fullName: string, number: number)
   return row ? toPullRequestRecordFromRow(row) : null;
 }
 
+// RC3 terminal-fail merges. The auto-maintain executor calls these when a merge mutation fails so the planner
+// stops planning a merge it can never complete (403/405/409/conflict), instead of retrying every sweep forever.
+
+/** Increment the failed-merge attempt counter for a PR, scoped to the head SHA that failed. Returns the new
+ *  count. Scoping to headSha means a new commit's attempts start fresh once the row's head advances. */
+export async function bumpPullRequestMergeAttempt(env: Env, fullName: string, number: number, headSha: string): Promise<number> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ mergeAttemptCount: sql`${pullRequests.mergeAttemptCount} + 1`, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+  const [row] = await db
+    .select({ count: pullRequests.mergeAttemptCount })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)))
+    .limit(1);
+  return Number(row?.count ?? 0);
+}
+
+/** Mark a PR terminally merge-blocked for its current head SHA: the planner skips the `merge` disposition while
+ *  merge_blocked_sha == headSha. Scoped to headSha so a later commit (a pushed fix) auto-clears the block (the
+ *  guard compares it to the live head). Records the human-readable terminal reason. */
+export async function markPullRequestMergeBlocked(env: Env, fullName: string, number: number, headSha: string, reason: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ mergeBlockedSha: headSha, mergeBlockedReason: reason.slice(0, 280), updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
 export async function getIssue(env: Env, fullName: string, number: number): Promise<IssueRecord | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(issues).where(and(eq(issues.repoFullName, fullName), eq(issues.number, number))).limit(1);
@@ -2554,6 +2649,27 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
   return rows.map(toPullRequestRecordFromRow);
 }
 
+export async function getRepoAuthorPullRequestHistory(env: Env, fullName: string, login: string, excludeNumber?: number): Promise<{ mergedPrCount: number; closedUnmergedPrCount: number }> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({
+      mergedPrCount: sql<number>`sum(case when ${pullRequests.mergedAt} is not null or ${pullRequests.state} = 'merged' then 1 else 0 end)`,
+      closedUnmergedPrCount: sql<number>`sum(case when ${pullRequests.state} = 'closed' and ${pullRequests.mergedAt} is null then 1 else 0 end)`,
+    })
+    .from(pullRequests)
+    .where(
+      and(
+        eq(pullRequests.repoFullName, fullName),
+        loginMatches(pullRequests.authorLogin, login),
+        excludeNumber === undefined ? undefined : not(eq(pullRequests.number, excludeNumber)),
+      ),
+    );
+  return {
+    mergedPrCount: Number(row?.mergedPrCount ?? 0),
+    closedUnmergedPrCount: Number(row?.closedUnmergedPrCount ?? 0),
+  };
+}
+
 export async function listContributorPullRequests(env: Env, login: string): Promise<PullRequestRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(pullRequests).where(loginMatches(pullRequests.authorLogin, login)).limit(1000);
@@ -2597,14 +2713,40 @@ export async function upsertPullRequestFile(env: Env, file: PullRequestFileRecor
     });
 }
 
+export async function deletePullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<void> {
+  const db = getDb(env.DB);
+  await db.delete(pullRequestFiles).where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
+}
+
 export async function listPullRequestFiles(env: Env, fullName: string, pullNumber: number): Promise<PullRequestFileRecord[]> {
   const db = getDb(env.DB);
   const rows = await db
     .select()
     .from(pullRequestFiles)
-    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)))
-    .limit(500);
+    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
   return rows.map(toPullRequestFileRecord);
+}
+
+export async function listRepoPullRequestFilePaths(
+  env: Env,
+  fullName: string,
+  options: { pullNumbers?: number[] | undefined; limit?: number | undefined } = {},
+): Promise<PullRequestFilePathRecord[]> {
+  const db = getDb(env.DB);
+  const pullNumbers = [...new Set(options.pullNumbers ?? [])].filter((number) => Number.isInteger(number) && number > 0);
+  if (options.pullNumbers && pullNumbers.length === 0) return [];
+  const where = pullNumbers.length > 0
+    ? and(eq(pullRequestFiles.repoFullName, fullName), inArray(pullRequestFiles.pullNumber, pullNumbers))
+    : eq(pullRequestFiles.repoFullName, fullName);
+  return db
+    .select({
+      repoFullName: pullRequestFiles.repoFullName,
+      pullNumber: pullRequestFiles.pullNumber,
+      path: pullRequestFiles.path,
+    })
+    .from(pullRequestFiles)
+    .where(where)
+    .limit(Math.max(0, Math.min(options.limit ?? 500, 500)));
 }
 
 export async function listRepoPullRequestFiles(env: Env, fullName: string): Promise<PullRequestFileRecord[]> {
@@ -3177,11 +3319,20 @@ export async function getAgentRecommendationOutcome(env: Env, actionId: string):
 
 export async function listAgentRecommendationOutcomes(
   env: Env,
-  options: { actorLogin?: string; windowDays?: number; now?: string; limit?: number } = {},
+  options: { actorLogin?: string; repoFullName?: string; windowDays?: number; now?: string; limit?: number } = {},
 ): Promise<AgentRecommendationOutcomeRecord[]> {
   const limit = clampInteger(options.limit ?? 500, 1, 5000);
   const conditions = [];
   if (options.actorLogin) conditions.push(eq(agentRecommendationOutcomes.actorLogin, options.actorLogin));
+  if (options.repoFullName) {
+    const repoFullName = options.repoFullName.toLowerCase();
+    conditions.push(
+      or(
+        sql`lower(${agentRecommendationOutcomes.outcomeRepoFullName}) = ${repoFullName}`,
+        sql`lower(${agentRecommendationOutcomes.targetRepoFullName}) = ${repoFullName}`,
+      ),
+    );
+  }
   if (options.windowDays !== undefined) {
     const windowDays = clampInteger(options.windowDays, 1, 365);
     const now = options.now ?? nowIso();
@@ -3252,6 +3403,106 @@ export async function listGateOutcomes(
     .orderBy(desc(gateOutcomes.updatedAt), gateOutcomes.id)
     .limit(limit);
   return rows.map(toGateOutcomeRecord);
+}
+
+// #779 approval queue. Stage an auto_with_approval action; `created:false` when one is already staged for this
+// (repo, pull, action_class) — re-evaluation never duplicates a staged action or re-surfaces a decided one.
+export async function createPendingAgentActionIfAbsent(
+  env: Env,
+  input: { repoFullName: string; pullNumber: number; installationId: number; actionClass: AgentActionClass; autonomyLevel: AutonomyLevel; params: AgentPendingActionParams; reason?: string | null | undefined },
+): Promise<{ action: AgentPendingActionRecord; created: boolean }> {
+  const repoFullName = boundedString(input.repoFullName, 200);
+  const values = {
+    id: crypto.randomUUID(),
+    repoFullName,
+    pullNumber: input.pullNumber,
+    installationId: input.installationId,
+    actionClass: input.actionClass,
+    autonomyLevel: input.autonomyLevel,
+    paramsJson: jsonString(input.params),
+    reason: input.reason ?? null,
+    status: "pending",
+  };
+  const inserted = await getDb(env.DB)
+    .insert(agentPendingActions)
+    .values(values)
+    .onConflictDoNothing({ target: [agentPendingActions.repoFullName, agentPendingActions.pullNumber, agentPendingActions.actionClass] })
+    .returning();
+  if (inserted.length > 0 && inserted[0]) return { action: toAgentPendingActionRecord(inserted[0]), created: true };
+  // A row already exists for this target — return it unchanged (the staged/decided action is sticky).
+  const [existing] = await getDb(env.DB)
+    .select()
+    .from(agentPendingActions)
+    .where(and(eq(agentPendingActions.repoFullName, repoFullName), eq(agentPendingActions.pullNumber, input.pullNumber), eq(agentPendingActions.actionClass, input.actionClass)))
+    .limit(1);
+  /* v8 ignore next -- onConflictDoNothing only no-ops when a conflicting row exists, so the lookup always finds it. */
+  if (!existing) throw new Error(`pending action conflict had no row: ${repoFullName}#${input.pullNumber} ${input.actionClass}`);
+  return { action: toAgentPendingActionRecord(existing), created: false };
+}
+
+function pendingAgentActionConditions(options: { repoFullName?: string; status?: AgentPendingActionStatus } = {}): SQL[] {
+  const conditions = [];
+  if (options.repoFullName) conditions.push(eq(agentPendingActions.repoFullName, options.repoFullName));
+  if (options.status) conditions.push(eq(agentPendingActions.status, options.status));
+  return conditions;
+}
+
+export async function listPendingAgentActions(
+  env: Env,
+  options: { repoFullName?: string; status?: AgentPendingActionStatus; limit?: number } = {},
+): Promise<AgentPendingActionRecord[]> {
+  const limit = clampInteger(options.limit ?? 200, 1, 2000);
+  const conditions = pendingAgentActionConditions(options);
+  const rows = await getDb(env.DB)
+    .select()
+    .from(agentPendingActions)
+    .where(conditions.length === 0 ? undefined : and(...conditions))
+    .orderBy(desc(agentPendingActions.createdAt), agentPendingActions.id)
+    .limit(limit);
+  return rows.map(toAgentPendingActionRecord);
+}
+
+export async function countPendingAgentActions(
+  env: Env,
+  options: { repoFullName?: string; status?: AgentPendingActionStatus } = {},
+): Promise<number> {
+  const conditions = pendingAgentActionConditions(options);
+  const [row] = await getDb(env.DB)
+    .select({ count: sql<number>`count(*)` })
+    .from(agentPendingActions)
+    .where(conditions.length === 0 ? undefined : and(...conditions));
+  return Number(row?.count ?? 0);
+}
+
+export async function getPendingAgentAction(env: Env, id: string): Promise<AgentPendingActionRecord | null> {
+  const [row] = await getDb(env.DB).select().from(agentPendingActions).where(eq(agentPendingActions.id, id)).limit(1);
+  return row ? toAgentPendingActionRecord(row) : null;
+}
+
+/** Mark a staged action accepted/rejected. Idempotency is the caller's concern (it checks status === pending). */
+export async function setPendingAgentActionStatus(env: Env, id: string, update: { status: AgentPendingActionStatus; decidedBy: string | null }): Promise<void> {
+  await getDb(env.DB)
+    .update(agentPendingActions)
+    .set({ status: update.status, decidedBy: update.decidedBy, decidedAt: nowIso(), updatedAt: nowIso() })
+    .where(eq(agentPendingActions.id, id));
+}
+
+function toAgentPendingActionRecord(row: typeof agentPendingActions.$inferSelect): AgentPendingActionRecord {
+  return {
+    id: row.id,
+    repoFullName: row.repoFullName,
+    pullNumber: row.pullNumber,
+    installationId: row.installationId,
+    actionClass: row.actionClass as AgentActionClass,
+    autonomyLevel: row.autonomyLevel as AutonomyLevel,
+    params: parseJson<AgentPendingActionParams>(row.paramsJson, {}),
+    reason: row.reason,
+    status: row.status as AgentPendingActionStatus,
+    decidedBy: row.decidedBy,
+    decidedAt: row.decidedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 export async function getAgentRecommendationOutcomeSummary(
@@ -3676,19 +3927,22 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,
     slopBand: row.slopBand,
+    mergeAttemptCount: row.mergeAttemptCount,
+    mergeBlockedSha: row.mergeBlockedSha,
+    mergeBlockedReason: row.mergeBlockedReason,
   };
 }
 
 /**
- * Persist the latest deterministic slop assessment onto an existing cached PR row. Kept separate from the
- * GitHub-sync upsert (whose SET clause never touches these columns) so a later sync cannot clobber the
- * score. A no-op when the PR row does not exist yet — the sync upsert creates it first.
+ * Persist or clear the latest deterministic slop assessment on an existing cached PR row. Kept separate
+ * from the GitHub-sync upsert (whose SET clause never touches these columns) so a later sync cannot
+ * clobber the score. A no-op when the PR row does not exist yet — the sync upsert creates it first.
  */
 export async function updatePullRequestSlopAssessment(
   env: Env,
   repoFullName: string,
   pullNumber: number,
-  assessment: { slopRisk: number; slopBand: string },
+  assessment: { slopRisk: number | null; slopBand: string | null },
 ): Promise<void> {
   const db = getDb(env.DB);
   await db
@@ -4959,6 +5213,14 @@ function parsePublicSurface(value: string): RepositorySettings["publicSurface"] 
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
   return normalizeCommandAuthorizationPolicy(parseJson<unknown>(value, null)).policy;
+}
+
+function parseAutonomyPolicy(value: string): AutonomyPolicy {
+  return normalizeAutonomyPolicy(parseJson<unknown>(value, null));
+}
+
+function parseAutoMaintainPolicy(value: string): AutoMaintainPolicy {
+  return normalizeAutoMaintainPolicy(parseJson<unknown>(value, null));
 }
 
 function parseSyncStatus(value: string): RepoSyncStateRecord["status"] {

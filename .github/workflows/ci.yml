@@ -10,7 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Keep pull requests in one ref-scoped group so newer commits cancel superseded PR runs.
+  # Add github.sha for push runs so distinct main commits do not cancel each other's validation.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}
+  # NB: keep this a literal boolean. An expression here (cancel-in-progress: ${{ ... }}) made GitHub
+  # fail the workflow at startup (startup_failure), so `validate` never reported.
   cancel-in-progress: true
 
 jobs:
@@ -26,14 +30,14 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - name: Check whitespace
         run: git diff --check
       - name: Filter changed paths
         id: filter
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         with:
           filters: |
             backend:
@@ -46,9 +50,9 @@ jobs:
               - 'scripts/**'
               - 'migrations/**'
               - '.github/workflows/**'
-              - '.github/actions/**'
             ui:
               - 'apps/gittensory-ui/**'
+              - 'apps/gittensory-extension/**'
               - 'src/**'
               - 'scripts/write-ui-openapi.ts'
               - 'scripts/build-extension.mjs'
@@ -71,11 +75,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node + install
-        uses: ./.github/actions/npm-setup
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (retry on transient failures)
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::npm ci failed after 3 attempts"
+          exit 1
       - name: Lint workflows
         run: npm run actionlint
       - name: Check migrations
@@ -101,17 +119,34 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           # Full history so Codecov can resolve the merge base for patch coverage.
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node + install
-        uses: ./.github/actions/npm-setup
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (retry on transient failures)
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::npm ci failed after 3 attempts"
+          exit 1
+      - name: Prepare test reports dir
+        run: mkdir -p reports/junit
       - name: Test with coverage (shard ${{ matrix.shard }}/2)
         id: coverage
         env:
           COVERAGE_NO_THRESHOLDS: "1"
+          VITEST_JUNIT_PATH: reports/junit/vitest-shard-${{ matrix.shard }}.xml
         run: npm run test:coverage -- --shard=${{ matrix.shard }}/2
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
@@ -121,10 +156,18 @@ jobs:
           echo "Reproduce locally with the full suite: 'npm run test:coverage' (no sharding)."
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
+          fail_ci_if_error: false
+      - name: Upload Vitest results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./reports/junit/vitest-shard-${{ matrix.shard }}.xml
+          report_type: test_results
           fail_ci_if_error: false
 
   # Worker-pool runtime tests (separate vitest config); split out of `test` so it
@@ -137,11 +180,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node + install
-        uses: ./.github/actions/npm-setup
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (retry on transient failures)
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::npm ci failed after 3 attempts"
+          exit 1
       - name: Worker runtime tests
         run: npm run test:workers
 
@@ -154,11 +211,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node + install
-        uses: ./.github/actions/npm-setup
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (retry on transient failures)
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::npm ci failed after 3 attempts"
+          exit 1
       - name: Build MCP
         run: npm run build:mcp
       - name: MCP package check
@@ -175,11 +246,25 @@ jobs:
       VITE_GITTENSORY_API_ORIGIN: https://gittensory-api.aethereal.dev
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node + install
-        uses: ./.github/actions/npm-setup
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (retry on transient failures)
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::npm ci failed after 3 attempts"
+          exit 1
       - name: OpenAPI drift check
         run: npm run ui:openapi:check
       - name: UI/MCP version audit
@@ -206,7 +291,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Dependency review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:

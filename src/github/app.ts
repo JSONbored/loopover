@@ -37,7 +37,18 @@ function timeoutFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
   return fetch(input, { ...(init ?? {}), signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) });
 }
 
+// In-isolate installation-token cache. GitHub installation tokens are valid ~1h; minting a fresh one on EVERY
+// call (the previous behavior) multiplied GitHub API usage enormously — each review path mints several tokens,
+// and across the sweep + re-reviews that exhausted the hourly rate limit (observed min_remaining=0 → reviews
+// errored → dead-lettered → missed syncs → stale head SHAs). Caching to ~1 mint/hour/installation removes that
+// multiplier. The module-level Map persists across requests handled by the same Worker isolate; a 2-minute
+// safety margin avoids handing out a token that expires mid-request.
+const installationTokenCache = new Map<number, { token: string; expiresAtMs: number }>();
+const TOKEN_SAFETY_MARGIN_MS = 120_000;
+
 export async function createInstallationToken(env: Env, installationId: number): Promise<string> {
+  const cached = installationTokenCache.get(installationId);
+  if (cached && cached.expiresAtMs - TOKEN_SAFETY_MARGIN_MS > Date.now()) return cached.token;
   const jwt = await createAppJwt(env);
   const response = await timeoutFetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",
@@ -47,9 +58,17 @@ export async function createInstallationToken(env: Env, installationId: number):
     const body = await response.text();
     throw new Error(`Failed to create GitHub installation token (${response.status}): ${body.slice(0, 200)}`);
   }
-  const payload = (await response.json()) as { token?: string };
+  const payload = (await response.json()) as { token?: string; expires_at?: string };
   if (!payload.token) throw new Error("GitHub installation token response did not include a token.");
+  const expiresAtMs = payload.expires_at ? Date.parse(payload.expires_at) : Date.now() + 50 * 60_000;
+  installationTokenCache.set(installationId, { token: payload.token, expiresAtMs });
   return payload.token;
+}
+
+/** Test-only: clear the in-isolate installation-token cache so each test starts fresh (the module-level Map
+ *  otherwise leaks a cached token across test cases that share an installation id). */
+export function clearInstallationTokenCacheForTest(): void {
+  installationTokenCache.clear();
 }
 
 export async function getAppInstallation(env: Env, installationId: number): Promise<NonNullable<GitHubWebhookPayload["installation"]>> {
@@ -259,7 +278,7 @@ async function createOrUpdateNamedCheckRun(
         /* v8 ignore next 2 -- Exported check helpers always provide status/conclusion for known-id finalization. */
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-        output: check.output,
+        output: outputForCheckRunUpdate(check.output),
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -282,7 +301,7 @@ async function createOrUpdateNamedCheckRun(
         name: check.name,
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
-        output: check.output,
+        output: outputForCheckRunUpdate(check.output),
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -308,6 +327,12 @@ async function createOrUpdateNamedCheckRun(
     }
     throw error;
   }
+}
+
+function outputForCheckRunUpdate(output: CheckRunOutput): CheckRunOutput {
+  if (!output.annotations || output.annotations.length === 0) return output;
+  const { annotations: _annotations, ...safeOutput } = output;
+  return safeOutput;
 }
 
 function publishedOutcome(data: CheckRunResponse): CheckRunOutcome {

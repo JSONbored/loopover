@@ -23,14 +23,18 @@ import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as ApiIndexRouteImport } from './routes/api.index'
 import { Route as DocsUpstreamDriftRouteImport } from './routes/docs.upstream-drift'
+import { Route as DocsTuningRouteImport } from './routes/docs.tuning'
 import { Route as DocsTroubleshootingRouteImport } from './routes/docs.troubleshooting'
 import { Route as DocsScoreabilityRouteImport } from './routes/docs.scoreability'
 import { Route as DocsQuickstartRouteImport } from './routes/docs.quickstart'
 import { Route as DocsPrivacySecurityRouteImport } from './routes/docs.privacy-security'
+import { Route as DocsOwnerChecklistRouteImport } from './routes/docs.owner-checklist'
 import { Route as DocsMinerWorkflowRouteImport } from './routes/docs.miner-workflow'
+import { Route as DocsMinerQuickstartRouteImport } from './routes/docs.miner-quickstart'
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
 import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
+import { Route as DocsHowReviewsWorkRouteImport } from './routes/docs.how-reviews-work'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
@@ -45,6 +49,7 @@ import { Route as AppMinerRouteImport } from './routes/app.miner'
 import { Route as AppMaintainerRouteImport } from './routes/app.maintainer'
 import { Route as AppDigestRouteImport } from './routes/app.digest'
 import { Route as AppCommandsRouteImport } from './routes/app.commands'
+import { Route as AppAuditRouteImport } from './routes/app.audit'
 import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
 import { Route as ApiOpRouteImport } from './routes/api.$op'
 
@@ -118,6 +123,11 @@ const DocsUpstreamDriftRoute = DocsUpstreamDriftRouteImport.update({
   path: '/upstream-drift',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsTuningRoute = DocsTuningRouteImport.update({
+  id: '/tuning',
+  path: '/tuning',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsTroubleshootingRoute = DocsTroubleshootingRouteImport.update({
   id: '/troubleshooting',
   path: '/troubleshooting',
@@ -138,9 +148,19 @@ const DocsPrivacySecurityRoute = DocsPrivacySecurityRouteImport.update({
   path: '/privacy-security',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsOwnerChecklistRoute = DocsOwnerChecklistRouteImport.update({
+  id: '/owner-checklist',
+  path: '/owner-checklist',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsMinerWorkflowRoute = DocsMinerWorkflowRouteImport.update({
   id: '/miner-workflow',
   path: '/miner-workflow',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsMinerQuickstartRoute = DocsMinerQuickstartRouteImport.update({
+  id: '/miner-quickstart',
+  path: '/miner-quickstart',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsMcpClientsRoute = DocsMcpClientsRouteImport.update({
@@ -159,6 +179,11 @@ const DocsMaintainerInstallTrustRoute =
     path: '/maintainer-install-trust',
     getParentRoute: () => DocsRoute,
   } as any)
+const DocsHowReviewsWorkRoute = DocsHowReviewsWorkRouteImport.update({
+  id: '/how-reviews-work',
+  path: '/how-reviews-work',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsGithubAppRoute = DocsGithubAppRouteImport.update({
   id: '/github-app',
   path: '/github-app',
@@ -229,6 +254,11 @@ const AppCommandsRoute = AppCommandsRouteImport.update({
   path: '/commands',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAuditRoute = AppAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAnalyticsRoute = AppAnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -253,6 +283,7 @@ export interface FileRoutesByFullPath {
   '/roadmap': typeof RoadmapRoute
   '/api/$op': typeof ApiOpRoute
   '/app/analytics': typeof AppAnalyticsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/commands': typeof AppCommandsRoute
   '/app/digest': typeof AppDigestRoute
   '/app/maintainer': typeof AppMaintainerRoute
@@ -267,14 +298,18 @@ export interface FileRoutesByFullPath {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
+  '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
+  '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
   '/api/': typeof ApiIndexRoute
   '/app/': typeof AppIndexRoute
@@ -290,6 +325,7 @@ export interface FileRoutesByTo {
   '/roadmap': typeof RoadmapRoute
   '/api/$op': typeof ApiOpRoute
   '/app/analytics': typeof AppAnalyticsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/commands': typeof AppCommandsRoute
   '/app/digest': typeof AppDigestRoute
   '/app/maintainer': typeof AppMaintainerRoute
@@ -304,14 +340,18 @@ export interface FileRoutesByTo {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
+  '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
+  '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
   '/api': typeof ApiIndexRoute
   '/app': typeof AppIndexRoute
@@ -331,6 +371,7 @@ export interface FileRoutesById {
   '/roadmap': typeof RoadmapRoute
   '/api/$op': typeof ApiOpRoute
   '/app/analytics': typeof AppAnalyticsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/commands': typeof AppCommandsRoute
   '/app/digest': typeof AppDigestRoute
   '/app/maintainer': typeof AppMaintainerRoute
@@ -345,14 +386,18 @@ export interface FileRoutesById {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
+  '/docs/miner-quickstart': typeof DocsMinerQuickstartRoute
   '/docs/miner-workflow': typeof DocsMinerWorkflowRoute
+  '/docs/owner-checklist': typeof DocsOwnerChecklistRoute
   '/docs/privacy-security': typeof DocsPrivacySecurityRoute
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
+  '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
   '/api/': typeof ApiIndexRoute
   '/app/': typeof AppIndexRoute
@@ -373,6 +418,7 @@ export interface FileRouteTypes {
     | '/roadmap'
     | '/api/$op'
     | '/app/analytics'
+    | '/app/audit'
     | '/app/commands'
     | '/app/digest'
     | '/app/maintainer'
@@ -387,14 +433,18 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
+    | '/docs/owner-checklist'
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
     | '/docs/troubleshooting'
+    | '/docs/tuning'
     | '/docs/upstream-drift'
     | '/api/'
     | '/app/'
@@ -410,6 +460,7 @@ export interface FileRouteTypes {
     | '/roadmap'
     | '/api/$op'
     | '/app/analytics'
+    | '/app/audit'
     | '/app/commands'
     | '/app/digest'
     | '/app/maintainer'
@@ -424,14 +475,18 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
+    | '/docs/owner-checklist'
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
     | '/docs/troubleshooting'
+    | '/docs/tuning'
     | '/docs/upstream-drift'
     | '/api'
     | '/app'
@@ -450,6 +505,7 @@ export interface FileRouteTypes {
     | '/roadmap'
     | '/api/$op'
     | '/app/analytics'
+    | '/app/audit'
     | '/app/commands'
     | '/app/digest'
     | '/app/maintainer'
@@ -464,14 +520,18 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
+    | '/docs/miner-quickstart'
     | '/docs/miner-workflow'
+    | '/docs/owner-checklist'
     | '/docs/privacy-security'
     | '/docs/quickstart'
     | '/docs/scoreability'
     | '/docs/troubleshooting'
+    | '/docs/tuning'
     | '/docs/upstream-drift'
     | '/api/'
     | '/app/'
@@ -591,6 +651,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsUpstreamDriftRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/tuning': {
+      id: '/docs/tuning'
+      path: '/tuning'
+      fullPath: '/docs/tuning'
+      preLoaderRoute: typeof DocsTuningRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/troubleshooting': {
       id: '/docs/troubleshooting'
       path: '/troubleshooting'
@@ -619,11 +686,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsPrivacySecurityRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/owner-checklist': {
+      id: '/docs/owner-checklist'
+      path: '/owner-checklist'
+      fullPath: '/docs/owner-checklist'
+      preLoaderRoute: typeof DocsOwnerChecklistRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/miner-workflow': {
       id: '/docs/miner-workflow'
       path: '/miner-workflow'
       fullPath: '/docs/miner-workflow'
       preLoaderRoute: typeof DocsMinerWorkflowRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/miner-quickstart': {
+      id: '/docs/miner-quickstart'
+      path: '/miner-quickstart'
+      fullPath: '/docs/miner-quickstart'
+      preLoaderRoute: typeof DocsMinerQuickstartRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/mcp-clients': {
@@ -645,6 +726,13 @@ declare module '@tanstack/react-router' {
       path: '/maintainer-install-trust'
       fullPath: '/docs/maintainer-install-trust'
       preLoaderRoute: typeof DocsMaintainerInstallTrustRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/how-reviews-work': {
+      id: '/docs/how-reviews-work'
+      path: '/how-reviews-work'
+      fullPath: '/docs/how-reviews-work'
+      preLoaderRoute: typeof DocsHowReviewsWorkRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/github-app': {
@@ -745,6 +833,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCommandsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/audit': {
+      id: '/app/audit'
+      path: '/audit'
+      fullPath: '/app/audit'
+      preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/analytics': {
       id: '/app/analytics'
       path: '/analytics'
@@ -776,6 +871,7 @@ const ApiRouteWithChildren = ApiRoute._addFileChildren(ApiRouteChildren)
 
 interface AppRouteChildren {
   AppAnalyticsRoute: typeof AppAnalyticsRoute
+  AppAuditRoute: typeof AppAuditRoute
   AppCommandsRoute: typeof AppCommandsRoute
   AppDigestRoute: typeof AppDigestRoute
   AppMaintainerRoute: typeof AppMaintainerRoute
@@ -791,6 +887,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAnalyticsRoute: AppAnalyticsRoute,
+  AppAuditRoute: AppAuditRoute,
   AppCommandsRoute: AppCommandsRoute,
   AppDigestRoute: AppDigestRoute,
   AppMaintainerRoute: AppMaintainerRoute,
@@ -811,14 +908,18 @@ interface DocsRouteChildren {
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
+  DocsHowReviewsWorkRoute: typeof DocsHowReviewsWorkRoute
   DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
+  DocsMinerQuickstartRoute: typeof DocsMinerQuickstartRoute
   DocsMinerWorkflowRoute: typeof DocsMinerWorkflowRoute
+  DocsOwnerChecklistRoute: typeof DocsOwnerChecklistRoute
   DocsPrivacySecurityRoute: typeof DocsPrivacySecurityRoute
   DocsQuickstartRoute: typeof DocsQuickstartRoute
   DocsScoreabilityRoute: typeof DocsScoreabilityRoute
   DocsTroubleshootingRoute: typeof DocsTroubleshootingRoute
+  DocsTuningRoute: typeof DocsTuningRoute
   DocsUpstreamDriftRoute: typeof DocsUpstreamDriftRoute
   DocsIndexRoute: typeof DocsIndexRoute
 }
@@ -828,14 +929,18 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,
+  DocsHowReviewsWorkRoute: DocsHowReviewsWorkRoute,
   DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,
   DocsMcpClientsRoute: DocsMcpClientsRoute,
+  DocsMinerQuickstartRoute: DocsMinerQuickstartRoute,
   DocsMinerWorkflowRoute: DocsMinerWorkflowRoute,
+  DocsOwnerChecklistRoute: DocsOwnerChecklistRoute,
   DocsPrivacySecurityRoute: DocsPrivacySecurityRoute,
   DocsQuickstartRoute: DocsQuickstartRoute,
   DocsScoreabilityRoute: DocsScoreabilityRoute,
   DocsTroubleshootingRoute: DocsTroubleshootingRoute,
+  DocsTuningRoute: DocsTuningRoute,
   DocsUpstreamDriftRoute: DocsUpstreamDriftRoute,
   DocsIndexRoute: DocsIndexRoute,
 }

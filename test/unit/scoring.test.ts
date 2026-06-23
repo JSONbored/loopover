@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getLatestScoringModelSnapshot } from "../../src/db/repositories";
-import { DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot } from "../../src/scoring/model";
+import { getLatestScoringModelSnapshot, listUpstreamDriftReports, persistScoringModelSnapshot } from "../../src/db/repositories";
+import { DEFAULT_ISSUE_DISCOVERY_SHARE, DEFAULT_SCORING_CONSTANTS, detectActiveModel, findUnmodeledUpstreamConstants, getOrCreateScoringModelSnapshot, isTimeDecayEnabled, parsePythonNumberConstants, refreshScoringModelSnapshot, SCORING_SNAPSHOT_STALE_MS, scoringSnapshotStalenessWarning } from "../../src/scoring/model";
 import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
+import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -71,6 +72,75 @@ IGNORED = "not numeric"
     expect(detectActiveModel({})).toBe("unknown");
   });
 
+  it("parses underscore separators, floats, and scientific notation without truncating (#810)", () => {
+    const parsed = parsePythonNumberConstants(`
+CONTRIBUTION_SCORE_FOR_FULL_BONUS = 1_500_000
+SRC_TOK_SATURATION_SCALE = 5.8e1
+MERGED_PR_BASE_SCORE = 1e-9
+OSS_EMISSION_SHARE = 0.90
+`);
+    // The previous /[-+]?\\d+(?:\\.\\d+)?/ regex stopped at `_`/`e`: 1_500_000 -> 1, 5.8e1 -> 5.8, 1e-9 -> 1.
+    expect(parsed.CONTRIBUTION_SCORE_FOR_FULL_BONUS).toBe(1500000);
+    expect(parsed.SRC_TOK_SATURATION_SCALE).toBe(58);
+    expect(parsed.MERGED_PR_BASE_SCORE).toBe(1e-9);
+    expect(parsed.OSS_EMISSION_SHARE).toBe(0.9);
+  });
+
+  it("parses underscore separators in the fractional part of upstream constants (#992)", () => {
+    const parsed = parsePythonNumberConstants(
+      `
+RATE = 0.000_001
+SCALE = 3.14_15
+VAL = 1_000.000_5
+BARE = .5_0
+`,
+      { knownOnly: false },
+    );
+    expect(parsed.RATE).toBe(0.000001);
+    expect(parsed.SCALE).toBe(3.1415);
+    expect(parsed.VAL).toBe(1000.0005);
+    expect(parsed.BARE).toBe(0.5);
+  });
+
+  it("flags only scoring snapshots older than the freshness window as stale (#810)", () => {
+    const now = Date.parse("2026-06-21T12:00:00.000Z");
+    const justFresh = new Date(now - SCORING_SNAPSHOT_STALE_MS + 60_000).toISOString();
+    const clearlyStale = new Date(now - SCORING_SNAPSHOT_STALE_MS - 60_000).toISOString();
+    expect(scoringSnapshotStalenessWarning({ fetchedAt: justFresh }, now)).toBeNull();
+    expect(scoringSnapshotStalenessWarning({ fetchedAt: clearlyStale }, now)).toMatch(/stale/i);
+  });
+
+  it("appends a staleness warning when getOrCreateScoringModelSnapshot serves an old snapshot (#810)", async () => {
+    const env = createTestEnv();
+    await persistScoringModelSnapshot(env, snapshot);
+    const served = await getOrCreateScoringModelSnapshot(env);
+    expect(served.id).toBe(snapshot.id);
+    expect(served.warnings.some((warning) => /stale/i.test(warning))).toBe(true);
+  });
+
+  it("does not add a staleness warning when getOrCreate refreshes a fresh snapshot (#810)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+    const served = await getOrCreateScoringModelSnapshot(env);
+    expect(served.warnings.some((warning) => /stale/i.test(warning))).toBe(false);
+  });
+
+  it("surfaces snapshot warnings in score previews (#810)", () => {
+    const warning = "Scoring constants snapshot is stale; preview scores may use old constants.";
+    const preview = buildScorePreview({
+      repo,
+      input: { repoFullName: repo.fullName, sourceTokenScore: 10 },
+      snapshot: { ...snapshot, warnings: [warning] },
+    });
+
+    expect(preview.warnings).toContain(warning);
+  });
+
   it("prefers exponential saturation when mixed upstream constants are present", () => {
     const parsed = parsePythonNumberConstants(`
 MERGED_PR_BASE_SCORE = 25
@@ -98,10 +168,132 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     ).not.toContain("ISSUES_TREASURY_EMISSION_SHARE");
   });
 
+  it("models upstream review-collateral, non-code line cap, and issue-discovery defaults (#809)", () => {
+    expect(DEFAULT_SCORING_CONSTANTS).toMatchObject({
+      MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0,
+      MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300,
+      DEFAULT_ISSUE_DISCOVERY_SHARE,
+    });
+    expect(DEFAULT_ISSUE_DISCOVERY_SHARE).toBe(0.5);
+    expect(
+      findUnmodeledUpstreamConstants(`
+MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER = 2.0
+MAX_LINES_SCORED_FOR_NON_CODE_EXT = 300
+DEFAULT_ISSUE_DISCOVERY_SHARE = 0.5
+NOVELTY_BONUS_SCALAR = 3
+`),
+    ).toEqual(["NOVELTY_BONUS_SCALAR"]);
+
+    const collateralPreview = buildScorePreview({
+      repo,
+      snapshot: {
+        ...snapshot,
+        constants: {
+          ...snapshot.constants,
+          MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0,
+          OPEN_PR_COLLATERAL_PERCENT: 0.2,
+          REVIEW_PENALTY_RATE: 0.15,
+        },
+      },
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 60,
+        sourceLines: 50,
+        changesRequestedCount: 4,
+        openPrCount: 1,
+        credibility: 1,
+      },
+    });
+    expect(collateralPreview.gates.reviewCollateralMultiplier).toBe(1.6);
+    expect(collateralPreview.gates.collateralFraction).toBeCloseTo(0.32, 5);
+    expect(collateralPreview.scoreEstimate.reviewPenaltyMultiplier).toBe(0.4);
+
+    const cappedCollateral = buildScorePreview({
+      repo,
+      snapshot: {
+        ...snapshot,
+        constants: {
+          ...snapshot.constants,
+          MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER: 2.0,
+          REVIEW_PENALTY_RATE: 0.15,
+        },
+      },
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 60,
+        sourceLines: 50,
+        changesRequestedCount: 10,
+        openPrCount: 1,
+        credibility: 1,
+      },
+    });
+    expect(cappedCollateral.gates.reviewCollateralMultiplier).toBe(2);
+    expect(cappedCollateral.gates.collateralFraction).toBeCloseTo(0.4, 5);
+
+    const uncappedNonCode = buildScorePreview({
+      repo,
+      snapshot: {
+        ...snapshot,
+        constants: { ...snapshot.constants, MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300, CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500, MAX_CONTRIBUTION_BONUS: 25 },
+      },
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 100,
+        testTokenScore: 0,
+        nonCodeTokenScore: 600,
+        sourceLines: 100,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    const cappedNonCode = buildScorePreview({
+      repo,
+      snapshot: {
+        ...snapshot,
+        constants: { ...snapshot.constants, MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300, CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500, MAX_CONTRIBUTION_BONUS: 25 },
+      },
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 100,
+        testTokenScore: 0,
+        nonCodeTokenScore: 600,
+        nonCodeLines: 600,
+        sourceLines: 100,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    expect(uncappedNonCode.scoreEstimate.contributionBonus).toBeGreaterThan(cappedNonCode.scoreEstimate.contributionBonus);
+    expect(cappedNonCode.scoreEstimate.contributionBonus).toBeCloseTo(
+      buildScorePreview({
+        repo,
+        snapshot: {
+          ...snapshot,
+          constants: { ...snapshot.constants, MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300, CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500, MAX_CONTRIBUTION_BONUS: 25 },
+        },
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 100,
+          testTokenScore: 0,
+          nonCodeTokenScore: 300,
+          nonCodeLines: 300,
+          sourceLines: 100,
+          openPrCount: 0,
+          credibility: 1,
+        },
+      }).scoreEstimate.contributionBonus,
+      5,
+    );
+  });
+
   it("detects the active model from fetched constants before default fallback constants", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    const fetchedUrls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      fetchedUrls.push(url);
       if (url.includes("constants.py")) {
         return new Response("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n");
       }
@@ -117,6 +309,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(refreshed.constants.MAX_CONTRIBUTION_BONUS).toBe(5);
     expect(refreshed.constants.SRC_TOK_SATURATION_SCALE).toBe(58);
     expect(refreshed.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("density-era indicators")]));
+    expect(fetchedUrls).toContain("https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/constants.py");
   });
 
   it("warns when fetched constants do not identify a known active model", async () => {
@@ -145,10 +338,63 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(unmodeled).not.toContain("TIME_DECAY_GRACE_PERIOD_HOURS"); // modeled as of #703
   });
 
-  it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
-    const env = createTestEnv();
+  it("excludes operational upstream constants from unmodeled scoring drift (#809)", () => {
+    const operationalOnly = findUnmodeledUpstreamConstants(`
+SECONDS_PER_DAY = 86400
+SECONDS_PER_HOUR = 3600
+GITHUB_HTTP_TIMEOUT_SECONDS = 15
+MIRROR_HTTP_TIMEOUT_SECONDS = 30
+MIRROR_MAX_ATTEMPTS = 3
+TREE_SITTER_PARSE_TIMEOUT_MICROS = 5_000_000
+SCORING_SUBPROCESS_BUDGET_S = 120
+MAX_FILE_SIZE_BYTES = 1_000_000
+RECYCLE_UID = 0
+ISSUES_TREASURY_UID = 111
+MAX_ISSUE_ID = 999_999
+`);
+    expect(operationalOnly).toEqual([]);
+
+    const withScoringGap = findUnmodeledUpstreamConstants(`
+SECONDS_PER_DAY = 86400
+GITHUB_HTTP_TIMEOUT_SECONDS = 15
+NOVELTY_BONUS_SCALAR = 3
+`);
+    expect(withScoringGap).toEqual(["NOVELTY_BONUS_SCALAR"]);
+  });
+
+  it("truncates the unmodeled-constants warning when upstream defines more than 12 (#809)", async () => {
+    const env = createTestEnv({
+      GITTENSOR_UPSTREAM_REPO: "custom/upstream",
+      GITTENSOR_UPSTREAM_REF: "staging",
+    });
+    const manyUnmodeled = Array.from({ length: 15 }, (_, index) => `UNMODELED_CONST_${String(index).padStart(2, "0")} = ${index + 1}`).join("\n");
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      if (url.includes("constants.py")) return new Response(manyUnmodeled);
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+    const warning = refreshed.warnings.find((entry) => /does not yet model/i.test(entry));
+    expect(warning).toMatch(/UNMODELED_CONST_00/);
+    expect(warning).toMatch(/UNMODELED_CONST_11/);
+    expect(warning).not.toMatch(/UNMODELED_CONST_12/);
+    expect(warning).toMatch(/…/);
+    expect(refreshed.payload.constants).toMatchObject({
+      unmodeledUpstreamConstants: expect.arrayContaining(["UNMODELED_CONST_00", "UNMODELED_CONST_14"]),
+    });
+  });
+
+  it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
+    const env = createTestEnv({
+      GITTENSOR_UPSTREAM_REPO: "custom/upstream",
+      GITTENSOR_UPSTREAM_REF: "staging",
+    });
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      fetchedUrls.push(url);
       if (url.includes("constants.py")) return new Response("SRC_TOK_SATURATION_SCALE = 58.0\nNOVELTY_BONUS_SCALAR = 3\n");
       if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
       return new Response("not found", { status: 404 });
@@ -156,8 +402,19 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
 
     const refreshed = await refreshScoringModelSnapshot(env);
 
+    expect(refreshed.sourceUrl).toBe("https://raw.githubusercontent.com/custom/upstream/staging/gittensor/constants.py");
+    expect(fetchedUrls).toContain("https://raw.githubusercontent.com/custom/upstream/staging/gittensor/constants.py");
     expect(refreshed.warnings.join(" ")).toMatch(/does not yet model.*NOVELTY_BONUS_SCALAR/);
     expect(refreshed.payload.constants).toMatchObject({ unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"] });
+    const fingerprint = await unmodeledScoringConstantsFingerprint();
+    expect((await listUpstreamDriftReports(env, 10)).find((report) => report.fingerprint === fingerprint)).toMatchObject({
+      status: "open",
+      affectedAreas: ["scoring_model"],
+      payload: expect.objectContaining({
+        unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"],
+        source: { repo: "custom/upstream", ref: "staging", commitSha: null },
+      }),
+    });
   });
 
   it("uses saturation math as the active private preview model", () => {
@@ -178,6 +435,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
         labels: ["bug"],
         linkedIssueMode: "standard",
         linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
         sourceTokenScore: 58,
         totalTokenScore: 1500,
         sourceLines: 120,
@@ -260,6 +518,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
         labels: ["bug"],
         linkedIssueMode: "standard",
         linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [100] },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
         sourceTokenScore: 60,
         totalTokenScore: 90,
         sourceLines: 50,
@@ -294,6 +553,38 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     });
 
     expect(preview.scoreEstimate.labelMultiplier).toBe(1);
+  });
+
+  it("applies penalty label multipliers instead of flooring them to 1 (#994)", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    const penaltyOnly = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["refactor"] } });
+    const unmatched = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["unmatched"] } });
+    const bonusAndPenalty = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["bug", "refactor"] } });
+    const bonusOnly = buildScorePreview({ repo, snapshot, input: { ...baseInput, labels: ["bug"] } });
+    const customFallback = buildScorePreview({
+      repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier: 1.05, labelMultipliers: { bug: 1.2 } } },
+      snapshot,
+      input: { ...baseInput, labels: ["unmatched"] },
+    });
+
+    expect(penaltyOnly.scoreEstimate.labelMultiplier).toBe(0.5);
+    expect(unmatched.scoreEstimate.labelMultiplier).toBe(1);
+    expect(bonusAndPenalty.scoreEstimate.labelMultiplier).toBe(1.2);
+    expect(bonusOnly.scoreEstimate.labelMultiplier).toBe(1.2);
+    expect(customFallback.scoreEstimate.labelMultiplier).toBe(1.05);
+    expect(penaltyOnly.scoreEstimate.estimatedMergedScore).toBeLessThan(bonusOnly.scoreEstimate.estimatedMergedScore);
+    expect(penaltyOnly.scoreEstimate.estimatedMergedScore).toBeCloseTo(
+      bonusOnly.scoreEstimate.estimatedMergedScore * (0.5 / 1.2),
+      5,
+    );
   });
 
   it("gates linked-issue assumptions with branch eligibility evidence", () => {
@@ -345,7 +636,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(ineligible.recommendation.actions).toEqual(expect.arrayContaining([expect.stringMatching(/eligible branch/i)]));
     expect(missing.branchEligibility).toMatchObject({ required: true, status: "unknown", evidence: "missing", source: "missing" });
     expect(missing.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "branch_eligibility_missing", severity: "context" })]));
-    expect(missing.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(missing.scoreEstimate.issueMultiplier).toBe(1);
     expect(unknown.branchEligibility).toMatchObject({ required: true, status: "unknown", evidence: "provided", source: "user_supplied", stale: true });
     expect(unknown.branchEligibility.warnings.join(" ")).toMatch(/unknown.*stale/i);
     expect(unknown.recommendation.actions).toEqual(expect.arrayContaining([expect.stringMatching(/refresh branch\/base eligibility metadata/i)]));
@@ -370,7 +661,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const validated = buildScorePreview({
       repo,
       snapshot,
-      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] } },
+      input: { ...baseInput, linkedIssueContext: { status: "validated", source: "official_mirror", issueNumbers: [7], solvedByPullRequests: [101] }, branchEligibility: { status: "eligible", source: "github_metadata" } },
     });
     const invalid = buildScorePreview({
       repo,
@@ -390,7 +681,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const defaultValidated = buildScorePreview({
       repo,
       snapshot,
-      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] } },
+      input: { ...baseInput, linkedIssueContext: { source: "user_supplied", issueNumbers: [10], solvedByPullRequests: [110] }, branchEligibility: { status: "eligible", source: "github_metadata" } },
     });
     const validatedWithoutSolverNumber = buildScorePreview({
       repo,
@@ -436,8 +727,8 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(raw.scoreEstimate.issueMultiplier).toBe(1);
     expect(raw.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "linked_issue_unvalidated", severity: "context" })]));
     const rawFixedScenario = raw.scenarioPreviews.find((scenario) => scenario.name === "linkedIssueFixed");
-    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1.33 });
-    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toBe("Linked issue context is solved-by-PR validated for issue(s) #7.");
+    expect(rawFixedScenario?.linkedIssueMultiplier).toMatchObject({ status: "validated", appliedMultiplier: 1 });
+    expect(rawFixedScenario?.linkedIssueMultiplier.reason).toMatch(/Branch eligibility evidence is missing/);
     expect(validated.linkedIssueMultiplier).toMatchObject({ status: "validated", eligible: true, solvedByPullRequests: [101], appliedMultiplier: 1.33 });
     expect(validated.scoreEstimate.issueMultiplier).toBe(1.33);
     expect(invalid.linkedIssueMultiplier).toMatchObject({ status: "invalid", eligible: false, appliedMultiplier: 1 });
@@ -506,7 +797,7 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     expect(afterPending?.source).toBe("user_supplied");
     expect(afterPending?.gates.credibilityObserved).toBe(0.8);
     expect(afterPending?.effectiveEstimatedScore).toBeGreaterThan(0);
-    expect(linkedIssueFixed?.scoreEstimate.issueMultiplier).toBe(1.33);
+    expect(linkedIssueFixed?.scoreEstimate.issueMultiplier).toBe(1);
     expect(JSON.stringify(preview)).not.toMatch(/guaranteed payout|wallet|hotkey|farming/i);
   });
 
@@ -738,6 +1029,149 @@ MAX_CODE_DENSITY_MULTIPLIER = 1.15
     const thrownFallback = await refreshScoringModelSnapshot(createTestEnv());
     expect(thrownFallback.sourceKind).toBe("fallback");
     expect(thrownFallback.activeModel).toBe("unknown");
+  });
+
+  describe("issue-discovery scoring constants (#808)", () => {
+    it("TEST_FILE_CONTRIBUTION_WEIGHT weights test tokens at 0.05× when totalTokenScore is derived from components", () => {
+      const snapshotWith808 = { ...snapshot, constants: { ...snapshot.constants, TEST_FILE_CONTRIBUTION_WEIGHT: 0.05 } };
+      const base = buildScorePreview({
+        repo,
+        snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      // With testTokenScore=200, the derived total should be 60 + 0.05*200 = 70 (not 260).
+      const withTest = buildScorePreview({
+        repo,
+        snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, testTokenScore: 200, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      // Contribution bonus ramp is based on totalTokenScore; 70 vs 60 produces a slightly higher bonus.
+      expect(withTest.scoreEstimate.contributionBonus).toBeGreaterThan(base.scoreEstimate.contributionBonus);
+      // But an explicit totalTokenScore overrides the weight completely — caller-supplied value is honoured as-is.
+      const explicit = buildScorePreview({
+        repo,
+        snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, testTokenScore: 200, totalTokenScore: 260, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      // explicit 260 is LARGER than weighted 70; contribution bonus must be greater.
+      expect(explicit.scoreEstimate.contributionBonus).toBeGreaterThan(withTest.scoreEstimate.contributionBonus);
+    });
+
+    it("open-issue spam gate blocks scoring when openIssueCount exceeds the threshold", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: {
+          ...snapshot.constants,
+          OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2,
+          OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300,
+          MAX_OPEN_ISSUE_THRESHOLD: 30,
+        },
+      };
+      const baseInput = { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0 };
+
+      // At the threshold (2) — gate passes.
+      const atThreshold = buildScorePreview({ repo, snapshot: snapshotWith808, input: { ...baseInput, openIssueCount: 2 } });
+      expect(atThreshold.gates.openIssueThreshold).toBe(2);
+      expect(atThreshold.gates.openIssueCount).toBe(2);
+      expect(atThreshold.scoreEstimate.openIssueMultiplier).toBe(1);
+      expect(atThreshold.effectiveEstimatedScore).toBeGreaterThan(0);
+
+      // One over the threshold — gate blocks.
+      const overThreshold = buildScorePreview({ repo, snapshot: snapshotWith808, input: { ...baseInput, openIssueCount: 3 } });
+      expect(overThreshold.scoreEstimate.openIssueMultiplier).toBe(0);
+      expect(overThreshold.effectiveEstimatedScore).toBe(0);
+      expect(overThreshold.blockedBy.some((b) => b.code === "open_issue_threshold")).toBe(true);
+      expect(overThreshold.blockedBy.find((b) => b.code === "open_issue_threshold")?.severity).toBe("blocker");
+    });
+
+    it("open-issue threshold scales with established merged-history token score", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 30 },
+      };
+      // No history: base 2 + floor(0/300) = 2.
+      const noHistory = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0, openIssueCount: 3 },
+      });
+      expect(noHistory.gates.openIssueThreshold).toBe(2);
+      expect(noHistory.scoreEstimate.openIssueMultiplier).toBe(0);
+
+      // With 900 tokens of history: 2 + floor(900/300) = 5.
+      const withHistory = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 900, openIssueCount: 3 },
+      });
+      expect(withHistory.gates.openIssueThreshold).toBe(5);
+      expect(withHistory.scoreEstimate.openIssueMultiplier).toBe(1); // 3 <= 5
+    });
+
+    it("open-issue gate defaults to 0 issues when openIssueCount is not supplied (never blocks)", () => {
+      const preview = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      expect(preview.gates.openIssueCount).toBe(0);
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(1);
+    });
+
+    it("MAX_OPEN_ISSUE_THRESHOLD caps the issue allowance even with a very large token history", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 5 },
+      };
+      // Even with a huge token history, the threshold cannot exceed MAX_OPEN_ISSUE_THRESHOLD (5).
+      const preview = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 90000, openIssueCount: 6 },
+      });
+      expect(preview.gates.openIssueThreshold).toBe(5);
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(0); // 6 > 5
+    });
+
+    it("bestReasonableCase clears the open-issue gate and surfaces an open_issue_threshold gate delta (#808)", () => {
+      const snapshotWith808 = {
+        ...snapshot,
+        constants: { ...snapshot.constants, OPEN_ISSUE_SPAM_BASE_THRESHOLD: 2, OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT: 300, MAX_OPEN_ISSUE_THRESHOLD: 30 },
+      };
+      // Current state is over the threshold (3 > 2) so the gate blocks the live preview.
+      const preview = buildScorePreview({
+        repo, snapshot: snapshotWith808,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1, existingContributorTokenScore: 0, openIssueCount: 3 },
+      });
+      expect(preview.scoreEstimate.openIssueMultiplier).toBe(0);
+      expect(preview.effectiveEstimatedScore).toBe(0);
+      // The best-reasonable-case scenario projects the open-issue count down to the threshold (2),
+      // clearing the gate so the underlying potential is visible there.
+      const bestReasonable = preview.scenarioPreviews.find((scenario) => scenario.name === "bestReasonableCase");
+      expect(bestReasonable?.gates.openIssueCount).toBe(2);
+      expect(bestReasonable?.gates.openIssueThreshold).toBe(2);
+      expect(bestReasonable?.scoreEstimate.openIssueMultiplier).toBe(1);
+      expect(bestReasonable?.effectiveEstimatedScore).toBeGreaterThan(0);
+      // Because the multiplier differs between current and best-reasonable-case, an open_issue_threshold
+      // gate delta must be emitted — this is the branch previously missing coverage.
+      expect(preview.gateDeltas).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "open_issue_threshold" })]));
+      const issueDelta = preview.gateDeltas.find((delta) => delta.gate === "open_issue_threshold");
+      expect(issueDelta?.current).toContain("multiplier 0");
+      expect(issueDelta?.projected).toContain("multiplier 1");
+    });
+
+    it("all nine issue-discovery constants are modeled and do not surface as upstream drift warnings (#808)", () => {
+      const upstreamSource = [
+        "TEST_FILE_CONTRIBUTION_WEIGHT = 0.05",
+        "MIN_VALID_MERGED_PRS = 3",
+        "MIN_VALID_SOLVED_ISSUES = 3",
+        "MIN_ISSUE_CREDIBILITY = 0.8",
+        "MIN_TOKEN_SCORE_FOR_VALID_ISSUE = 5",
+        "OPEN_ISSUE_SPAM_BASE_THRESHOLD = 2",
+        "OPEN_ISSUE_SPAM_TOKEN_SCORE_PER_SLOT = 300",
+        "MAX_OPEN_ISSUE_THRESHOLD = 30",
+        "PR_LOOKBACK_DAYS = 30",
+      ].join("\n");
+      const unmodeled = findUnmodeledUpstreamConstants(upstreamSource);
+      expect(unmodeled).toEqual([]);
+    });
   });
 
   describe("upstream time-decay (#703)", () => {

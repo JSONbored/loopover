@@ -104,6 +104,72 @@ function base64Encode(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// ─── Draft user-token encryption (AES-256-GCM, single-string envelope) ───────────────────────────
+// Ported from the reviewbot public draft-submission flow (GITTENSORY_REVIEW_DRAFT). Distinct from
+// encryptSecret/decryptSecret above: this packs salt+iv+ciphertext into ONE `.`-joined base64url
+// string so a single TEXT column (submission_user_tokens.encrypted_token) holds the full envelope,
+// and derives the AES key via HKDF (not PBKDF2). The user's short-lived GitHub OAuth token is the
+// only plaintext stored, and only until the fork PR is opened (then it is consumed). Never logged.
+
+function base64UrlDecode(value: string): Uint8Array {
+  const padded = `${value.replace(/-/g, "+").replace(/_/g, "/")}${"=".repeat((4 - (value.length % 4)) % 4)}`;
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+async function deriveDraftTokenAesKey(secret: string, salt: Uint8Array): Promise<CryptoKey> {
+  const keyMaterial = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt, info: new TextEncoder().encode("gittensory:draft-user-token:v1") },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+/** AES-256-GCM encrypt -> base64url(salt).base64url(iv).base64url(ciphertext). */
+export async function encryptDraftToken(secret: string, plaintext: string): Promise<string> {
+  if (!secret) throw new Error("missing_encryption_secret");
+  const salt = new Uint8Array(16);
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(salt);
+  crypto.getRandomValues(iv);
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await deriveDraftTokenAesKey(secret, salt), new TextEncoder().encode(plaintext));
+  return `${base64UrlEncode(salt)}.${base64UrlEncode(iv)}.${base64UrlEncode(new Uint8Array(ciphertext))}`;
+}
+
+/** Decrypt a payload produced by {@link encryptDraftToken}. Throws on any tamper/mismatch. */
+export async function decryptDraftToken(secret: string, encrypted: string): Promise<string> {
+  if (!secret) throw new Error("missing_encryption_secret");
+  const parts = encrypted.split(".");
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) throw new Error("Invalid encrypted payload.");
+  try {
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlDecode(parts[1]) },
+      await deriveDraftTokenAesKey(secret, base64UrlDecode(parts[0])),
+      base64UrlDecode(parts[2]),
+    );
+    return new TextDecoder().decode(plaintext);
+  } catch {
+    throw new Error("Invalid encrypted payload.");
+  }
+}
+
+/** Random URL-safe token (default 32 bytes) — used as the OAuth CSRF state for a draft. */
+export function randomDraftToken(bytes = 32): string {
+  const data = new Uint8Array(bytes);
+  crypto.getRandomValues(data);
+  return base64UrlEncode(data);
+}
+
+/** Prefixed opaque id, e.g. `draft_<hex>`. */
+export function newDraftId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
 export function base64UrlEncode(input: Uint8Array | string): string {
   const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
   let binary = "";

@@ -4299,6 +4299,9 @@
                       },
                       "credibilityObserved": {
                         "type": "number"
+                      },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4306,6 +4309,7 @@
                       "openPrThreshold",
                       "openPrCount",
                       "collateralFraction",
+                      "reviewCollateralMultiplier",
                       "credibilityFloor",
                       "credibilityObserved"
                     ]
@@ -4551,6 +4555,9 @@
                       },
                       "credibilityObserved": {
                         "type": "number"
+                      },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4558,6 +4565,7 @@
                       "openPrThreshold",
                       "openPrCount",
                       "collateralFraction",
+                      "reviewCollateralMultiplier",
                       "credibilityFloor",
                       "credibilityObserved"
                     ]
@@ -4803,6 +4811,9 @@
                       },
                       "credibilityObserved": {
                         "type": "number"
+                      },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -4810,6 +4821,7 @@
                       "openPrThreshold",
                       "openPrCount",
                       "collateralFraction",
+                      "reviewCollateralMultiplier",
                       "credibilityFloor",
                       "credibilityObserved"
                     ]
@@ -5055,6 +5067,9 @@
                       },
                       "credibilityObserved": {
                         "type": "number"
+                      },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -5062,6 +5077,7 @@
                       "openPrThreshold",
                       "openPrCount",
                       "collateralFraction",
+                      "reviewCollateralMultiplier",
                       "credibilityFloor",
                       "credibilityObserved"
                     ]
@@ -5307,6 +5323,9 @@
                       },
                       "credibilityObserved": {
                         "type": "number"
+                      },
+                      "reviewCollateralMultiplier": {
+                        "type": "number"
                       }
                     },
                     "required": [
@@ -5314,6 +5333,7 @@
                       "openPrThreshold",
                       "openPrCount",
                       "collateralFraction",
+                      "reviewCollateralMultiplier",
                       "credibilityFloor",
                       "credibilityObserved"
                     ]
@@ -6207,6 +6227,9 @@
               },
               "credibilityObserved": {
                 "type": "number"
+              },
+              "reviewCollateralMultiplier": {
+                "type": "number"
               }
             },
             "required": [
@@ -6214,6 +6237,7 @@
               "openPrThreshold",
               "openPrCount",
               "collateralFraction",
+              "reviewCollateralMultiplier",
               "credibilityFloor",
               "credibilityObserved"
             ]
@@ -6455,6 +6479,9 @@
                     },
                     "credibilityObserved": {
                       "type": "number"
+                    },
+                    "reviewCollateralMultiplier": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -6462,6 +6489,7 @@
                     "openPrThreshold",
                     "openPrCount",
                     "collateralFraction",
+                    "reviewCollateralMultiplier",
                     "credibilityFloor",
                     "credibilityObserved"
                   ]
@@ -8025,6 +8053,97 @@
               "advisory",
               "block"
             ]
+          },
+          "autonomy": {
+            "type": "object",
+            "properties": {
+              "review": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "request_changes": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "approve": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "merge": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "close": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "observe",
+                  "suggest",
+                  "propose",
+                  "auto_with_approval",
+                  "auto"
+                ]
+              }
+            }
+          },
+          "autoMaintain": {
+            "type": "object",
+            "properties": {
+              "requireApprovals": {
+                "type": "integer"
+              },
+              "mergeMethod": {
+                "type": "string",
+                "enum": [
+                  "merge",
+                  "squash",
+                  "rebase"
+                ]
+              }
+            },
+            "required": [
+              "requireApprovals",
+              "mergeMethod"
+            ]
+          },
+          "agentPaused": {
+            "type": "boolean"
+          },
+          "agentDryRun": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -12099,6 +12218,127 @@
           "source",
           "stale"
         ]
+      },
+      "PublicStats": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "handled": {
+                "type": "number"
+              },
+              "merged": {
+                "type": "number"
+              },
+              "closed": {
+                "type": "number"
+              },
+              "reversed": {
+                "type": "number"
+              },
+              "accuracyPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "commented": {
+                "type": "number"
+              },
+              "ignored": {
+                "type": "number"
+              },
+              "manual": {
+                "type": "number"
+              },
+              "error": {
+                "type": "number"
+              },
+              "reviewed": {
+                "type": "number"
+              },
+              "filteredPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "minutesSaved": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "handled",
+              "reviewed",
+              "merged",
+              "closed",
+              "commented",
+              "ignored",
+              "manual",
+              "error",
+              "reversed",
+              "filteredPct",
+              "accuracyPct",
+              "minutesSaved"
+            ]
+          },
+          "weekly": {
+            "type": "object",
+            "properties": {
+              "merged": {
+                "type": "number"
+              },
+              "reviewed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "reviewed",
+              "merged"
+            ]
+          },
+          "byProject": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "project": {
+                  "type": "string"
+                },
+                "merged": {
+                  "type": "number"
+                },
+                "closed": {
+                  "type": "number"
+                },
+                "accuracyPct": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "reviewed": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "project",
+                "reviewed",
+                "merged",
+                "closed",
+                "accuracyPct"
+              ]
+            }
+          }
+        },
+        "required": [
+          "generatedAt",
+          "updatedAt",
+          "totals",
+          "weekly",
+          "byProject"
+        ]
       }
     },
     "parameters": {},
@@ -14841,6 +15081,112 @@
           },
           "403": {
             "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/repos/{owner}/{repo}/agent/audit-feed": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Maintainer-scoped agent audit feed (#784): executed actions + approval-queue decisions, newest first, public-safe action posture only. Supports ?since=ISO-8601&limit=1-200.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repoFullName": {
+                      "type": "string"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "eventType": {
+                            "type": "string"
+                          },
+                          "pullNumber": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "actor": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "eventType",
+                          "pullNumber",
+                          "outcome",
+                          "actor",
+                          "detail",
+                          "createdAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repoFullName",
+                    "events"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed since (not ISO-8601) or limit (not an integer in 1-200)"
+          },
+          "403": {
+            "description": "Insufficient role"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/public/stats": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicStats"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)"
+          },
+          "503": {
+            "description": "Public stats are temporarily unavailable"
           }
         },
         "security": [

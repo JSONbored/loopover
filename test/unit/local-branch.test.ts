@@ -94,6 +94,34 @@ describe("local branch analysis", () => {
     expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "duplicate_risk" })]));
   });
 
+  it("applies the open-issue spam gate from trusted outcome history", () => {
+    const issueHeavyHistory: ContributorOutcomeHistory = {
+      ...outcomeHistory,
+      totals: { ...outcomeHistory.totals, issues: 99, openIssues: 99 },
+      repoOutcomes: [{ ...outcomeHistory.repoOutcomes[0]!, issues: 99, openIssues: 99 }],
+    };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        labels: ["enhancement"],
+        changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory: issueHeavyHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scorePreview.gates.openIssueCount).toBe(99);
+    expect(analysis.scorePreview.scoreEstimate.openIssueMultiplier).toBe(0);
+    expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "open_issue_threshold" })]));
+  });
+
   it("bounds local scorer warnings before adding local findings", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
@@ -234,6 +262,7 @@ describe("local branch analysis", () => {
         changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" }],
         validation: [{ command: "npm test -- cache", status: "passed" }],
         localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 70, sourceLines: 42 },
+        branchEligibility: { status: "eligible", source: "github_metadata" },
       },
       repo,
       issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
@@ -1259,6 +1288,15 @@ describe("local branch analysis", () => {
     expect(analysis.workspaceIntelligence.blockers.branchQuality).toEqual([]);
     expect(analysis.workspaceIntelligence.blockers.accountState.length).toBeGreaterThan(0);
     expect(analysis.recommendedRerunCondition).toBe("Rerun after account/queue maturity blockers clear.");
+    expect(analysis.prPacket.markdown).not.toMatch(/account\/queue maturity|account-state|score|credibility|Open PR count/i);
+    expect(analysis.prPacket.bodySections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          heading: "Next Steps",
+          lines: expect.arrayContaining(["- Rerun after any branch, base, or PR state changes before opening/submitting."]),
+        }),
+      ]),
+    );
     expect(analysis.nextActions[0]?.actionKind).not.toBe("land_existing_prs");
   });
 
@@ -1569,6 +1607,117 @@ describe("local MCP git metadata collection", () => {
     expect(JSON.stringify(analysis.scenarioSummary)).not.toMatch(
       /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|reward[-\s]?estimate|farming|raw trust|trust[-\s]?score|scoreability|private[-\s]?reviewability|public[-\s]?score[-\s]?(?:estimate|prediction)/i,
     );
+  });
+
+  it("does not throw when branch analysis identifiers contain protocol terms", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "wallet-tools/api",
+        branchName: "feature/wallet-ui",
+        baseRef: "hotkey-fix",
+        changedFiles: [{ path: "src/util.ts", additions: 20, deletions: 1, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 35, totalTokenScore: 55, sourceLines: 30 },
+      },
+      repo: { ...repo, fullName: "wallet-tools/api", owner: "wallet-tools", name: "api" },
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scenarioSummary.repoFullName).toBe("wallet-tools/api");
+    expect(analysis.scenarioSummary.dataClassification.facts).toEqual(expect.arrayContaining(["Contributor", "Repository", "Branch"]));
+  });
+
+  it("ignores contributor open PRs from other repos when ranking pressure options", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        { repoFullName: "someone-else/other-repo", number: 4, title: "Cross-repo WIP", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const options = analysis.scenarioSummary.options;
+    expect(options[0]).toMatchObject({ label: "Open another PR now", recommended: true });
+    expect(options[0]?.rationale).toContain("Repo queue pressure is low.");
+    expect(options[0]?.obstacles).toEqual([]);
+  });
+
+  it("counts same-repo contributor open PRs case-insensitively when ranking pressure options", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "Oktofeesh1",
+        repoFullName: "EnTrius/AllWays-UI",
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const options = analysis.scenarioSummary.options;
+    expect(options[0]).toMatchObject({ label: "Clean up existing work first", recommended: true });
+    expect(options.find((option) => option.label === "Open another PR now")?.obstacles.join(" ")).toMatch(/already have open PR/i);
+  });
+
+  it("wires open-PR pressure strategy options into scenarioSummary.options (#348)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/util.ts", additions: 30, deletions: 2, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 38 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 9, title: "Improve util", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+      ],
+      // contributorPullRequests is preferred when present; the authorless PR exercises the null-author
+      // guard in the own-open-PR count and must not be miscounted as this contributor's work.
+      contributorPullRequests: [
+        { repoFullName: repo.fullName, number: 4, title: "WIP util", state: "open", authorLogin: "oktofeesh1", labels: [], linkedIssues: [] },
+        { repoFullName: repo.fullName, number: 5, title: "Authorless", state: "open", authorLogin: null, labels: [], linkedIssues: [] },
+      ],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    // Before this fix the renderer never received the pressure simulation, so options was always [].
+    const options = analysis.scenarioSummary.options;
+    expect(options.length).toBe(3);
+    expect(options.map((option) => option.rank)).toEqual([1, 2, 3]);
+    expect(options.filter((option) => option.recommended)).toHaveLength(1);
+    expect(options[0]?.recommended).toBe(true);
+    for (const option of options) {
+      expect(option.label.length).toBeGreaterThan(0);
+      expect(option.nextStep.length).toBeGreaterThan(0);
+    }
   });
 
   it("populates scenarioSummary.dataClassification with contributor and repo facts from branch metadata", () => {

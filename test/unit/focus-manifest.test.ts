@@ -183,6 +183,32 @@ describe("matchesManifestPath", () => {
   });
 });
 
+// Regression tests for the three compileManifestPathMatcher branches: exact,
+// directory-prefix, and wildcard. Each test exercises one branch in isolation.
+describe("matchesManifestPath — compileManifestPathMatcher branches", () => {
+  it("exact branch: returns true only when normalised path equals normalised pattern", () => {
+    expect(matchesManifestPath("src/index.ts", "src/index.ts")).toBe(true);
+    expect(matchesManifestPath("./src/Index.ts", "src/index.ts")).toBe(true); // normalisation
+    expect(matchesManifestPath("src/other.ts", "src/index.ts")).toBe(false);
+  });
+
+  it("directory-prefix branch: matches descendants but not siblings with shared prefix", () => {
+    expect(matchesManifestPath("src/utils/foo.ts", "src/utils")).toBe(true);
+    expect(matchesManifestPath("src/utils/foo.ts", "src/utils/")).toBe(true);
+    // "src/utilsX" shares the prefix string but must not match "src/utils"
+    expect(matchesManifestPath("src/utilsX/foo.ts", "src/utils")).toBe(false);
+    expect(matchesManifestPath("docs/readme.md", "src/")).toBe(false);
+  });
+
+  it("wildcard branch: * and ** expand to any characters in regex", () => {
+    expect(matchesManifestPath("packages/mcp/lib/x.ts", "packages/*/lib/*.ts")).toBe(true);
+    expect(matchesManifestPath("src/foo.ts", "src/*.ts")).toBe(true);
+    expect(matchesManifestPath("src/foo.go", "src/*.ts")).toBe(false);
+    expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
+    expect(matchesManifestPath("src/a.ts", "**/*.go")).toBe(false);
+  });
+});
+
 describe("buildFocusManifestGuidance", () => {
   const wanted = parseFocusManifest(FULL_MANIFEST);
 
@@ -909,6 +935,26 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(settingsOverrideToJson(parseFocusManifest({}).settings)).toBeNull();
   });
 
+  it("parses + resolves agent autonomy from the settings: block, dropping invalid entries (#773)", () => {
+    const manifest = parseFocusManifest({ settings: { autonomy: { merge: "auto", close: "auto_with_approval", deploy: "auto", label: "nope" } } });
+    expect(manifest.settings.autonomy).toEqual({ merge: "auto", close: "auto_with_approval" }); // unknown class + invalid level dropped
+    const eff = resolveEffectiveSettings({ autonomy: { review: "observe" } } as unknown as RepositorySettings, manifest);
+    expect(eff.autonomy).toEqual({ merge: "auto", close: "auto_with_approval" }); // yml overlays DB
+    // A malformed/empty autonomy block never blanks the DB-configured policy.
+    const noOverride = resolveEffectiveSettings({ autonomy: { merge: "auto" } } as unknown as RepositorySettings, parseFocusManifest({ settings: { autonomy: { bogus: "x" } } }));
+    expect(noOverride.autonomy).toEqual({ merge: "auto" });
+  });
+
+  it("parses + resolves autoMaintain from the settings: block, filling defaults (#774)", () => {
+    const manifest = parseFocusManifest({ settings: { autoMaintain: { mergeMethod: "rebase", requireApprovals: 99 } } });
+    expect(manifest.settings.autoMaintain).toEqual({ mergeMethod: "rebase", requireApprovals: 10 }); // clamped
+    const eff = resolveEffectiveSettings({ autoMaintain: { requireApprovals: 1, mergeMethod: "squash" } } as unknown as RepositorySettings, manifest);
+    expect(eff.autoMaintain).toEqual({ mergeMethod: "rebase", requireApprovals: 10 }); // yml overlays DB
+    // A non-mapping autoMaintain is ignored, leaving the DB policy intact.
+    const ignored = resolveEffectiveSettings({ autoMaintain: { requireApprovals: 2, mergeMethod: "merge" } } as unknown as RepositorySettings, parseFocusManifest({ settings: { autoMaintain: "nope" } }));
+    expect(ignored.autoMaintain).toEqual({ requireApprovals: 2, mergeMethod: "merge" });
+  });
+
   it("resolveEffectiveSettings overlays settings: over DB and lets gate: win for gate fields", () => {
     const db = { commentMode: "off", gateCheckMode: "off", linkedIssueGateMode: "off", duplicatePrGateMode: "off", autoLabelEnabled: true } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(
@@ -930,6 +976,14 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const eff = resolveEffectiveSettings(db, parseFocusManifest({ settings: { aiReviewMode: "advisory" }, gate: { aiReview: { mode: "block", byok: true } } }));
     expect(eff.aiReviewMode).toBe("block");
     expect(eff.aiReviewByok).toBe(true);
+  });
+
+  it("promotes requireLinkedIssue to linkedIssueGateMode block when the gate mode is still off (#797)", () => {
+    const eff = resolveEffectiveSettings(
+      { requireLinkedIssue: true, linkedIssueGateMode: "off" } as RepositorySettings,
+      parseFocusManifest(null),
+    );
+    expect(eff.linkedIssueGateMode).toBe("block");
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gateCheckPolicy } from "../../src/queue/processors";
+import { gateCheckPolicy, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
 import type { Advisory, RepositorySettings } from "../../src/types";
@@ -188,6 +188,27 @@ describe("slop gate (#530/#532)", () => {
     const blocked = evaluateGateCheck(cleanAdvisory(), gateCheckPolicy(eff, null, true, 80));
     expect(blocked.conclusion).toBe("failure");
     expect(blocked.blockers.map((finding) => finding.code)).toContain("slop_risk_above_threshold");
+  });
+});
+
+describe("merge-readiness evidence collection (#551)", () => {
+  it("collects linked-issue evidence when the aggregate gate is enabled even if the sub-gate is off", () => {
+    expect(shouldCollectLinkedIssueEvidence(settings({ requireLinkedIssue: false, linkedIssueGateMode: "off", mergeReadinessGateMode: "block" }))).toBe(true);
+    expect(shouldCollectLinkedIssueEvidence(settings({ requireLinkedIssue: false, linkedIssueGateMode: "off", mergeReadinessGateMode: "advisory" }))).toBe(true);
+    expect(shouldCollectLinkedIssueEvidence(settings({ requireLinkedIssue: false, linkedIssueGateMode: "off", mergeReadinessGateMode: "off" }))).toBe(false);
+  });
+
+  it("collects deterministic slop evidence when the aggregate gate is enabled even if the sub-gate is off", () => {
+    expect(shouldCollectSlopEvidence(settings({ slopGateMode: "off", mergeReadinessGateMode: "block" }))).toBe(true);
+    expect(shouldCollectSlopEvidence(settings({ slopGateMode: "off", mergeReadinessGateMode: "advisory" }))).toBe(true);
+    expect(shouldCollectSlopEvidence(settings({ slopGateMode: "off", mergeReadinessGateMode: "off" }))).toBe(false);
+  });
+
+  it("runs AI slop advisory only when the slop gate is explicitly enabled", () => {
+    expect(shouldRunSlopAiAdvisory(settings({ slopGateMode: "advisory", slopAiAdvisory: true }))).toBe(true);
+    expect(shouldRunSlopAiAdvisory(settings({ slopGateMode: "block", slopAiAdvisory: true }))).toBe(true);
+    expect(shouldRunSlopAiAdvisory(settings({ slopGateMode: "off", mergeReadinessGateMode: "advisory", slopAiAdvisory: true }))).toBe(false);
+    expect(shouldRunSlopAiAdvisory(settings({ slopGateMode: "advisory", slopAiAdvisory: false }))).toBe(false);
   });
 });
 

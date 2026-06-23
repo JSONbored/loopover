@@ -196,8 +196,28 @@ function collisionClustersForPull(collisions: CollisionReport, pullNumber: numbe
   );
 }
 
-function annotationLineForFile(file: PullRequestFileRecord): number {
-  return Math.max(1, file.additions > 0 ? 1 : 1);
+const ANNOTATABLE_PR_FILE_STATUSES = new Set(["added", "changed", "modified"]);
+
+export function firstAddedLineFromPatch(patch: string): number | null {
+  for (const line of patch.split("\n")) {
+    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (match?.[1]) return Math.max(1, Number.parseInt(match[1], 10));
+  }
+  return null;
+}
+
+function annotationLineForFile(file: PullRequestFileRecord): number | null {
+  if (file.additions <= 0) return null;
+  const status = file.status?.toLowerCase();
+  if (status && !ANNOTATABLE_PR_FILE_STATUSES.has(status)) return null;
+  const patch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+  const addedLine = firstAddedLineFromPatch(patch);
+  if (addedLine !== null) return addedLine;
+  return status === "added" || !status ? 1 : null;
+}
+
+function annotatablePullRequestFiles(files: PullRequestFileRecord[]): PullRequestFileRecord[] {
+  return files.filter((file) => file.path && isCodePath(file.path) && annotationLineForFile(file) !== null);
 }
 
 export function buildCheckRunAnnotations(
@@ -235,13 +255,14 @@ export function buildCheckRunAnnotations(
     });
   };
 
-  const codeFiles = annotationContext.files.filter((file) => file.path && isCodePath(file.path) && !isTestPath(file.path));
-  const testFiles = annotationContext.files.filter((file) => file.path && isTestPath(file.path));
+  const annotatableFiles = annotatablePullRequestFiles(annotationContext.files);
+  const codeFiles = annotatableFiles.filter((file) => !isTestPath(file.path));
+  const testFiles = annotatableFiles.filter((file) => isTestPath(file.path));
   if (codeFiles.length > 0 && testFiles.length === 0) {
     for (const file of codeFiles) {
       addCandidate(
         file.path,
-        annotationLineForFile(file),
+        annotationLineForFile(file) ?? 1,
         "warning",
         "Missing test evidence",
         "Code changed without an obvious test file in this PR. Add focused tests or explain why existing coverage is sufficient.",
@@ -251,19 +272,19 @@ export function buildCheckRunAnnotations(
 
   for (const cluster of collisionClustersForPull(annotationContext.collisions, annotationContext.pullNumber)) {
     const level: CheckRunAnnotation["annotation_level"] = cluster.risk === "high" ? "warning" : "notice";
-    for (const file of annotationContext.files) {
-      addCandidate(file.path, annotationLineForFile(file), level, "Possible duplicate overlap", cluster.reason);
+    for (const file of annotatableFiles) {
+      addCandidate(file.path, annotationLineForFile(file) ?? 1, level, "Possible duplicate overlap", cluster.reason);
     }
   }
 
-  const changedPaths = annotationContext.files.map((file) => file.path).filter(Boolean);
+  const changedPaths = annotatableFiles.map((file) => file.path);
   for (const finding of advisoryResult.findings) {
     if (!finding.publicText) continue;
     const targets = changedPaths.length > 0 ? changedPaths : [];
     for (const path of targets) {
       addCandidate(
         path,
-        1,
+        annotationLineForFile(annotatableFiles.find((file) => file.path === path)!) ?? 1,
         severityToAnnotationLevel(finding.severity),
         finding.title,
         finding.publicText,
@@ -393,7 +414,7 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
   }
   if (gate.conclusion === "neutral" || gate.conclusion === "skipped") {
     return {
-      title: gate.title,
+      title: gate.title.slice(0, 255),
       summary: gate.summary,
       text: "Gittensory did not create a contributor-facing failure for this event.",
     };
@@ -403,7 +424,10 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
     return `- ${sanitizeForCheckRun(finding.title)}.${action}`;
   });
   return {
-    title: gate.title,
+    // GitHub's check-run output.title 422s when too long; cap it (matches the 255 cap used for annotations).
+    // An unbounded title (e.g. when failing-check names are appended) threw a 422 that aborted the ENTIRE
+    // review before the comment, audit, and auto-action — so red-CI PRs were never reviewed or closed.
+    title: gate.title.slice(0, 255),
     summary: "Gittensory Gate found a repo-configured hard blocker.",
     text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.",
   };
@@ -609,6 +633,11 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // most conservative AI signal (two independent models, high confidence) but still confirmed-contributor
   // gated by evaluateGateCheck, and advisory by default.
   if (code === "ai_consensus_defect") return gateMode(policy.aiReviewGateMode ?? "advisory") === "block";
+  // A leaked-secret finding (`secret_leak`) ALWAYS hard-blocks: a committed credential must be removed and
+  // rotated before merge, with no opt-in. This finding is produced ONLY by the flag-gated safety scan
+  // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
+  // gate verdict is byte-identical to today.
+  if (code === "secret_leak") return true;
   // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer
   // opts into manifestPolicy: block. Default off/advisory keeps them advisory-only.
   if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {

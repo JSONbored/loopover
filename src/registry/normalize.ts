@@ -1,8 +1,7 @@
+import { DEFAULT_ISSUE_DISCOVERY_SHARE } from "../scoring/model";
 import type { JsonValue, RegistryRepoConfig, RegistrySnapshot, RepoTimeDecayOverrides } from "../types";
 
 type RawRepoConfig = Record<string, JsonValue>;
-
-const DEFAULT_ISSUE_DISCOVERY_SHARE = 0.5;
 
 export function normalizeRegistryPayload(payload: unknown, source: RegistrySnapshot["source"], fetchedAt: string): RegistrySnapshot {
   const repos = extractRepoEntries(payload).map(([repo, config]) => normalizeRepo(repo, config));

@@ -167,11 +167,12 @@ export type NotificationFeed = {
 // Shapes the recipient's badge feed: the unread count (the badge number) plus recent items. Only rows that
 // reached `delivered` (or already `read`) are shown — `pending`/`suppressed` never surface to the user.
 export function buildNotificationFeed(login: string, deliveries: NotificationDeliveryRecord[]): NotificationFeed {
-  const visible = deliveries.filter((delivery) => delivery.status === "delivered" || delivery.status === "read");
-  return {
-    login: login.toLowerCase(),
-    unreadCount: visible.filter((delivery) => delivery.status === "delivered").length,
-    notifications: visible.map((delivery) => ({
+  const notifications: NotificationFeedItem[] = [];
+  let unreadCount = 0;
+  for (const delivery of deliveries) {
+    if (delivery.status !== "delivered" && delivery.status !== "read") continue;
+    if (delivery.status === "delivered") unreadCount += 1;
+    notifications.push({
       id: delivery.id,
       eventType: delivery.eventType,
       repoFullName: delivery.repoFullName,
@@ -181,8 +182,9 @@ export function buildNotificationFeed(login: string, deliveries: NotificationDel
       deeplink: delivery.deeplink,
       status: delivery.status,
       createdAt: delivery.createdAt,
-    })),
-  };
+    });
+  }
+  return { login: login.toLowerCase(), unreadCount, notifications };
 }
 
 // Badge delivery is pull-based: "delivering" just makes the row visible to the recipient's feed (status

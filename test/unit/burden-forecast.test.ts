@@ -146,17 +146,13 @@ describe("loadOrComputeBurdenForecastResponse", () => {
     expect(response?.ageSeconds).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it("falls back to a computed forecast when no snapshot exists but the repo is known", async () => {
+  it("returns null when no snapshot exists for a known repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "owner/uncached", private: false, owner: { login: "owner" }, default_branch: "main" });
+
     const response = await loadOrComputeBurdenForecastResponse(env, "owner/uncached");
-    expect(response).toMatchObject({
-      status: "ready",
-      source: "computed",
-      freshness: "fresh",
-      ageSeconds: 0,
-    });
-    expect(response?.report).toMatchObject({ repoFullName: "owner/uncached", level: "low" });
+
+    expect(response).toBeNull();
   });
 
   it("does not call broad request-time listers when a cached forecast exists", async () => {
@@ -180,7 +176,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
     }
   });
 
-  it("uses only the bounded per-repo listers when computing a missing forecast", async () => {
+  it("does not call broad request-time listers when no cached forecast exists", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "computed-perf", full_name: "owner/computed-perf", private: false, owner: { login: "owner" }, default_branch: "main" });
     const repositoriesModule = await import("../../src/db/repositories");
@@ -192,10 +188,9 @@ describe("loadOrComputeBurdenForecastResponse", () => {
 
     const response = await loadOrComputeBurdenForecastResponse(env, "owner/computed-perf");
 
-    expect(response).toMatchObject({ source: "computed", report: { repoFullName: "owner/computed-perf" } });
+    expect(response).toBeNull();
     for (const spy of spies) {
-      expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy).toHaveBeenCalledWith(env, "owner/computed-perf");
+      expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     }
   });

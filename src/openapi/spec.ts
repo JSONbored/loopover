@@ -45,6 +45,7 @@ import {
   PullRequestReviewabilitySchema,
   PreflightResultSchema,
   PublicRepoStatsSchema,
+  PublicStatsSchema,
   QueueHealthSchema,
   ReadinessSchema,
   RegistryChangeReportSchema,
@@ -84,6 +85,7 @@ export function buildOpenApiSpec() {
   registry.register("RegistrySnapshot", RegistrySnapshotSchema);
   registry.register("Repository", RepositorySchema);
   registry.register("PublicRepoStats", PublicRepoStatsSchema);
+  registry.register("PublicStats", PublicStatsSchema);
   registry.register("Advisory", AdvisorySchema);
   registry.register("ActionPortfolio", ActionPortfolioSchema);
   registry.register("WorkboardItem", WorkboardItemSchema);
@@ -165,6 +167,15 @@ export function buildOpenApiSpec() {
     path: "/v1/mcp/compatibility",
     responses: {
       200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/stats",
+    responses: {
+      200: { description: "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.", content: { "application/json": { schema: PublicStatsSchema } } },
+      404: { description: "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)" },
+      503: { description: "Public stats are temporarily unavailable" },
     },
   });
   registry.registerPath({
@@ -407,6 +418,34 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Persist API-backed focus manifest for a repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       400: { description: "Malformed JSON request body" },
+      403: { description: "Insufficient role" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/agent/audit-feed",
+    responses: {
+      200: {
+        description: "Maintainer-scoped agent audit feed (#784): executed actions + approval-queue decisions, newest first, public-safe action posture only. Supports ?since=ISO-8601&limit=1-200.",
+        content: {
+          "application/json": {
+            schema: z.object({
+              repoFullName: z.string(),
+              events: z.array(
+                z.object({
+                  eventType: z.string(),
+                  pullNumber: z.number().nullable(),
+                  outcome: z.string(),
+                  actor: z.string().nullable(),
+                  detail: z.string().nullable(),
+                  createdAt: z.string(),
+                }),
+              ),
+            }),
+          },
+        },
+      },
+      400: { description: "Malformed since (not ISO-8601) or limit (not an integer in 1-200)" },
       403: { description: "Insufficient role" },
     },
   });

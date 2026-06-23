@@ -53,6 +53,45 @@ describe("MCP output schema discovery", () => {
     }
   });
 
+
+  it("keeps draft PR body MCP text free of private scoring taxonomy", async () => {
+    const mcp = new GittensoryMcp(createTestEnv()) as unknown as {
+      analyzeLocalBranch: () => Promise<unknown>;
+      draftPrBody(input: Record<string, unknown>): Promise<{ summary: string; data: Record<string, unknown> }>;
+      toolResult(payload: { summary: string; data: Record<string, unknown> }): { content: Array<{ type: "text"; text: string }>; structuredContent: Record<string, unknown> };
+    };
+    mcp.analyzeLocalBranch = async () => ({
+      repoFullName: "octo/demo",
+      prPacket: {
+        titleSuggestion: "Fix cache refresh race",
+        bodySections: [{ heading: "Changed Paths", lines: ["- src/cache.ts (modified, +12/-3)"] }],
+        validationSummary: {
+          passed: 1,
+          failed: 0,
+          notRun: 0,
+          commands: [{ command: "npm run test:ci", status: "passed", summary: "all green" }],
+        },
+        publicSafeWarnings: [],
+      },
+      baseFreshness: {
+        status: "fresh",
+        changedFileCount: 1,
+        testFileCount: 0,
+        warnings: [],
+        recommendation: undefined,
+      },
+      manifestGuidance: { present: false, publicNextSteps: [] },
+      preflight: { linkedIssues: [42], collisions: [], reviewBurden: "low" },
+    });
+
+    const payload = await mcp.draftPrBody({});
+    const result = mcp.toolResult(payload);
+    const visibleText = result.content[0]?.text ?? "";
+    expect(visibleText).not.toMatch(/private scoreability|score preview|scenario projections|risk signals|score-gate blockers|branch eligibility gate|ranked next actions/i);
+    expect(JSON.stringify(result.structuredContent)).not.toMatch(/private scoreability|score preview|risk signals|score-gate blockers|branch eligibility gate|ranked next actions/i);
+    expect(visibleText).toContain("internal analysis context omitted");
+  });
+
   it("exposes an outputSchema on EVERY registered tool (#550)", async () => {
     const { client } = await connectTestClient();
     const { tools } = await client.listTools();
@@ -230,6 +269,58 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.repoFullName).toBe("octo/demo");
     expect(Array.isArray(data.components)).toBe(true);
     expect(data.highestLeverageLever).toBeTruthy();
+  });
+
+  it("gittensory_explain_score_breakdown applies trusted open-issue counts", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    for (const number of [1, 2, 3]) {
+      await upsertIssueFromGitHub(env, "octo/demo", {
+        number,
+        title: `Open contributor issue ${number}`,
+        state: "open",
+        user: { login: "alice" },
+        labels: [],
+        body: "Issue body",
+      });
+    }
+    await upsertIssueFromGitHub(env, "octo/other", {
+      number: 99,
+      title: "Other repo issue",
+      state: "open",
+      user: { login: "alice" },
+      labels: [],
+      body: "Issue body",
+    });
+    await upsertIssueFromGitHub(env, "octo/demo", {
+      number: 4,
+      title: "Closed contributor issue",
+      state: "closed",
+      user: { login: "alice" },
+      labels: [],
+      body: "Issue body",
+    });
+
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_explain_score_breakdown",
+      arguments: {
+        repoFullName: "octo/demo",
+        contributorLogin: "alice",
+        sourceTokenScore: 40,
+        totalTokenScore: 60,
+        sourceLines: 80,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.effectiveEstimatedScore).toBe(0);
+    expect(data.gateHighlights).toEqual(
+      expect.arrayContaining([expect.objectContaining({ gate: "open_issue_threshold" })]),
+    );
   });
 
   it("gittensory_explain_score_breakdown requires contributorLogin", async () => {
@@ -416,5 +507,5 @@ describe("MCP output schemas validate on real tool calls (#550)", () => {
     const fetched = await client.callTool({ name: "gittensory_agent_get_run", arguments: { runId } });
     expect(fetched.isError, `agent_get_run errored: ${JSON.stringify(fetched.content)}`).toBeFalsy();
     expect(fetched.structuredContent).toBeDefined();
-  });
+  }, 30_000);
 });

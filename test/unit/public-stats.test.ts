@@ -7,7 +7,10 @@ import {
 
 type Row = Record<string, unknown>;
 
-// Stub D1: route reads by SQL (FROM table + clause). Supports prepare(sql).all() and prepare(sql).bind(...).all().
+// Stub D1: route reads by SQL signature. The three reads are distinguished by:
+//   - weekly:       contains `first_seen`
+//   - dispositions: contains `github_app.pr_public_surface_published` (and is NOT the weekly read)
+//   - reversals:    contains `FROM review_audit`
 function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
   const make = (sql: string, args: unknown[]) => ({
     bind: (...a: unknown[]) => make(sql, a),
@@ -22,6 +25,15 @@ function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
 
 const NOW = Date.parse("2026-06-22T00:00:00Z");
 
+function isWeekly(sql: string): boolean {
+  return sql.includes("first_seen");
+}
+function isDispositions(sql: string): boolean {
+  return (
+    sql.includes("github_app.pr_public_surface_published") && !isWeekly(sql)
+  );
+}
+
 describe("isPublicStatsEnabled", () => {
   it("is truthy only for 1/true/yes/on (case-insensitive)", () => {
     for (const v of ["1", "true", "TRUE", "yes", "on"])
@@ -32,43 +44,34 @@ describe("isPublicStatsEnabled", () => {
 });
 
 describe("getPublicStats — live aggregate over the review ledger", () => {
-  // Real prod proportions: merged 1392 + closed 724 + commented 514 + ignored 491 + manual 78 + error 34 = 3233;
-  // reviewed = 1392+724+514+78 = 2708; reversed 33 over 2116 auto-actions.
+  // Live shape: distinct reviewed PRs (audit_events) per repo, split by terminal disposition from pull_requests
+  // (merged / closed-without-merge / still-open-in-review). reviewed = merged + closed + inReview.
   function ledger(sql: string): Row[] {
-    if (
-      sql.includes("FROM review_targets") &&
-      sql.includes("GROUP BY project")
-    ) {
+    if (isWeekly(sql)) {
+      return [{ reviewed: 1420, merged: 900 }];
+    }
+    if (isDispositions(sql)) {
       return [
         {
           project: "JSONbored/awesome-claude",
-          handled: 2066,
+          reviewed: 2034,
           merged: 1231,
           closed: 524,
-          commented: 200,
-          ignored: 80,
-          manual: 31,
-          error: 0,
+          inReview: 279,
         },
         {
           project: "JSONbored/metagraphed",
-          handled: 829,
+          reviewed: 393,
           merged: 137,
           closed: 176,
-          commented: 200,
-          ignored: 300,
-          manual: 16,
-          error: 0,
+          inReview: 80,
         },
         {
           project: "JSONbored/gittensory",
-          handled: 338,
+          reviewed: 315,
           merged: 24,
           closed: 24,
-          commented: 114,
-          ignored: 111,
-          manual: 31,
-          error: 34,
+          inReview: 267,
         },
       ];
     }
@@ -79,31 +82,26 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
         { project: "JSONbored/gittensory", reversed: 3 },
       ];
     }
-    if (sql.includes("created_at >= ?")) {
-      return [{ merged: 900, closed: 300, commented: 200, manual: 20 }];
-    }
     return [];
   }
 
   it("derives reviewed / filtered% / accuracy / time-saved from real-shaped data", async () => {
     const out = await getPublicStats(stubEnv(ledger), NOW);
-    expect(out.totals.handled).toBe(3233);
-    expect(out.totals.merged).toBe(1392);
-    expect(out.totals.closed).toBe(724);
-    expect(out.totals.commented).toBe(514);
-    expect(out.totals.ignored).toBe(491);
-    expect(out.totals.manual).toBe(78);
-    expect(out.totals.error).toBe(34);
-    expect(out.totals.reversed).toBe(33);
-    // reviewed = merged + closed + commented + manual = 2708
-    expect(out.totals.reviewed).toBe(2708);
-    // filtered = (2708 - 1392) / 2708 = 48.6%
-    expect(out.totals.filteredPct).toBe(48.6);
+    // handled = reviewed = 2034 + 393 + 315 = 2742
+    expect(out.totals.handled).toBe(2742);
+    expect(out.totals.merged).toBe(1392); // 1231 + 137 + 24
+    expect(out.totals.closed).toBe(724); // 524 + 176 + 24
+    expect(out.totals.commented).toBe(626); // still-open reviewed PRs: 279 + 80 + 267
+    expect(out.totals.ignored).toBe(0);
+    expect(out.totals.manual).toBe(0);
+    expect(out.totals.error).toBe(0);
+    expect(out.totals.reversed).toBe(33); // 20 + 10 + 3
+    expect(out.totals.reviewed).toBe(2742);
+    // filtered = (2742 - 1392) / 2742 = 49.2%
+    expect(out.totals.filteredPct).toBe(49.2);
     // accuracy = 1 - 33 / (1392 + 724) = 98.4%
     expect(out.totals.accuracyPct).toBe(98.4);
-    // time saved = 2708 * 15 min
-    expect(out.totals.minutesSaved).toBe(2708 * MINUTES_SAVED_PER_PR);
-    // weekly reviewed = 900 + 300 + 200 + 20 = 1420
+    expect(out.totals.minutesSaved).toBe(2742 * MINUTES_SAVED_PER_PR);
     expect(out.weekly).toEqual({ reviewed: 1420, merged: 900 });
     expect(out.byProject.map((p) => p.project)).toEqual([
       "JSONbored/awesome-claude",
@@ -122,59 +120,39 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
             { project: "CustomerCo/stealth-product", reversed: 1 },
           ].filter((row) => args.includes(String(row.project).toLowerCase()));
         }
-        if (sql.includes("created_at >= ?")) {
-          const allowed = args.slice(1);
+        if (isWeekly(sql)) {
+          const allowed = args.slice(2); // [sinceIso, sinceIso, ...projects]
           const weeklyRows = [
-            {
-              project: "JSONbored/gittensory",
-              merged: 1,
-              closed: 1,
-              commented: 0,
-              manual: 0,
-            },
-            {
-              project: "CustomerCo/stealth-product",
-              merged: 3,
-              closed: 0,
-              commented: 0,
-              manual: 0,
-            },
+            { project: "JSONbored/gittensory", reviewed: 2, merged: 1 },
+            { project: "CustomerCo/stealth-product", reviewed: 3, merged: 3 },
           ].filter((row) =>
             allowed.includes(String(row.project).toLowerCase()),
           );
           return [
             weeklyRows.reduce(
               (acc, row) => ({
+                reviewed: acc.reviewed + row.reviewed,
                 merged: acc.merged + row.merged,
-                closed: acc.closed + row.closed,
-                commented: acc.commented + row.commented,
-                manual: acc.manual + row.manual,
               }),
-              { merged: 0, closed: 0, commented: 0, manual: 0 },
+              { reviewed: 0, merged: 0 },
             ),
           ];
         }
-        if (sql.includes("GROUP BY project")) {
+        if (isDispositions(sql)) {
           return [
             {
               project: "JSONbored/gittensory",
-              handled: 2,
+              reviewed: 2,
               merged: 1,
               closed: 1,
-              commented: 0,
-              ignored: 0,
-              manual: 0,
-              error: 0,
+              inReview: 0,
             },
             {
               project: "CustomerCo/stealth-product",
-              handled: 3,
+              reviewed: 3,
               merged: 3,
               closed: 0,
-              commented: 0,
-              ignored: 0,
-              manual: 0,
-              error: 0,
+              inReview: 0,
             },
           ].filter((row) => args.includes(String(row.project).toLowerCase()));
         }
@@ -224,8 +202,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   it("is fail-safe: a throwing read degrades to zeros, not an error", async () => {
     const env = stubEnv((sql) => {
-      if (sql.includes("GROUP BY project"))
-        throw new Error("review_targets down");
+      if (isDispositions(sql)) throw new Error("audit_events down");
       return [];
     });
     const out = await getPublicStats(env, NOW);
@@ -235,36 +212,27 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   it("coerces null SUM/reversal/weekly fields to 0 (SUM over an empty set returns NULL in SQLite)", async () => {
     // Every numeric column comes back null (the nullish arm of each `?? 0`); p2 has no reversal row, exercising
-    // the `reversedByProject.get(...) ?? 0` fallback; weekly[0] is present but its fields are null.
+    // the `reversedByProject.get(...) ?? 0` fallback; the weekly row is present but its fields are null.
     const out = await getPublicStats(
       stubEnv((sql) => {
         if (sql.includes("FROM review_audit"))
           return [{ project: "p1", reversed: null }];
-        if (sql.includes("created_at >= ?"))
-          return [
-            { merged: null, closed: null, commented: null, manual: null },
-          ];
-        if (sql.includes("GROUP BY project")) {
+        if (isWeekly(sql)) return [{ reviewed: null, merged: null }];
+        if (isDispositions(sql)) {
           return [
             {
               project: "p1",
-              handled: null,
+              reviewed: null,
               merged: null,
               closed: null,
-              commented: null,
-              ignored: null,
-              manual: null,
-              error: null,
+              inReview: null,
             },
             {
               project: "p2",
-              handled: null,
+              reviewed: null,
               merged: null,
               closed: null,
-              commented: null,
-              ignored: null,
-              manual: null,
-              error: null,
+              inReview: null,
             },
           ];
         }

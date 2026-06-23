@@ -2,16 +2,18 @@
 // done, powering the above-the-fold homepage counter. Flag-gated by GITTENSORY_PUBLIC_STATS (default OFF): when
 // off the public endpoint 404s, so the deploy is byte-identical to today until the flag is deliberately set.
 //
-// REALTIME: queries the live tables directly (no rollup/cron) so a new review shows up within the 60s HTTP cache
-// window — single source of truth, always current. The source is review_targets (one row per PR, scoped to the
-// repos the review system handles: gittensory, awesome-claude, metagraphed) with the terminal review DISPOSITION
-// in `status`. This is NOT the broader pull_requests / recent_merged_pull_requests mining caches.
+// REALTIME: queries the live ledger directly (no rollup/cron) so a new review shows up within the 60s HTTP cache
+// window. "reviewed" = a distinct PR for which the review system published a public review surface (audit_events
+// `github_app.pr_public_surface_published`, scoped to the repos it handles: gittensory, awesome-claude,
+// metagraphed); each PR's terminal DISPOSITION is read from the pull_requests cache. (The legacy review_targets
+// ledger this used to read was orphaned by the convergence cutover — nothing writes it anymore.)
 //
-// DISPOSITIONS (terminal): merged / closed = gittensory auto-actioned; commented = reviewed + advised, deferred
-// to a maintainer; manual = escalated to a maintainer; ignored = skipped (drafts/bots/excluded); error = failed.
-//   reviewed   = merged + closed + commented + manual   (PRs it actually reviewed; excludes ignored + error)
+// DISPOSITIONS: merged (merged_at set) / closed (closed without a merge) = the review system auto-actioned;
+// commented = still-open reviewed PRs (reviewed + advised, awaiting a maintainer / CI). Reviewed PRs that never
+// got a published surface (skipped drafts/bots, errors) simply don't appear — there is no ignored/manual/error.
+//   reviewed   = merged + closed + commented            (every distinct PR a review surface was published for)
 //   filteredPct = (reviewed - merged) / reviewed         (share resolved WITHOUT a merge — noise kept off humans)
-//   accuracyPct = 1 - reversed / (merged + closed)       (reversal-grounded; reversed from review_audit)
+//   accuracyPct = 1 - reversed / (merged + closed)       (reversal-grounded; reversed from review_audit history)
 //   minutesSaved = reviewed * MINUTES_SAVED_PER_PR        (estimated maintainer review time saved)
 //
 // PRIVACY: counts only — no PR content, authors, scores, or reward internals. Safe to serve publicly.
@@ -92,13 +94,10 @@ function publicStatsProjects(env: {
 
 interface DispositionRow {
   project: string;
-  handled: number;
+  reviewed: number;
   merged: number;
   closed: number;
-  commented: number;
-  ignored: number;
-  manual: number;
-  error: number;
+  inReview: number;
 }
 
 export interface PublicStatsPayload {
@@ -130,23 +129,28 @@ export interface PublicStatsPayload {
   }>;
 }
 
-const DISPOSITION_SELECT = `
-  SUM(CASE WHEN status = 'merged' THEN 1 ELSE 0 END) AS merged,
-  SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed,
-  SUM(CASE WHEN status = 'commented' THEN 1 ELSE 0 END) AS commented,
-  SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored,
-  SUM(CASE WHEN status = 'manual' THEN 1 ELSE 0 END) AS manual,
-  SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error`;
+// Live "reviewed" = a distinct PR for which the bot published a review surface (audit_events
+// `github_app.pr_public_surface_published`, target_key "owner/repo#number"). Its terminal DISPOSITION
+// (merged / closed-without-merge / still-open-in-review) comes from the pull_requests cache. This replaces the
+// legacy review_targets ledger, which the convergence cutover orphaned (nothing writes it anymore). `reversed`
+// (the accuracy denominator) still comes from review_audit's historical reversal events — there is no live
+// reversal signal yet, so it acts as a floor. All reads are public-safe COUNTs and degrade to 0 via safeAll.
+const PUBLISHED_PR_KEYS = `
+  SELECT
+    substr(target_key, 1, instr(target_key, '#') - 1) AS repo,
+    CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number,
+    created_at
+  FROM audit_events
+  WHERE event_type = 'github_app.pr_public_surface_published' AND instr(target_key, '#') > 0`;
 
-/** Assemble the public-safe payload from the LIVE review ledger (cheap: review_targets is one row per PR). */
+/** Assemble the public-safe payload from the LIVE review ledger: distinct PRs the bot published a review for
+ *  (audit_events) joined to their terminal disposition (pull_requests state). Realtime behind the 60s HTTP cache
+ *  — a new review shows up within ~a minute; no rollup/cron. */
 export async function getPublicStats(
   env: Env,
   nowMs: number = Date.now(),
 ): Promise<PublicStatsPayload> {
-  const sinceIso = new Date(nowMs - 7 * 86_400_000)
-    .toISOString()
-    .slice(0, 19)
-    .replace("T", " ");
+  const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString();
   const projects = publicStatsProjects(env);
   const generatedAt = new Date(nowMs).toISOString();
   const empty = (): PublicStatsPayload => ({
@@ -171,34 +175,48 @@ export async function getPublicStats(
   });
   if (projects.length === 0) return empty();
 
-  const projectFilter = `LOWER(project) IN (${projects.map(() => "?").join(", ")})`;
-  const [dispositions, reversalRows, weekly] = await Promise.all([
+  const inList = projects.map(() => "?").join(", ");
+  const [dispositions, reversalRows, weeklyRows] = await Promise.all([
     safeAll<DispositionRow>(
       env,
-      `SELECT project, COUNT(*) AS handled,${DISPOSITION_SELECT} FROM review_targets WHERE ${projectFilter} GROUP BY project`,
+      `SELECT ev.repo AS project,
+              COUNT(*) AS reviewed,
+              SUM(CASE WHEN pr.merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged,
+              SUM(CASE WHEN pr.state = 'closed' AND pr.merged_at IS NULL THEN 1 ELSE 0 END) AS closed,
+              SUM(CASE WHEN pr.id IS NULL OR pr.state = 'open' THEN 1 ELSE 0 END) AS inReview
+         FROM (SELECT DISTINCT repo, number FROM (${PUBLISHED_PR_KEYS})) ev
+         LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number
+        WHERE LOWER(ev.repo) IN (${inList})
+        GROUP BY ev.repo`,
       ...projects,
     ),
     safeAll<{ project: string; reversed: number }>(
       env,
       `SELECT project, COUNT(*) AS reversed FROM review_audit
-       WHERE event_type IN ('reversal_reverted', 'reversal_reopened') AND ${projectFilter} GROUP BY project`,
+        WHERE event_type IN ('reversal_reverted', 'reversal_reopened') AND LOWER(project) IN (${inList})
+        GROUP BY project`,
       ...projects,
     ),
-    safeAll<{
-      merged: number;
-      closed: number;
-      commented: number;
-      manual: number;
-    }>(
+    safeAll<{ reviewed: number; merged: number }>(
       env,
-      `SELECT${DISPOSITION_SELECT.replace(/, $/, "")} FROM review_targets WHERE created_at >= ? AND ${projectFilter}`,
+      `SELECT
+         SUM(CASE WHEN first_seen >= ? THEN 1 ELSE 0 END) AS reviewed,
+         SUM(CASE WHEN merged_at IS NOT NULL AND merged_at >= ? THEN 1 ELSE 0 END) AS merged
+       FROM (
+         SELECT ev.repo, ev.number, MIN(ev.created_at) AS first_seen, MAX(pr.merged_at) AS merged_at
+           FROM (${PUBLISHED_PR_KEYS}) ev
+           LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number
+          WHERE LOWER(ev.repo) IN (${inList})
+          GROUP BY ev.repo, ev.number
+       )`,
+      sinceIso,
       sinceIso,
       ...projects,
     ),
   ]);
 
   const reversedByProject = new Map(
-    reversalRows.map((r) => [r.project, r.reversed ?? 0]),
+    reversalRows.map((r) => [String(r.project).toLowerCase(), r.reversed ?? 0]),
   );
   const totals = {
     handled: 0,
@@ -214,20 +232,16 @@ export async function getPublicStats(
     .map((d) => {
       const merged = d.merged ?? 0;
       const closed = d.closed ?? 0;
-      const commented = d.commented ?? 0;
-      const manual = d.manual ?? 0;
-      const ignored = d.ignored ?? 0;
-      const error = d.error ?? 0;
-      const reversed = reversedByProject.get(d.project) ?? 0;
-      totals.handled += d.handled ?? 0;
+      const inReview = d.inReview ?? 0;
+      const reversed =
+        reversedByProject.get(String(d.project).toLowerCase()) ?? 0;
+      const reviewed = merged + closed + inReview;
+      totals.handled += reviewed;
       totals.merged += merged;
       totals.closed += closed;
-      totals.commented += commented;
-      totals.ignored += ignored;
-      totals.manual += manual;
-      totals.error += error;
+      // "commented" carries the still-open reviewed PRs (reviewed + advised, awaiting a maintainer / CI).
+      totals.commented += inReview;
       totals.reversed += reversed;
-      const reviewed = reviewedOf({ merged, closed, commented, manual });
       return {
         project: d.project,
         reviewed,
@@ -240,7 +254,7 @@ export async function getPublicStats(
     .sort((a, b) => b.reviewed - a.reviewed);
 
   const reviewed = reviewedOf(totals);
-  const w = weekly[0] ?? { merged: 0, closed: 0, commented: 0, manual: 0 };
+  const w = weeklyRows[0] ?? { reviewed: 0, merged: 0 };
   return {
     generatedAt,
     updatedAt: generatedAt,
@@ -251,7 +265,7 @@ export async function getPublicStats(
       accuracyPct: accuracyPct(totals.merged, totals.closed, totals.reversed),
       minutesSaved: reviewed * MINUTES_SAVED_PER_PR,
     },
-    weekly: { reviewed: reviewedOf(w), merged: w.merged ?? 0 },
+    weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },
     byProject,
   };
 }

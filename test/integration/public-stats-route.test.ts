@@ -2,26 +2,39 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createTestEnv } from "../helpers/d1";
 
-/** Seed a handful of terminal review dispositions (+ one reversal) into review_targets / review_audit. */
+/** Seed the LIVE ledger: a published-review surface per reviewed PR (audit_events) + each PR's terminal
+ *  disposition (pull_requests state/merged_at), plus one reversal (review_audit). */
 async function seed(env: Env) {
-  const rows: Array<[string, string, number, string]> = [
-    ["t-m1", "JSONbored/gittensory", 1, "merged"],
-    ["t-c1", "JSONbored/gittensory", 2, "closed"],
-    ["t-cm1", "JSONbored/gittensory", 3, "commented"],
-    ["t-ig1", "JSONbored/gittensory", 4, "ignored"], // excluded from "reviewed"
-    ["t-m2", "JSONbored/awesome-claude", 5, "merged"],
-    ["t-m3", "JSONbored/awesome-claude", 6, "merged"],
+  // [repo, number, state, mergedAt] — merged (merged_at set) / closed (state closed, no merge) / open (in review).
+  const prs: Array<[string, number, string, string | null]> = [
+    ["JSONbored/gittensory", 1, "closed", "2026-06-20T00:00:00Z"], // merged
+    ["JSONbored/gittensory", 2, "closed", null], // closed without merge
+    ["JSONbored/gittensory", 3, "open", null], // still in review
+    ["JSONbored/awesome-claude", 5, "closed", "2026-06-20T00:00:00Z"], // merged
+    ["JSONbored/awesome-claude", 6, "closed", "2026-06-20T00:00:00Z"], // merged
   ];
-  for (const [id, project, number, status] of rows) {
+  for (const [repo, number, state, mergedAt] of prs) {
     await env.DB.prepare(
-      `INSERT INTO review_targets (id, project, kind, repo, number, status) VALUES (?, ?, 'pr', ?, ?, ?)`,
+      `INSERT INTO audit_events (id, event_type, target_key, outcome) VALUES (?, 'github_app.pr_public_surface_published', ?, 'completed')`,
     )
-      .bind(id, project, project, number, status)
+      .bind(`ae-${repo}-${number}`, `${repo}#${number}`)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO pull_requests (id, repo_full_name, number, title, state, merged_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        `pr-${repo}-${number}`,
+        repo,
+        number,
+        `PR ${number}`,
+        state,
+        mergedAt,
+      )
       .run();
   }
   // One human reversal of a gittensory auto-merge (awesome-claude has none → exercises the per-project ?? 0).
   await env.DB.prepare(
-    `INSERT INTO review_audit (id, project, target_id, event_type, decision) VALUES ('rev1', 'JSONbored/gittensory', 't-m1', 'reversal_reverted', 'merge')`,
+    `INSERT INTO review_audit (id, project, target_id, event_type, decision) VALUES ('rev1', 'JSONbored/gittensory', 'JSONbored/gittensory#1', 'reversal_reverted', 'merge')`,
   ).run();
 }
 
@@ -47,14 +60,14 @@ describe("GET /v1/public/stats (#1059)", () => {
       weekly: { reviewed: number; merged: number };
       byProject: Array<{ project: string; reviewed: number }>;
     };
-    expect(body.totals.handled).toBe(6);
+    expect(body.totals.handled).toBe(5); // distinct reviewed PRs
     expect(body.totals.merged).toBe(3);
     expect(body.totals.closed).toBe(1);
-    expect(body.totals.commented).toBe(1);
-    expect(body.totals.ignored).toBe(1);
+    expect(body.totals.commented).toBe(1); // the still-open reviewed PR
+    expect(body.totals.ignored).toBe(0);
     expect(body.totals.manual).toBe(0);
     expect(body.totals.error).toBe(0);
-    expect(body.totals.reviewed).toBe(5); // merged 3 + closed 1 + commented 1 (ignored excluded)
+    expect(body.totals.reviewed).toBe(5); // merged 3 + closed 1 + in-review 1
     expect(body.totals.reversed).toBe(1);
     expect(body.totals.accuracyPct).toBe(75); // 1 - 1 / (3 + 1)
     // busiest repo first: gittensory reviewed 3 (m1+c1+cm1) > awesome-claude 2 (m2+m3)

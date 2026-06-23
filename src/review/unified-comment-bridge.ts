@@ -232,7 +232,7 @@ export type UnifiedCommentBridgeArgs = {
  */
 export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedCollapsible | null {
   const attr = (value: string): string =>
-    value.replace(/[&"<>]/g, (char) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[char] ?? char);
+    value.replace(/[&"<>]/g, (char) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[char] as string);
   const markdownCode = (value: string): string =>
     `\`${value
       .replace(/\\/g, "\\\\")

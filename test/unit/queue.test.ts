@@ -34,7 +34,7 @@ import {
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
 } from "../../src/db/repositories";
-import { processJob } from "../../src/queue/processors";
+import { changedPathsForGuardrail, processJob } from "../../src/queue/processors";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -5528,3 +5528,14 @@ async function generatePrivateKeyPem(): Promise<string> {
   const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
   return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
+
+describe("changedPathsForGuardrail", () => {
+  it("collects current + rename paths and skips empty entries", () => {
+    const files = [
+      { path: "src/a.ts", previousFilename: null },
+      { path: "src/b.ts", previousFilename: "src/old-b.ts" }, // a rename contributes both names
+      { path: "", previousFilename: "" }, // an empty path AND empty rename are both skipped (both guard branches false)
+    ] as unknown as Parameters<typeof changedPathsForGuardrail>[0];
+    expect(changedPathsForGuardrail(files)).toEqual(["src/a.ts", "src/b.ts", "src/old-b.ts"]);
+  });
+});

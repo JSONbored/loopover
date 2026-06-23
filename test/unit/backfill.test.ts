@@ -32,6 +32,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
   fetchAndStorePullRequestFilesForReview,
+  fetchLiveCiAggregate,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -2635,6 +2636,82 @@ describe("GitHub backfill", () => {
       await expect(fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 99, "public-token")).resolves.toEqual([]);
     });
   });
+
+  describe("fetchLiveCiAggregate", () => {
+    it("keeps non-required failing and pending statuses advisory when required contexts are known", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "trusted-required-ci", status: "completed", conclusion: "success" },
+              { name: "attacker/non-required-check", status: "completed", conclusion: "failure", output: { title: "Injected failure" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) {
+          return Response.json({
+            statuses: [
+              { context: "trusted-required-ci", state: "success" },
+              { context: "attacker/non-required-status", state: "failure", description: "Injected failure" },
+              { context: "attacker/non-required-pending", state: "pending", description: "Never settles" },
+            ],
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["trusted-required-ci"]));
+
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.failingDetails).toEqual([]);
+      expect(aggregate.nonRequiredFailingDetails.map((detail) => detail.name).sort()).toEqual(["attacker/non-required-check", "attacker/non-required-status"]);
+    });
+
+    it("falls back to gating all contexts when required contexts are unavailable", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "unknown-required-status", state: "failure", description: "Could be required" }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "unknown-required-status" })]);
+      expect(aggregate.nonRequiredFailingDetails).toEqual([]);
+    });
+
+    it("ignores ALL of the bot's OWN checks (Gate + Context) so it never self-deadlocks (#gate-self-deadlock)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "test", status: "completed", conclusion: "success" },
+              // BOTH bot-posted checks, still in_progress (posted but not yet concluded). Counting EITHER would
+              // defer the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
+              { name: "Gittensory Gate", status: "in_progress", conclusion: null },
+              { name: "Gittensory Context", status: "in_progress", conclusion: null },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      // Both bot checks are excluded from the CI wait even if listed among the required contexts.
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Gate", "Gittensory Context"]));
+
+      expect(aggregate.ciState).toBe("passed"); // would be "pending" if either in_progress bot check were counted
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+  });
+
 });
 
 async function seedRegisteredRepo(env: Env) {

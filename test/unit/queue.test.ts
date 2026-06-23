@@ -1945,7 +1945,7 @@ describe("queue processors", () => {
       "",
       "- [x] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review",
     ].join("\n");
-    const calls = { token: 0, permission: 0, minerList: 0, commentGets: 0, commentPatches: 0 };
+    const calls = { token: 0, permission: 0, minerList: 0, commentGets: 0, commentPatches: 0, checkRuns: 0 };
     let patchedBody = "";
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -1968,6 +1968,10 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) {
         calls.token += 1;
         return Response.json({ token: "installation-token" });
+      }
+      if (url.includes("/check-runs")) {
+        calls.checkRuns += 1;
+        return Response.json({ id: 888 });
       }
       if (url.includes("/collaborators/maintainer/permission")) {
         calls.permission += 1;
@@ -2000,7 +2004,7 @@ describe("queue processors", () => {
     });
 
     // token: 1 — the installation token is now cached + reused within the request (was 2: main + permission check).
-    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1 });
+    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1, checkRuns: 0 });
     expect(patchedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
     expect(patchedBody).toContain("Readiness score:");
     expect(patchedBody).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review");

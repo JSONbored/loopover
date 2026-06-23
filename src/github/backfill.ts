@@ -58,7 +58,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
-import { createInstallationToken, getAppInstallation } from "./app";
+import { createInstallationToken, getAppInstallation, GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME } from "./app";
 
 type GitHubLabelPayload = {
   name: string;
@@ -1907,6 +1907,12 @@ async function fetchPullRequestChecks(
 
 const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
 const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+// The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
+// "CI to wait on": counting them self-deadlocks (the review waits for all CI to finish; these only finish when
+// the very review they're blocking runs → the PR defers forever). Excluded from the CI aggregate entirely.
+// (#gate-self-deadlock — froze green-CI PRs as "CI still running". The Gate alone wasn't enough: the Context
+// check is posted the same way and re-created the deadlock, so exclude ALL bot-owned checks.)
+const BOT_OWNED_CHECK_NAMES = new Set<string>([GITTENSORY_GATE_CHECK_NAME, GITTENSORY_CONTEXT_CHECK_NAME]);
 
 export type LiveCiAggregate = {
   ciState: "passed" | "failed" | "pending" | "unverified";
@@ -1951,27 +1957,25 @@ export async function fetchRequiredStatusContexts(env: Env, repoFullName: string
  * reviewbot `getAllChecksState` parity that the converged auto-maintain path needs: codecov (codecov/patch,
  * codecov/project) and many other tools post a classic COMMIT-STATUS, not a check-run — fetching only
  * `/check-runs` (what the backfill sync does) misses them entirely, which is why a red codecov was reported as
- * "CI green". We aggregate ANY failing check/status → "failed"; else any still-running → "pending"; else any
- * present → "passed"; none at all → "unverified". The disposition layer NEVER approves/merges unless "passed",
- * and closes (non-owner) / holds (owner) on "failed". Best-effort: a fetch error degrades that source to empty.
+ * "CI green". When branch-protection required contexts are known, only those trusted contexts gate review or
+ * automation; non-required failures are reported separately. When required contexts cannot be determined, we
+ * conservatively fold all checks/statuses into the gate so required red checks are not silently ignored.
+ * Best-effort: a fetch error degrades that source to empty.
  */
 export async function fetchLiveCiAggregate(
   env: Env,
   repoFullName: string,
   headSha: string | null | undefined,
   token: string | undefined,
-  // Operator policy (#all-ci-required): ALL CI gates — every check (required or not, incl. codecov/*) must be
-  // GREEN to merge, and ANY red check fails the gate (→ close a contributor PR / hold the owner's); a still-
-  // running check sets `pending` so the review WAITS for it. The legacy `requiredContexts` arg is accepted for
-  // signature compatibility but no longer narrows the gate.
+  // Branch-protection REQUIRED contexts are the trust boundary for CI gate authority. Non-required checks may be
+  // influenced by PR authors or third-party actors, so they are surfaced as advisory details but must not defer
+  // review, fail the merge gate, or drive automated close decisions. If required contexts are unavailable, fall
+  // back to gating on all contexts to avoid silently passing an unknown required failure.
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
   if (!headSha) return { ciState: "unverified", failingDetails: [], nonRequiredFailingDetails: [] };
-  void requiredContexts;
-  // Every check gates (required or not). isRequired is kept (always true) so the failing/pending bucketing below
-  // is unchanged in shape — nonRequiredFailingDetails simply stays empty now.
-  const enforceRequiredOnly = false;
-  const isRequired = (_name: string): boolean => !enforceRequiredOnly;
+  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
+  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts.has(name);
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;
@@ -1987,6 +1991,7 @@ export async function fetchLiveCiAggregate(
     ).catch(() => undefined);
     if (!result) break;
     for (const run of result.data.check_runs ?? []) {
+      if (BOT_OWNED_CHECK_NAMES.has(run.name)) continue; // never wait on the bot's own Gate/Context checks (see above)
       total += 1;
       const conclusion = (run.conclusion ?? "").toLowerCase();
       const status = (run.status ?? "").toLowerCase();
@@ -2013,9 +2018,10 @@ export async function fetchLiveCiAggregate(
     token,
   ).catch(() => undefined);
   for (const ctx of statusResult?.data.statuses ?? []) {
+    const name = ctx.context ?? "status";
+    if (BOT_OWNED_CHECK_NAMES.has(name)) continue; // never wait on the bot's own Gate/Context checks (see #gate-self-deadlock above)
     total += 1;
     const state = (ctx.state ?? "").toLowerCase();
-    const name = ctx.context ?? "status";
     if (state === "failure" || state === "error") {
       const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
       const detail = { name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) };

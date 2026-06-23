@@ -48,6 +48,7 @@ const REVIEW_SYSTEM_PROMPT = [
   "BE SELECTIVE — report only the findings that genuinely matter. List at MOST ~3 blockers and ~5 nits, keeping only the most important; prefer signal over volume and do NOT pad the lists.",
   "DEDUPLICATE — if the same kind of issue recurs across several functions or lines, report it ONCE and note it applies broadly; never repeat a near-identical finding per occurrence.",
   "SEVERITY DISCIPLINE — defensive or speculative hardening ('should handle X', 'consider validating', 'add error handling') is a NIT, not a blocker, UNLESS a real input WILL actually trigger the failure. CI or check status itself (failing, pending, unverified) is NOT a code defect — never list it (the gate evaluates CI separately).",
+  "DIFF SCOPE — the diff shows only CHANGED lines, NOT whole files. A function, variable, import, type, or symbol you do not SEE may already be defined or imported elsewhere in the same file/module. NEVER report a 'missing import', 'undefined/not-imported symbol', or 'X is not defined -> ReferenceError' as a blocker unless the diff ITSELF removes the definition or introduces the symbol without defining it anywhere shown. When you cannot confirm a symbol is missing from the visible diff, it is NOT a blocker — at most a nit ('verify X is imported/defined').",
   "Do NOT rubber-stamp: if the diff is genuinely clean, the assessment states specifically why and blockers is [].",
   "Never mention rewards, rankings, payouts, wallets, hotkeys, coldkeys, trust scores, scoreability, reviewability, or farming.",
 ].join(" ");
@@ -352,8 +353,11 @@ export function composeAdvisoryNotes(reviews: ModelReview[]): string | null {
     lines.push("");
   }
   if (safeNits.length > 0) {
-    lines.push("**Nits**");
+    // Nits go inside a collapsed <details> toggle so the body stays focused on the assessment + blockers;
+    // the blank line after </summary> lets GitHub render the markdown list inside the dropdown. (#focused-reviews)
+    lines.push("<details>", `<summary>Nits (${safeNits.length})</summary>`, "");
     lines.push(...safeNits.map((s) => `- ${s}`));
+    lines.push("</details>");
   }
   // Reaching here means at least one section was pushed (the all-empty case returned null above).
   return lines.join("\n").trim();

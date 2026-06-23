@@ -332,11 +332,11 @@ describe("pure helpers", () => {
     const assessmentOnly = composeAdvisoryNotes([review({ assessment: "Looks good." })]);
     expect(assessmentOnly).toBe("Looks good.");
     const nitsOnly = composeAdvisoryNotes([review({ nits: ["Add a test."] })]);
-    expect(nitsOnly).toContain("**Nits**");
+    expect(nitsOnly).toContain("<summary>Nits");
     expect(nitsOnly).not.toContain("**Blockers**");
     const blockersOnly = composeAdvisoryNotes([review({ blockers: ["Null deref in src/a.ts."] })]);
     expect(blockersOnly).toContain("**Blockers**");
-    expect(blockersOnly).not.toContain("**Nits**");
+    expect(blockersOnly).not.toContain("<summary>Nits");
   });
 
   it("composeAdvisoryNotes merges + dedupes blockers/nits across two reviewers and renders both sections", () => {
@@ -346,7 +346,7 @@ describe("pure helpers", () => {
     expect(out).toContain("Solid change."); // first reviewer's assessment wins
     expect(out).toContain("**Blockers**");
     expect(out).toContain("Off-by-one in the loop bound.");
-    expect(out).toContain("**Nits**");
+    expect(out).toContain("<summary>Nits");
     expect(out).toContain("Tighten the type."); // nits + suggestions merged
     // the shared blocker + the shared nit/suggestion each appear exactly once (dedupe across reviewers)
     expect(out.match(/Null deref in src\/a\.ts\./g)?.length).toBe(1);

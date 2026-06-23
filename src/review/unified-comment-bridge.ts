@@ -231,13 +231,19 @@ export type UnifiedCommentBridgeArgs = {
  * when nothing is renderable (no route has any shot URL), so the section is omitted rather than shown empty.
  */
 export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedCollapsible | null {
-  const attr = (value: string): string => value.replace(/"/g, "%22");
-  const alt = (value: string): string => value.replace(/"/g, "'");
+  const attr = (value: string): string =>
+    value.replace(/[&"<>]/g, (char) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[char] as string);
+  const markdownCode = (value: string): string =>
+    `\`${value
+      .replace(/\\/g, "\\\\")
+      .replace(/`/g, "\\`")
+      .replace(/\|/g, "\\|")
+      .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))}\``;
   const cell = (url: string | undefined, label: string): string =>
-    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${alt(label)}" src="${attr(url)}"></a>` : "—";
+    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${attr(label)}" src="${attr(url)}"></a>` : "—";
   const rows: string[] = [];
   for (const route of routes) {
-    const path = `\`${route.path.replace(/\|/g, "\\|")}\``;
+    const path = markdownCode(route.path);
     if (route.beforeUrl || route.afterUrl) {
       rows.push(`| ${path} | desktop | ${cell(route.beforeUrl, `before ${route.path}`)} | ${cell(route.afterUrl, `after ${route.path}`)} |`);
     }

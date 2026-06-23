@@ -130,6 +130,29 @@ describe("data spine repositories", () => {
       payload: { name: "test" },
     });
     expect(await listPullRequestFiles(env, "JSONbored/gittensory", 5)).toMatchObject([{ path: "src/index.ts", changes: 12 }]);
+    for (let index = 0; index < 501; index += 1) {
+      await upsertPullRequestFile(env, {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 6,
+        path: `docs/file-${index}.md`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: { filename: `docs/file-${index}.md` },
+      });
+    }
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 6,
+      path: "scripts/deploy.sh",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: { filename: "scripts/deploy.sh" },
+    });
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 6)).toHaveLength(502);
     expect(await listPullRequestReviews(env, "JSONbored/gittensory", 5)).toMatchObject([{ reviewerLogin: "maintainer" }]);
     expect(await listCheckSummaries(env, "JSONbored/gittensory", 5)).toMatchObject([{ name: "test", conclusion: "success" }]);
 

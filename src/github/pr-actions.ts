@@ -60,6 +60,29 @@ export async function mergePullRequest(
   return { merged: data.merged ?? true, sha: data.sha ?? null };
 }
 
+/** Rebase a PR onto its base via GitHub's update-branch (merges the current base into the PR head). Keeps a
+ *  BEHIND PR current before reviewing/merging so the review + required CI run against the merged result —
+ *  reviewbot parity. `expectedHeadSha` guards against racing a head that moved since we read it. The PUT
+ *  returns 202 (update queued) on success; a caller treats any throw as best-effort (e.g. 422 when already
+ *  up to date or the branch is dirty/conflicting — those are handled by the gate, not retried here). */
+export async function updatePullRequestBranch(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  pullNumber: number,
+  expectedHeadSha?: string | undefined,
+): Promise<void> {
+  const { owner, repo } = splitRepo(repoFullName);
+  const token = await createInstallationToken(env, installationId);
+  const octokit = new Octokit({ auth: token });
+  await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch", {
+    owner,
+    repo,
+    pull_number: pullNumber,
+    ...(expectedHeadSha ? { expected_head_sha: expectedHeadSha } : {}),
+  });
+}
+
 /** Post a plain issue/PR comment (used for the templated close message before closing). */
 export async function createIssueComment(env: Env, installationId: number, repoFullName: string, issueNumber: number, body: string): Promise<{ id: number }> {
   const { owner, repo } = splitRepo(repoFullName);

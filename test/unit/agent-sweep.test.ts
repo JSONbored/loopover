@@ -19,9 +19,9 @@ function pr(overrides: Partial<PullRequestRecord> & { number: number }): PullReq
 
 describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
   it("drops PRs updated within the freshness window (recently gated by their webhook)", () => {
-    const pulls = [pr({ number: 1, updatedAt: minutesAgo(5) }), pr({ number: 2, updatedAt: minutesAgo(120) })];
+    const pulls = [pr({ number: 1, updatedAt: minutesAgo(1) }), pr({ number: 2, updatedAt: minutesAgo(120) })];
     const picked = selectRegateCandidates({ pulls, now: NOW });
-    expect(picked.map((p) => p.number)).toEqual([2]);
+    expect(picked.map((p) => p.number)).toEqual([2]); // #1 updated 1m ago is inside the 2-min freshness window
   });
 
   it("orders the stalest first and bounds to max (rate-aware)", () => {
@@ -63,8 +63,8 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
     expect(picked.map((p) => p.number)).toEqual([2, 1]); // drafts still excluded; both non-draft kept, stalest first
   });
 
-  it("defaults: freshness window is one hour and the cap is 25", () => {
-    expect(SWEEP_FRESHNESS_MS).toBe(60 * 60 * 1000);
+  it("defaults: freshness window is two minutes and the cap is 25", () => {
+    expect(SWEEP_FRESHNESS_MS).toBe(2 * 60 * 1000);
     expect(SWEEP_MAX_PRS).toBe(25);
     const pulls = Array.from({ length: 40 }, (_, i) => pr({ number: i + 1, updatedAt: minutesAgo(120 + i) }));
     expect(selectRegateCandidates({ pulls, now: NOW })).toHaveLength(25);

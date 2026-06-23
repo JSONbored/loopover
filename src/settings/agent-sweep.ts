@@ -10,8 +10,11 @@ import type { PullRequestRecord } from "../types";
 export const SWEEP_MAX_PRS = 25;
 
 // Skip-if-fresh window: a PR touched within this span was almost certainly just gated by its webhook, so the
-// sweep leaves it alone and spends its budget on genuinely stale PRs. One hour mirrors the sweep cadence.
-export const SWEEP_FRESHNESS_MS = 60 * 60 * 1000;
+// sweep leaves it alone for that brief moment to avoid racing the in-flight webhook review. Kept SHORT (2 min)
+// because the sweep is now LIGHT (re-gate + act, no AI) and runs every ~2 min — a just-approved PR must be
+// re-evaluated within minutes so it MERGES once its approval registers (BLOCKED→CLEAN). One hour stranded
+// approved PRs unmerged for up to an hour.
+export const SWEEP_FRESHNESS_MS = 2 * 60 * 1000;
 
 /**
  * Select the open PRs a single repo sweep should recompute: drop drafts and anything updated within

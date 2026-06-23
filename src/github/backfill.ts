@@ -1910,8 +1910,41 @@ const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 export type LiveCiAggregate = {
   ciState: "passed" | "failed" | "pending" | "unverified";
+  // Checks that FAIL the gate: every failing check when required contexts are unknown, else only the failing
+  // REQUIRED contexts. These drive ciState === "failed" and the disposition (no-merge / close / request-changes).
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
+  // RC2: checks that are RED but NOT in branch-protection's required set (e.g. codecov/patch, codecov/project).
+  // Surfaced to the contributor but they do NOT fail the gate, block merge/approve, or force request_changes.
+  // Empty when required contexts are unknown (best-effort fetch failed / no protection) — then every red check
+  // stays in failingDetails (byte-identical to pre-RC2).
+  nonRequiredFailingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
 };
+
+/**
+ * RC2 best-effort fetch of the base branch's branch-protection REQUIRED status-check contexts. Returns the set
+ * of required context names (covering both the legacy `contexts` array and the newer `checks[].context` shape),
+ * or `null` when none can be determined — a 404 (no protection / no required checks), a 403 (token lacks
+ * admin:repo, common for installations/forks), or any other error. `null`/empty makes fetchLiveCiAggregate fall
+ * back to folding ALL red checks into the gate, so a fetch failure can never silently pass a required red check.
+ */
+export async function fetchRequiredStatusContexts(env: Env, repoFullName: string, baseRef: string | null | undefined, token: string | undefined): Promise<Set<string> | null> {
+  if (!baseRef) return null;
+  const result = await githubJsonWithHeaders<{ contexts?: Array<string | null> | null; checks?: Array<{ context?: string | null }> | null }>(
+    env,
+    repoFullName,
+    `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`,
+    token,
+  ).catch(() => undefined);
+  if (!result) return null; // 404 (no protection) / 403 (no admin) — treat as "unknown".
+  const names = new Set<string>();
+  for (const ctx of result.data.contexts ?? []) {
+    if (typeof ctx === "string" && ctx.trim().length > 0) names.add(ctx);
+  }
+  for (const check of result.data.checks ?? []) {
+    if (typeof check?.context === "string" && check.context.trim().length > 0) names.add(check.context);
+  }
+  return names;
+}
 
 /**
  * Fetch the head SHA's LIVE CI aggregate over BOTH GitHub Check-runs AND classic commit-statuses. This is the
@@ -1922,9 +1955,25 @@ export type LiveCiAggregate = {
  * present → "passed"; none at all → "unverified". The disposition layer NEVER approves/merges unless "passed",
  * and closes (non-owner) / holds (owner) on "failed". Best-effort: a fetch error degrades that source to empty.
  */
-export async function fetchLiveCiAggregate(env: Env, repoFullName: string, headSha: string | null | undefined, token: string | undefined): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", failingDetails: [] };
+export async function fetchLiveCiAggregate(
+  env: Env,
+  repoFullName: string,
+  headSha: string | null | undefined,
+  token: string | undefined,
+  // Operator policy (#all-ci-required): ALL CI gates — every check (required or not, incl. codecov/*) must be
+  // GREEN to merge, and ANY red check fails the gate (→ close a contributor PR / hold the owner's); a still-
+  // running check sets `pending` so the review WAITS for it. The legacy `requiredContexts` arg is accepted for
+  // signature compatibility but no longer narrows the gate.
+  requiredContexts?: ReadonlySet<string> | null,
+): Promise<LiveCiAggregate> {
+  if (!headSha) return { ciState: "unverified", failingDetails: [], nonRequiredFailingDetails: [] };
+  void requiredContexts;
+  // Every check gates (required or not). isRequired is kept (always true) so the failing/pending bucketing below
+  // is unchanged in shape — nonRequiredFailingDetails simply stays empty now.
+  const enforceRequiredOnly = false;
+  const isRequired = (_name: string): boolean => !enforceRequiredOnly;
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
+  const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;
   let anyPending = false;
 
@@ -1943,11 +1992,12 @@ export async function fetchLiveCiAggregate(env: Env, repoFullName: string, headS
       const status = (run.status ?? "").toLowerCase();
       if (conclusion ? CI_FAILING_CONCLUSIONS.has(conclusion) : false) {
         const summary = [run.output?.title, run.output?.summary].find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim().slice(0, 200);
-        failingDetails.push({ name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) });
+        const detail = { name: run.name, ...(summary ? { summary } : {}), ...(run.details_url ? { detailsUrl: run.details_url } : {}) };
+        (isRequired(run.name) ? failingDetails : nonRequiredFailingDetails).push(detail);
       } else if (conclusion ? CI_PASSING_CONCLUSIONS.has(conclusion) : status === "completed") {
         // concluded and not failing → passing
-      } else {
-        anyPending = true; // queued / in_progress / not yet concluded
+      } else if (isRequired(run.name)) {
+        anyPending = true; // queued / in_progress / not yet concluded — only a REQUIRED check holds the gate
       }
     }
     if (!hasNextPage(result.link)) break;
@@ -1968,16 +2018,20 @@ export async function fetchLiveCiAggregate(env: Env, repoFullName: string, headS
     const name = ctx.context ?? "status";
     if (state === "failure" || state === "error") {
       const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
-      failingDetails.push({ name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) });
+      const detail = { name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) };
+      (isRequired(name) ? failingDetails : nonRequiredFailingDetails).push(detail);
     } else if (state === "success") {
       // passing
-    } else {
-      anyPending = true; // pending
+    } else if (isRequired(name)) {
+      anyPending = true; // pending — only a REQUIRED context holds the gate
     }
   }
 
+  // ciState reflects ONLY gate-failing (required, or all-when-unknown) checks. A repo whose only red check is a
+  // non-required codecov/* therefore reports "passed" and is eligible to merge/approve, with the codecov
+  // failure riding along in nonRequiredFailingDetails for the contributor to see.
   const ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
-  return { ciState, failingDetails };
+  return { ciState, failingDetails, nonRequiredFailingDetails };
 }
 
 /**
@@ -1991,6 +2045,20 @@ export async function fetchLiveCiAggregate(env: Env, repoFullName: string, headS
 export async function fetchLivePullRequestMergeState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
   const result = await githubJsonWithHeaders<{ mergeable_state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
   return result?.data.mergeable_state ?? undefined;
+}
+
+/** RC1 (idempotent reviews): the PR's LIVE reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED) via
+ *  GraphQL. The STORED reviewDecision is only written by the open-PR backfill and goes stale, so the action
+ *  planner's approve/request-changes dedup was blind and re-posted a review every cycle — the re-review loop.
+ *  Refreshing it live makes the dedup accurate. Best-effort: returns undefined on any error (caller falls back
+ *  to the stored value). */
+export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  if (!token) return undefined;
+  const [owner, name] = repoFullName.split("/");
+  if (!owner || !name) return undefined;
+  const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequest(number: ${prNumber}) { reviewDecision } } }`;
+  const result = await githubGraphQl<{ data?: { repository?: { pullRequest?: { reviewDecision?: string | null } | null } | null } }>(env, query, token).catch(() => undefined);
+  return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
 }
 
 async function fetchPullRequestDetailsFromGraphQl(

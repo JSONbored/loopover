@@ -347,6 +347,135 @@ describe("makeGithubFileFetcher (GitHub Contents-API-backed FileFetcher)", () =>
     fetchSpy.mockRestore();
   });
 
+  it("does not read bodies whose Content-Length exceeds the per-file cap", async () => {
+    const env = createTestEnv();
+    const text = vi.fn(async () => "too large");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-length": "100" }),
+      text,
+      body: null,
+    } as unknown as Response);
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    const out = await fetcher.getFileContent("big.ts", "sha7", 10);
+    expect(out?.length).toBeGreaterThan(10);
+    expect(text).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("streams the body and truncates once the running text exceeds the per-file cap", async () => {
+    const env = createTestEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            // Left open (not closed) so getFileContent must cancel() the reader on truncation. The
+            // throwing cancel() forces reader.cancel() to reject, exercising the .catch fail-safe.
+            controller.enqueue(new TextEncoder().encode("x".repeat(50)));
+          },
+          cancel() {
+            throw new Error("cancel boom");
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    const out = await fetcher.getFileContent("big.ts", "sha7", 10);
+    // The reader loop sees the running text exceed the cap and returns maxChars + 1 chars.
+    expect(out).toBe("x".repeat(11));
+    fetchSpy.mockRestore();
+  });
+
+  it("streams an under-cap body to completion and returns the full text", async () => {
+    const env = createTestEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("small"));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    expect(await fetcher.getFileContent("small.ts", "sha7", 10)).toBe("small");
+    fetchSpy.mockRestore();
+  });
+
+  it("over-counts a trailing partial multibyte sequence on the final flush and truncates", async () => {
+    const env = createTestEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            // "abc" keeps the running length at the cap; the lone 0xE2 byte is an incomplete UTF-8
+            // 3-byte lead, so the final decoder flush emits U+FFFD and pushes the total over the cap.
+            controller.enqueue(new TextEncoder().encode("abc"));
+            controller.enqueue(new Uint8Array([0xe2]));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    const out = await fetcher.getFileContent("multibyte.ts", "sha7", 3);
+    expect(out).toHaveLength(4);
+    expect(out?.startsWith("abc")).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it("falls back to text() when the response has no streamable body, truncating over-cap content", async () => {
+    const env = createTestEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      headers: new Headers(), // no content-length → skips the early Content-Length guard
+      body: null,
+      text: async () => "y".repeat(50),
+    } as unknown as Response);
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    expect(await fetcher.getFileContent("nobody.ts", "sha7", 10)).toBe("y".repeat(11));
+    fetchSpy.mockRestore();
+  });
+
+  it("falls back to text() and returns the full body when no streamable body and under cap", async () => {
+    const env = createTestEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      headers: new Headers(),
+      body: null,
+      text: async () => "tiny",
+    } as unknown as Response);
+    const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+    expect(await fetcher.getFileContent("nobody-small.ts", "sha7", 10)).toBe("tiny");
+    fetchSpy.mockRestore();
+  });
+
+  it("aborts the fetch via the 10s timeout and resolves to null (fail-safe)", async () => {
+    vi.useFakeTimers();
+    try {
+      const env = createTestEnv();
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            const signal = (init as RequestInit | undefined)?.signal;
+            signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      );
+      const fetcher = await makeGithubFileFetcher(env, "acme/widgets", null);
+      const pending = fetcher.getFileContent("slow.ts", "sha7");
+      // Fire the abort timer; the rejected fetch is swallowed by the outer fail-safe catch.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toBeNull();
+      fetchSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("attempts an installation token when given an installationId, falling back to the public token on failure", async () => {
     // No GitHub App key is configured in the test env, so createInstallationToken rejects; the wire
     // swallows it (.catch -> undefined) and the fetcher then authenticates with the public token.

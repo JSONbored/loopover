@@ -414,7 +414,7 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
   }
   if (gate.conclusion === "neutral" || gate.conclusion === "skipped") {
     return {
-      title: gate.title,
+      title: gate.title.slice(0, 255),
       summary: gate.summary,
       text: "Gittensory did not create a contributor-facing failure for this event.",
     };
@@ -424,7 +424,10 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
     return `- ${sanitizeForCheckRun(finding.title)}.${action}`;
   });
   return {
-    title: gate.title,
+    // GitHub's check-run output.title 422s when too long; cap it (matches the 255 cap used for annotations).
+    // An unbounded title (e.g. when failing-check names are appended) threw a 422 that aborted the ENTIRE
+    // review before the comment, audit, and auto-action — so red-CI PRs were never reviewed or closed.
+    title: gate.title.slice(0, 255),
     summary: "Gittensory Gate found a repo-configured hard blocker.",
     text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.",
   };

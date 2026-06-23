@@ -511,8 +511,31 @@ function clientIp(request: Request): string {
   return request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown-ip";
 }
 
-function json(data: unknown, status: number): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+function json(data: unknown, status: number, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
+}
+
+const DRAFT_OAUTH_COOKIE = "gittensory_draft_oauth";
+
+function parseCookieHeader(header: string | null): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  for (const part of (header || "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const name = part.slice(0, eq).trim();
+    if (!name) continue;
+    try {
+      cookies[name] = decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      cookies[name] = "";
+    }
+  }
+  return cookies;
+}
+
+function draftOAuthCookie(state: string, origin: string, maxAgeSeconds: number): string {
+  const secure = new URL(origin).protocol === "https:" ? "; Secure" : "";
+  return `${DRAFT_OAUTH_COOKIE}=${encodeURIComponent(state)}; Path=/v1/drafts/auth/callback; Max-Age=${maxAgeSeconds}; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export async function handleDraftCreate(request: Request, env: Env): Promise<Response> {
@@ -560,7 +583,7 @@ export async function handleDraftCreate(request: Request, env: Env): Promise<Res
   authUrl.searchParams.set("redirect_uri", `${origin}/v1/drafts/auth/callback`);
   authUrl.searchParams.set("state", `${id}.${state}`);
 
-  return json({ ok: true, draftId: id, statusUrl: `/v1/drafts/${id}`, authUrl: authUrl.toString(), target }, 201);
+  return json({ ok: true, draftId: id, statusUrl: `/v1/drafts/${id}`, authUrl: authUrl.toString(), target }, 201, { "set-cookie": draftOAuthCookie(`${id}.${state}`, origin, 10 * 60) });
 }
 
 export async function handleDraftStatus(_request: Request, env: Env, draftId: string): Promise<Response> {
@@ -597,8 +620,14 @@ export async function handleDraftOAuthCallback(request: Request, env: Env): Prom
   const url = new URL(request.url);
   const code = url.searchParams.get("code") || "";
   const providerError = url.searchParams.get("error") || "";
-  const [draftId, stateToken] = (url.searchParams.get("state") || "").split(".");
+  const state = url.searchParams.get("state") || "";
+  const [draftId, stateToken] = state.split(".");
   if (!draftId || !stateToken) return new Response("Invalid submission state.", { status: 400 });
+
+  const cookieState = parseCookieHeader(request.headers.get("cookie"))[DRAFT_OAUTH_COOKIE] || "";
+  if (!cookieState || !timingSafeEqualHex(await sha256Hex(cookieState), await sha256Hex(state))) {
+    return new Response("Invalid or expired submission state.", { status: 400 });
+  }
 
   const row = await env.DB.prepare(`SELECT * FROM submission_drafts WHERE id = ?`).bind(draftId).first<DraftRow>();
   // Constant-time compare of the OAuth-state hash (CSRF token); both are lowercase hex SHA-256.
@@ -631,7 +660,7 @@ export async function handleDraftOAuthCallback(request: Request, env: Env): Prom
   await env.JOBS.send({ type: "submit-draft", requestedBy: "api", draftId });
 
   return new Response(`<meta http-equiv="refresh" content="0; url=/v1/drafts/${draftId}">Submission queued.`, {
-    headers: { "content-type": "text/html" },
+    headers: { "content-type": "text/html", "set-cookie": draftOAuthCookie("", url.origin, 0) },
   });
 }
 

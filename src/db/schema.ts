@@ -276,6 +276,12 @@ export const pullRequests = sqliteTable(
     // Latest deterministic slop assessment (gittensory-computed; written separately from the GitHub sync).
     slopRisk: integer("slop_risk"),
     slopBand: text("slop_band"),
+    // RC3 terminal-fail merges: failed-merge attempt count + the head SHA at which the merge is terminally
+    // blocked (perms/required-check/conflict) so the planner stops planning a merge. Keyed to head SHA → a new
+    // commit auto-clears it. gittensory-computed (executor-written), omitted from the GitHub-sync SET clause.
+    mergeAttemptCount: integer("merge_attempt_count").notNull().default(0),
+    mergeBlockedSha: text("merge_blocked_sha"),
+    mergeBlockedReason: text("merge_blocked_reason"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

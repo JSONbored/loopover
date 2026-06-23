@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import {
   listCollisionEdges,
   createAgentRun,
@@ -34,7 +35,7 @@ import {
   upsertRepositorySettings,
   upsertRepositoryFromGitHub,
 } from "../../src/db/repositories";
-import { processJob } from "../../src/queue/processors";
+import { changedPathsForGuardrail, processJob } from "../../src/queue/processors";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -44,6 +45,7 @@ describe("queue processors", () => {
   // Freshness-SLO fixtures are dated relative to late May 2026; pin the clock so staleness windows
   // stay deterministic regardless of when CI runs.
   beforeEach(() => {
+    clearInstallationTokenCacheForTest();
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-28T00:00:00.000Z"));
   });
@@ -576,6 +578,37 @@ describe("queue processors", () => {
     expect(sent).toEqual([]);
   });
 
+  it("agent re-gate sweep re-reviews each stale open PR (installation id) and swallows a failing re-review", async () => {
+    const env = createTestEnv({});
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, linkedIssueGateMode: "block" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Unlinked PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "no linked issue here" });
+    // Advance past the one-hour freshness window so the just-seeded PR reads as stale.
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // Make the re-review itself REJECT (its advisory persist throws) so the sweep's per-PR error backstop runs.
+    // Only the advisories insert is poisoned; every other read/write (verdict computation, the closing audit
+    // event) keeps working — the sweep must still complete and record its advisory verdict.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    env.DB.prepare = ((sql: string) => {
+      if (/insert\s+into\s+["'`]?advisories/i.test(sql)) throw new Error("advisory persist failed");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    const audit = await realPrepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.sweep.regate").first<{
+      outcome: string;
+      metadata_json: string;
+    }>();
+    expect(audit?.outcome).toBe("completed");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ repoFullName: "owner/agent-repo", examined: 1, flagged: 1 });
+    // The failing re-review was caught and logged via the sweep_rereview_failed backstop, not rethrown.
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("sweep_rereview_failed"))).toBe(true);
+    errors.mockRestore();
+  });
+
   it("agent re-gate sweep respects the #776 kill-switch: a paused repo records a skip and recomputes nothing (#777)", async () => {
     const env = createTestEnv({});
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } });
@@ -866,7 +899,7 @@ describe("queue processors", () => {
     expect(calls).toEqual({ minerList: 1, gateChecks: 2 });
   });
 
-  it("auto-maintain (#778): a blocking gate on an agent-configured repo records label + request-changes actions (dry-run)", async () => {
+  it("auto-maintain (#778): a blocking gate on an agent-configured repo records the changes-requested label, never a formal request_changes (dry-run)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -922,9 +955,10 @@ describe("queue processors", () => {
     const labelAudit = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.action.label").first<{ outcome: string; metadata_json: string }>();
     expect(labelAudit?.outcome).toBe("completed");
     expect(JSON.parse(labelAudit?.metadata_json ?? "{}")).toMatchObject({ mode: "dry_run", actionClass: "label" });
-    const rcAudit = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.action.request_changes").first<{ outcome: string; metadata_json: string }>();
-    expect(rcAudit?.outcome).toBe("completed");
-    expect(JSON.parse(rcAudit?.metadata_json ?? "{}")).toMatchObject({ mode: "dry_run" });
+    // The bot NEVER posts a formal request_changes (a blocking review strands the PR). With close NOT at an acting
+    // level here, a blocking contributor PR is only labeled; with close acting it would be closed. No request_changes.
+    const rcAudit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.request_changes").first<{ outcome: string }>();
+    expect(rcAudit).toBeFalsy();
   });
 
   it("auto-maintain (#778): uses the full gate verdict so manifest-policy blockers cannot be merged", async () => {
@@ -999,10 +1033,11 @@ describe("queue processors", () => {
     });
 
     const mergeCount = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge").first<{ n: number }>();
-    expect(mergeCount?.n).toBe(0);
-    const rcAudit = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.action.request_changes").first<{ outcome: string; metadata_json: string }>();
-    expect(rcAudit?.outcome).toBe("completed");
-    expect(JSON.parse(rcAudit?.metadata_json ?? "{}")).toMatchObject({ mode: "dry_run" });
+    expect(mergeCount?.n).toBe(0); // the manifest-policy blocker prevents the auto-merge (the key assertion)
+    // The bot never posts a formal request_changes. With close NOT at an acting level here, the blocked PR is
+    // simply not merged (no blocking review); with close acting it would be closed.
+    const rcAudit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.request_changes").first<{ outcome: string }>();
+    expect(rcAudit).toBeFalsy();
   });
 
   it("auto-maintain (#778): a repo with no acting autonomy takes no agent action", async () => {
@@ -1590,15 +1625,16 @@ describe("queue processors", () => {
       },
     });
 
-    // The completion PATCH failed (500), so the catch finalized the SAME check run (id 970) to a neutral,
-    // non-blocking terminal state — never left hanging in_progress.
+    // The completion PATCH failed (500), so the LOCAL check-run catch finalized the SAME check run (id 970) to
+    // a neutral, non-blocking terminal state — never left hanging in_progress — and CONTINUED the review
+    // (no re-throw), so the comment/audit/auto-action still run instead of the whole review dead-lettering.
     expect(patchBodies.length).toBe(2);
     const finalize = patchBodies[1];
     expect(finalize?.status).toBe("completed");
     expect(finalize?.conclusion).toBe("neutral");
     expect(finalize?.output?.title).toBe("Gittensory Gate — could not finish evaluating");
     const audit = await env.DB.prepare("select outcome from audit_events where event_type = ? and target_key = ?")
-      .bind("github_app.gate_finalized_on_error", "JSONbored/gittensory#80")
+      .bind("github_app.gate_check_failed_nonfatal", "JSONbored/gittensory#80")
       .first<{ outcome: string }>();
     expect(audit?.outcome).toBe("error");
   });
@@ -1816,10 +1852,13 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ gateWrites: 1, commentGets: 1, commentPosts: 0 });
+    // The real review is PRESERVED on close: the gate check is marked skipped (gateWrites:1), but the unified
+    // comment is NOT touched (commentGets:0, commentPosts:0) — no post-close pass overwrites the open-time review
+    // with an empty skip card. (#preserve-review-on-close)
+    expect(calls).toEqual({ gateWrites: 1, commentGets: 0, commentPosts: 0 });
   });
 
-  it("audits closed PR skipped gate permission failures and swallows late panel errors", async () => {
+  it("audits closed PR skipped gate permission failures (no late panel write — the real review is preserved)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -1862,7 +1901,8 @@ describe("queue processors", () => {
       },
     });
 
-    expect(commentGets).toBe(1);
+    // No late panel update on close (the real review is preserved), so the comment endpoint is never hit.
+    expect(commentGets).toBe(0);
     const audit = await env.DB.prepare("select target_key, outcome, detail from audit_events where event_type = ?")
       .bind("github_app.gate_check_permission_missing")
       .first<{ target_key: string; outcome: string; detail: string }>();
@@ -1959,7 +1999,8 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ token: 2, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1 });
+    // token: 1 — the installation token is now cached + reused within the request (was 2: main + permission check).
+    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1 });
     expect(patchedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
     expect(patchedBody).toContain("Readiness score:");
     expect(patchedBody).toContain("- [ ] <!-- gittensory-rerun-review:v1 --> Re-run Gittensory review");
@@ -2268,7 +2309,8 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ token: 2, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1 });
+    // token: 1 — the installation token is now cached + reused within the request (was 2: main + permission check).
+    expect(calls).toEqual({ token: 1, permission: 1, minerList: 1, commentGets: 1, commentPatches: 1 });
   });
 
   it("skips PR panel reruns when the editing actor and PR author are unavailable", async () => {
@@ -4045,9 +4087,9 @@ describe("queue processors", () => {
     });
 
     expect(calls.commentsCreated).toBe(8);
-    // Each command now also resolves the commenter's real repo permission (#788), which fetches its own
-    // installation token — so the per-command token count is 2 (permission check + comment).
-    expect(calls.token).toBe(16);
+    // The installation token is cached + reused across all 8 commands (each previously minted 2 — permission
+    // check + comment — for 16 total). Caching collapses them to a single mint, which is the rate-limit fix.
+    expect(calls.token).toBe(1);
     expect(calls.minerList).toBeGreaterThanOrEqual(1);
     const audit = await env.DB.prepare("select event_type, detail from audit_events where target_key = ? order by created_at")
       .bind("JSONbored/gittensory#77")
@@ -4154,7 +4196,7 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ commentsCreated: 1, token: 2 }); // +1 token for the #788 permission check
+    expect(calls).toEqual({ commentsCreated: 1, token: 1 }); // token cached + reused across the #788 permission check
     const audit = await env.DB.prepare("select event_type, detail, metadata_json from audit_events where target_key = ? order by created_at")
       .bind("JSONbored/gittensory#90")
       .all<{ event_type: string; detail: string | null; metadata_json: string }>();
@@ -4287,7 +4329,7 @@ describe("queue processors", () => {
       },
     });
 
-    expect(calls).toEqual({ commentsCreated: 1, token: 2, minerList: 0 }); // +1 token for the #788 permission check
+    expect(calls).toEqual({ commentsCreated: 1, token: 1, minerList: 0 }); // token cached + reused across the #788 permission check
     const audit = await env.DB.prepare("select event_type, detail from audit_events where target_key = ? order by created_at")
       .bind("JSONbored/gittensory#91")
       .all<{ event_type: string; detail: string | null }>();
@@ -5537,3 +5579,14 @@ async function generatePrivateKeyPem(): Promise<string> {
   const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
   return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
+
+describe("changedPathsForGuardrail", () => {
+  it("collects current + rename paths and skips empty entries", () => {
+    const files = [
+      { path: "src/a.ts", previousFilename: null },
+      { path: "src/b.ts", previousFilename: "src/old-b.ts" }, // a rename contributes both names
+      { path: "", previousFilename: "" }, // an empty path AND empty rename are both skipped (both guard branches false)
+    ] as unknown as Parameters<typeof changedPathsForGuardrail>[0];
+    expect(changedPathsForGuardrail(files)).toEqual(["src/a.ts", "src/b.ts", "src/old-b.ts"]);
+  });
+});

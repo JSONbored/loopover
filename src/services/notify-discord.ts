@@ -1,0 +1,73 @@
+import { errorMessage } from "../utils/json";
+
+// Per-repo Discord notifications (reviewbot parity). Each repo notifies its OWN channel on a terminal action —
+// merged / closed / changes-requested(manual) — so the operator sees what the bot did, like the old Reviewbott
+// embeds. Best-effort: a notify failure NEVER affects the gate/action (wrapped + swallowed by the caller).
+// RC1 already dedups at the action level (the planner won't re-post an unchanged verdict), so this fires once
+// per outcome per PR without a separate notification ledger.
+
+const ALLOWED_DISCORD_HOSTS = new Set(["discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com"]);
+
+function isValidDiscordWebhook(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && ALLOWED_DISCORD_HOSTS.has(parsed.hostname.toLowerCase()) && parsed.pathname.startsWith("/api/webhooks/");
+  } catch {
+    return false;
+  }
+}
+
+// Map each repo to its operator-set webhook SECRET name (set via `wrangler secret put`). A repo with no mapping
+// (or an unset secret) simply does not notify — byte-identical to today for any other repo.
+const WEBHOOK_SECRET_BY_REPO: Record<string, string> = {
+  "jsonbored/gittensory": "GITTENSORY_DISCORD_WEBHOOK",
+  "jsonbored/metagraphed": "METAGRAPHED_DISCORD_WEBHOOK",
+  "jsonbored/awesome-claude": "AWESOME_DISCORD_WEBHOOK",
+};
+
+function resolveWebhook(env: Env, repoFullName: string): string | undefined {
+  const name = WEBHOOK_SECRET_BY_REPO[repoFullName.toLowerCase()];
+  if (!name) return undefined;
+  const value = (env as unknown as Record<string, unknown>)[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export type NotifyOutcome = "merged" | "closed" | "manual";
+
+const OUTCOME_META: Record<NotifyOutcome, { word: string; color: number }> = {
+  merged: { word: "merged", color: 0x2ea043 },
+  closed: { word: "closed", color: 0xcf222e },
+  manual: { word: "manual review", color: 0xbf8700 },
+};
+
+/** Post a per-action Discord embed (merged/closed/manual) to the repo's channel. Best-effort: never throws. */
+export async function notifyActionToDiscord(
+  env: Env,
+  params: { repoFullName: string; pullNumber: number; outcome: NotifyOutcome; summary: string; submitter?: string | null | undefined },
+): Promise<void> {
+  const webhookUrl = resolveWebhook(env, params.repoFullName);
+  if (!webhookUrl || !isValidDiscordWebhook(webhookUrl)) return;
+  const meta = OUTCOME_META[params.outcome];
+  const body = {
+    username: "Gittensory",
+    embeds: [
+      {
+        title: `${params.repoFullName}#${params.pullNumber} · ${meta.word}`,
+        url: `https://github.com/${params.repoFullName}/pull/${params.pullNumber}`,
+        description: (params.summary || meta.word).slice(0, 1800),
+        color: meta.color,
+        fields: [
+          { name: "Outcome", value: `\`${params.outcome}\``, inline: true },
+          { name: "PR", value: `#${params.pullNumber}`, inline: true },
+          ...(params.submitter ? [{ name: "Submitter", value: `@${params.submitter}`, inline: true }] : []),
+        ],
+        footer: { text: `Gittensory · ${params.repoFullName}` },
+      },
+    ],
+  };
+  try {
+    await fetch(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+  } catch (error) {
+    console.warn(JSON.stringify({ ev: "discord_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
+  }
+}

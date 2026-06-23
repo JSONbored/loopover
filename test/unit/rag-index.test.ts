@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { indexRepo, reindexChangedPaths } from "../../src/review/rag-index";
-import { MAX_CHUNKS_PER_REPO, RAG_DIMENSIONS, ragNamespace } from "../../src/review/rag";
-import { processJob } from "../../src/queue/processors";
+import { MAX_CHUNKS_PER_REPO, MAX_FILE_BYTES, RAG_DIMENSIONS, ragNamespace } from "../../src/review/rag";
+import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
@@ -51,6 +51,7 @@ function indexEnv(over: { vec?: ReturnType<typeof vectorizeStub>; ai?: ReturnTyp
 
 const REPO = { fullName: "JSONbored/gittensory", installationId: null, defaultBranch: "main" };
 const PROJECT = "JSONbored/gittensory";
+const QUEUE_PROJECT = "JSONbored";
 
 /** Stub global fetch for the git-tree + raw-contents calls the populator makes. */
 function stubGithub(opts: {
@@ -204,6 +205,146 @@ describe("reindexChangedPaths: delete + re-upsert only the changed paths", () =>
     expect(vec.deleted).not.toContain(`${ns}|src/b.ts::0`);
   });
 
+
+  it("skips oversized changed files before chunking/upserting", async () => {
+    const { env, vec } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)")
+      .bind(`${ns}|src/huge.ts::0`, PROJECT, "gittensory", "src/huge.ts", 0, "code", "old")
+      .run();
+    stubGithub({ files: { "src/huge.ts": "x".repeat(MAX_FILE_BYTES + 1) } });
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, ["src/huge.ts"]);
+
+    expect(result).toEqual({ indexed: 0, files: 0, capped: false });
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(0);
+    expect(vec.deleted).toContain(`${ns}|src/huge.ts::0`);
+    expect(vec.upserted.length).toBe(0);
+  });
+
+  it("rejects a changed file whose Content-Length header already exceeds the cap (no body read)", async () => {
+    const { env, vec } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)")
+      .bind(`${ns}|src/declared-big.ts::0`, PROJECT, "gittensory", "src/declared-big.ts", 0, "code", "old")
+      .run();
+    // Header declares an oversized length → readTextCapped bails before streaming the (small) body.
+    vi.stubGlobal("fetch", async () =>
+      new Response("export const a = 1;\n", { status: 200, headers: { "content-length": String(MAX_FILE_BYTES + 1) } }),
+    );
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, ["src/declared-big.ts"]);
+
+    expect(result).toEqual({ indexed: 0, files: 0, capped: false });
+    expect(vec.upserted.length).toBe(0);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(0);
+  });
+
+  it("reads a changed file delivered without a readable body via arrayBuffer (within the cap)", async () => {
+    const { env, vec } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    // A Response built from a Blob exposes arrayBuffer() but no streamable .body in this runtime path:
+    // force the no-reader branch with an explicit body-less object.
+    const bytes = new TextEncoder().encode("export const a = 1;\n");
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      headers: new Headers(),
+      body: null,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    }));
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, ["src/a.ts"]);
+
+    expect(result.files).toBe(1);
+    expect(result.indexed).toBe(1);
+    expect(vec.upserted).toContain(`${ns}|src/a.ts::0`);
+  });
+
+  it("rejects a body-less changed file whose arrayBuffer exceeds the cap", async () => {
+    const { env, vec } = indexEnv();
+    const oversized = new Uint8Array(MAX_FILE_BYTES + 1);
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      headers: new Headers(),
+      body: null,
+      arrayBuffer: async () => oversized.buffer,
+    }));
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, ["src/a.ts"]);
+
+    expect(result).toEqual({ indexed: 0, files: 0, capped: false });
+    expect(vec.upserted.length).toBe(0);
+  });
+
+  it("tolerates empty stream chunks and cancels a stream that overflows the cap (cancel rejection swallowed)", async () => {
+    const { env, vec } = indexEnv();
+    const reads = [
+      { done: false, value: undefined }, // empty chunk → `if (!value) continue`
+      { done: false, value: new Uint8Array(MAX_FILE_BYTES + 1) }, // overflow → cancel path
+    ];
+    let i = 0;
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: async () => reads[i++] ?? { done: true, value: undefined },
+          cancel: async () => {
+            throw new Error("cancel failed"); // exercises `.catch(() => undefined)`
+          },
+        }),
+      },
+    }));
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, ["src/a.ts"]);
+
+    expect(result).toEqual({ indexed: 0, files: 0, capped: false });
+    expect(vec.upserted.length).toBe(0);
+  });
+
+  it("caps incremental reindex upserts at MAX_CHUNKS_PER_REPO", async () => {
+    const { env, vec } = indexEnv();
+    const overCap = MAX_CHUNKS_PER_REPO + 25;
+    const files: Record<string, string> = {};
+    const paths = Array.from({ length: overCap }, (_, i) => `src/f${i}.ts`);
+    for (const path of paths) files[path] = `export const ${path.replace(/\W/g, "_")} = 1;\n`;
+    stubGithub({ files });
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, paths);
+
+    expect(result.capped).toBe(true);
+    expect(result.indexed).toBe(MAX_CHUNKS_PER_REPO);
+    expect(vec.upserted.length).toBe(MAX_CHUNKS_PER_REPO);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(MAX_CHUNKS_PER_REPO);
+  });
+
+
+  it("counts existing repo chunks when capping incremental reindex", async () => {
+    const { env, vec } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.batch(
+      Array.from({ length: MAX_CHUNKS_PER_REPO - 1 }, (_, i) =>
+        env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)").bind(
+          `${ns}|src/existing${i}.ts::0`,
+          PROJECT,
+          "gittensory",
+          `src/existing${i}.ts`,
+          0,
+          "code",
+          "old",
+        ),
+      ),
+    );
+    stubGithub({ files: { "src/new-a.ts": "export const a = 1;\n", "src/new-b.ts": "export const b = 1;\n" } });
+
+    const result = await reindexChangedPaths(env, PROJECT, REPO, ["src/new-a.ts", "src/new-b.ts"]);
+
+    expect(result.capped).toBe(true);
+    expect(result.indexed).toBe(1);
+    expect(vec.upserted.length).toBe(1);
+    expect(await countChunks(env, PROJECT, "gittensory")).toBe(MAX_CHUNKS_PER_REPO);
+  });
+
   it("a deleted file (404 at head) is removed and not re-added", async () => {
     const { env } = indexEnv();
     const ns = ragNamespace(PROJECT, "gittensory");
@@ -306,7 +447,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     await registerRepo(env, "JSONbored/gittensory");
     stubGithub({ tree: [{ path: "src/a.ts", size: 30 }], files: { "src/a.ts": "export const a = 1;\n" } });
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
-    expect(await countChunks(env, PROJECT, "gittensory")).toBe(1);
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(1);
   });
 
   it("per-repo dispatch SKIPS a non-allowlisted repo (no indexing)", async () => {
@@ -321,7 +462,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     vi.stubGlobal("fetch", fetchSpy);
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(await countChunks(env, PROJECT, "gittensory")).toBe(0);
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(0);
   });
 
   it("per-repo INCREMENTAL dispatch (with paths) runs reindexChangedPaths", async () => {
@@ -329,7 +470,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     await registerRepo(env, "JSONbored/gittensory");
     stubGithub({ files: { "src/a.ts": "export const a = 1;\n" } });
     await processJob(env, { type: "rag-index-repo", requestedBy: "webhook", repoFullName: "JSONbored/gittensory", paths: ["src/a.ts"] });
-    expect(await pathsFor(env, PROJECT, "gittensory")).toEqual(["src/a.ts"]);
+    expect(await pathsFor(env, QUEUE_PROJECT, "gittensory")).toEqual(["src/a.ts"]);
   });
 
   it("FLAG-OFF per-repo dispatch is a no-op", async () => {
@@ -343,7 +484,7 @@ describe("rag-index-repo job dispatch (processors.ts wiring)", () => {
     vi.stubGlobal("fetch", fetchSpy);
     await processJob(env, { type: "rag-index-repo", requestedBy: "schedule", repoFullName: "JSONbored/gittensory" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(await countChunks(env, PROJECT, "gittensory")).toBe(0);
+    expect(await countChunks(env, QUEUE_PROJECT, "gittensory")).toBe(0);
   });
 });
 
@@ -407,5 +548,16 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
 
   it("a non-allowlisted repo enqueues nothing", async () => {
     expect(await runMergedPrWebhook({ repos: "" })).toEqual([]);
+  });
+});
+
+describe("splitRepoForRag", () => {
+  it("splits owner/name into the shared project/repo key shape", () => {
+    expect(splitRepoForRag("JSONbored/gittensory")).toEqual(["JSONbored", "gittensory"]);
+  });
+
+  it("falls back to an empty project for a bare repo name (no slash)", () => {
+    // The slash === -1 arm — indexing and retrieval must agree on this shape for a name without an owner.
+    expect(splitRepoForRag("bareRepoName")).toEqual(["", "bareRepoName"]);
   });
 });

@@ -412,6 +412,12 @@ export type PullRequestRecord = {
    *  the repo opted into slop. `null`/absent = not assessed (slop off, or PR not yet processed). */
   slopRisk?: number | null | undefined;
   slopBand?: string | null | undefined;
+  /** RC3 terminal-fail merges: failed auto-merge attempt count, and the head SHA at which the merge is
+   *  terminally blocked (with a human-readable reason). When mergeBlockedSha === headSha the planner suppresses
+   *  the `merge` disposition (held for a human); a new commit clears the block. */
+  mergeAttemptCount?: number | null | undefined;
+  mergeBlockedSha?: string | null | undefined;
+  mergeBlockedReason?: string | null | undefined;
 };
 
 export type IssueRecord = {

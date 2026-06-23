@@ -82,7 +82,7 @@ const CHUNK_OVERLAP = 1500;
 export const MAX_CHUNKS_PER_REPO = 1500;
 const EMBED_BATCH = 96; // Workers AI caps embedding input at 100 items/call
 const MAX_CONTEXT_CHARS = 14000; // bound the injected block (mirrors diff/knowledge budgets)
-const MAX_FILE_BYTES = 1_000_000; // skip files larger than ~1MB
+export const MAX_FILE_BYTES = 1_000_000; // skip files larger than ~1MB
 
 export type RagKind = "code" | "doc";
 /** `boundary` records HOW the chunk was cut (informational): a whole small file, or a logical JS/TS unit. */

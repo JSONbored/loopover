@@ -2787,6 +2787,65 @@ export function buildPullRequestReviewIntelligence(args: {
   };
 }
 
+// Index PRs by each issue number they link, ONCE and in original array order, so a per-issue lookup is O(1)
+// instead of re-scanning the whole PR list for every issue. Duplicate linked-issue numbers on a single PR are
+// de-duplicated so the PR lands in each bucket at most once — matching `.filter(pr => pr.linkedIssues.includes(n))`.
+function indexPullRequestsByLinkedIssue<T extends { number: number; linkedIssues: number[] }>(pullRequests: T[]): Map<number, T[]> {
+  const byIssue = new Map<number, T[]>();
+  for (const pr of pullRequests) {
+    for (const issueNumber of new Set(pr.linkedIssues)) {
+      const bucket = byIssue.get(issueNumber);
+      if (bucket) bucket.push(pr);
+      else byIssue.set(issueNumber, [pr]);
+    }
+  }
+  return byIssue;
+}
+
+// Index collision clusters by the issue numbers they reference, ONCE and preserving cluster order — replaces a
+// per-issue `clusters.filter(c => c.items.some(i => i.type === "issue" && i.number === n))` full scan. A cluster
+// is bucketed once per distinct issue number it contains, matching the `.some(...)` membership test exactly.
+function indexCollisionClustersByIssue(clusters: CollisionCluster[]): Map<number, CollisionCluster[]> {
+  const byIssue = new Map<number, CollisionCluster[]>();
+  for (const cluster of clusters) {
+    const issueNumbers = new Set<number>();
+    for (const item of cluster.items) if (item.type === "issue") issueNumbers.add(item.number);
+    for (const issueNumber of issueNumbers) {
+      const bucket = byIssue.get(issueNumber);
+      if (bucket) bucket.push(cluster);
+      else byIssue.set(issueNumber, [cluster]);
+    }
+  }
+  return byIssue;
+}
+
+// Resolve the PRs "linked" to an issue using the prebuilt index instead of scanning every PR: a PR counts if it
+// links the issue (`pr.linkedIssues`) OR the issue's cached metadata back-references it (`issue.linkedPrs`).
+// Byte-identical to the previous
+// `pullRequests.filter(pr => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number))`,
+// and always a fresh array so callers may safely sort/mutate it. The common cases (no back-reference, or one that
+// adds nothing new) skip the full scan; only a genuinely new back-reference falls back to a single ordered filter
+// over the PR list to reproduce exact array order.
+function resolveLinkedPullRequests<T extends { number: number }>(
+  issue: IssueRecord,
+  pullRequests: T[],
+  byLinkedIssue: Map<number, T[]>,
+  byNumber: Map<number, T>,
+): T[] {
+  const linkingPrs = byLinkedIssue.get(issue.number) ?? [];
+  if (issue.linkedPrs.length === 0) return [...linkingPrs];
+  const matchedNumbers = new Set<number>(linkingPrs.map((pr) => pr.number));
+  let addedBackReference = false;
+  for (const prNumber of issue.linkedPrs) {
+    if (byNumber.has(prNumber) && !matchedNumbers.has(prNumber)) {
+      matchedNumbers.add(prNumber);
+      addedBackReference = true;
+    }
+  }
+  if (!addedBackReference) return [...linkingPrs];
+  return pullRequests.filter((pr) => matchedNumbers.has(pr.number));
+}
+
 export function buildIssueQualityReport(
   repo: RepositoryRecord | null,
   issues: IssueRecord[],
@@ -2799,14 +2858,21 @@ export function buildIssueQualityReport(
   const lane = buildLaneAdvice(repo, fullName);
   const collisions = prebuiltCollisions ?? buildCollisionReport(fullName, issues, pullRequests, recentMergedPullRequests);
   const bountyByIssue = indexBountiesByIssue(bounties);
+  // Build per-issue indexes ONCE: the loop below runs over up to 100 open issues, and each previously re-scanned
+  // the full PR list (up to 10k) twice plus every collision cluster. O(issues·PRs) → O(issues + PRs).
+  const prsByLinkedIssue = indexPullRequestsByLinkedIssue(pullRequests);
+  const prByNumber = new Map(pullRequests.map((pr) => [pr.number, pr] as const));
+  const mergedPrsByLinkedIssue = indexPullRequestsByLinkedIssue(recentMergedPullRequests);
+  const mergedPrByNumber = new Map(recentMergedPullRequests.map((pr) => [pr.number, pr] as const));
+  const clustersByIssue = indexCollisionClustersByIssue(collisions.clusters);
   const lifecycleByIssue = new Map(buildIssueDiscoveryLifecycleReport(repo, issues, pullRequests, fullName, recentMergedPullRequests).states.map((entry) => [entry.number, entry]));
   const reports = issues
     .filter((issue) => issue.state === "open")
     .slice(0, 100)
     .map((issue) => {
-      const linkedPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-      const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number) || issue.linkedPrs.includes(pr.number));
-      const issueCollisions = collisions.clusters.filter((cluster) => cluster.items.some((item) => item.type === "issue" && item.number === issue.number));
+      const linkedPrs = resolveLinkedPullRequests(issue, pullRequests, prsByLinkedIssue, prByNumber);
+      const linkedMergedPrs = resolveLinkedPullRequests(issue, recentMergedPullRequests, mergedPrsByLinkedIssue, mergedPrByNumber);
+      const issueCollisions = clustersByIssue.get(issue.number) ?? [];
       /* v8 ignore next -- Missing issue dates normalize to zero age; issue-quality status tests cover age-driven behavior. */
       const age = daysSince(issue.updatedAt ?? issue.createdAt);
       /* v8 ignore next -- Lifecycle map is built from the same issue set; fallback protects malformed external issue-quality payloads. */
@@ -2876,9 +2942,14 @@ export function buildIssueDiscoveryLifecycleReport(
   recentMergedPullRequests: RecentMergedPullRequestRecord[] = [],
 ): IssueDiscoveryLifecycleReport {
   const lane = buildLaneAdvice(repo, fullName);
+  // One-time PR-by-issue index so each per-issue classification is an O(1) lookup, not a full PR rescan.
+  const linkedIndex = {
+    open: indexPullRequestsByLinkedIssue(pullRequests),
+    merged: indexPullRequestsByLinkedIssue(recentMergedPullRequests),
+  };
   const states = issues
     .slice(0, 300)
-    .map((issue) => classifyIssueDiscoveryLifecycle(issue, pullRequests, recentMergedPullRequests, lane))
+    .map((issue) => classifyIssueDiscoveryLifecycle(issue, pullRequests, recentMergedPullRequests, lane, linkedIndex))
     .sort((left, right) => lifecycleRank(left.state) - lifecycleRank(right.state) || left.number - right.number);
   return {
     repoFullName: fullName,
@@ -3239,9 +3310,12 @@ function classifyIssueDiscoveryLifecycle(
   pullRequests: PullRequestRecord[],
   recentMergedPullRequests: RecentMergedPullRequestRecord[],
   lane: LaneAdvice,
+  linkedIndex?: { open: Map<number, PullRequestRecord[]>; merged: Map<number, RecentMergedPullRequestRecord[]> },
 ): IssueDiscoveryLifecycleReport["states"][number] {
-  const linkedOpenPrs = pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
-  const linkedMergedPrs = recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  // With a prebuilt index (the per-repo lifecycle report) look up this issue's linked PRs in O(1); ad-hoc
+  // single-issue callers pass no index and fall back to the original filter. Both yield array-order results.
+  const linkedOpenPrs = linkedIndex ? (linkedIndex.open.get(issue.number) ?? []) : pullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
+  const linkedMergedPrs = linkedIndex ? (linkedIndex.merged.get(issue.number) ?? []) : recentMergedPullRequests.filter((pr) => pr.linkedIssues.includes(issue.number));
   const mergedSolverPrs = [...linkedOpenPrs.filter((pr) => pr.mergedAt || pr.state === "merged"), ...linkedMergedPrs];
   const solvedByPullRequests = [...new Set(mergedSolverPrs.map((pr) => pr.number))].sort((left, right) => left - right);
   const issueAuthorLogin = issue.authorLogin;

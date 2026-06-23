@@ -400,7 +400,13 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   // Estimate against the EFFECTIVE system prompt (`system`) so grounding's extra context is billed against the
   // budget. Flag-OFF, `system === REVIEW_SYSTEM_PROMPT`, so the estimate is byte-identical to today.
   const estimatedNeurons = freeAiCalls === 0 ? 0 : estimateNeurons(system.length + user.length, maxTokens, freeAiCalls);
-  const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
+  // FAIL-SAFE default (#budget-no-starve): the daily neuron budget is a runaway-LOOP backstop, not a normal-
+  // operation gate. An absent/empty/non-numeric env var must default HIGH (the clamp max), never to a tiny value
+  // that silently starves every dual-AI review into quota_exceeded — that exact misconfig (the deployed worker
+  // read the 10k free-tier default off `main` while this branch said 2M) blocked all reviews. An EXPLICIT value
+  // (including "0" to deliberately disable) still wins; only unset/empty/NaN falls back to the safe maximum.
+  const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
+  const budget = clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(rawNeuronBudget) ? rawNeuronBudget : 10_000_000, 0, 10_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
   if (estimatedNeurons > remainingBudget) {

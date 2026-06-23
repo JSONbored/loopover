@@ -438,6 +438,12 @@ export type DecisionPackSharedInputs = {
   allPullRequests: PullRequestRecord[];
   bounties: BountyRecord[];
   scoringSnapshot: ScoringModelSnapshotRecord;
+  // Per-repo maps/manifests keyed by lowercased full name. These are login-INDEPENDENT (they derive only
+  // from the registered-repo set), so the batch job builds them once here instead of re-deriving — and, for
+  // focus manifests, re-FETCHING over the network — for every contributor in the loop.
+  issueQualityByRepo: Map<string, IssueQualityReport>;
+  repoOutcomePatternsByRepo: Map<string, RepoOutcomePatterns>;
+  focusManifests: Map<string, FocusManifest>;
 };
 
 export async function loadDecisionPackSharedInputs(env: Env): Promise<DecisionPackSharedInputs> {
@@ -451,12 +457,34 @@ export async function loadDecisionPackSharedInputs(env: Env): Promise<DecisionPa
     listBounties(env),
     getOrCreateScoringModelSnapshot(env),
   ]);
-  return { repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot };
+  // Depends on `repositories`, so it runs after the first wave. Built once per batch and reused across logins.
+  const [issueQualityByRepo, repoOutcomePatternsByRepo, focusManifests] = await Promise.all([
+    loadIssueQualityReportMap(env, repositories),
+    loadRepoOutcomePatternsMap(env, repositories),
+    loadRepoFocusManifests(
+      env,
+      repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName),
+    ),
+  ]);
+  return {
+    repositories,
+    syncStates,
+    syncSegments,
+    totals,
+    allIssues,
+    allPullRequests,
+    bounties,
+    scoringSnapshot,
+    issueQualityByRepo,
+    repoOutcomePatternsByRepo,
+    focusManifests,
+  };
 }
 
 export async function buildAndPersistContributorDecisionPack(env: Env, login: string, shared?: DecisionPackSharedInputs): Promise<ContributorDecisionPack> {
   // The heavy full-table reads are login-independent; reuse caller-provided context (batch job) or load once here (single-login run).
-  const { repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot } = shared ?? (await loadDecisionPackSharedInputs(env));
+  const { repositories, syncStates, syncSegments, totals, allIssues, allPullRequests, bounties, scoringSnapshot, issueQualityByRepo, repoOutcomePatternsByRepo, focusManifests } =
+    shared ?? (await loadDecisionPackSharedInputs(env));
   const [github, contributorPullRequests, contributorIssues, cachedRepoStats, gittensorSnapshot] = await Promise.all([
     fetchPublicContributorProfile(login, env),
     listContributorPullRequests(env, login),
@@ -466,15 +494,8 @@ export async function buildAndPersistContributorDecisionPack(env: Env, login: st
   ]);
   const repoStats = authoritativeContributorRepoStats(gittensorSnapshot, cachedRepoStats);
   await evaluateRecommendationOutcomes(env, login);
-  const [issueQualityByRepo, repoOutcomePatternsByRepo, recommendationOutcomeFeedback] = await Promise.all([
-    loadIssueQualityReportMap(env, repositories),
-    loadRepoOutcomePatternsMap(env, repositories),
-    getAgentRecommendationOutcomeSummary(env, login),
-  ]);
-  const focusManifests = await loadRepoFocusManifests(
-    env,
-    repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName),
-  );
+  // Login-DEPENDENT, so it stays per-login; the login-independent maps/manifests above come from `shared`.
+  const recommendationOutcomeFeedback = await getAgentRecommendationOutcomeSummary(env, login);
   const profile = buildContributorProfile(login, github, contributorPullRequests, contributorIssues, repoStats, gittensorSnapshot);
   const pullRequestFiles = await loadContributorPullRequestFilePaths(env, {
     login,

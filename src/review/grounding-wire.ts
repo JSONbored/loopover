@@ -113,28 +113,58 @@ export async function makeGithubFileFetcher(env: Env, repoFullName: string, inst
   token = token ?? env.GITHUB_PUBLIC_TOKEN;
   const { owner, name } = repoParts(repoFullName);
   return {
-    async getFileContent(path: string, ref: string): Promise<string | null> {
+    async getFileContent(path: string, ref: string, maxChars = 24_001): Promise<string | null> {
       try {
         const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${path
           .split("/")
           .map(encodeURIComponent)
           .join("/")}?ref=${encodeURIComponent(ref)}`;
-        const response = await fetch(url, {
-          headers: {
-            // raw media type returns the file body directly (no base64 envelope to decode).
-            accept: "application/vnd.github.raw+json",
-            "user-agent": "gittensory/0.1",
-            "x-github-api-version": "2022-11-28",
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
-        });
-        if (!response.ok) return null;
-        return await response.text();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        try {
+          const response = await fetch(url, {
+            signal: controller.signal,
+            headers: {
+              // raw media type returns the file body directly (no base64 envelope to decode).
+              accept: "application/vnd.github.raw+json",
+              "user-agent": "gittensory/0.1",
+              "x-github-api-version": "2022-11-28",
+              ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+          });
+          if (!response.ok) return null;
+          const contentLength = response.headers.get("content-length");
+          if (contentLength && Number(contentLength) > maxChars) return " ".repeat(maxChars + 1);
+          return await readTextWithLimit(response, maxChars);
+        } finally {
+          clearTimeout(timeout);
+        }
       } catch {
         return null; // network / decode failure → skip this file (fail-safe)
       }
     },
   };
+}
+
+async function readTextWithLimit(response: Response, maxChars: number): Promise<string | null> {
+  if (!response.body) {
+    const text = await response.text();
+    return text.length > maxChars ? text.slice(0, maxChars + 1) : text;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    if (text.length > maxChars) {
+      await reader.cancel().catch(() => undefined);
+      return text.slice(0, maxChars + 1);
+    }
+  }
+  text += decoder.decode();
+  return text.length > maxChars ? text.slice(0, maxChars + 1) : text;
 }
 
 /** The grounding text spliced into the reviewer prompts. Both fields are "" when grounding is OFF or empty,

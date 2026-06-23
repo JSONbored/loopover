@@ -1,4 +1,6 @@
-import { createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, recordAuditEvent } from "../db/repositories";
+import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
+import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
+import { notifyActionToDiscord, type NotifyOutcome } from "./notify-discord";
 import { ensurePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest } from "../github/pr-actions";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
@@ -24,6 +26,8 @@ export type AgentActionExecutionContext = {
   agentPaused?: boolean | undefined;
   agentDryRun?: boolean | undefined;
   installationPermissions: Record<string, string> | null | undefined;
+  // PR author login — surfaced as the "Submitter" in the per-repo Discord action notification.
+  authorLogin?: string | null | undefined;
 };
 
 export type AgentActionOutcome = {
@@ -87,12 +91,59 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);
+      // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,
+      // close→closed, request_changes→manual review. Best-effort; never affects the action. RC1 dedups at the
+      // action level, so this fires once per outcome per PR (no spam).
+      const notifyOutcome: NotifyOutcome | null =
+        action.actionClass === "merge" ? "merged" : action.actionClass === "close" ? "closed" : action.actionClass === "request_changes" ? "manual" : null;
+      if (notifyOutcome) {
+        await notifyActionToDiscord(env, { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary: action.reason, submitter: ctx.authorLogin }).catch(() => undefined);
+      }
     } catch (error) {
       await audit("error", errorMessage(error));
+      // RC3 terminal-fail merges: a merge that fails on perms (403/405) / required-check-absent (409) / a real
+      // conflict can NEVER complete for this commit — mark it terminally merge-blocked so the planner stops
+      // re-planning it every sweep. A possibly-transient failure is retried up to MERGE_RETRY_CAP then held.
+      if (action.actionClass === "merge" && ctx.headSha) {
+        await handleMergeFailure(env, ctx, error);
+      }
     }
   }
 
   return outcomes;
+}
+
+// RC3: persist the outcome of a FAILED merge so it is never retried blindly forever. A non-transient failure
+// (403/405 perms, 409 required-check-absent, merge conflict) is terminal immediately; an otherwise-unclassified
+// failure (e.g. base moved during the merge — a benign TOCTOU race) is retried up to MERGE_RETRY_CAP and then
+// escalated to the same terminal hold. Either way the planner suppresses the merge for this head SHA and the PR
+// is held for a human (never auto-closed).
+async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, error: unknown): Promise<void> {
+  const headSha = ctx.headSha;
+  /* v8 ignore next -- guarded at the call site; defensive. */
+  if (!headSha) return;
+  const message = errorMessage(error);
+  const { terminal: classifiedTerminal, reason: classifiedReason } = classifyMergeFailure(error);
+  let terminal = classifiedTerminal;
+  let reason = classifiedReason;
+  if (!terminal) {
+    // Possibly transient: bound the retries so a persistently-failing "clean" merge still escalates.
+    const attempts = await bumpPullRequestMergeAttempt(env, ctx.repoFullName, ctx.pullNumber, headSha);
+    if (attempts >= MERGE_RETRY_CAP) {
+      terminal = true;
+      reason = `merge could not complete after ${attempts} attempt(s): ${message}`;
+    }
+  }
+  if (!terminal) return;
+  await markPullRequestMergeBlocked(env, ctx.repoFullName, ctx.pullNumber, headSha, reason);
+  await recordAuditEvent(env, {
+    eventType: "agent.action.merge_blocked",
+    actor: AGENT_ACTOR,
+    targetKey: `${ctx.repoFullName}#${ctx.pullNumber}`,
+    outcome: "denied",
+    detail: `merge held for human — ${reason}`,
+    metadata: { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, headSha, reason: reason.slice(0, 280) },
+  }).catch(() => undefined);
 }
 
 async function performAction(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction): Promise<void> {

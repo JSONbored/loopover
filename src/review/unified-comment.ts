@@ -431,7 +431,6 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
     if (c.body.trim()) blocks.push(c.rawHtml ? detailsRaw(c.title, c.body.trim()) : details(c.title, c.body.trim()));
   }
 
-  if (ctx.reRunLabel) blocks.push(`- [ ] ${ctx.reRunLabel}`);
   // Color-coded status legend (key) — a quiet footer mapping each headline color/icon to its meaning, so a
   // reader can tell at a glance what "this PR's status" means. Squares are the SAME ones used in the headline.
   blocks.push(
@@ -439,7 +438,13 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   );
   if (ctx.footerMarkdown?.trim()) blocks.push(`---\n${ctx.footerMarkdown.trim()}`);
 
-  return asAlert(meta.alert, blocks.join("\n\n"));
+  // The re-run checkbox MUST render at top level, OUTSIDE the alert blockquote. GitHub disables interactive
+  // task-list checkboxes inside a blockquote (every line `> `-prefixed by asAlert), so a checkbox emitted via
+  // asAlert can never be ticked — no issue_comment.edited fires and maybeProcessPrPanelRetrigger never runs.
+  // Appending it after the alert keeps the box clickable AND keeps the checked-marker regex matching a non-
+  // quoted `- [x] <marker> …` line. The PR_PANEL_COMMENT_MARKER prepended by the bridge still leads the body.
+  const alerted = asAlert(meta.alert, blocks.join("\n\n"));
+  return ctx.reRunLabel ? `${alerted}\n\n- [ ] ${ctx.reRunLabel}` : alerted;
 }
 
 /**

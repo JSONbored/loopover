@@ -26,6 +26,10 @@ function jsonHeaders(): Record<string, string> {
   return { "content-type": "application/json", origin: ORIGIN };
 }
 
+function callbackHeaders(setCookie: string | null): Record<string, string> {
+  return setCookie ? { cookie: setCookie.split(";")[0] ?? "" } : {};
+}
+
 const SAMPLE_FIELDS = {
   category: "skills",
   name: "Example Skill",
@@ -92,6 +96,9 @@ describe("draft endpoints — flag ON, public + unauthenticated", () => {
     // path-only URL resolves the origin to http://localhost, so the redirect_uri lives under it.
     expect(authUrl.searchParams.get("redirect_uri")).toBe("http://localhost/v1/drafts/auth/callback");
     expect(authUrl.searchParams.get("state")?.startsWith(`${body.draftId}.`)).toBe(true);
+    expect(res.headers.get("set-cookie")).toContain("gittensory_draft_oauth=");
+    expect(res.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(res.headers.get("set-cookie")).toContain("SameSite=Lax");
 
     const row = await env.DB.prepare("SELECT status, category, slug, target_path, branch_name, auth_state_hash FROM submission_drafts WHERE id = ?").bind(body.draftId).first<{
       status: string;
@@ -523,23 +530,55 @@ describe("processSubmitDraft — fork-PR happy path + branches", () => {
 });
 
 describe("handleDraftOAuthCallback — success + error paths", () => {
-  async function createDraftState(env: Env): Promise<{ draftId: string; state: string }> {
+  async function createDraftState(env: Env): Promise<{ draftId: string; state: string; cookie: string }> {
     const app = createApp();
-    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { draftId: string; authUrl: string };
+    const response = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env);
+    const created = (await response.json()) as { draftId: string; authUrl: string };
     const state = new URL(created.authUrl).searchParams.get("state") ?? "";
-    return { draftId: created.draftId, state };
+    return { draftId: created.draftId, state, cookie: response.headers.get("set-cookie") ?? "" };
   }
+
+  it("rejects a valid OAuth state when the browser-bound draft cookie is missing", async () => {
+    const env = draftEnv();
+    const { state } = await createDraftState(env);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid-code&state=${encodeURIComponent(state)}`), env);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid or expired submission state.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("treats a malformed draft cookie as absent (covers the cookie-parser empty-name + decode-failure arms)", async () => {
+    const env = draftEnv();
+    const { state } = await createDraftState(env);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    // One Cookie header that drives both parseCookieHeader fallbacks:
+    //  • " =lead"                  → whitespace-only name (eq > 0 but name trims to "") → `if (!name) continue`
+    //  • gittensory_draft_oauth=%  → a lone-percent value makes decodeURIComponent throw → decoded as ""
+    // The draft cookie therefore resolves to "", cannot match the URL state, and the callback rejects (no exchange).
+    const res = await handleDraftOAuthCallback(
+      new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid-code&state=${encodeURIComponent(state)}`, {
+        headers: { cookie: " =lead; gittensory_draft_oauth=%" },
+      }),
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid or expired submission state.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
 
   it("exchanges the code, stores an encrypted token, flips the draft to queued, and returns meta-refresh HTML", async () => {
     const env = draftEnv();
-    const { draftId, state } = await createDraftState(env);
+    const { draftId, state, cookie } = await createDraftState(env);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
       if (url.includes("github.com/login/oauth/access_token")) return ok({ access_token: "gho_exchanged_token" });
       throw new Error(`unexpected fetch ${url}`);
     });
 
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid-code&state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid-code&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     fetchSpy.mockRestore();
 
     expect(res.status).toBe(200);
@@ -558,10 +597,10 @@ describe("handleDraftOAuthCallback — success + error paths", () => {
 
   it("returns 400 when the token exchange returns an error (no access_token)", async () => {
     const env = draftEnv();
-    const { draftId, state } = await createDraftState(env);
+    const { draftId, state, cookie } = await createDraftState(env);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok({ error: "bad_verification_code", error_description: "The code passed is incorrect or expired." }));
 
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=stale&state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=stale&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     fetchSpy.mockRestore();
 
     expect(res.status).toBe(400);
@@ -572,9 +611,9 @@ describe("handleDraftOAuthCallback — success + error paths", () => {
 
   it("returns 400 on a provider error query param without attempting an exchange", async () => {
     const env = draftEnv();
-    const { state } = await createDraftState(env);
+    const { state, cookie } = await createDraftState(env);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?error=access_denied&state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?error=access_denied&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("GitHub authorization was not completed.");
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -583,8 +622,8 @@ describe("handleDraftOAuthCallback — success + error paths", () => {
 
   it("returns 503 when OAuth secrets are not configured", async () => {
     const env = draftEnv({ GITHUB_OAUTH_CLIENT_SECRET: "" });
-    const { state } = await createDraftState(env);
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=x&state=${encodeURIComponent(state)}`), env);
+    const { state, cookie } = await createDraftState(env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=x&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     expect(res.status).toBe(503);
   });
 });
@@ -1152,11 +1191,13 @@ describe("handleDraftOAuthCallback — extra guards", () => {
   it("returns 400 when the code is empty even though the state is valid (no-code branch)", async () => {
     const app = createApp();
     const env = draftEnv();
-    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { authUrl: string };
+    const createdResponse = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env);
+    const created = (await createdResponse.json()) as { authUrl: string };
     const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    const cookie = createdResponse.headers.get("set-cookie") ?? "";
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     // Valid state, but no `code` and no `error` query param → "authorization was not completed".
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("GitHub authorization was not completed.");
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -1166,12 +1207,14 @@ describe("handleDraftOAuthCallback — extra guards", () => {
   it("returns 400 with the generic 'GitHub auth failed.' message when the exchange yields no error fields", async () => {
     const app = createApp();
     const env = draftEnv();
-    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { authUrl: string };
+    const createdResponse = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env);
+    const created = (await createdResponse.json()) as { authUrl: string };
     const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    const cookie = createdResponse.headers.get("set-cookie") ?? "";
     // 200 OK but no access_token and no error/error_description → exchangeGitHubUserCode throws the
     // bare "GitHub auth failed." fallback, which the callback catches → 400 "GitHub authorization failed."
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok({}));
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     fetchSpy.mockRestore();
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("GitHub authorization failed.");
@@ -1180,11 +1223,13 @@ describe("handleDraftOAuthCallback — extra guards", () => {
   it("returns 400 when the exchange responds non-OK (response.ok false branch)", async () => {
     const app = createApp();
     const env = draftEnv();
-    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env)).json()) as { authUrl: string };
+    const createdResponse = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, env);
+    const created = (await createdResponse.json()) as { authUrl: string };
     const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    const cookie = createdResponse.headers.get("set-cookie") ?? "";
     // Non-OK + a non-JSON body → response.json().catch(() => ({})) → {} → throws "GitHub auth failed."
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("Bad Gateway", { status: 502 }));
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     fetchSpy.mockRestore();
     expect(res.status).toBe(400);
     expect(await res.text()).toBe("GitHub authorization failed.");
@@ -1308,8 +1353,10 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
     // env whose CLIENT_SECRET is genuinely undefined → draftSecrets clientSecret = "" → 503.
     const fullEnv = draftEnv();
     const app = createApp();
-    const created = (await (await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, fullEnv)).json()) as { authUrl: string };
+    const createdResponse = await app.request("/v1/drafts", { method: "POST", headers: jsonHeaders(), body: JSON.stringify(SAMPLE_FIELDS) }, fullEnv);
+    const created = (await createdResponse.json()) as { authUrl: string };
     const state = new URL(created.authUrl).searchParams.get("state") ?? "";
+    const cookie = createdResponse.headers.get("set-cookie") ?? "";
 
     // Re-point the SAME D1 instance into an env missing the client secret (undefined, not "").
     const env = createTestEnv({
@@ -1319,7 +1366,7 @@ describe("draftSecrets — `?? \"\"` nullish arms (env props genuinely undefined
       DB: fullEnv.DB,
       // GITHUB_OAUTH_CLIENT_SECRET intentionally omitted (undefined)
     });
-    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`), env);
+    const res = await handleDraftOAuthCallback(new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid&state=${encodeURIComponent(state)}`, { headers: callbackHeaders(cookie) }), env);
     expect(res.status).toBe(503);
     expect(await res.text()).toBe("Draft flow not configured.");
   });

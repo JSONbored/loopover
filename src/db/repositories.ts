@@ -2495,6 +2495,36 @@ export async function getPullRequest(env: Env, fullName: string, number: number)
   return row ? toPullRequestRecordFromRow(row) : null;
 }
 
+// RC3 terminal-fail merges. The auto-maintain executor calls these when a merge mutation fails so the planner
+// stops planning a merge it can never complete (403/405/409/conflict), instead of retrying every sweep forever.
+
+/** Increment the failed-merge attempt counter for a PR, scoped to the head SHA that failed. Returns the new
+ *  count. Scoping to headSha means a new commit's attempts start fresh once the row's head advances. */
+export async function bumpPullRequestMergeAttempt(env: Env, fullName: string, number: number, headSha: string): Promise<number> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ mergeAttemptCount: sql`${pullRequests.mergeAttemptCount} + 1`, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+  const [row] = await db
+    .select({ count: pullRequests.mergeAttemptCount })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)))
+    .limit(1);
+  return Number(row?.count ?? 0);
+}
+
+/** Mark a PR terminally merge-blocked for its current head SHA: the planner skips the `merge` disposition while
+ *  merge_blocked_sha == headSha. Scoped to headSha so a later commit (a pushed fix) auto-clears the block (the
+ *  guard compares it to the live head). Records the human-readable terminal reason. */
+export async function markPullRequestMergeBlocked(env: Env, fullName: string, number: number, headSha: string, reason: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ mergeBlockedSha: headSha, mergeBlockedReason: reason.slice(0, 280), updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
 export async function getIssue(env: Env, fullName: string, number: number): Promise<IssueRecord | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(issues).where(and(eq(issues.repoFullName, fullName), eq(issues.number, number))).limit(1);
@@ -2693,8 +2723,7 @@ export async function listPullRequestFiles(env: Env, fullName: string, pullNumbe
   const rows = await db
     .select()
     .from(pullRequestFiles)
-    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)))
-    .limit(500);
+    .where(and(eq(pullRequestFiles.repoFullName, fullName), eq(pullRequestFiles.pullNumber, pullNumber)));
   return rows.map(toPullRequestFileRecord);
 }
 
@@ -3898,6 +3927,9 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,
     slopBand: row.slopBand,
+    mergeAttemptCount: row.mergeAttemptCount,
+    mergeBlockedSha: row.mergeBlockedSha,
+    mergeBlockedReason: row.mergeBlockedReason,
   };
 }
 

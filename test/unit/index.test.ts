@@ -65,7 +65,7 @@ describe("worker entrypoint", () => {
     expect(waitUntil).toHaveLength(1);
   });
 
-  it("enqueues light scheduled work outside hourly and full-sync windows", async () => {
+  it("enqueues only the light auto-maintain sweep on a regular tick (not :00 or :30)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
       JOBS: {
@@ -76,14 +76,12 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
     await Promise.all(waitUntil);
 
-    expect(sent).toEqual([
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
-      { type: "repair-data-fidelity", requestedBy: "schedule" },
-      { type: "refresh-installation-health", requestedBy: "schedule" },
-    ]);
+    // A regular */2 tick (not :00, not :30) enqueues ONLY the light auto-maintain sweep — the heavier sync/health
+    // jobs are gated to :00/:30, so the tight cadence stays cheap while merges/closes fire promptly.
+    expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
   });
 
   it("enqueues hourly refreshes without full detail work outside the six-hour window", async () => {
@@ -101,6 +99,7 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
@@ -108,7 +107,6 @@ describe("worker entrypoint", () => {
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
-      { type: "agent-regate-sweep", requestedBy: "schedule" },
     ]);
   });
 
@@ -127,6 +125,7 @@ describe("worker entrypoint", () => {
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "backfill-registered-repos", requestedBy: "schedule", mode: "full" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
@@ -134,7 +133,6 @@ describe("worker entrypoint", () => {
       { type: "refresh-scoring-model", requestedBy: "schedule" },
       { type: "refresh-upstream-drift", requestedBy: "schedule" },
       { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
-      { type: "agent-regate-sweep", requestedBy: "schedule" },
       { type: "generate-signal-snapshots", requestedBy: "schedule" },
       { type: "build-burden-forecasts", requestedBy: "schedule" },
       { type: "build-contributor-evidence", requestedBy: "schedule" },

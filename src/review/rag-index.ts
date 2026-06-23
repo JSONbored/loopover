@@ -27,10 +27,12 @@ import { repoParts } from "../utils/json";
 import { createReviewAdapters } from "./adapters";
 import {
   chunkFile,
+  countRepoChunks,
   deleteChunksForPaths,
   filePriority,
   isIndexablePath,
   MAX_CHUNKS_PER_REPO,
+  MAX_FILE_BYTES,
   ragNamespace,
   type RagChunk,
   upsertChunks,
@@ -86,8 +88,49 @@ async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token:
   }
 }
 
-/** Fetch a single file's raw text at `ref`. null on any non-OK / error (fail-safe — skip that file). */
-async function fetchFileText(env: Env, repoFullName: string, path: string, ref: string, token: string | undefined): Promise<string | null> {
+/** Read a response body as UTF-8 text, aborting once the byte limit is exceeded. */
+async function readTextCapped(response: Response, maxBytes: number): Promise<string | null> {
+  const contentLength = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) return null;
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buffer = await response.arrayBuffer();
+    return buffer.byteLength > maxBytes ? null : new TextDecoder().decode(buffer);
+  }
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
+/** Fetch a single file's raw text at `ref`. null on any non-OK / oversized / error (fail-safe — skip that file). */
+async function fetchFileText(
+  env: Env,
+  repoFullName: string,
+  path: string,
+  ref: string,
+  token: string | undefined,
+  maxBytes = MAX_FILE_BYTES,
+): Promise<string | null> {
   try {
     const { owner, name } = repoParts(repoFullName);
     const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${path
@@ -96,7 +139,7 @@ async function fetchFileText(env: Env, repoFullName: string, path: string, ref: 
       .join("/")}?ref=${encodeURIComponent(ref)}`;
     const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github.raw+json") });
     if (!response.ok) return null;
-    return await response.text();
+    return await readTextCapped(response, maxBytes);
   } catch {
     return null;
   }
@@ -231,23 +274,30 @@ export async function reindexChangedPaths(
     if (indexable.length === 0) return { indexed: 0, files: 0, capped: false };
     const token = await resolveReadToken(env, repo.installationId);
     const ref = indexRef(repo.defaultBranch);
+    let stored = await countRepoChunks(infra.storage, project, repoName);
     let upserted = 0;
     let filesIndexed = 0;
+    let capped = false;
     for (const path of indexable) {
+      if (stored >= MAX_CHUNKS_PER_REPO) {
+        capped = true;
+        break;
+      }
       const text = await fetchFileText(env, repoFullName, path, ref, token);
-      if (text === null) continue; // file deleted at head, or unreadable — already removed above, leave it gone
+      if (text === null) continue; // file deleted at head, oversized, or unreadable — already removed above, leave it gone
       const chunks = chunkFile(path, text, namespace);
       if (chunks.length === 0) continue;
-      const n = await upsertChunks(infra, project, repoName, chunks);
+      const n = await upsertChunksCapped(env, project, repoName, chunks, stored);
       if (n > 0) {
         upserted += n;
+        stored += n;
         filesIndexed += 1;
       }
     }
     console.log(
-      JSON.stringify({ ev: "rag_reindex_paths", project, repo: repoFullName, paths: unique.length, files: filesIndexed, indexed: upserted }),
+      JSON.stringify({ ev: "rag_reindex_paths", project, repo: repoFullName, paths: unique.length, files: filesIndexed, indexed: upserted, capped }),
     );
-    return { indexed: upserted, files: filesIndexed, capped: false };
+    return { indexed: upserted, files: filesIndexed, capped };
   } catch (error) {
     console.log(JSON.stringify({ ev: "rag_reindex_paths_error", repo: repo.fullName, message: String(error).slice(0, 200) }));
     return empty;

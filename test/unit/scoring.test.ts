@@ -338,6 +338,54 @@ NOVELTY_BONUS_SCALAR = 3
     expect(unmodeled).not.toContain("TIME_DECAY_GRACE_PERIOD_HOURS"); // modeled as of #703
   });
 
+  it("excludes operational upstream constants from unmodeled scoring drift (#809)", () => {
+    const operationalOnly = findUnmodeledUpstreamConstants(`
+SECONDS_PER_DAY = 86400
+SECONDS_PER_HOUR = 3600
+GITHUB_HTTP_TIMEOUT_SECONDS = 15
+MIRROR_HTTP_TIMEOUT_SECONDS = 30
+MIRROR_MAX_ATTEMPTS = 3
+TREE_SITTER_PARSE_TIMEOUT_MICROS = 5_000_000
+SCORING_SUBPROCESS_BUDGET_S = 120
+MAX_FILE_SIZE_BYTES = 1_000_000
+RECYCLE_UID = 0
+ISSUES_TREASURY_UID = 111
+MAX_ISSUE_ID = 999_999
+`);
+    expect(operationalOnly).toEqual([]);
+
+    const withScoringGap = findUnmodeledUpstreamConstants(`
+SECONDS_PER_DAY = 86400
+GITHUB_HTTP_TIMEOUT_SECONDS = 15
+NOVELTY_BONUS_SCALAR = 3
+`);
+    expect(withScoringGap).toEqual(["NOVELTY_BONUS_SCALAR"]);
+  });
+
+  it("truncates the unmodeled-constants warning when upstream defines more than 12 (#809)", async () => {
+    const env = createTestEnv({
+      GITTENSOR_UPSTREAM_REPO: "custom/upstream",
+      GITTENSOR_UPSTREAM_REF: "staging",
+    });
+    const manyUnmodeled = Array.from({ length: 15 }, (_, index) => `UNMODELED_CONST_${String(index).padStart(2, "0")} = ${index + 1}`).join("\n");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response(manyUnmodeled);
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+    const warning = refreshed.warnings.find((entry) => /does not yet model/i.test(entry));
+    expect(warning).toMatch(/UNMODELED_CONST_00/);
+    expect(warning).toMatch(/UNMODELED_CONST_11/);
+    expect(warning).not.toMatch(/UNMODELED_CONST_12/);
+    expect(warning).toMatch(/…/);
+    expect(refreshed.payload.constants).toMatchObject({
+      unmodeledUpstreamConstants: expect.arrayContaining(["UNMODELED_CONST_00", "UNMODELED_CONST_14"]),
+    });
+  });
+
   it("warns on the snapshot when upstream defines an unmodeled scoring dimension", async () => {
     const env = createTestEnv({
       GITTENSOR_UPSTREAM_REPO: "custom/upstream",

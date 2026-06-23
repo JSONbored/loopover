@@ -42,19 +42,22 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   const hour = scheduledAt.getUTCHours();
   const isHourly = minute === 0;
   const isFullSyncWindow = isHourly && hour % 6 === 0;
-  const jobs: JobMessage[] = [
-    { type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" },
-    { type: "repair-data-fidelity", requestedBy: "schedule" },
-    { type: "refresh-installation-health", requestedBy: "schedule" },
-  ];
+  // The light auto-maintain sweep runs EVERY cron tick (~every 2 min) so an approved+clean PR MERGES and a
+  // red-CI non-owner PR CLOSES promptly — reviewbot parity (its cron fired every minute). It re-fetches LIVE CI +
+  // mergeable and only ACTS (merge/close/hold); it never re-runs the AI, so it is cheap enough for this cadence.
+  // Previously this was gated by `isHourly`, so an approved PR could wait ~an hour for its merge pass.
+  const jobs: JobMessage[] = [{ type: "agent-regate-sweep", requestedBy: "schedule" }];
+  // The heavier sync/health jobs keep their ~30-minute cadence even though the cron now ticks every ~2 minutes.
+  if (minute % 30 === 0) {
+    jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });
+    jobs.push({ type: "repair-data-fidelity", requestedBy: "schedule" });
+    jobs.push({ type: "refresh-installation-health", requestedBy: "schedule" });
+  }
   if (isHourly) {
     jobs.push({ type: "refresh-registry", requestedBy: "schedule" });
     jobs.push({ type: "refresh-scoring-model", requestedBy: "schedule" });
     jobs.push({ type: "refresh-upstream-drift", requestedBy: "schedule" });
     jobs.push({ type: "rollup-product-usage", requestedBy: "schedule", days: 7 });
-    // Agent layer (#777): re-gate stale open PRs hourly. Fans out to one job per agent-configured repo;
-    // webhooks don't fire when a PR's base advances, so this is what keeps those verdicts fresh.
-    jobs.push({ type: "agent-regate-sweep", requestedBy: "schedule" });
     // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Hourly anomaly scan over gittensory's own
     // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
     // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.

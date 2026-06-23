@@ -2525,6 +2525,18 @@ export async function markPullRequestMergeBlocked(env: Env, fullName: string, nu
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
+/** Re-approval idempotency: record the head SHA the bot just auto-approved. The planner skips the `approve`
+ *  disposition while approved_head_sha == headSha (this commit is already approved by the bot). Scoped to
+ *  headSha so a later commit (the live head no longer matches) lets the bot re-approve the new code without
+ *  any manual reset. Mirrors markPullRequestMergeBlocked. */
+export async function markPullRequestApproved(env: Env, fullName: string, number: number, headSha: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ approvedHeadSha: headSha, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
 export async function getIssue(env: Env, fullName: string, number: number): Promise<IssueRecord | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(issues).where(and(eq(issues.repoFullName, fullName), eq(issues.number, number))).limit(1);
@@ -3930,6 +3942,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     mergeAttemptCount: row.mergeAttemptCount,
     mergeBlockedSha: row.mergeBlockedSha,
     mergeBlockedReason: row.mergeBlockedReason,
+    approvedHeadSha: row.approvedHeadSha,
   };
 }
 

@@ -282,6 +282,11 @@ export const pullRequests = sqliteTable(
     mergeAttemptCount: integer("merge_attempt_count").notNull().default(0),
     mergeBlockedSha: text("merge_blocked_sha"),
     mergeBlockedReason: text("merge_blocked_reason"),
+    // Re-approval idempotency: the head SHA the bot last auto-approved. The planner skips the `approve`
+    // disposition while approved_head_sha == headSha (this commit is already approved). Keyed to head SHA → a
+    // new commit makes the bot re-approve the new code. gittensory-computed (executor-written), omitted from
+    // the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors merge_blocked_sha.)
+    approvedHeadSha: text("approved_head_sha"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

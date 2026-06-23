@@ -418,6 +418,10 @@ export type PullRequestRecord = {
   mergeAttemptCount?: number | null | undefined;
   mergeBlockedSha?: string | null | undefined;
   mergeBlockedReason?: string | null | undefined;
+  /** Re-approval idempotency: the head SHA the bot last auto-approved. The planner skips the `approve`
+   *  disposition while approvedHeadSha === headSha (this commit is already approved by the bot); a new commit
+   *  clears the match so the bot may re-approve the new code. Mirrors mergeBlockedSha. */
+  approvedHeadSha?: string | null | undefined;
 };
 
 export type IssueRecord = {
@@ -570,6 +574,10 @@ export type AutoMaintainPolicy = {
  *  action's class is set, mirroring PlannedAgentAction. */
 export type AgentPendingActionParams = {
   label?: string;
+  // Flag-then-close double-check: whether a `label` action ADDs (default/absent) or REMOVEs its label, plus an
+  // optional comment posted alongside the label mutation. Persisted so a staged label action replays faithfully.
+  labelOp?: "add" | "remove";
+  comment?: string;
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;

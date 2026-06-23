@@ -1,7 +1,7 @@
-import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
+import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, type NotifyOutcome } from "./notify-discord";
-import { ensurePullRequestLabel } from "../github/labels";
+import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
@@ -91,6 +91,13 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
     try {
       await performAction(env, ctx, action);
       await audit("completed", action.reason);
+      // Re-approval idempotency: record the head SHA we just approved so the planner skips re-approving this
+      // exact commit on the next sweep (a GitHub App's own approval does not reliably flip reviewDecision to
+      // APPROVED, so reviewDecision alone can't dedup). A new commit clears the match → the bot approves it.
+      // Best-effort: a failed persist only risks one redundant re-approval, never a wrong disposition.
+      if (action.actionClass === "approve" && ctx.headSha) {
+        await markPullRequestApproved(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha).catch(() => undefined);
+      }
       // Per-repo Discord notification on a terminal/visible action (reviewbot parity): merge→merged,
       // close→closed, request_changes→manual review. Best-effort; never affects the action. RC1 dedups at the
       // action level, so this fires once per outcome per PR (no spam).
@@ -149,7 +156,14 @@ async function handleMergeFailure(env: Env, ctx: AgentActionExecutionContext, er
 async function performAction(env: Env, ctx: AgentActionExecutionContext, action: PlannedAgentAction): Promise<void> {
   switch (action.actionClass) {
     case "label":
-      await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.label ?? "", { createMissingLabel: true });
+      // Flag-then-close double-check: a `label` action may ADD (default) or REMOVE its label, and may carry an
+      // optional comment (the Pass-1 flag warning, or the resolved note) posted alongside the label mutation.
+      if (action.labelOp === "remove") {
+        await removePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.label ?? "");
+      } else {
+        await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.label ?? "", { createMissingLabel: true });
+      }
+      if (action.comment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.comment);
       return;
     case "request_changes":
       await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "REQUEST_CHANGES", action.reviewBody ?? "");
@@ -174,6 +188,8 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
 export function actionParams(action: PlannedAgentAction): AgentPendingActionParams {
   return {
     ...(action.label !== undefined ? { label: action.label } : {}),
+    ...(action.labelOp !== undefined ? { labelOp: action.labelOp } : {}),
+    ...(action.comment !== undefined ? { comment: action.comment } : {}),
     ...(action.reviewBody !== undefined ? { reviewBody: action.reviewBody } : {}),
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),

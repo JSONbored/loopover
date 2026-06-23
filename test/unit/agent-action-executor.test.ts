@@ -9,10 +9,11 @@ vi.mock("../../src/github/pr-actions", () => ({
 }));
 vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
+  removePullRequestLabel: vi.fn(async () => undefined),
 }));
 
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
-import { ensurePullRequestLabel } from "../../src/github/labels";
+import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github/labels";
 import { actionParams, executeAgentMaintenanceActions, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { createTestEnv } from "../helpers/d1";
@@ -65,6 +66,39 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
     expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
+  });
+
+  it("LIVE label with labelOp=add + comment: adds the label AND posts the comment", async () => {
+    const env = createTestEnv({});
+    const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" };
+    await executeAgentMaintenanceActions(env, ctx(), [flag]);
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "gittensory:pending-closure", { createMissingLabel: true });
+    expect(removePullRequestLabel).not.toHaveBeenCalled();
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "⚠️ flagged");
+  });
+
+  it("LIVE label with labelOp=remove + comment: removes the label (never adds) AND posts the comment", async () => {
+    const env = createTestEnv({});
+    const clear: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "resolved", label: "gittensory:pending-closure", labelOp: "remove", comment: "✓ resolved" };
+    await executeAgentMaintenanceActions(env, ctx(), [clear]);
+    expect(removePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "gittensory:pending-closure");
+    expect(ensurePullRequestLabel).not.toHaveBeenCalled();
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "✓ resolved");
+  });
+
+  it("actionParams threads labelOp + comment so a staged flag replays faithfully", () => {
+    const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" };
+    expect(actionParams(flag)).toEqual({ label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" });
+  });
+
+  it("LIVE approve persists the approved head SHA for re-approval idempotency", async () => {
+    const env = createTestEnv({});
+    await env.DB.prepare("insert into pull_requests (id, repo_full_name, number, title, state, head_sha, payload_json, created_at, updated_at) values (?,?,?,?,?,?,?,?,?)")
+      .bind("owner/repo#7", "owner/repo", 7, "t", "open", "sha7", "{}", "2026-06-23T00:00:00Z", "2026-06-23T00:00:00Z")
+      .run();
+    await executeAgentMaintenanceActions(env, ctx({ headSha: "sha7" }), [approve]);
+    const row = await env.DB.prepare("select approved_head_sha from pull_requests where id = ?").bind("owner/repo#7").first<{ approved_head_sha: string | null }>();
+    expect(row?.approved_head_sha).toBe("sha7");
   });
 
   it("PAUSED (per-repo): mutates nothing and audits denied", async () => {

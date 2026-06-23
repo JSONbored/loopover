@@ -1,0 +1,20 @@
+-- Re-approval idempotency: stop the auto-maintain re-approve loop.
+--
+-- BEFORE: planAgentMaintenanceActions() plans an `approve` whenever the PR is review-good and
+-- reviewDecision !== "APPROVED". A GitHub App's OWN approval review does NOT reliably flip the PR's
+-- reviewDecision to APPROVED (the decision aggregates human/CODEOWNERS reviews, and an App self-review often
+-- leaves it null), so the guard never trips — the bot re-approves the SAME commit on every webhook + every
+-- scheduled re-gate sweep, posting a redundant, contributor-visible approval review each time (observed 24x on
+-- one PR). (Mirrors the RC3 merge-retry-forever loop fixed in 0052 with merge_blocked_sha.)
+--
+-- AFTER: when the bot's `approve` action executes, it records the head SHA it just approved. The planner skips
+-- planning an approve while approved_head_sha == headSha (this exact commit is already approved). A NEW commit
+-- changes the head SHA, so approved_head_sha no longer matches and the bot may approve the new commit (correct).
+--
+-- approved_head_sha is keyed to the head SHA so a NEW commit (which upsertPullRequestFromGitHub writes) makes
+-- the bot re-approve the new code — no manual reset. Mirrors merge_blocked_sha's storage/threading exactly.
+--
+-- pull_requests IS a Drizzle table (src/db/schema.ts), so this column is added to the Drizzle schema too;
+-- this raw migration is the production DDL applied by `wrangler d1 migrations apply` (drizzle-kit is not the
+-- runtime migrator here). Nullable / no default → backward-compatible (existing rows = NULL = not yet approved).
+ALTER TABLE pull_requests ADD COLUMN approved_head_sha TEXT;

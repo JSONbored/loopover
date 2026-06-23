@@ -15,6 +15,8 @@ function config(overrides: Partial<LinkedIssueHardRulesConfig> = {}): LinkedIssu
     pointBearingLabels: ["gittensor:bug", "gittensor:feature", "gittensor:priority"],
     maintainerOnlyLabels: ["maintainer-only"],
     defaultLabelRepo: false,
+    verifyBeforeClose: true,
+    closeDelaySeconds: 30,
     ...overrides,
   };
 }
@@ -232,6 +234,9 @@ describe("loadLinkedIssueHardRules", () => {
       pointBearingLabels: ["gittensor:bug"],
       maintainerOnlyLabels: ["reserved"],
       defaultLabelRepo: true,
+      // verify config not specified in the KV object → defaults (verify ON, 30s).
+      verifyBeforeClose: true,
+      closeDelaySeconds: 30,
     });
   });
 
@@ -255,5 +260,25 @@ describe("loadLinkedIssueHardRules", () => {
     const get = vi.fn().mockResolvedValue({ linkedIssueHardRules: { ownerAssignedClose: "block" } });
     await loadLinkedIssueHardRules(envWith(get), "soloname");
     expect(get).toHaveBeenCalledWith("soloname", "json");
+  });
+
+  it("defaults verifyBeforeClose ON and closeDelaySeconds to 30 when unspecified", async () => {
+    const cfg = await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { ownerAssignedClose: "block" } })), "o/r");
+    expect(cfg.verifyBeforeClose).toBe(true);
+    expect(cfg.closeDelaySeconds).toBe(30);
+  });
+
+  it("disables verifyBeforeClose only on an explicit false (any other value keeps ON)", async () => {
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { verifyBeforeClose: false } })), "o/r")).verifyBeforeClose).toBe(false);
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { verifyBeforeClose: "no" } })), "o/r")).verifyBeforeClose).toBe(true);
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: {} })), "o/r")).verifyBeforeClose).toBe(true);
+  });
+
+  it("clamps closeDelaySeconds into [0, 300] and falls back to 30 for a non-number", async () => {
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 120 } })), "o/r")).closeDelaySeconds).toBe(120);
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: -5 } })), "o/r")).closeDelaySeconds).toBe(0);
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 9999 } })), "o/r")).closeDelaySeconds).toBe(300);
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 45.9 } })), "o/r")).closeDelaySeconds).toBe(45);
+    expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: "30" } })), "o/r")).closeDelaySeconds).toBe(30);
   });
 });

@@ -177,7 +177,7 @@ import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
 import { loadHardGuardrailGlobs } from "../review/guardrail-config";
-import { evaluateLinkedIssueHardRules, loadLinkedIssueHardRules } from "../review/linked-issue-hard-rules";
+import { AGENT_LABEL_PENDING_CLOSURE, evaluateLinkedIssueHardRules, loadLinkedIssueHardRules } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { recordNativeGateDecision } from "../review/parity-wire";
@@ -675,6 +675,9 @@ async function maybeRunAgentMaintenance(
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
+    // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
+    // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).
+    linkedIssueVerify: { verifyBeforeClose: linkedIssueRulesConfig.verifyBeforeClose, closeDelaySeconds: linkedIssueRulesConfig.closeDelaySeconds },
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,
@@ -683,6 +686,7 @@ async function maybeRunAgentMaintenance(
       linkedDuplicateCount: linkedIssueDuplicatePullRequestsForGate(pr, otherOpenPullRequests).length,
       headSha: pr.headSha,
       mergeBlockedSha: pr.mergeBlockedSha,
+      approvedHeadSha: pr.approvedHeadSha,
     },
   });
   if (planned.length === 0) return;
@@ -705,6 +709,18 @@ async function maybeRunAgentMaintenance(
     },
     planned,
   );
+
+  // Flag-then-close double-check, Pass 2 trigger: when this pass FLAGGED the PR (added the pending-closure
+  // label), re-enqueue a delayed re-review after closeDelaySeconds so the verification pass runs promptly
+  // instead of waiting for the next CI-completion event or the hourly sweep. Best-effort — if the enqueue fails,
+  // the next sweep / CI event is the backstop Pass 2. Reuses the existing `recapture-preview` delayed-re-review
+  // job (it just re-runs reReviewStoredPullRequest), so no new job type is needed.
+  const flaggedForLinkedIssue = planned.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add");
+  if (flaggedForLinkedIssue) {
+    const delaySeconds = Math.max(0, linkedIssueRulesConfig.closeDelaySeconds);
+    const verifyJob = { type: "recapture-preview" as const, deliveryId: `linked-issue-verify:${repoFullName}#${pr.number}`, repoFullName, prNumber: pr.number, installationId, attempt: 0 };
+    await (delaySeconds > 0 ? env.JOBS.send(verifyJob, { delaySeconds }) : env.JOBS.send(verifyJob)).catch(() => undefined);
+  }
 }
 
 /**

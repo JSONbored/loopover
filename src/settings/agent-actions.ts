@@ -2,6 +2,7 @@ import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPol
 import type { GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { changedPathsHittingGuardrail } from "../signals/change-guardrail";
+import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 
 // High-slop threshold default when a repo hasn't set slopGateMinScore (mirrors the gate's `high` band).
 const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
@@ -38,6 +39,13 @@ export type PlannedAgentAction = {
   reason: string;
   // Action-specific payload (only the field for this actionClass is set):
   label?: string;
+  // For a `label` action: whether to ADD (default) or REMOVE the label. The flag-then-close double-check adds
+  // the pending-closure label on Pass 1 and removes it when the violation resolves; all other label actions add.
+  labelOp?: "add" | "remove";
+  // For a `label` action: an OPTIONAL issue comment posted alongside the label mutation (the flag-then-close
+  // warning on Pass 1, or the "resolved" note on flag-clear). Kept on the `label` action so the flag uses the
+  // already-held Issues-API `label` autonomy class (no new action class / no write-permission gate).
+  comment?: string;
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
@@ -81,6 +89,14 @@ export type AgentActionPlanInput = {
   // AI verdicts). It still NEVER fires for the owner or automation bots (the `isContributor` guard). Absent /
   // not-violated ⇒ no effect.
   linkedIssueHardRule?: { violated: boolean; reason: string | null } | undefined;
+  // Flag-then-close double-check for the linked-issue hard rule (#linked-issue-verify-before-close). When
+  // `verifyBeforeClose` is true (the default), a violation FLAGS the PR (pending-closure label + warning comment)
+  // on first detection and only CLOSES on a LATER evaluation when the violation STILL holds AND the PR already
+  // carries the pending-closure label (a label-based two-pass state machine). When false, the close fires
+  // immediately (the original GAP-5 behavior). Absent ⇒ immediate close (back-compat for callers that don't
+  // pass it). `closeDelaySeconds` is surfaced in the flag comment so the contributor knows the verification
+  // window. The presence of the label is read from `input.pr.labels`.
+  linkedIssueVerify?: { verifyBeforeClose: boolean; closeDelaySeconds: number } | undefined;
   pr: {
     mergeableState?: string | null | undefined;
     reviewDecision?: string | null | undefined;
@@ -91,6 +107,11 @@ export type AgentActionPlanInput = {
     // (perms/required-check/conflict). When they match, the merge can't complete for this commit → suppress it.
     headSha?: string | null | undefined;
     mergeBlockedSha?: string | null | undefined;
+    // Re-approval idempotency: the head SHA the bot last auto-approved. When it equals the live headSha this
+    // exact commit is already bot-approved → suppress the `approve` disposition (a GitHub App's own approval
+    // does NOT reliably flip reviewDecision to APPROVED, so without this the bot re-approves every sweep). A new
+    // commit makes the live head differ → the bot may approve the new code (correct).
+    approvedHeadSha?: string | null | undefined;
   };
 };
 
@@ -152,6 +173,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // RC3: a prior merge attempt failed terminally for THIS exact head SHA (403/405/409/conflict) → never re-plan
   // the merge; it can't complete for this commit. A new commit makes the live head differ from mergeBlockedSha.
   const mergeTerminallyBlocked = input.pr.mergeBlockedSha != null && input.pr.headSha != null && input.pr.mergeBlockedSha === input.pr.headSha;
+  // Re-approval idempotency: this exact commit is already bot-approved when the stored approved-head SHA equals
+  // the live head SHA → never re-post an approval for it (a GitHub App's own approval does not reliably flip
+  // reviewDecision to APPROVED, so reviewDecision alone can't dedup). A new commit makes the heads differ →
+  // approve may fire again. Absent approved-head SHA (never approved by the bot) ⇒ not idempotent-skipped.
+  const alreadyApprovedThisHead = input.pr.approvedHeadSha != null && input.pr.headSha != null && input.pr.approvedHeadSha === input.pr.headSha;
   const canMerge = reviewGood && !guardrailHit && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
   // A guarded/CRUCIAL path (CI, the review engine, visual) → ALWAYS held for the owner, never auto-actioned —
   // not auto-approved, not auto-merged, AND not auto-closed. Operator decision (#hold-crucial-on-reject): a
@@ -165,7 +191,28 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // PR (the `isContributor` guard owns the owner/automation exemption) and respects the `close` autonomy class.
   // It takes PRECEDENCE over merge/approve below: a PR linking an ineligible issue must never auto-merge.
   const linkedIssueHardRule = input.linkedIssueHardRule;
-  const willCloseForLinkedIssue = linkedIssueHardRule?.violated === true && isContributor && acting("close");
+  // Base condition: a CONTRIBUTOR PR links an issue tripping a deterministic hard rule AND the `close` autonomy
+  // class is acting. (The owner/automation exemption lives in `isContributor`.)
+  const linkedIssueViolated = linkedIssueHardRule?.violated === true && isContributor && acting("close");
+  // Flag-then-close double-check (#linked-issue-verify-before-close). Default behavior when the caller doesn't
+  // pass the config is IMMEDIATE close (back-compat). When verifyBeforeClose is on, the close is a TWO-PASS
+  // label-state machine: Pass 1 flags (adds the pending-closure label + a warning comment) and Pass 2 — the next
+  // evaluation, with the violation still present AND the label already on the PR — closes.
+  const verifyBeforeClose = input.linkedIssueVerify?.verifyBeforeClose === true;
+  const closeDelaySeconds = input.linkedIssueVerify?.closeDelaySeconds ?? 0;
+  const pendingClosureLabelPresent = hasLabel(input.pr.labels, AGENT_LABEL_PENDING_CLOSURE);
+  // Pass 1 — violation present, verify-mode on, label NOT yet on the PR → FLAG (label + comment), do NOT close.
+  const flagForLinkedIssue = linkedIssueViolated && verifyBeforeClose && !pendingClosureLabelPresent;
+  // Close NOW when: verify-mode OFF (immediate, original GAP-5), OR Pass 2 (violation persists AND the
+  // pending-closure label is already present from a prior pass).
+  const willCloseForLinkedIssue = linkedIssueViolated && (!verifyBeforeClose || pendingClosureLabelPresent);
+  // The violation has CLEARED (no longer violated) but the PR still carries a pending-closure flag from a prior
+  // pass → remove the stale flag (never close). Independent of `isContributor`/`close` autonomy: clearing a stale
+  // label is always safe and must happen even if the rule/author no longer qualifies for a close.
+  const clearLinkedIssueFlag = linkedIssueHardRule?.violated !== true && pendingClosureLabelPresent;
+  // True whenever a pending linked-issue close is in flight (flag OR close) — drives the changes-requested label
+  // and suppresses approve/merge below (a PR about to be closed for an ineligible issue must never auto-merge).
+  const linkedIssueCloseInFlight = flagForLinkedIssue || willCloseForLinkedIssue;
   const ciReason = ciFailed
     ? `CI is failing${failingCheckNames.length ? ` (${failingCheckNames.join(", ")})` : ""}`
     : ciUnverified
@@ -174,11 +221,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
 
   // 1) label — ready-to-merge (review-good, unguarded) / needs-human-review (review-good but guarded) /
   // changes-requested (not review-good → will be closed for a contributor, held for the owner). A pending
-  // linked-issue hard-rule close forces the changes-requested label regardless of the gate verdict (the PR is
-  // about to be closed for an ineligible linked issue). Idempotent.
+  // linked-issue hard-rule close (flag OR close pass) forces the changes-requested label regardless of the gate
+  // verdict (the PR is about to be closed for an ineligible linked issue). Idempotent.
   if (acting("label")) {
-    const label = willCloseForLinkedIssue || !reviewGood ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
-    const reason = willCloseForLinkedIssue
+    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    const reason = linkedIssueCloseInFlight
       ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
       : !reviewGood
         ? `verdict=${input.conclusion}${ciReason ? `; ${ciReason}` : ""}`
@@ -187,6 +234,32 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
           : `verdict=${input.conclusion}; CI green`;
     if (!hasLabel(input.pr.labels, label)) {
       actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
+    }
+    // Flag-then-close double-check, Pass 1: add the pending-closure label + a warning comment citing the specific
+    // rule and the verification window. The label's presence is the state that, persisting to the next pass with
+    // the violation still present, triggers the close. Idempotent (the flag only fires when the label is absent).
+    if (flagForLinkedIssue) {
+      const ruleReason = linkedIssueHardRule?.reason ?? "the linked issue is not eligible for a community PR";
+      const window = closeDelaySeconds > 0 ? `~${closeDelaySeconds}s` : "the next verification";
+      actions.push({
+        actionClass: "label",
+        requiresApproval: approval("label"),
+        reason: `linked-issue hard rule (flagged for verification): ${ruleReason}`,
+        label: AGENT_LABEL_PENDING_CLOSURE,
+        labelOp: "add",
+        comment: `⚠️ This PR links an ineligible issue (${ruleReason}) and will be closed on re-verification in ${window} unless the linked issue changes.`,
+      });
+    }
+    // Violation CLEARED but a stale pending-closure flag remains → remove it (+ a resolved note). Never closes.
+    if (clearLinkedIssueFlag) {
+      actions.push({
+        actionClass: "label",
+        requiresApproval: approval("label"),
+        reason: "linked-issue hard rule resolved — clearing the pending-closure flag",
+        label: AGENT_LABEL_PENDING_CLOSURE,
+        labelOp: "remove",
+        comment: "✓ The linked-issue hard-rule violation is resolved — this PR is no longer pending closure.",
+      });
     }
   }
 
@@ -197,7 +270,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // OWNER/automation PR is HELD via the needs-human label + the (non-blocking) unified review comment — never a
   // formal request-changes. (#no-request-changes) Either merge/approve, or close, with the rare manual hold left
   // open + commented, never blocked.
-  if (reviewGood && !guardrailHit && !willCloseForLinkedIssue && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
+  if (reviewGood && !guardrailHit && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),
@@ -206,11 +279,16 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
-  // 3) disposition — LINKED-ISSUE HARD-RULE CLOSE (deterministic, fires even on a guarded path; precedes
-  // merge) / MERGE (review-good, unguarded, mergeable, approvals) / CLOSE (not-good OR conflicting CONTRIBUTOR
-  // PR, one-shot) / MANUAL (guarded, or any not-good OWNER/automation PR — held, never closed). Mutually
-  // exclusive.
-  if (willCloseForLinkedIssue) {
+  // 3) disposition — FLAG-HOLD (linked-issue Pass 1: flagged this pass, verification pending → NO disposition) /
+  // LINKED-ISSUE HARD-RULE CLOSE (deterministic, fires even on a guarded path; precedes merge) / MERGE
+  // (review-good, unguarded, mergeable, approvals) / CLOSE (not-good OR conflicting CONTRIBUTOR PR, one-shot) /
+  // MANUAL (guarded, or any not-good OWNER/automation PR — held, never closed). Mutually exclusive.
+  if (flagForLinkedIssue) {
+    // Pass 1 of the flag-then-close double-check: the PR was flagged in the label section above and is HELD this
+    // pass — no merge, no close. The NEXT evaluation (violation still present + the label now on the PR) closes.
+    // Falling through here also suppresses the general `willClose` path so a flagged red-CI PR isn't closed until
+    // the verification pass confirms the linked-issue violation.
+  } else if (willCloseForLinkedIssue) {
     // A contributor linked an issue that violates a deterministic hard rule (owner-assigned / missing
     // point-label / maintainer-only). Close one-shot, citing the SPECIFIC rule + issue so the contributor knows
     // exactly why. This is the FIRST disposition branch: it wins over an otherwise-mergeable verdict (a PR for

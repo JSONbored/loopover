@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
 function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateCheckConclusion }): AgentActionPlanInput {
@@ -63,6 +64,35 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(failing).toContain("close");
     expect(failing).not.toContain("approve");
     expect(failing).not.toContain("request_changes");
+  });
+
+  describe("re-approval idempotency on the head SHA (stop the re-approve loop)", () => {
+    const good = { conclusion: "success" as const, autonomy: { approve: "auto" as const }, ciState: "passed" as const };
+
+    it("approves when approvedHeadSha is ABSENT (never approved this commit)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ ...good, pr: { labels: [], headSha: "abc123" } })));
+      expect(plan).toContain("approve");
+    });
+
+    it("approves when approvedHeadSha DIFFERS from the live headSha (a new commit pushed)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ ...good, pr: { labels: [], headSha: "newsha", approvedHeadSha: "oldsha" } })));
+      expect(plan).toContain("approve");
+    });
+
+    it("SKIPS approve when approvedHeadSha EQUALS the live headSha (this commit already bot-approved)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ ...good, pr: { labels: [], headSha: "abc123", approvedHeadSha: "abc123" } })));
+      expect(plan).not.toContain("approve");
+    });
+
+    it("does not affect merge — an already-approved-this-head PR still merges when clean", () => {
+      const plan = classes(
+        planAgentMaintenanceActions(
+          input({ ...good, autonomy: { approve: "auto", merge: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean", headSha: "abc123", approvedHeadSha: "abc123" } }),
+        ),
+      );
+      expect(plan).not.toContain("approve");
+      expect(plan).toContain("merge");
+    });
   });
 
   it("merges only a clean, approved, passing PR (reviewDecision drives the approval gate)", () => {
@@ -323,6 +353,58 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(cls).not.toContain("approve");
       // labeled changes-requested, not ready-to-merge
       expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+  });
+
+  describe("linked-issue flag-then-close double-check (#linked-issue-verify-before-close)", () => {
+    const violation = { violated: true, reason: "Linked issue #5 is labeled `maintainer-only` — it is not open for community PRs." };
+    const verifyOn = { verifyBeforeClose: true, closeDelaySeconds: 30 };
+    const pendingLabel = (plan: ReturnType<typeof planAgentMaintenanceActions>) => plan.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_PENDING_CLOSURE);
+
+    it("Pass 1 (verify on, label ABSENT): FLAGS (pending-closure label + warning comment), does NOT close", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
+      expect(classes(plan)).not.toContain("close");
+      const flag = pendingLabel(plan);
+      expect(flag).toBeTruthy();
+      expect(flag?.labelOp).toBe("add");
+      expect(flag?.comment).toContain("ineligible issue");
+      expect(flag?.comment).toContain("~30s");
+    });
+
+    it("Pass 2 (verify on, label PRESENT, violation persists): CLOSES with the cited reason", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [AGENT_LABEL_PENDING_CLOSURE] } }));
+      const close = plan.find((a) => a.actionClass === "close");
+      expect(close).toBeTruthy();
+      expect(close?.reason).toBe(violation.reason);
+      // Pass 2 must NOT re-add the pending-closure label (it is already present).
+      expect(pendingLabel(plan)).toBeFalsy();
+    });
+
+    it("violation CLEARED with the label present: REMOVES the flag (+ resolved comment), never closes", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto", merge: "auto" }, ciState: "passed", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, linkedIssueHardRule: { violated: false, reason: null }, linkedIssueVerify: verifyOn, pr: { labels: [AGENT_LABEL_PENDING_CLOSURE], mergeableState: "clean" } }));
+      expect(classes(plan)).not.toContain("close");
+      const remove = pendingLabel(plan);
+      expect(remove?.labelOp).toBe("remove");
+      expect(remove?.comment).toContain("resolved");
+    });
+
+    it("verifyBeforeClose = false: IMMEDIATE close on first detection (original GAP-5 behavior, no flag)", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: { verifyBeforeClose: false, closeDelaySeconds: 30 }, pr: { labels: [] } }));
+      expect(classes(plan)).toContain("close");
+      expect(pendingLabel(plan)).toBeFalsy();
+    });
+
+    it("owner PR is NEVER flagged or closed even with verify on (isContributor guard)", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto" }, ciState: "passed", authorIsOwner: true, linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
+      expect(classes(plan)).not.toContain("close");
+      expect(pendingLabel(plan)).toBeFalsy();
+    });
+
+    it("Pass 1 does NOT approve or merge an otherwise-mergeable flagged PR (held for verification)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto", approve: "auto", merge: "auto" }, ciState: "passed", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).not.toContain("close");
+      expect(plan).not.toContain("approve");
+      expect(plan).not.toContain("merge");
     });
   });
 });

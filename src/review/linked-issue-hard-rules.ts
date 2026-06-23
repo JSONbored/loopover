@@ -26,6 +26,15 @@ export type LinkedIssueHardRulesConfig = {
   // True when the repo uses the default gittensor labels, which is the precondition for the missing-point rule
   // (a repo that does NOT use point labels must never auto-close for "missing point label").
   defaultLabelRepo: boolean;
+  // Flag-then-close double-check (#linked-issue-verify-before-close). When TRUE (default), a hard-rule
+  // violation does NOT close on first detection: the planner FLAGS the PR (adds the pending-closure label + a
+  // warning comment) and only CLOSES on the NEXT gate evaluation if the violation STILL holds AND the label is
+  // already present (a label-based two-pass state machine — the second pass is the verification). When FALSE,
+  // the close fires immediately on first detection (the original GAP-5 behavior).
+  verifyBeforeClose: boolean;
+  // How long (seconds) until the verification pass — surfaced in the flag comment, and used to delay the
+  // optional re-review re-enqueue so Pass 2 doesn't wait for the slow sweep. Clamped to [0, 300].
+  closeDelaySeconds: number;
 };
 
 // Fail-SAFE default: every mode OFF, empty label lists, NOT a default-label repo. An unconfigured (or
@@ -35,6 +44,16 @@ export type LinkedIssueHardRulesConfig = {
 const DEFAULT_POINT_BEARING_LABELS = ["gittensor:bug", "gittensor:feature", "gittensor:priority"];
 const DEFAULT_MAINTAINER_ONLY_LABELS = ["maintainer-only"];
 
+// The namespaced label that marks a PR as flagged-for-closure by the linked-issue hard rule (Pass 1). Its
+// presence + a persisting violation on the next evaluation is the verification trigger (Pass 2 → close). Cleared
+// when the violation resolves. Namespaced so it never collides with project labels (mirrors AGENT_LABEL_*).
+export const AGENT_LABEL_PENDING_CLOSURE = "gittensory:pending-closure";
+
+// Default verification delay (seconds) — how long until the second-pass close. Clamped to this range on load.
+const DEFAULT_CLOSE_DELAY_SECONDS = 30;
+const MIN_CLOSE_DELAY_SECONDS = 0;
+const MAX_CLOSE_DELAY_SECONDS = 300;
+
 export const DEFAULT_LINKED_ISSUE_HARD_RULES: LinkedIssueHardRulesConfig = {
   ownerAssignedClose: "off",
   missingPointLabelClose: "off",
@@ -42,7 +61,16 @@ export const DEFAULT_LINKED_ISSUE_HARD_RULES: LinkedIssueHardRulesConfig = {
   pointBearingLabels: [],
   maintainerOnlyLabels: [],
   defaultLabelRepo: false,
+  // Default ON: a hard-rule violation flags first, then closes on re-verification (the operator's double-check).
+  verifyBeforeClose: true,
+  closeDelaySeconds: DEFAULT_CLOSE_DELAY_SECONDS,
 };
+
+/** Clamp a KV-provided close delay to a sane range, falling back to the default for a non-finite / absent value. */
+function clampCloseDelaySeconds(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CLOSE_DELAY_SECONDS;
+  return Math.min(MAX_CLOSE_DELAY_SECONDS, Math.max(MIN_CLOSE_DELAY_SECONDS, Math.trunc(value)));
+}
 
 function asMode(value: unknown): LinkedIssueHardRulesMode | null {
   return value === "block" || value === "off" ? value : null;
@@ -61,6 +89,8 @@ type LinkedIssueHardRulesKvShape = {
   pointBearingLabels?: JsonValue;
   maintainerOnlyLabels?: JsonValue;
   defaultLabelRepo?: JsonValue;
+  verifyBeforeClose?: JsonValue;
+  closeDelaySeconds?: JsonValue;
 };
 
 /**
@@ -85,6 +115,9 @@ export async function loadLinkedIssueHardRules(env: Env, repoFullName: string): 
       pointBearingLabels: asStringArray(raw.pointBearingLabels) ?? DEFAULT_POINT_BEARING_LABELS,
       maintainerOnlyLabels: asStringArray(raw.maintainerOnlyLabels) ?? DEFAULT_MAINTAINER_ONLY_LABELS,
       defaultLabelRepo: raw.defaultLabelRepo === true,
+      // Default ON: only an explicit `false` disables the flag-then-close double-check.
+      verifyBeforeClose: raw.verifyBeforeClose !== false,
+      closeDelaySeconds: clampCloseDelaySeconds(raw.closeDelaySeconds),
     };
   } catch {
     // A KV outage must NEVER let a deterministic close fire — fail safe to all-off (the opposite of the

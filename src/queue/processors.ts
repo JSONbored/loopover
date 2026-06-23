@@ -3116,7 +3116,7 @@ function authoritativeContributorRepoStats(
 }
 
 /** Split `owner/name` into the project/repo key shape shared by RAG indexing and retrieval. */
-function splitRepoForRag(repoFullName: string): [string, string] {
+export function splitRepoForRag(repoFullName: string): [string, string] {
   const slash = repoFullName.indexOf("/");
   return slash === -1 ? ["", repoFullName] : [repoFullName.slice(0, slash), repoFullName.slice(slash + 1)];
 }

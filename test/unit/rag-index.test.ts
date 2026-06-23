@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { indexRepo, reindexChangedPaths } from "../../src/review/rag-index";
 import { MAX_CHUNKS_PER_REPO, RAG_DIMENSIONS, ragNamespace } from "../../src/review/rag";
-import { processJob } from "../../src/queue/processors";
+import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
@@ -408,5 +408,16 @@ describe("merged-PR incremental re-index trigger (webhook)", () => {
 
   it("a non-allowlisted repo enqueues nothing", async () => {
     expect(await runMergedPrWebhook({ repos: "" })).toEqual([]);
+  });
+});
+
+describe("splitRepoForRag", () => {
+  it("splits owner/name into the shared project/repo key shape", () => {
+    expect(splitRepoForRag("JSONbored/gittensory")).toEqual(["JSONbored", "gittensory"]);
+  });
+
+  it("falls back to an empty project for a bare repo name (no slash)", () => {
+    // The slash === -1 arm — indexing and retrieval must agree on this shape for a name without an owner.
+    expect(splitRepoForRag("bareRepoName")).toEqual(["", "bareRepoName"]);
   });
 });

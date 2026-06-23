@@ -37,10 +37,19 @@ export const RELIABLE_FALLBACK_MODELS: readonly [string, string] = [
 export const AI_CONSENSUS_FLOOR = 0.9;
 
 const REVIEW_SYSTEM_PROMPT = [
-  "You are a senior open-source maintainer reviewing a single pull request diff.",
-  "Be concise, concrete, and fair. Judge only the diff and the context provided.",
-  "Report a critical defect ONLY when you are highly confident the change introduces a real bug, a",
-  "security hole, data loss, or a build break — NOT for style, nits, naming, or merely-missing tests.",
+  "You are a senior open-source maintainer giving a THOROUGH code review of a single pull request diff.",
+  "Review like a careful human: read each meaningful hunk and give SPECIFIC, concrete feedback — correctness",
+  "bugs, logic errors, risky patterns, missing/incorrect error handling, unhandled edge cases, security issues,",
+  "performance problems, race conditions, and API/contract or backward-compat breaks. Reference the file (and the",
+  "function/line where you can) for every point. Do NOT rubber-stamp: if the diff is genuinely clean, state",
+  "specifically WHY it is safe (what you checked); otherwise give real, actionable findings.",
+  "Judge only the diff and the context provided. `assessment` must be a substantive walkthrough of the change",
+  "(several sentences — what it does, whether it is correct, and the notable details), NOT one generic line.",
+  "`suggestions` = concrete improvements (file-referenced); `risks` = things that could break or need a human's",
+  "attention. Aim for real depth over brevity.",
+  "Report a criticalDefect ONLY when you are highly confident the change introduces a real bug, a security",
+  "hole, data loss, or a build break — NOT for style, nits, naming, or merely-missing tests (those belong in",
+  "suggestions/risks and must NOT block).",
   "Never mention rewards, rankings, payouts, wallets, hotkeys, coldkeys, trust scores, scoreability,",
   "reviewability, or farming.",
   'Respond with ONLY a JSON object of this exact shape (no prose, no code fence):',
@@ -211,7 +220,9 @@ function buildUserPrompt(input: GittensoryAiReviewInput): string {
     input.body ? `Description:\n${input.body.slice(0, 2000)}` : "Description: (none)",
     "",
     "Unified diff (truncated if large):",
-    input.diff.slice(0, 60000),
+    // Widened 60k→120k so a large multi-file PR is actually reviewed in full (the 120B Workers-AI models have a
+    // 128k context window; pairing this with the higher output ceiling gives a thorough review). (#extensive-reviews)
+    input.diff.slice(0, 120000),
   ];
   // Convergence (grounding): append the FINISHED CI status + FULL file content when the caller supplied them
   // (flag GITTENSORY_REVIEW_GROUNDING on). Absent/empty (the default) → the prompt is byte-identical to today.
@@ -378,7 +389,10 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED)) return { status: "disabled", reason: "Public AI comments are disabled." };
   if (!env.AI) return { status: "unavailable", reason: "Workers AI binding is not configured." };
 
-  const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
+  // Output ceiling for the review. The old 1024 cap forced a shallow "no blockers" scorecard across large diffs;
+  // a thorough finding-by-finding review needs real room. Default 4096, max 8192 (the free Workers-AI 120B models
+  // support it); an explicit env value still wins, clamped. (#extensive-reviews)
+  const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS) || 4096, 512, 8192);
   // Safety (convergence, flag-gated): defang the UNTRUSTED, author-controlled title/body/diff so a
   // prompt-injection payload never reaches the model verbatim. Flag-OFF (default) passes `input` through
   // unchanged → the prompt is byte-identical to today. Only the title/body/diff fed to buildUserPrompt are

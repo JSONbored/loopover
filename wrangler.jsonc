@@ -46,8 +46,10 @@
     // ~hundreds of k/day; 2,000,000 never blocks normal review volume while still capping an infinite-loop bug.
     "AI_DAILY_NEURON_BUDGET": "2000000",
     "AI_BYOK_DAILY_REPO_LIMIT": "25",
-    // Enterprise: give the reviewer room for a real assessment + suggestions + risks (256 floored the synthesis).
-    "AI_MAX_OUTPUT_TOKENS": "1024",
+    // Enterprise: give the reviewer real room for a THOROUGH finding-by-finding review (assessment + suggestions
+    // + risks). 1024 forced a shallow "no blockers" scorecard on large diffs; 4096 lets the dual-AI produce a
+    // substantive review. (#extensive-reviews — the clamp in ai-review.ts allows up to 8192.)
+    "AI_MAX_OUTPUT_TOKENS": "4096",
     "AI_GATEWAY_ID": "",
     "ADMIN_GITHUB_LOGINS": "JSONbored",
     // Convergence (Stage D): render the public PR comment via the unified-comment bridge. Default OFF —

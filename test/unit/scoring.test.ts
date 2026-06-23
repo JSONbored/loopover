@@ -286,6 +286,25 @@ NOVELTY_BONUS_SCALAR = 3
       }).scoreEstimate.contributionBonus,
       5,
     );
+
+    const explicitTotalWithNonCode = buildScorePreview({
+      repo,
+      snapshot: {
+        ...snapshot,
+        constants: { ...snapshot.constants, MAX_LINES_SCORED_FOR_NON_CODE_EXT: 300, CONTRIBUTION_SCORE_FOR_FULL_BONUS: 1500, MAX_CONTRIBUTION_BONUS: 25 },
+      },
+      input: {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 100,
+        totalTokenScore: 700,
+        nonCodeTokenScore: 600,
+        nonCodeLines: 600,
+        sourceLines: 100,
+        openPrCount: 0,
+        credibility: 1,
+      },
+    });
+    expect(explicitTotalWithNonCode.scoreEstimate.contributionBonus).toBeCloseTo(cappedNonCode.scoreEstimate.contributionBonus, 5);
   });
 
   it("detects the active model from fetched constants before default fallback constants", async () => {

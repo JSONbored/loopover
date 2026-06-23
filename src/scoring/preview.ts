@@ -301,12 +301,11 @@ function computeScoreCore(
   const issueDiscoverySlice = repoSlice * issueDiscoveryShare;
   const sourceTokenScore = nonNegative(input.sourceTokenScore);
   // TEST_FILE_CONTRIBUTION_WEIGHT (#808): upstream weights test-file tokens at 0.05× relative to source tokens.
-  // Applied only when totalTokenScore is not explicitly provided — an explicit caller total is honoured as-is.
   const testFileWeight = constant(constants, "TEST_FILE_CONTRIBUTION_WEIGHT", 0.05);
   const cappedNonCodeTokenScore = applyNonCodeLineCap(input, constants);
-  const totalTokenScore = nonNegative(
-    input.totalTokenScore ?? sourceTokenScore + testFileWeight * nonNegative(input.testTokenScore) + cappedNonCodeTokenScore,
-  );
+  const derivedTotalTokenScore = sourceTokenScore + testFileWeight * nonNegative(input.testTokenScore) + cappedNonCodeTokenScore;
+  const totalTokenScore =
+    input.totalTokenScore === undefined ? nonNegative(derivedTotalTokenScore) : applyNonCodeCapToTotal(input.totalTokenScore, input, cappedNonCodeTokenScore);
   const sourceLines = Math.max(1, nonNegative(input.sourceLines ?? sourceTokenScore));
   const fixedBaseScore = input.fixedBaseScore ?? config?.fixedBaseScore ?? undefined;
   const rawDensity = sourceTokenScore / sourceLines;
@@ -976,6 +975,17 @@ function applyNonCodeLineCap(input: Pick<ScorePreviewInput, "nonCodeTokenScore" 
   if (score <= 0 || lines <= 0) return score;
   const maxLines = constant(constants, "MAX_LINES_SCORED_FOR_NON_CODE_EXT", 300);
   return lines <= maxLines ? score : score * (maxLines / lines);
+}
+
+function applyNonCodeCapToTotal(
+  totalTokenScore: number,
+  input: Pick<ScorePreviewInput, "nonCodeTokenScore" | "nonCodeLines">,
+  cappedNonCodeTokenScore: number,
+): number {
+  const total = nonNegative(totalTokenScore);
+  const nonCodeTokenScore = nonNegative(input.nonCodeTokenScore);
+  if (nonCodeTokenScore <= 0 || cappedNonCodeTokenScore >= nonCodeTokenScore) return total;
+  return Math.max(0, total - (nonCodeTokenScore - cappedNonCodeTokenScore));
 }
 
 function constant(constants: Record<string, number>, key: string, fallback: number): number {

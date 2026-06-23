@@ -1279,4 +1279,48 @@ NOVELTY_BONUS_SCALAR = 3
       expect(buildScorePreview({ repo: repoDefault, snapshot, input }).scoreEstimate.timeDecayMultiplier).toBeLessThan(1);
     });
   });
+
+  describe("single-source fallbacks (#812)", () => {
+    it("the density-era fallback constants are declared in DEFAULT_SCORING_CONSTANTS (no longer silent literals)", () => {
+      expect(DEFAULT_SCORING_CONSTANTS.MIN_TOKEN_SCORE_FOR_BASE_SCORE).toBe(5);
+      expect(DEFAULT_SCORING_CONSTANTS.MAX_CODE_DENSITY_MULTIPLIER).toBe(1.15);
+      expect(DEFAULT_SCORING_CONSTANTS.MERGED_PR_BASE_SCORE).toBe(25);
+      expect(DEFAULT_SCORING_CONSTANTS.SRC_TOK_SATURATION_SCALE).toBe(58);
+    });
+
+    it("a preview with an empty constants object resolves every fallback from DEFAULT_SCORING_CONSTANTS, matching an explicit-defaults preview", () => {
+      const input: ScorePreviewInput = { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 };
+      const emptyConstants = buildScorePreview({
+        repo,
+        snapshot: { ...snapshot, activeModel: "pending_saturation_model" as const, constants: {} },
+        input,
+      });
+      const explicitDefaults = buildScorePreview({
+        repo,
+        snapshot: { ...snapshot, activeModel: "pending_saturation_model" as const, constants: { ...DEFAULT_SCORING_CONSTANTS } },
+        input,
+      });
+      expect(emptyConstants.scoreEstimate).toEqual(explicitDefaults.scoreEstimate);
+      expect(emptyConstants.gates).toEqual(explicitDefaults.gates);
+      expect(emptyConstants.effectiveEstimatedScore).toBe(explicitDefaults.effectiveEstimatedScore);
+      expect(emptyConstants.effectiveEstimatedScore).toBeGreaterThan(0);
+    });
+
+    it("retains the density model branch as a supported activeModel (the #812 'if density is dead' condition is false)", () => {
+      const densityPreview = buildScorePreview({
+        repo,
+        snapshot: { ...snapshot, activeModel: "current_density_model" as const, constants: { ...DEFAULT_SCORING_CONSTANTS } },
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      expect(densityPreview.scoreEstimate.densityMultiplier).toBeGreaterThan(0);
+      expect(densityPreview.scoreEstimate.densityMultiplier).toBeLessThanOrEqual(DEFAULT_SCORING_CONSTANTS.MAX_CODE_DENSITY_MULTIPLIER!);
+      expect(densityPreview.effectiveEstimatedScore).toBeGreaterThan(0);
+    });
+
+    it("treats density-era constants as modeled (not unmodeled drift) once single-sourced in DEFAULT_SCORING_CONSTANTS", () => {
+      expect(
+        findUnmodeledUpstreamConstants("MIN_TOKEN_SCORE_FOR_BASE_SCORE = 5\nMAX_CODE_DENSITY_MULTIPLIER = 1.15\n"),
+      ).toEqual([]);
+    });
+  });
 });

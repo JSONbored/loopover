@@ -1960,15 +1960,18 @@ export async function fetchLiveCiAggregate(
   repoFullName: string,
   headSha: string | null | undefined,
   token: string | undefined,
-  // RC2: when a NON-EMPTY set, only these branch-protection-required contexts gate the PR — a red check outside
-  // the set is surfaced (nonRequiredFailingDetails) but never fails the gate. null/empty ⇒ fold ALL red checks
-  // (pre-RC2 behavior), the safe fallback when protection can't be read.
+  // Operator policy (#all-ci-required): ALL CI gates — every check (required or not, incl. codecov/*) must be
+  // GREEN to merge, and ANY red check fails the gate (→ close a contributor PR / hold the owner's); a still-
+  // running check sets `pending` so the review WAITS for it. The legacy `requiredContexts` arg is accepted for
+  // signature compatibility but no longer narrows the gate.
   requiredContexts?: ReadonlySet<string> | null,
 ): Promise<LiveCiAggregate> {
   if (!headSha) return { ciState: "unverified", failingDetails: [], nonRequiredFailingDetails: [] };
-  // Only enforce a required subset when we actually resolved one; otherwise every red check is gate-failing.
-  const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
-  const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts!.has(name);
+  void requiredContexts;
+  // Every check gates (required or not). isRequired is kept (always true) so the failing/pending bucketing below
+  // is unchanged in shape — nonRequiredFailingDetails simply stays empty now.
+  const enforceRequiredOnly = false;
+  const isRequired = (_name: string): boolean => !enforceRequiredOnly;
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;

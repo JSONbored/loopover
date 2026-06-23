@@ -269,6 +269,62 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(classes(planAgentMaintenanceActions(input({ ...base, ciState: "failed" })))).not.toContain("merge");
     });
   });
+
+  describe("linked-issue hard-rule close (#linked-issue-hard-rules)", () => {
+    const violation = { violated: true, reason: "Linked issue #5 is labeled `maintainer-only` — it is not open for community PRs." };
+
+    it("closes a CONTRIBUTOR PR with the cited reason on a hard-rule violation", () => {
+      const close = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "passed", linkedIssueHardRule: violation, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })).find((a) => a.actionClass === "close");
+      expect(close).toBeTruthy();
+      expect(close?.reason).toBe(violation.reason);
+      // the cited reason is surfaced in the close comment too
+      expect(close?.closeComment).toContain(violation.reason);
+    });
+
+    it("does NOT close the same violation on an OWNER PR (the isContributor guard)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "passed", authorIsOwner: true, linkedIssueHardRule: violation, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("does NOT close the same violation on an automation-bot PR", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "passed", authorIsAutomationBot: true, linkedIssueHardRule: violation, pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("plans no hard-rule close when there is no violation (a clean review-good PR merges instead)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", close: "auto" }, ciState: "passed", linkedIssueHardRule: { violated: false, reason: null }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean" } })));
+      expect(plan).toContain("merge");
+      expect(plan).not.toContain("close");
+    });
+
+    it("plans no hard-rule close when the field is absent entirely", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", close: "auto" }, ciState: "passed", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean" } })));
+      expect(plan).toContain("merge");
+      expect(plan).not.toContain("close");
+    });
+
+    it("does NOT close when the close autonomy class is not acting (even with a violation)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "observe", label: "auto" }, ciState: "passed", linkedIssueHardRule: violation, pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("CLOSES even on a GUARDED path (deterministic rule, not an AI verdict — no hold-crucial exemption)", () => {
+      // Unlike a gate reject, the linked-issue rule is deterministic, so it fires regardless of guardrailHit.
+      const guarded = { changedPaths: ["src/scoring/model.ts"], hardGuardrailGlobs: ["src/scoring/**"] };
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "passed", ...guarded, linkedIssueHardRule: violation, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("close");
+    });
+
+    it("takes PRECEDENCE over an otherwise-mergeable verdict (never auto-merges a PR linking an ineligible issue)", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", close: "auto", approve: "auto", label: "auto" }, ciState: "passed", autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, linkedIssueHardRule: violation, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const cls = classes(plan);
+      expect(cls).toContain("close");
+      expect(cls).not.toContain("merge");
+      expect(cls).not.toContain("approve");
+      // labeled changes-requested, not ready-to-merge
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+  });
 });
 
 describe("isProtectedAutomationAuthor", () => {

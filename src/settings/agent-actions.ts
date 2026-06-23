@@ -74,6 +74,13 @@ export type AgentActionPlanInput = {
   // The names of the failing checks, surfaced in the close/request-changes reason so the contributor knows
   // WHY (e.g. "codecov/patch"). Empty unless ciState === "failed".
   failingCheckNames?: string[] | undefined;
+  // Linked-issue HARD-RULE result (#linked-issue-hard-rules). A DETERMINISTIC verdict about the issue(s) this PR
+  // links (owner-assigned / missing point-label / maintainer-only), pre-computed by the trigger. When
+  // `violated`, a CONTRIBUTOR PR is one-shot CLOSED citing `reason` — and because it is deterministic (no
+  // hallucination risk), that close fires REGARDLESS of a hard-guardrail path hit (the guard exists only for
+  // AI verdicts). It still NEVER fires for the owner or automation bots (the `isContributor` guard). Absent /
+  // not-violated ⇒ no effect.
+  linkedIssueHardRule?: { violated: boolean; reason: string | null } | undefined;
   pr: {
     mergeableState?: string | null | undefined;
     reviewDecision?: string | null | undefined;
@@ -152,6 +159,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // verifies and closes/merges. The BULK (non-guarded) contributor PRs still auto-close one-shot on a bad
   // verdict / conflict — only the small crucial set is held. Owner/automation PRs are never closed regardless.
   const willClose = !guardrailHit && isContributor && acting("close") && (!reviewGood || isConflict);
+  // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
+  // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
+  // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR
+  // PR (the `isContributor` guard owns the owner/automation exemption) and respects the `close` autonomy class.
+  // It takes PRECEDENCE over merge/approve below: a PR linking an ineligible issue must never auto-merge.
+  const linkedIssueHardRule = input.linkedIssueHardRule;
+  const willCloseForLinkedIssue = linkedIssueHardRule?.violated === true && isContributor && acting("close");
   const ciReason = ciFailed
     ? `CI is failing${failingCheckNames.length ? ` (${failingCheckNames.join(", ")})` : ""}`
     : ciUnverified
@@ -159,14 +173,18 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       : "";
 
   // 1) label — ready-to-merge (review-good, unguarded) / needs-human-review (review-good but guarded) /
-  // changes-requested (not review-good → will be closed for a contributor, held for the owner). Idempotent.
+  // changes-requested (not review-good → will be closed for a contributor, held for the owner). A pending
+  // linked-issue hard-rule close forces the changes-requested label regardless of the gate verdict (the PR is
+  // about to be closed for an ineligible linked issue). Idempotent.
   if (acting("label")) {
-    const label = !reviewGood ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
-    const reason = !reviewGood
-      ? `verdict=${input.conclusion}${ciReason ? `; ${ciReason}` : ""}`
-      : guardrailHit
-        ? `verdict=${input.conclusion}; guarded path → owner safety review`
-        : `verdict=${input.conclusion}; CI green`;
+    const label = willCloseForLinkedIssue || !reviewGood ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    const reason = willCloseForLinkedIssue
+      ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
+      : !reviewGood
+        ? `verdict=${input.conclusion}${ciReason ? `; ${ciReason}` : ""}`
+        : guardrailHit
+          ? `verdict=${input.conclusion}; guarded path → owner safety review`
+          : `verdict=${input.conclusion}; CI green`;
     if (!hasLabel(input.pr.labels, label)) {
       actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
     }
@@ -179,7 +197,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // OWNER/automation PR is HELD via the needs-human label + the (non-blocking) unified review comment — never a
   // formal request-changes. (#no-request-changes) Either merge/approve, or close, with the rare manual hold left
   // open + commented, never blocked.
-  if (reviewGood && !guardrailHit && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
+  if (reviewGood && !guardrailHit && !willCloseForLinkedIssue && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),
@@ -188,10 +206,18 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
-  // 3) disposition — MERGE (review-good, unguarded, mergeable, approvals) / CLOSE (not-good OR conflicting
-  // CONTRIBUTOR PR, one-shot) / MANUAL (guarded, or any not-good OWNER/automation PR — held, never closed).
-  // Mutually exclusive.
-  if (canMerge) {
+  // 3) disposition — LINKED-ISSUE HARD-RULE CLOSE (deterministic, fires even on a guarded path; precedes
+  // merge) / MERGE (review-good, unguarded, mergeable, approvals) / CLOSE (not-good OR conflicting CONTRIBUTOR
+  // PR, one-shot) / MANUAL (guarded, or any not-good OWNER/automation PR — held, never closed). Mutually
+  // exclusive.
+  if (willCloseForLinkedIssue) {
+    // A contributor linked an issue that violates a deterministic hard rule (owner-assigned / missing
+    // point-label / maintainer-only). Close one-shot, citing the SPECIFIC rule + issue so the contributor knows
+    // exactly why. This is the FIRST disposition branch: it wins over an otherwise-mergeable verdict (a PR for
+    // an ineligible issue must never auto-merge) and fires REGARDLESS of `guardrailHit` (deterministic, not AI).
+    const reason = linkedIssueHardRule?.reason ?? "the linked issue is not eligible for a community PR";
+    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason, closeComment: closeMessage([reason]) });
+  } else if (canMerge) {
     actions.push({
       actionClass: "merge",
       requiresApproval: approval("merge"),

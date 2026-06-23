@@ -2067,6 +2067,38 @@ export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName:
   return result?.data?.repository?.pullRequest?.reviewDecision ?? undefined;
 }
 
+/** The deterministic linked-issue facts the hard-rule evaluator needs (labels / assignees / open-state). */
+export type LinkedIssueFactsResult = { number: number; labels: string[]; assignees: string[]; state: string };
+
+/**
+ * FETCH the facts for one linked issue via the REST issues endpoint. FAIL-OPEN: any fetch/parse error returns
+ * undefined so the caller skips that issue — a deterministic auto-close must NEVER fire (or be blocked) on a
+ * transient fetch failure. Uses the same authenticated REST client + public-token 404-fallback as the other
+ * live fetches. (Note: GitHub's issues endpoint also returns pull requests, which carry a `pull_request` field;
+ * a PR number passed here would simply fail the rules — we only treat real issues' labels/assignees.)
+ */
+export async function fetchLinkedIssueFacts(env: Env, repoFullName: string, issueNumber: number, token: string | undefined): Promise<LinkedIssueFactsResult | undefined> {
+  const result = await githubJsonWithHeaders<{
+    number?: number;
+    state?: string | null;
+    labels?: Array<{ name?: string | null } | string | null> | null;
+    assignees?: Array<{ login?: string | null } | null> | null;
+  }>(env, repoFullName, `/issues/${issueNumber}`, token).catch(() => undefined);
+  if (!result) return undefined;
+  const data = result.data;
+  const labels = (data.labels ?? []).flatMap((label) => {
+    if (typeof label === "string") return label.length > 0 ? [label] : [];
+    return label?.name ? [label.name] : [];
+  });
+  const assignees = (data.assignees ?? []).flatMap((assignee) => (assignee?.login ? [assignee.login] : []));
+  return {
+    number: data.number ?? issueNumber,
+    labels,
+    assignees,
+    state: String(data.state ?? "open").toLowerCase(),
+  };
+}
+
 async function fetchPullRequestDetailsFromGraphQl(
   env: Env,
   repoFullName: string,

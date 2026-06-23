@@ -64,6 +64,7 @@ import {
   backfillRepositorySegment,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
+  fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
@@ -175,6 +176,7 @@ import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
 import { loadHardGuardrailGlobs } from "../review/guardrail-config";
+import { evaluateLinkedIssueHardRules, loadLinkedIssueHardRules } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { recordNativeGateDecision } from "../review/parity-wire";
@@ -639,6 +641,26 @@ async function maybeRunAgentMaintenance(
   const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
 
+  // Linked-issue HARD-RULE close (#linked-issue-hard-rules). DETERMINISTIC: if the repo enabled any rule AND
+  // this PR links at least one issue, fetch each linked issue's facts (labels/assignees/state) and evaluate.
+  // Skip the fetch entirely when no rule is on OR there are no linked issues (no extra GitHub calls on the
+  // common path). Fetches are FAIL-OPEN per issue (a fetch error skips that issue, never blocks the review);
+  // the config load is FAIL-SAFE (a KV fault yields all-off, never a surprise close).
+  let linkedIssueHardRule: { violated: boolean; reason: string | null } | undefined;
+  const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, repoFullName);
+  const anyLinkedIssueRuleOn =
+    linkedIssueRulesConfig.ownerAssignedClose === "block" ||
+    linkedIssueRulesConfig.missingPointLabelClose === "block" ||
+    linkedIssueRulesConfig.maintainerOnlyLabelClose === "block";
+  if (anyLinkedIssueRuleOn && pr.linkedIssues.length > 0) {
+    const issueFacts = (
+      await Promise.all(pr.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(env, repoFullName, issueNumber, ciToken ?? env.GITHUB_PUBLIC_TOKEN)))
+    ).flatMap((facts) => (facts ? [facts] : []));
+    if (issueFacts.length > 0) {
+      linkedIssueHardRule = evaluateLinkedIssueHardRules({ issues: issueFacts, config: linkedIssueRulesConfig, repoOwner });
+    }
+  }
+
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
@@ -651,6 +673,7 @@ async function maybeRunAgentMaintenance(
     authorIsAutomationBot,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
+    ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,

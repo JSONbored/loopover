@@ -5,7 +5,7 @@ import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyLev
 export const AUTONOMY_LEVELS = ["observe", "suggest", "propose", "auto_with_approval", "auto"] as const;
 
 // The write-action classes the maintainer auto-maintain layer (#778) can take on a PR.
-export const AGENT_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"] as const;
+export const AGENT_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "update_branch"] as const;
 
 // Deny-by-default: any action class with no explicit, valid level resolves to this.
 export const DEFAULT_AUTONOMY_LEVEL: AutonomyLevel = "observe";

@@ -88,7 +88,6 @@ import {
   sanitizePublicComment,
 } from "../github/commands";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
-import { updatePullRequestBranch } from "../github/pr-actions";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
@@ -105,7 +104,7 @@ import {
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection } from "../settings/command-authorization";
-import { isAgentConfigured } from "../settings/autonomy";
+import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
 import { selectRegateCandidates } from "../settings/agent-sweep";
 import { isProtectedAutomationAuthor, planAgentMaintenanceActions } from "../settings/agent-actions";
@@ -732,17 +731,34 @@ async function prReadyForReview(env: Env, installationId: number, repoFullName: 
   // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result.
   const liveMergeState = await fetchLivePullRequestMergeState(env, repoFullName, pr.number, token).catch(() => undefined);
   if (liveMergeState === "behind") {
-    const rebased = await updatePullRequestBranch(env, installationId, repoFullName, pr.number, pr.headSha)
-      .then(() => true)
-      .catch((error) => {
-        console.log(JSON.stringify({ ev: "rebase_failed", repoFullName, pull: pr.number, message: errorMessage(error).slice(0, 120) }));
-        return false;
-      });
-    if (rebased) {
-      await recordAuditEvent(env, { eventType: "github_app.pr_branch_updated", actor: "gittensory", targetKey: `${repoFullName}#${pr.number}`, outcome: "completed", detail: "behind base; update-branch issued before review", metadata: { deliveryId, repoFullName } }).catch(() => undefined);
+    const autonomyLevel = resolveAutonomy(settings.autonomy, "update_branch");
+    const installation = await getInstallation(env, installationId);
+    const [outcome] = await executeAgentMaintenanceActions(
+      env,
+      {
+        installationId,
+        repoFullName,
+        pullNumber: pr.number,
+        headSha: pr.headSha,
+        autonomy: settings.autonomy,
+        agentPaused: settings.agentPaused,
+        agentDryRun: settings.agentDryRun,
+        installationPermissions: installation?.permissions ?? null,
+        authorLogin: pr.authorLogin,
+      },
+      [
+        {
+          actionClass: "update_branch",
+          requiresApproval: autonomyRequiresApproval(autonomyLevel),
+          reason: "behind base; update-branch before review",
+          expectedHeadSha: pr.headSha,
+        },
+      ],
+    );
+    if (outcome?.outcome === "completed") {
       return false; // the rebase fires a synchronize → fresh review runs on the new head
     }
-    // rebase failed (a real conflict, or transient) → fall through: the gate closes a conflict; CI-wait still applies.
+    // Not authorized, staged, dry-run, or failed (conflict/transient) → fall through and review without mutating.
   }
   // 2) wait for ALL CI to finish (every check gates). Still-running + none-failed (ciState "pending") → defer.
   const ci = await fetchLiveCiAggregate(env, repoFullName, pr.headSha, token).catch(() => undefined);

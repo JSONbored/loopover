@@ -41,6 +41,7 @@ export type PlannedAgentAction = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
+  expectedHeadSha?: string;
 };
 
 export type AgentActionPlanInput = {

@@ -5,12 +5,13 @@ vi.mock("../../src/github/pr-actions", () => ({
   mergePullRequest: vi.fn(async () => ({ merged: true, sha: "merged-sha" })),
   closePullRequest: vi.fn(async () => ({ state: "closed" })),
   createIssueComment: vi.fn(async () => ({ id: 2 })),
+  updatePullRequestBranch: vi.fn(async () => undefined),
 }));
 vi.mock("../../src/github/labels", () => ({
   ensurePullRequestLabel: vi.fn(async () => ({ applied: true, created: false })),
 }));
 
-import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest } from "../../src/github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";
 import { executeAgentMaintenanceActions, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
@@ -22,7 +23,7 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     repoFullName: "owner/repo",
     pullNumber: 7,
     headSha: "sha7",
-    autonomy: { label: "auto", request_changes: "auto", approve: "auto", merge: "auto", close: "auto" },
+    autonomy: { label: "auto", request_changes: "auto", approve: "auto", merge: "auto", close: "auto", update_branch: "auto" },
     agentPaused: false,
     agentDryRun: false,
     installationPermissions: { pull_requests: "write", issues: "write" },
@@ -35,6 +36,7 @@ const requestChanges: PlannedAgentAction = { actionClass: "request_changes", req
 const approve: PlannedAgentAction = { actionClass: "approve", requiresApproval: false, reason: "passed", reviewBody: "lgtm" };
 const merge: PlannedAgentAction = { actionClass: "merge", requiresApproval: false, reason: "clean", mergeMethod: "squash" };
 const close: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "noise", closeComment: "closing" };
+const updateBranch: PlannedAgentAction = { actionClass: "update_branch", requiresApproval: false, reason: "behind", expectedHeadSha: "sha7" };
 
 async function auditFor(env: Env, actionClass: string): Promise<{ outcome: string; metadata_json: string } | null> {
   return env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ? order by created_at desc limit 1").bind(`agent.action.${actionClass}`).first();
@@ -47,23 +49,25 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
 
   it("LIVE: executes each action class via its GitHub primitive and audits completed", async () => {
     const env = createTestEnv({});
-    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, requestChanges, approve, merge, close]);
-    expect(outcomes.map((o) => o.outcome)).toEqual(["completed", "completed", "completed", "completed", "completed"]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [label, requestChanges, approve, merge, close, updateBranch]);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["completed", "completed", "completed", "completed", "completed", "completed"]);
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "gittensory:ready-to-merge", { createMissingLabel: true });
     expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "REQUEST_CHANGES", "please fix");
     expect(createPullRequestReview).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "APPROVE", "lgtm");
     expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "sha7" });
     expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "closing");
     expect(closePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7);
+    expect(updatePullRequestBranch).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "sha7");
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
   });
 
   it("PAUSED (per-repo): mutates nothing and audits denied", async () => {
     const env = createTestEnv({});
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ agentPaused: true }), [label, merge]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ agentPaused: true }), [label, merge, updateBranch]);
     expect(outcomes.every((o) => o.outcome === "denied")).toBe(true);
     expect(ensurePullRequestLabel).not.toHaveBeenCalled();
     expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(updatePullRequestBranch).not.toHaveBeenCalled();
     expect(JSON.parse((await auditFor(env, "label"))?.metadata_json ?? "{}")).toMatchObject({ mode: "paused" });
   });
 
@@ -93,11 +97,13 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
 
   it("PR-write without pull_requests:write → denied (re-consent), but label still runs (issues:write)", async () => {
     const env = createTestEnv({});
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ installationPermissions: { pull_requests: "read", issues: "write" } }), [label, merge]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ installationPermissions: { pull_requests: "read", issues: "write" } }), [label, merge, updateBranch]);
     expect(outcomes.find((o) => o.actionClass === "label")?.outcome).toBe("completed");
     expect(outcomes.find((o) => o.actionClass === "merge")?.outcome).toBe("denied");
+    expect(outcomes.find((o) => o.actionClass === "update_branch")?.outcome).toBe("denied");
     expect(ensurePullRequestLabel).toHaveBeenCalledTimes(1);
     expect(mergePullRequest).not.toHaveBeenCalled();
+    expect(updatePullRequestBranch).not.toHaveBeenCalled();
     expect((await auditFor(env, "merge"))?.outcome).toBe("denied");
   });
 

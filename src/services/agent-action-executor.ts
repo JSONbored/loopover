@@ -2,7 +2,7 @@ import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNo
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, type NotifyOutcome } from "./notify-discord";
 import { ensurePullRequestLabel } from "../github/labels";
-import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest } from "../github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../github/pr-actions";
 import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { buildAgentActionAudit, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import type { PlannedAgentAction } from "../settings/agent-actions";
@@ -15,7 +15,7 @@ const AGENT_ACTOR = "gittensory";
 
 // The PR-state action classes that require GitHub `pull_requests: write`. `label` mutates via the Issues API
 // (`issues: write`, always held), so it is exempt from the write-permission readiness gate.
-const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close"]);
+const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close", "update_branch"]);
 
 export type AgentActionExecutionContext = {
   installationId: number;
@@ -164,6 +164,9 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       if (action.closeComment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment);
       await closePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber);
       return;
+    case "update_branch":
+      await updatePullRequestBranch(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.expectedHeadSha);
+      return;
   }
 }
 
@@ -174,6 +177,7 @@ export function actionParams(action: PlannedAgentAction): AgentPendingActionPara
     ...(action.reviewBody !== undefined ? { reviewBody: action.reviewBody } : {}),
     ...(action.mergeMethod !== undefined ? { mergeMethod: action.mergeMethod } : {}),
     ...(action.closeComment !== undefined ? { closeComment: action.closeComment } : {}),
+    ...(action.expectedHeadSha !== undefined ? { expectedHeadSha: action.expectedHeadSha } : {}),
   };
 }
 

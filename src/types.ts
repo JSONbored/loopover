@@ -550,7 +550,7 @@ export type RepositoryCommandAuthorizationPolicy = {
 export type AutonomyLevel = "observe" | "suggest" | "propose" | "auto_with_approval" | "auto";
 
 /** The write-action classes the maintainer auto-maintain layer (#778) can take on a PR. */
-export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label";
+export type AgentActionClass = "review" | "request_changes" | "approve" | "merge" | "close" | "label" | "update_branch";
 
 /** Per-action-class autonomy. An unset class resolves to `observe` (deny-by-default). */
 export type AutonomyPolicy = Partial<Record<AgentActionClass, AutonomyLevel>>;
@@ -573,6 +573,7 @@ export type AgentPendingActionParams = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
+  expectedHeadSha?: string;
 };
 
 export type AgentPendingActionStatus = "pending" | "accepted" | "rejected";

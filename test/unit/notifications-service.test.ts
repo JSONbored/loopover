@@ -270,6 +270,19 @@ describe("deliverNotification", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("does not claim sibling pending email deliveries when the anchor no longer has a destination", async () => {
+    const env = createTestEnv();
+    await upsertDigestSubscription(env, { login: "miner", email: "miner@example.com" });
+    const [, firstEmail] = await evaluateNotificationEvent(env, event({ dedupKey: "no-destination-a" }));
+    const [, secondEmail] = await evaluateNotificationEvent(env, event({ dedupKey: "no-destination-b", pullNumber: 8, deeplink: "https://github.com/owner/repo/pull/8" }));
+    await upsertNotificationSubscription(env, { login: "miner", channel: "email", status: "paused" });
+
+    await deliverNotification(env, firstEmail!.id);
+
+    expect((await getNotificationDeliveryById(env, firstEmail!.id))?.status).toBe("delivered");
+    expect((await getNotificationDeliveryById(env, secondEmail!.id))?.status).toBe("pending");
+  });
+
   it("reports whether email delivery is runtime-configured", () => {
     expect(notificationEmailDeliveryEnabled(createTestEnv())).toBe(true);
     const unconfigured = createTestEnv();

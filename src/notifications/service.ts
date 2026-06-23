@@ -296,6 +296,8 @@ async function deliverEmailNotification(env: Env, anchorDelivery: NotificationDe
   ]);
   const destinations = resolveNotificationEmailDestinations(subscriptions, digestSubscriptions);
   if (destinations.length === 0) {
+    // Without a resolved destination, do not claim sibling email rows into `sending`; only finalize the
+    // anchor row so a store-only/muted state cannot strand pending deliveries.
     await markNotificationDeliveryDelivered(env, anchorDelivery.id);
     return;
   }

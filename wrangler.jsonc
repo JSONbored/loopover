@@ -56,7 +56,7 @@
     // Convergence (visual capture): capture a before/after screenshot for PRs touching WEB-VISIBLE files
     // (frontend pages / public OG images). Needs the BROWSER + REVIEW_AUDIT bindings; runs only when this is
     // ON AND the repo is in GITTENSORY_REVIEW_REPOS. DEFAULT OFF — flag-OFF captures nothing (byte-identical).
-    "GITTENSORY_REVIEW_SCREENSHOTS": "false",
+    "GITTENSORY_REVIEW_SCREENSHOTS": "true",
     // Convergence (grounding): ground the AI reviewer prompt with the PR's finished CI status + the full
     // post-change content of the changed files, so a non-frontier model verifies claims instead of guessing.
     // Default OFF — flag-OFF keeps the reviewer prompt byte-identical and makes no extra GitHub fetch.
@@ -105,6 +105,12 @@
     // NO repos converged → the per-PR converged path stays dormant for every repo regardless of the global
     // flags (byte-identical to today). The cron/endpoint flags (ops/selftune/parity/draft) stay global.
     "GITTENSORY_REVIEW_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
+    // Proof of Power (#1059): serve the public homepage stats counter at GET /v1/public/stats, computed LIVE
+    // from the review ledger (review_targets + review_audit) behind a 60s cache. ON — the above-the-fold band
+    // shows PRs reviewed / filtered-without-merge % / maintainer time saved / decision accuracy for the
+    // reviewed repos. Flag-OFF the endpoint 404s and the homepage band renders nothing (counts only, no PR
+    // content/authors/scores/rewards). See src/review/public-stats.ts.
+    "GITTENSORY_PUBLIC_STATS": "true",
   },
   "routes": [
     {

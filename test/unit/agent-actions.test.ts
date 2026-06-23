@@ -12,6 +12,7 @@ function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateChec
     hardGuardrailGlobs: [],
     authorIsOwner: false,
     authorIsAutomationBot: false,
+    ciState: "passed",
     pr: { labels: [] },
     ...overrides,
   };
@@ -77,11 +78,11 @@ describe("planAgentMaintenanceActions (#778)", () => {
 
   it("applies conservative defaults when autoMaintain / slopGateMinScore are omitted", () => {
     // no autoMaintain → requireApprovals defaults to 1 → a clean passing PR without APPROVED does NOT merge
-    expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
     // no slopGateMinScore → defaults to 60 → slopRisk 70 counts as noise and closes
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], slopRisk: 70 } }))).toContain("close");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 70 } }))).toContain("close");
     // ...and slopRisk 50 is below the default → no close
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], slopRisk: 50 } }))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 50 } }))).not.toContain("close");
   });
 
   it("closes clear noise (high slop or duplicate) on a non-passing verdict, and never closes a passing PR", () => {
@@ -194,7 +195,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
 
     it("DOES auto-close the same noisy PR when the author is not the owner", () => {
-      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: false, authorIsAutomationBot: false, pr: { labels: [], slopRisk: 95 } })));
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 95 } })));
       expect(plan).toContain("close");
     });
 
@@ -213,6 +214,57 @@ describe("planAgentMaintenanceActions (#778)", () => {
     it("still auto-merges a clean+approved automation-bot PR (the guard blocks only close, never merge)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, authorIsAutomationBot: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
       expect(plan).toContain("merge");
+    });
+  });
+
+  describe("CI policy: a red CI is never approved/merged — closed (non-owner) / held (owner); pending defers", () => {
+    it("does NOT approve or merge a PR whose CI is failing, even when the gate passes and it is clean+approved", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto", merge: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).not.toContain("approve");
+      expect(plan).not.toContain("merge");
+    });
+
+    it("closes a red-CI non-owner PR and cites the failing checks (even when the gate itself passes)", () => {
+      const close = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], pr: { labels: [] } })).find((a) => a.actionClass === "close");
+      expect(close).toBeTruthy();
+      expect(close?.reason).toContain("CI is failing");
+      expect(close?.reason).toContain("codecov/patch");
+    });
+
+    it("NEVER closes the owner's red-CI PR — it is held (request_changes), left open", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", request_changes: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], authorIsOwner: true, pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
+      expect(plan).toContain("request_changes");
+    });
+
+    it("requests changes (never approves) on a red CI and cites the failing check", () => {
+      const rc = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto", request_changes: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch", "build"], pr: { labels: [] } })).find((a) => a.actionClass === "request_changes");
+      expect(rc?.reviewBody).toContain("codecov/patch");
+      expect(rc?.reviewBody).toContain("CI is not green");
+    });
+
+    it("labels a red-CI PR changes-requested (not ready-to-merge)", () => {
+      const label = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], pr: { labels: [] } })).find((a) => a.actionClass === "label");
+      expect(label?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+
+    it("DEFERS every action while CI is still pending (settle-before-decide)", () => {
+      expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "pending", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }))).toEqual([]);
+    });
+
+    it("HOLDS (needs-human-review, no merge/close/approve) a gate-passing PR whose CI is unverified", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "unverified", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const cls = classes(plan);
+      expect(cls).not.toContain("merge");
+      expect(cls).not.toContain("close");
+      expect(cls).not.toContain("approve");
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+    });
+
+    it("merges the same clean+approved PR on green CI but NOT on red CI", () => {
+      const base = { conclusion: "success" as const, autonomy: { merge: "auto" as const }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } };
+      expect(classes(planAgentMaintenanceActions(input({ ...base, ciState: "passed" })))).toContain("merge");
+      expect(classes(planAgentMaintenanceActions(input({ ...base, ciState: "failed" })))).not.toContain("merge");
     });
   });
 });

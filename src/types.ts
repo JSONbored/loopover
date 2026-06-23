@@ -9,6 +9,17 @@ export type JobMessage =
       payload: GitHubWebhookPayload;
     }
   | {
+      // Delayed self-poll to re-capture a PR's before/after preview once its preview deploy is live — the first
+      // review captures a "loading" placeholder when the deploy isn't ready yet (capture.previewPending). Each
+      // recapture re-reviews the PR; bounded by `attempt` so a never-resolving preview can't loop forever.
+      type: "recapture-preview";
+      deliveryId: string;
+      repoFullName: string;
+      prNumber: number;
+      installationId: number;
+      attempt: number;
+    }
+  | {
       type: "refresh-registry";
       requestedBy: "schedule" | "api" | "test";
     }

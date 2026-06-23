@@ -2685,7 +2685,7 @@ describe("GitHub backfill", () => {
       expect(aggregate.nonRequiredFailingDetails).toEqual([]);
     });
 
-    it("ignores the bot's OWN Gittensory Gate check so it never self-deadlocks (#gate-self-deadlock)", async () => {
+    it("ignores ALL of the bot's OWN checks (Gate + Context) so it never self-deadlocks (#gate-self-deadlock)", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
@@ -2693,9 +2693,10 @@ describe("GitHub backfill", () => {
           return Response.json({
             check_runs: [
               { name: "test", status: "completed", conclusion: "success" },
-              // the bot's OWN gate, still in_progress (posted but not yet concluded). Counting it would defer
-              // the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
+              // BOTH bot-posted checks, still in_progress (posted but not yet concluded). Counting EITHER would
+              // defer the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
               { name: "Gittensory Gate", status: "in_progress", conclusion: null },
+              { name: "Gittensory Context", status: "in_progress", conclusion: null },
             ],
           });
         }
@@ -2703,10 +2704,10 @@ describe("GitHub backfill", () => {
         return new Response("not found", { status: 404 });
       });
 
-      // The gate is among the branch-protection required contexts, yet it MUST be excluded from the CI wait.
-      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Gate"]));
+      // Both bot checks are excluded from the CI wait even if listed among the required contexts.
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Gate", "Gittensory Context"]));
 
-      expect(aggregate.ciState).toBe("passed"); // would be "pending" if the in_progress gate were counted
+      expect(aggregate.ciState).toBe("passed"); // would be "pending" if either in_progress bot check were counted
       expect(aggregate.failingDetails).toEqual([]);
     });
   });

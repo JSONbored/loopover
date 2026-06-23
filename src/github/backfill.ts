@@ -58,7 +58,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
-import { createInstallationToken, getAppInstallation, GITTENSORY_GATE_CHECK_NAME } from "./app";
+import { createInstallationToken, getAppInstallation, GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME } from "./app";
 
 type GitHubLabelPayload = {
   name: string;
@@ -1907,6 +1907,12 @@ async function fetchPullRequestChecks(
 
 const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
 const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+// The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
+// "CI to wait on": counting them self-deadlocks (the review waits for all CI to finish; these only finish when
+// the very review they're blocking runs → the PR defers forever). Excluded from the CI aggregate entirely.
+// (#gate-self-deadlock — froze green-CI PRs as "CI still running". The Gate alone wasn't enough: the Context
+// check is posted the same way and re-created the deadlock, so exclude ALL bot-owned checks.)
+const BOT_OWNED_CHECK_NAMES = new Set<string>([GITTENSORY_GATE_CHECK_NAME, GITTENSORY_CONTEXT_CHECK_NAME]);
 
 export type LiveCiAggregate = {
   ciState: "passed" | "failed" | "pending" | "unverified";
@@ -1985,11 +1991,7 @@ export async function fetchLiveCiAggregate(
     ).catch(() => undefined);
     if (!result) break;
     for (const run of result.data.check_runs ?? []) {
-      // The bot's OWN gate check is NOT "CI" to wait on. It posts the gate as in_progress and then concludes it
-      // AFTER reviewing — so counting it here self-deadlocks: the review waits for all CI to finish, the gate
-      // never finishes (it's pending until the review it is blocking runs), and the PR defers forever. Skip it.
-      // (#gate-self-deadlock — this was deferring green-CI PRs as "CI still running" indefinitely.)
-      if (run.name === GITTENSORY_GATE_CHECK_NAME) continue;
+      if (BOT_OWNED_CHECK_NAMES.has(run.name)) continue; // never wait on the bot's own Gate/Context checks (see above)
       total += 1;
       const conclusion = (run.conclusion ?? "").toLowerCase();
       const status = (run.status ?? "").toLowerCase();
@@ -2017,7 +2019,7 @@ export async function fetchLiveCiAggregate(
   ).catch(() => undefined);
   for (const ctx of statusResult?.data.statuses ?? []) {
     const name = ctx.context ?? "status";
-    if (name === GITTENSORY_GATE_CHECK_NAME) continue; // never wait on the bot's own gate (see #gate-self-deadlock above)
+    if (BOT_OWNED_CHECK_NAMES.has(name)) continue; // never wait on the bot's own Gate/Context checks (see #gate-self-deadlock above)
     total += 1;
     const state = (ctx.state ?? "").toLowerCase();
     if (state === "failure" || state === "error") {

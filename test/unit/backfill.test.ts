@@ -2684,6 +2684,32 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "unknown-required-status" })]);
       expect(aggregate.nonRequiredFailingDetails).toEqual([]);
     });
+
+    it("ignores ALL of the bot's OWN checks (Gate + Context) so it never self-deadlocks (#gate-self-deadlock)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "test", status: "completed", conclusion: "success" },
+              // BOTH bot-posted checks, still in_progress (posted but not yet concluded). Counting EITHER would
+              // defer the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
+              { name: "Gittensory Gate", status: "in_progress", conclusion: null },
+              { name: "Gittensory Context", status: "in_progress", conclusion: null },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      // Both bot checks are excluded from the CI wait even if listed among the required contexts.
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "headsha", "public-token", new Set(["test", "Gittensory Gate", "Gittensory Context"]));
+
+      expect(aggregate.ciState).toBe("passed"); // would be "pending" if either in_progress bot check were counted
+      expect(aggregate.failingDetails).toEqual([]);
+    });
   });
 
 });

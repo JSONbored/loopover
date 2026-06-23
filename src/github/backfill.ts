@@ -58,7 +58,7 @@ import type {
   RepositorySettings,
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
-import { createInstallationToken, getAppInstallation } from "./app";
+import { createInstallationToken, getAppInstallation, GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME } from "./app";
 
 type GitHubLabelPayload = {
   name: string;
@@ -1907,6 +1907,12 @@ async function fetchPullRequestChecks(
 
 const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
 const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+// The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
+// "CI to wait on": counting them self-deadlocks (the review waits for all CI to finish; these only finish when
+// the very review they're blocking runs → the PR defers forever). Excluded from the CI aggregate entirely.
+// (#gate-self-deadlock — froze green-CI PRs as "CI still running". The Gate alone wasn't enough: the Context
+// check is posted the same way and re-created the deadlock, so exclude ALL bot-owned checks.)
+const BOT_OWNED_CHECK_NAMES = new Set<string>([GITTENSORY_GATE_CHECK_NAME, GITTENSORY_CONTEXT_CHECK_NAME]);
 
 export type LiveCiAggregate = {
   ciState: "passed" | "failed" | "pending" | "unverified";
@@ -1985,6 +1991,7 @@ export async function fetchLiveCiAggregate(
     ).catch(() => undefined);
     if (!result) break;
     for (const run of result.data.check_runs ?? []) {
+      if (BOT_OWNED_CHECK_NAMES.has(run.name)) continue; // never wait on the bot's own Gate/Context checks (see above)
       total += 1;
       const conclusion = (run.conclusion ?? "").toLowerCase();
       const status = (run.status ?? "").toLowerCase();
@@ -2011,9 +2018,10 @@ export async function fetchLiveCiAggregate(
     token,
   ).catch(() => undefined);
   for (const ctx of statusResult?.data.statuses ?? []) {
+    const name = ctx.context ?? "status";
+    if (BOT_OWNED_CHECK_NAMES.has(name)) continue; // never wait on the bot's own Gate/Context checks (see #gate-self-deadlock above)
     total += 1;
     const state = (ctx.state ?? "").toLowerCase();
-    const name = ctx.context ?? "status";
     if (state === "failure" || state === "error") {
       const summary = typeof ctx.description === "string" ? ctx.description.trim().slice(0, 200) : "";
       const detail = { name, ...(summary ? { summary } : {}), ...(ctx.target_url ? { detailsUrl: ctx.target_url } : {}) };

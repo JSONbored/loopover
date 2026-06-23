@@ -2603,16 +2603,6 @@ async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payloa
 
   const { repo, advisory } = await buildAuthorizedPrActionAdvisory(env, repoFullName, pr, settings);
   await persistAdvisory(env, advisory);
-  // B (re-run visibility): flip the Gittensory Gate to in_progress NOW — before the (slow) refresh + AI
-  // re-review that run inside maybePublishPrPublicSurface below — so a maintainer who clicks "Re-run
-  // Gittensory review" sees the Gate check go running → concluded like a real CI step. The conclusion in
-  // maybePublishPrPublicSurface resolves the SAME run by name + headSha, so this never duplicates the check.
-  // Fail-safe: a transient check-run API error here must never abort the re-run (the conclusion still posts).
-  try {
-    await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory);
-  } catch {
-    // The in_progress flip is cosmetic; the authoritative Gate conclusion is posted by the publish below.
-  }
   await recordAuditEvent(env, {
     eventType: "github_app.pr_panel_retriggered",
     actor,

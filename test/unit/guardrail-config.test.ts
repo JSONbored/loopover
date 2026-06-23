@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, loadHardGuardrailGlobs } from "../../src/review/guardrail-config";
+import { DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, FAIL_CLOSED_GUARDRAIL_GLOBS, loadHardGuardrailGlobs } from "../../src/review/guardrail-config";
 
 function envWith(get: (key: string, type: string) => Promise<unknown>): Env {
   return { REVIEW_CONFIG: { get } } as unknown as Env;
@@ -28,14 +28,15 @@ describe("loadHardGuardrailGlobs", () => {
     expect(globs).toEqual(["scripts/**"]);
   });
 
-  it("fails safe to the default when the KV read throws", async () => {
+  it("fails CLOSED (guard everything) when the KV read throws — an outage must never open the gate", async () => {
     const globs = await loadHardGuardrailGlobs(
       envWith(async () => {
         throw new Error("kv down");
       }),
       "o/r",
     );
-    expect(globs).toEqual(DEFAULT_CRUCIAL_GUARDRAIL_GLOBS);
+    expect(globs).toEqual(FAIL_CLOSED_GUARDRAIL_GLOBS); // ["**"] → every path held for human review
+    expect(globs).not.toEqual(DEFAULT_CRUCIAL_GUARDRAIL_GLOBS);
   });
 
   it("uses the whole name as the slug when there is no owner prefix", async () => {

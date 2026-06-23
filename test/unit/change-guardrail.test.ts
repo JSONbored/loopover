@@ -30,3 +30,41 @@ describe("change-guardrail glob matching", () => {
     expect(changedPathsHittingGuardrail(["src/scoring/x.ts"], [])).toEqual([]);
   });
 });
+
+// #flood-readiness: the LIVE gittensory KV globs must guard crucial files that live OUTSIDE the dir-prefix
+// guards (the awesome-claude #4196 class — a weakened sensitive file slipping through because its folder
+// wasn't covered), while leaving clean non-crucial PRs auto-mergeable. Mirrors REVIEW_CONFIG["gittensory"].
+describe("hard-guardrail covers content-crucial files outside the dir-prefix guards", () => {
+  const GITTENSORY_GLOBS = [
+    ".github/**", "scripts/**", "packages/**", "apps/gittensory-ui/**",
+    "src/scoring/**", "src/signals/**", "src/rules/**", "src/gittensor/**", "src/auth/**",
+    "src/upstream/**", "src/settings/**", "src/review/**", "src/services/**", "src/github/**", "src/config/**",
+  ];
+
+  it("guards crucial files in non-obvious folders (scoring/auth/rules/gate/reviewer)", () => {
+    for (const p of [
+      "src/services/score-breakdown.ts", // scoring logic under services/
+      "src/services/ai-review.ts", // the reviewer engine (#4196 class)
+      "src/settings/command-authorization.ts", // authorization under settings/
+      "src/settings/agent-actions.ts", // the merge/close decision planner
+      "src/upstream/ruleset.ts", // rules under upstream/
+      "src/upstream/unmodeled-scoring-drift.ts", // scoring drift under upstream/
+      "src/review/guardrail-config.ts", // the guardrail loader itself
+      "src/github/backfill.ts", // CI aggregation that gates merges
+      "src/config/gittensory-repo-focus-manifest.ts", // scoring focus config
+    ]) {
+      expect(changedPathsHittingGuardrail([p], GITTENSORY_GLOBS)).toEqual([p]);
+    }
+  });
+
+  it("still lets clean non-crucial PRs auto-merge (infra/data/registry/docs/tests)", () => {
+    const nonCrucial = ["src/utils/json.ts", "src/db/repositories.ts", "src/registry/normalize.ts", "src/mcp/server.ts", "README.md", "docs/x.md", "test/unit/foo.test.ts"];
+    expect(changedPathsHittingGuardrail(nonCrucial, GITTENSORY_GLOBS)).toEqual([]);
+  });
+
+  it("the fail-closed sentinel ['**'] guards every path (KV-outage hold-all)", () => {
+    for (const p of ["src/utils/json.ts", "README.md", "anything/at/all.txt"]) {
+      expect(matchesAny(p, ["**"])).toBe(true);
+    }
+  });
+});

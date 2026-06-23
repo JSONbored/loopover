@@ -10,11 +10,24 @@ describe("loadHardGuardrailGlobs", () => {
     expect(await loadHardGuardrailGlobs({} as Env, "JSONbored/gittensory")).toEqual(DEFAULT_CRUCIAL_GUARDRAIL_GLOBS);
   });
 
-  it("reads globs from KV keyed by the repo slug (owner stripped)", async () => {
+  it("uses the legacy full-name key before the slug fallback when no installation-scoped key exists", async () => {
     const get = vi.fn().mockResolvedValue({ hardGuardrailGlobs: ["src/scoring/**", "scripts/**"] });
     const globs = await loadHardGuardrailGlobs(envWith(get), "JSONbored/gittensory");
     expect(globs).toEqual(["src/scoring/**", "scripts/**"]);
-    expect(get).toHaveBeenCalledWith("gittensory", "json");
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenNthCalledWith(1, "jsonbored/gittensory", "json");
+  });
+
+  it("prefers the installation-scoped key to avoid cross-tenant bleed on same-slug repos", async () => {
+    const get = vi.fn(async (key: string) => {
+      if (key === "installation:42:gittensory") return { hardGuardrailGlobs: ["tenant-a/**"] };
+      if (key === "gittensory") return { hardGuardrailGlobs: ["legacy-shared/**"] };
+      return null;
+    });
+    const globs = await loadHardGuardrailGlobs(envWith(get), "JSONbored/gittensory", 42);
+    expect(globs).toEqual(["tenant-a/**"]);
+    expect(get).toHaveBeenNthCalledWith(1, "installation:42:jsonbored/gittensory", "json");
+    expect(get).toHaveBeenNthCalledWith(2, "installation:42:gittensory", "json");
   });
 
   it("falls back to the default when the field is absent, null, or empty", async () => {

@@ -69,6 +69,23 @@ describe("repository BYOK key storage", () => {
     await expect(getDecryptedRepositoryAiKey(env, "acme/widgets")).resolves.toBeNull();
   });
 
+  it("isolates BYOK records by installation for the same repo slug", async () => {
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    await env.DB.prepare("insert into repositories (full_name, owner, name, installation_id, is_installed, is_registered, is_private, created_at, updated_at) values (?, ?, ?, ?, 1, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+      .bind("acme/widgets", "acme", "widgets", 11)
+      .run();
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", installationId: 11, provider: "anthropic", key: "sk-ant-tenant-a-1111", model: null });
+    await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", installationId: 22, provider: "openai", key: "sk-openai-tenant-b-2222", model: null });
+
+    await env.DB.prepare("update repositories set installation_id = ? where full_name = ?").bind(11, "acme/widgets").run();
+    await expect(getRepositoryAiKeyStatus(env, "acme/widgets")).resolves.toMatchObject({ configured: true, provider: "anthropic", last4: "1111" });
+    await expect(getDecryptedRepositoryAiKey(env, "acme/widgets")).resolves.toMatchObject({ provider: "anthropic", key: "sk-ant-tenant-a-1111" });
+
+    await env.DB.prepare("update repositories set installation_id = ? where full_name = ?").bind(22, "acme/widgets").run();
+    await expect(getRepositoryAiKeyStatus(env, "acme/widgets")).resolves.toMatchObject({ configured: true, provider: "openai", last4: "2222" });
+    await expect(getDecryptedRepositoryAiKey(env, "acme/widgets")).resolves.toMatchObject({ provider: "openai", key: "sk-openai-tenant-b-2222" });
+  });
+
   it("audits the key lifecycle (set → replace → delete) without ever recording key material", async () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
     await upsertRepositoryAiKey(env, { repoFullName: "acme/widgets", provider: "anthropic", key: "sk-ant-first-key-0000", createdBy: "alice" });
@@ -92,7 +109,7 @@ describe("repository BYOK key storage", () => {
   it("stores real ISO timestamps when created_at/updated_at are omitted (no literal default)", async () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
     const db = getDb(env.DB);
-    await db.insert(repositoryAiKeys).values({ repoFullName: "acme/widgets", provider: "anthropic", ciphertext: "ct", iv: "iv", last4: "7890" });
+    await db.insert(repositoryAiKeys).values({ repoFullName: "acme/widgets", installationId: 0, provider: "anthropic", ciphertext: "ct", iv: "iv", last4: "7890" });
     const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, "acme/widgets")).limit(1);
     expect(row?.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(row?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);

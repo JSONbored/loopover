@@ -458,6 +458,7 @@ export type GatePolicyPack = "gittensor" | "oss-anti-slop";
 
 export type RepositorySettings = {
   repoFullName: string;
+  installationId?: number | null | undefined;
   commentMode: "off" | "detected_contributors_only" | "all_prs";
   publicAudienceMode: "oss_maintainer" | "gittensor_only";
   publicSignalLevel: "minimal" | "standard";

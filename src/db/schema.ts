@@ -22,7 +22,7 @@ export const repositories = sqliteTable("repositories", {
   fullName: text("full_name").primaryKey(),
   owner: text("owner").notNull(),
   name: text("name").notNull(),
-  installationId: integer("installation_id"),
+  installationId: integer("installation_id").notNull().default(0),
   isInstalled: integer("is_installed", { mode: "boolean" }).notNull().default(false),
   isRegistered: integer("is_registered", { mode: "boolean" }).notNull().default(false),
   isPrivate: integer("is_private", { mode: "boolean" }).notNull().default(false),
@@ -38,8 +38,11 @@ export const repositories = sqliteTable("repositories", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
 });
 
-export const repositorySettings = sqliteTable("repository_settings", {
-  repoFullName: text("repo_full_name").primaryKey(),
+export const repositorySettings = sqliteTable(
+  "repository_settings",
+  {
+  repoFullName: text("repo_full_name").notNull(),
+  installationId: integer("installation_id").notNull().default(0),
   commentMode: text("comment_mode").notNull().default("detected_contributors_only"),
   publicAudienceMode: text("public_audience_mode").notNull().default("oss_maintainer"),
   publicSignalLevel: text("public_signal_level").notNull().default("standard"),
@@ -77,13 +80,21 @@ export const repositorySettings = sqliteTable("repository_settings", {
   agentDryRun: integer("agent_dry_run", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
-});
+  },
+  (table) => ({
+    repoInstallation: uniqueIndex("repository_settings_repo_installation_unique").on(table.repoFullName, table.installationId),
+    repoUpdated: index("repository_settings_repo_updated_idx").on(table.repoFullName, table.updatedAt),
+  }),
+);
 
 // Maintainer BYOK provider keys (Anthropic/OpenAI), encrypted at rest with AES-256-GCM. Isolated in its
 // own table so the ciphertext is NEVER serialized by the repository-settings GET surface. The plaintext
 // key is never stored; `last4` is a display-only hint derived from the plaintext at write time.
-export const repositoryAiKeys = sqliteTable("repository_ai_keys", {
-  repoFullName: text("repo_full_name").primaryKey(),
+export const repositoryAiKeys = sqliteTable(
+  "repository_ai_keys",
+  {
+  repoFullName: text("repo_full_name").notNull(),
+  installationId: integer("installation_id").notNull().default(0),
   provider: text("provider").notNull(),
   ciphertext: text("ciphertext").notNull(),
   iv: text("iv").notNull(),
@@ -97,7 +108,12 @@ export const repositoryAiKeys = sqliteTable("repository_ai_keys", {
   createdBy: text("created_by"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
-});
+  },
+  (table) => ({
+    repoInstallation: uniqueIndex("repository_ai_keys_repo_installation_unique").on(table.repoFullName, table.installationId),
+    repoUpdated: index("repository_ai_keys_repo_updated_idx").on(table.repoFullName, table.updatedAt),
+  }),
+);
 
 export const repoSyncState = sqliteTable("repo_sync_state", {
   repoFullName: text("repo_full_name").primaryKey(),

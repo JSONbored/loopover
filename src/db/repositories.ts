@@ -229,7 +229,7 @@ export async function markInstallationDeleted(env: Env, installationId: number):
   await db.update(installations).set({ suspendedAt: nowIso(), updatedAt: nowIso() }).where(eq(installations.id, installationId));
   await db
     .update(repositories)
-    .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
+    .set({ isInstalled: false, installationId: sql`null`, updatedAt: nowIso() })
     .where(eq(repositories.installationId, installationId));
 }
 
@@ -239,7 +239,7 @@ export async function markRepositoriesRemovedFromInstallation(env: Env, installa
   const db = getDb(env.DB);
   await db
     .update(repositories)
-    .set({ isInstalled: false, installationId: null, updatedAt: nowIso() })
+    .set({ isInstalled: false, installationId: sql`null`, updatedAt: nowIso() })
     .where(and(eq(repositories.installationId, installationId), inArray(repositories.fullName, names)));
 }
 
@@ -397,10 +397,17 @@ export async function listRepositories(env: Env): Promise<RepositoryRecord[]> {
 
 export async function getRepositorySettings(env: Env, fullName: string): Promise<RepositorySettings> {
   const db = getDb(env.DB);
-  const [row] = await db.select().from(repositorySettings).where(eq(repositorySettings.repoFullName, fullName)).limit(1);
-  if (!row) {
+  const installationId = await resolveScopedInstallationId(env, fullName);
+  const [row] = await db
+    .select()
+    .from(repositorySettings)
+    .where(and(eq(repositorySettings.repoFullName, fullName), eq(repositorySettings.installationId, installationId)))
+    .limit(1);
+  const effectiveRow = row;
+  if (!effectiveRow) {
     return {
       repoFullName: fullName,
+      installationId,
       commentMode: "detected_contributors_only",
       publicAudienceMode: "oss_maintainer",
       publicSignalLevel: "standard",
@@ -439,50 +446,53 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     };
   }
   return {
-    repoFullName: row.repoFullName,
-    commentMode: parseCommentMode(row.commentMode),
-    publicAudienceMode: parsePublicAudienceMode(row.publicAudienceMode),
-    publicSignalLevel: row.publicSignalLevel === "minimal" ? "minimal" : "standard",
-    checkRunMode: parseCheckRunMode(row.checkRunMode),
-    checkRunDetailLevel: parseCheckRunDetailLevel(row.checkRunDetailLevel),
-    gateCheckMode: parseGateCheckMode(row.gateCheckMode),
-    gatePack: parseGatePack(row.gatePack),
-    linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
-    duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
-    qualityGateMode: parseGateRuleMode(row.qualityGateMode),
-    qualityGateMinScore: normalizeQualityGateMinScore(row.qualityGateMinScore),
-    slopGateMode: parseGateRuleMode(row.slopGateMode),
-    mergeReadinessGateMode: parseGateRuleMode(row.mergeReadinessGateMode),
-    manifestPolicyGateMode: parseGateRuleMode(row.manifestPolicyGateMode),
-    firstTimeContributorGrace: row.firstTimeContributorGrace,
-    slopGateMinScore: normalizeQualityGateMinScore(row.slopGateMinScore),
-    slopAiAdvisory: row.slopAiAdvisory,
-    aiReviewMode: parseGateRuleMode(row.aiReviewMode),
-    aiReviewByok: row.aiReviewByok,
-    aiReviewProvider: normalizeAiReviewProvider(row.aiReviewProvider),
-    aiReviewModel: row.aiReviewModel ?? null,
-    autoLabelEnabled: row.autoLabelEnabled,
-    gittensorLabel: row.gittensorLabel,
-    createMissingLabel: row.createMissingLabel,
-    publicSurface: parsePublicSurface(row.publicSurface),
-    includeMaintainerAuthors: row.includeMaintainerAuthors,
-    requireLinkedIssue: row.requireLinkedIssue,
-    backfillEnabled: row.backfillEnabled,
-    privateTrustEnabled: row.privateTrustEnabled,
-    badgeEnabled: row.badgeEnabled,
-    agentPaused: row.agentPaused,
-    agentDryRun: row.agentDryRun,
-    commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
-    autonomy: parseAutonomyPolicy(row.autonomyJson),
-    autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+    repoFullName: effectiveRow.repoFullName,
+    installationId: effectiveRow.installationId ?? installationId,
+    commentMode: parseCommentMode(effectiveRow.commentMode),
+    publicAudienceMode: parsePublicAudienceMode(effectiveRow.publicAudienceMode),
+    publicSignalLevel: effectiveRow.publicSignalLevel === "minimal" ? "minimal" : "standard",
+    checkRunMode: parseCheckRunMode(effectiveRow.checkRunMode),
+    checkRunDetailLevel: parseCheckRunDetailLevel(effectiveRow.checkRunDetailLevel),
+    gateCheckMode: parseGateCheckMode(effectiveRow.gateCheckMode),
+    gatePack: parseGatePack(effectiveRow.gatePack),
+    linkedIssueGateMode: parseGateRuleMode(effectiveRow.linkedIssueGateMode),
+    duplicatePrGateMode: parseGateRuleMode(effectiveRow.duplicatePrGateMode),
+    qualityGateMode: parseGateRuleMode(effectiveRow.qualityGateMode),
+    qualityGateMinScore: normalizeQualityGateMinScore(effectiveRow.qualityGateMinScore),
+    slopGateMode: parseGateRuleMode(effectiveRow.slopGateMode),
+    mergeReadinessGateMode: parseGateRuleMode(effectiveRow.mergeReadinessGateMode),
+    manifestPolicyGateMode: parseGateRuleMode(effectiveRow.manifestPolicyGateMode),
+    firstTimeContributorGrace: effectiveRow.firstTimeContributorGrace,
+    slopGateMinScore: normalizeQualityGateMinScore(effectiveRow.slopGateMinScore),
+    slopAiAdvisory: effectiveRow.slopAiAdvisory,
+    aiReviewMode: parseGateRuleMode(effectiveRow.aiReviewMode),
+    aiReviewByok: effectiveRow.aiReviewByok,
+    aiReviewProvider: normalizeAiReviewProvider(effectiveRow.aiReviewProvider),
+    aiReviewModel: effectiveRow.aiReviewModel ?? null,
+    autoLabelEnabled: effectiveRow.autoLabelEnabled,
+    gittensorLabel: effectiveRow.gittensorLabel,
+    createMissingLabel: effectiveRow.createMissingLabel,
+    publicSurface: parsePublicSurface(effectiveRow.publicSurface),
+    includeMaintainerAuthors: effectiveRow.includeMaintainerAuthors,
+    requireLinkedIssue: effectiveRow.requireLinkedIssue,
+    backfillEnabled: effectiveRow.backfillEnabled,
+    privateTrustEnabled: effectiveRow.privateTrustEnabled,
+    badgeEnabled: effectiveRow.badgeEnabled,
+    agentPaused: effectiveRow.agentPaused,
+    agentDryRun: effectiveRow.agentDryRun,
+    commandAuthorization: parseCommandAuthorizationPolicy(effectiveRow.commandAuthorizationJson),
+    autonomy: parseAutonomyPolicy(effectiveRow.autonomyJson),
+    autoMaintain: parseAutoMaintainPolicy(effectiveRow.autoMaintainJson),
+    createdAt: effectiveRow.createdAt,
+    updatedAt: effectiveRow.updatedAt,
   };
 }
 
 export async function upsertRepositorySettings(env: Env, settings: Partial<RepositorySettings> & { repoFullName: string }): Promise<RepositorySettings> {
+  const installationId = settings.installationId ?? (await resolveScopedInstallationId(env, settings.repoFullName));
   const resolved: RepositorySettings = {
     repoFullName: settings.repoFullName,
+    installationId,
     commentMode: settings.commentMode ?? "detected_contributors_only",
     publicAudienceMode: settings.publicAudienceMode ?? "oss_maintainer",
     publicSignalLevel: settings.publicSignalLevel ?? "standard",
@@ -524,6 +534,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     .insert(repositorySettings)
     .values({
       repoFullName: resolved.repoFullName,
+      installationId: resolved.installationId ?? 0,
       commentMode: resolved.commentMode,
       publicAudienceMode: resolved.publicAudienceMode,
       publicSignalLevel: resolved.publicSignalLevel,
@@ -562,7 +573,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
-      target: repositorySettings.repoFullName,
+      target: [repositorySettings.repoFullName, repositorySettings.installationId],
       set: {
         commentMode: resolved.commentMode,
         publicAudienceMode: resolved.publicAudienceMode,
@@ -626,9 +637,15 @@ function normalizeAiKeyProvider(value: string): AiKeyProvider {
 /** Read the secret-free status of a repo's configured BYOK key (for the dashboard/API). */
 export async function getRepositoryAiKeyStatus(env: Env, fullName: string): Promise<RepositoryAiKeyStatus> {
   const db = getDb(env.DB);
-  const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName)).limit(1);
-  if (!row) return { configured: false };
-  return { configured: true, provider: normalizeAiKeyProvider(row.provider), last4: row.last4, model: row.model ?? null, createdBy: row.createdBy, updatedAt: row.updatedAt };
+  const installationId = await resolveScopedInstallationId(env, fullName);
+  const [row] = await db
+    .select()
+    .from(repositoryAiKeys)
+    .where(and(eq(repositoryAiKeys.repoFullName, fullName), eq(repositoryAiKeys.installationId, installationId)))
+    .limit(1);
+  const effectiveRow = row;
+  if (!effectiveRow) return { configured: false };
+  return { configured: true, provider: normalizeAiKeyProvider(effectiveRow.provider), last4: effectiveRow.last4, model: effectiveRow.model ?? null, createdBy: effectiveRow.createdBy, updatedAt: effectiveRow.updatedAt };
 }
 
 /**
@@ -638,11 +655,12 @@ export async function getRepositoryAiKeyStatus(env: Env, fullName: string): Prom
  */
 export async function upsertRepositoryAiKey(
   env: Env,
-  input: { repoFullName: string; provider: AiKeyProvider; key: string; model?: string | null; createdBy?: string | null },
+  input: { repoFullName: string; provider: AiKeyProvider; key: string; model?: string | null; createdBy?: string | null; installationId?: number | null | undefined },
 ): Promise<RepositoryAiKeyStatus> {
   const secret = env.TOKEN_ENCRYPTION_SECRET;
   if (!secret) throw new Error("missing_encryption_secret");
   const trimmedKey = input.key.trim();
+  const installationId = input.installationId ?? (await resolveScopedInstallationId(env, input.repoFullName));
   const existing = await getRepositoryAiKeyStatus(env, input.repoFullName);
   const { ciphertext, iv, salt, version } = await encryptSecret(trimmedKey, secret);
   const last4 = trimmedKey.slice(-4);
@@ -652,9 +670,9 @@ export async function upsertRepositoryAiKey(
   const db = getDb(env.DB);
   await db
     .insert(repositoryAiKeys)
-    .values({ repoFullName: input.repoFullName, provider: input.provider, ciphertext, iv, salt, keyVersion: version, model, last4, createdBy, updatedAt })
+    .values({ repoFullName: input.repoFullName, installationId: installationId ?? 0, provider: input.provider, ciphertext, iv, salt, keyVersion: version, model, last4, createdBy, updatedAt })
     .onConflictDoUpdate({
-      target: repositoryAiKeys.repoFullName,
+      target: [repositoryAiKeys.repoFullName, repositoryAiKeys.installationId],
       set: { provider: input.provider, ciphertext, iv, salt, keyVersion: version, model, last4, createdBy, updatedAt },
     });
   await recordAiKeyChange(env, { repoFullName: input.repoFullName, action: existing.configured ? "replace" : "set", provider: input.provider, last4, actor: createdBy });
@@ -664,8 +682,9 @@ export async function upsertRepositoryAiKey(
 /** Remove a repo's BYOK key. Records a lifecycle audit event when a key was actually present. */
 export async function deleteRepositoryAiKey(env: Env, fullName: string, actor?: string | null): Promise<void> {
   const existing = await getRepositoryAiKeyStatus(env, fullName);
+  const installationId = await resolveScopedInstallationId(env, fullName);
   const db = getDb(env.DB);
-  await db.delete(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName));
+  await db.delete(repositoryAiKeys).where(and(eq(repositoryAiKeys.repoFullName, fullName), eq(repositoryAiKeys.installationId, installationId)));
   if (existing.configured) {
     await recordAiKeyChange(env, { repoFullName: fullName, action: "delete", provider: existing.provider, last4: existing.last4, actor: actor ?? null });
   }
@@ -701,14 +720,25 @@ export async function getDecryptedRepositoryAiKey(env: Env, fullName: string): P
   const secret = env.TOKEN_ENCRYPTION_SECRET;
   if (!secret) return null;
   const db = getDb(env.DB);
-  const [row] = await db.select().from(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, fullName)).limit(1);
-  if (!row) return null;
+  const installationId = await resolveScopedInstallationId(env, fullName);
+  const [row] = await db
+    .select()
+    .from(repositoryAiKeys)
+    .where(and(eq(repositoryAiKeys.repoFullName, fullName), eq(repositoryAiKeys.installationId, installationId)))
+    .limit(1);
+  const effectiveRow = row;
+  if (!effectiveRow) return null;
   try {
-    const key = await decryptSecret(row.ciphertext, row.iv, secret, row.salt);
-    return { provider: normalizeAiKeyProvider(row.provider), key, model: row.model ?? null };
+    const key = await decryptSecret(effectiveRow.ciphertext, effectiveRow.iv, secret, effectiveRow.salt);
+    return { provider: normalizeAiKeyProvider(effectiveRow.provider), key, model: effectiveRow.model ?? null };
   } catch {
     return null;
   }
+}
+
+async function resolveScopedInstallationId(env: Env, repoFullName: string): Promise<number> {
+  const repo = await getRepository(env, repoFullName);
+  return repo?.installationId ?? 0;
 }
 
 export async function upsertRepoSyncState(env: Env, state: RepoSyncStateRecord): Promise<void> {

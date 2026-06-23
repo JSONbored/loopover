@@ -270,6 +270,13 @@ describe("data spine repositories", () => {
     expect(await getRepositorySettings(env, "owner/repo")).toMatchObject({ gatePack: "gittensor", linkedIssueGateMode: "block" });
     await upsertRepositorySettings(env, { repoFullName: "owner/defaultpack" });
     expect((await getRepositorySettings(env, "owner/defaultpack")).gatePack).toBe("gittensor");
+    // #1028 installation-scoped settings isolation: same repoFullName can carry independent hosted state.
+    await upsertRepositorySettings(env, { repoFullName: "owner/tenantrepo", installationId: 101, gatePack: "oss-anti-slop", linkedIssueGateMode: "advisory" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/tenantrepo", installationId: 202, gatePack: "gittensor", linkedIssueGateMode: "block" });
+    await upsertRepositoryFromGitHub(env, { name: "tenantrepo", full_name: "owner/tenantrepo", owner: { login: "owner" } }, 101);
+    expect(await getRepositorySettings(env, "owner/tenantrepo")).toMatchObject({ installationId: 101, gatePack: "oss-anti-slop", linkedIssueGateMode: "advisory" });
+    await env.DB.prepare("update repositories set installation_id = ? where full_name = ?").bind(202, "owner/tenantrepo").run();
+    expect(await getRepositorySettings(env, "owner/tenantrepo")).toMatchObject({ installationId: 202, gatePack: "gittensor", linkedIssueGateMode: "block" });
     // slop gate (#530/#532) round-trips and defaults to off.
     await upsertRepositorySettings(env, { repoFullName: "owner/sloprepo", slopGateMode: "block", slopGateMinScore: 55, slopAiAdvisory: true });
     const slopSettings = await getRepositorySettings(env, "owner/sloprepo");

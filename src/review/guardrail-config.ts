@@ -24,12 +24,21 @@ function asNonEmptyStringArray(value: unknown): string[] | null {
  * DEFAULT_CRUCIAL_GUARDRAIL_GLOBS when the binding / key / field is absent or malformed — fail-SAFE and never
  * throws (the auto-maintain trigger is best-effort and must not be sunk by a config read).
  */
-export async function loadHardGuardrailGlobs(env: Env, repoFullName: string): Promise<string[]> {
+export async function loadHardGuardrailGlobs(env: Env, repoFullName: string, installationId?: number | null | undefined): Promise<string[]> {
   const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
   if (!env.REVIEW_CONFIG) return DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
   try {
-    const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { hardGuardrailGlobs?: JsonValue } | null;
-    return asNonEmptyStringArray(config?.hardGuardrailGlobs) ?? DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
+    const candidateKeys = [
+      ...(installationId !== undefined && installationId !== null ? [`installation:${installationId}:${repoFullName.toLowerCase()}`, `installation:${installationId}:${slug.toLowerCase()}`] : []),
+      repoFullName.toLowerCase(),
+      slug.toLowerCase(),
+    ];
+    for (const key of candidateKeys) {
+      const config = (await env.REVIEW_CONFIG.get(key, "json")) as { hardGuardrailGlobs?: JsonValue } | null;
+      const globs = asNonEmptyStringArray(config?.hardGuardrailGlobs);
+      if (globs) return globs;
+    }
+    return DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
   } catch {
     return DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
   }

@@ -13,7 +13,7 @@ vi.mock("../../src/github/labels", () => ({
 
 import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { ensurePullRequestLabel } from "../../src/github/labels";
-import { executeAgentMaintenanceActions, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
+import { actionParams, executeAgentMaintenanceActions, type AgentActionExecutionContext } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { createTestEnv } from "../helpers/d1";
 
@@ -45,6 +45,12 @@ async function auditFor(env: Env, actionClass: string): Promise<{ outcome: strin
 describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("actionParams threads expectedHeadSha for an update_branch action (and omits absent fields)", () => {
+    expect(actionParams(updateBranch)).toEqual({ expectedHeadSha: "sha7" });
+    expect(actionParams(label)).toEqual({ label: "gittensory:ready-to-merge" });
+    expect(actionParams(merge)).toEqual({ mergeMethod: "squash" });
   });
 
   it("LIVE: executes each action class via its GitHub primitive and audits completed", async () => {

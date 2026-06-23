@@ -1040,6 +1040,105 @@ describe("queue processors", () => {
     expect(rcAudit).toBeFalsy();
   });
 
+  // #1092: prReadyForReview rebases a BEHIND-base PR through the agent executor (gated by update_branch autonomy
+  // + pull_requests:write) before reviewing, then defers — the synchronize on the new head re-runs review.
+  async function seedBehindRepo(env: Env, over: { autonomy?: Record<string, string>; agentPaused?: boolean; perms?: Record<string, string>; noInstall?: boolean } = {}) {
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    if (!over.noInstall) {
+      await upsertInstallation(env, {
+        installation: {
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: over.perms ?? { metadata: "read", pull_requests: "write", issues: "write" },
+          events: ["pull_request"],
+        },
+        repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+      });
+    }
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      autonomy: over.autonomy ?? { merge: "auto", update_branch: "auto" },
+      agentPaused: over.agentPaused ?? false,
+    });
+  }
+
+  function behindWebhook() {
+    return {
+      type: "github-webhook" as const,
+      deliveryId: "behind-update-branch",
+      eventName: "pull_request" as const,
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 48, title: "Behind base", state: "open", user: { login: "contributor" }, head: { sha: "behindsha" }, labels: [], body: "x" },
+      },
+    };
+  }
+
+  it("auto-maintain (#1092): a BEHIND-base PR routes update-branch through the executor, then defers review", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedBehindRepo(env);
+    let updateBranchCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/48/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({ message: "Updating pull request branch." }, { status: 202 });
+      }
+      if (/\/pulls\/48(?:\?|$)/.test(url)) return Response.json({ number: 48, mergeable_state: "behind" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, behindWebhook());
+
+    expect(updateBranchCalls).toBe(1); // the rebase was issued before review
+    const ub = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.update_branch").first<{ outcome: string }>();
+    expect(ub?.outcome).toBe("completed");
+    // Deferred for the rebase → no gate verdict published on the stale head.
+    const merge = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge").first<{ n: number }>();
+    expect(merge?.n).toBe(0);
+  });
+
+  it("auto-maintain (#1092): a behind PR is not rebased when the installation lacks pull_requests:write (falls through)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedBehindRepo(env, { noInstall: true });
+    // A stored open PR + the recapture-preview job drive reReviewStoredPullRequest directly (no webhook
+    // installation upsert), so getInstallation(...) is null → installation?.permissions ?? null hits the null arm.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 48, title: "Behind base", state: "open", user: { login: "contributor" }, head: { sha: "behindsha" }, labels: [], body: "x" });
+    let updateBranchCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/48/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({}, { status: 202 });
+      }
+      if (/\/pulls\/48(?:\?|$)/.test(url)) return Response.json({ number: 48, mergeable_state: "behind" });
+      // CI still running on the (un-rebased) head → prReadyForReview defers at the CI gate, cleanly.
+      if (url.includes("/commits/behindsha/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "in_progress", conclusion: null }] });
+      if (url.includes("/commits/behindsha/status")) return Response.json({ state: "pending", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, { type: "recapture-preview", deliveryId: "rp-48", installationId: 123, repoFullName: "JSONbored/gittensory", prNumber: 48, attempt: 1 });
+
+    expect(updateBranchCalls).toBe(0); // no installation perms → the executor denies the write; the block falls through
+  });
+
   it("auto-maintain (#778): a repo with no acting autonomy takes no agent action", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

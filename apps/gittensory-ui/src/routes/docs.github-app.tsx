@@ -12,13 +12,13 @@ export const Route = createFileRoute("/docs/github-app")({
       {
         name: "description",
         content:
-          "Install the Gittensory GitHub App, choose repos, and configure sticky PR panels, advisory checks, and optional Gate enforcement.",
+          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Gate check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional Gate enforcement.",
       },
       { property: "og:title", content: "GitHub App setup — Gittensory docs" },
       {
         property: "og:description",
         content:
-          "Install the Gittensory GitHub App, choose repos, and configure sticky PR panels, advisory checks, and optional Gate enforcement.",
+          "Install the Gittensory GitHub App so the gittensory app reviews your pull requests — the Gittensory Gate check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional Gate enforcement.",
       },
       { property: "og:url", content: "/docs/github-app" },
     ],
@@ -32,8 +32,16 @@ function GithubApp() {
     <DocsPage
       eyebrow="Workflows"
       title="GitHub App setup"
-      description="Install Gittensory on a repo, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
+      description="Install Gittensory on a repo so the gittensory app reviews your pull requests, then choose whether it should stay advisory or enforce repo-configured PR quality rules."
     >
+      <p>
+        Once installed, the <strong>gittensory app reviews every pull request</strong> on the repos
+        you select. Each review produces two surfaces: the <strong>Gittensory Gate</strong> check
+        run (and the advisory <strong>Gittensory Context</strong> check), and a single review
+        comment posted by <code>gittensory[bot]</code> that updates in place as the PR evolves.
+        Everything on this page configures that review.
+      </p>
+
       <h2>Install</h2>
       <p>
         The hosted deployment uses the GitHub App slug <code>gittensory</code>. Start from{" "}
@@ -98,12 +106,29 @@ GET /v1/installations/:id/repair`}
 
       <h2>PR panel</h2>
       <p>
-        The PR panel is one sticky bot comment that updates in place. It shows a public-safe
-        readiness score, concrete signal evidence, and short actions for linked issues, related
-        work, review load, validation evidence, open PR queue, contributor context, and Gate result.
+        The PR panel is the review comment the gittensory app posts on each pull request. It is one
+        sticky comment authored by <code>gittensory[bot]</code> that updates in place — the app
+        edits the same comment instead of adding new ones. It shows a public-safe readiness score,
+        concrete signal evidence, and short actions for linked issues, related work, review load,
+        validation evidence, open PR queue, contributor context, and Gate result.
+      </p>
+      <p>
+        By default the comment is posted only to detected contributors (<code>commentMode</code> is{" "}
+        <code>detected_contributors_only</code>). Set <code>commentMode</code> to{" "}
+        <code>all_prs</code> to comment on every PR, or <code>off</code> to suppress the comment
+        entirely. Operators who have rolled the deployment onto the unified review comment (see
+        below) get the single in-place comment shape; otherwise the legacy multi-panel comment is
+        used unchanged.
       </p>
 
       <h2>Checks</h2>
+      <p>
+        The gittensory app publishes its review as check runs. <strong>Gittensory Gate</strong> is
+        the gate result; <strong>Gittensory Context</strong> is the advisory companion. Both are
+        controlled per repo by <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>),
+        with <code>checkRunDetailLevel</code> choosing <code>minimal</code>, <code>standard</code>,
+        or <code>deep</code> output.
+      </p>
       <p>
         <strong>Gittensory Context</strong> is advisory and should not be required in branch
         protection. <strong>Gittensory Gate</strong> is opt-in and can be made required after a repo
@@ -118,10 +143,52 @@ GET /v1/installations/:id/repair`}
 
       <h2>Gate modes</h2>
       <p>
-        Each Gate rule supports <code>off</code>, <code>advisory</code>, or <code>block</code>.
-        Linked issue, duplicate PR, and quality-score checks default to <code>advisory</code>. The
-        quality rule only blocks when <code>qualityGateMode</code> is <code>block</code> and a
-        <code>qualityGateMinScore</code> threshold is configured.
+        The deterministic gate is the heart of the gittensory review. Its master switch is{" "}
+        <code>gateCheckMode</code> (<code>off</code> / <code>enabled</code>); each dimension then
+        refines an already-enabled gate with a tri-state mode — <code>off</code> (not evaluated),{" "}
+        <code>advisory</code> (surfaced, never blocks), or <code>block</code> (can become a hard{" "}
+        <strong>Gittensory Gate</strong> blocker). Blocking is always confirmed-contributor-gated:
+        the mode chooses which deterministic checks are active, never <em>who</em> can be blocked.
+      </p>
+      <ul>
+        <li>
+          <code>linkedIssueGateMode</code> — linked-issue check. Default <code>advisory</code>.
+        </li>
+        <li>
+          <code>duplicatePrGateMode</code> — duplicate / superseding PR detection. Default{" "}
+          <code>block</code>.
+        </li>
+        <li>
+          <code>qualityGateMode</code> + <code>qualityGateMinScore</code> — the PR-quality score
+          gate. Default <code>advisory</code>; only blocks when set to <code>block</code> with a
+          configured min score.
+        </li>
+        <li>
+          <code>slopGateMode</code> + <code>slopGateMinScore</code> — the deterministic anti-slop
+          signal. Default <code>off</code>; <code>advisory</code> surfaces the slop score and
+          warnings, <code>block</code> also hard-blocks at or above the min score (engine default
+          band <code>60</code>).
+        </li>
+        <li>
+          <code>mergeReadinessGateMode</code> — composite merge-readiness gate. Default{" "}
+          <code>off</code>.
+        </li>
+        <li>
+          <code>manifestPolicyGateMode</code> — makes the repo manifest's declared policy (blocked
+          paths, required linked issue, test expectations) enforceable. Default <code>off</code>.
+        </li>
+        <li>
+          <code>aiReviewMode</code> — AI review. Default <code>off</code>; <code>advisory</code>{" "}
+          posts AI review notes only, <code>block</code> lets a dual-model high-confidence consensus
+          defect become a blocker (confirmed contributors only).
+        </li>
+      </ul>
+      <p>
+        The policy pack (<code>gatePack</code>) selects which rule set runs: <code>gittensor</code>{" "}
+        (confirmed-contributor-gated, registry-aware) or <code>oss-anti-slop</code> (the
+        deterministic rules against any author on any repo). Enable{" "}
+        <code>firstTimeContributorGrace</code> to soften a would-be block to advisory for a genuine
+        newcomer.
       </p>
 
       <h2>
@@ -161,6 +228,91 @@ review:
         (reward, score, wallet, hotkey, payout, etc.); the Gittensor attribution and register link
         always remain on the footer.
       </p>
+      <p>
+        The per-repo settings above choose <em>what</em> Gittensory does on each PR. The next
+        section covers the deployment-wide capability switches that turn whole review features on or
+        off.
+      </p>
+
+      <h2>
+        Review capability flags (<code>GITTENSORY_REVIEW_*</code>)
+      </h2>
+      <p>
+        Beyond per-repo settings, operators turn whole review <em>capabilities</em> on or off with
+        the <code>GITTENSORY_REVIEW_*</code> worker environment variables. Every flag defaults to{" "}
+        <strong>OFF</strong>: when a flag is off its code path is inert and the review behaves
+        exactly as if the feature did not exist. "Truthy" is one of <code>1</code>,{" "}
+        <code>true</code>, <code>yes</code>, or <code>on</code>. You roll capabilities forward — and
+        back — one flag, and one repo, at a time.
+      </p>
+      <Callout variant="safety">
+        Per-PR features require <strong>two</strong> conditions: the capability flag is on{" "}
+        <em>and</em> the repo is listed in <code>GITTENSORY_REVIEW_REPOS</code>. With an empty repo
+        allowlist every per-PR feature stays dormant for everyone, no matter the global flags.
+      </Callout>
+      <ul>
+        <li>
+          <code>GITTENSORY_REVIEW_REPOS</code> — per-repo cutover allowlist. Comma-separated{" "}
+          <code>owner/repo</code> names that may run the per-PR features. Add repos one at a time to
+          roll forward; remove to roll back.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_SAFETY</code> — safety scan: defangs untrusted PR title/body/diff
+          (prompt-injection neutralization) before the reviewer sees it, and surfaces a{" "}
+          <code>secret_leak</code> blocker for leaked secrets in the diff. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_GROUNDING</code> — grounds the AI reviewer with the PR's finished
+          CI status and the full post-change content of the changed files, so the model verifies its
+          claims against reality. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_RAG</code> — retrieval-augmented context: appends semantically
+          related code/docs from the codebase vector index to the reviewer prompt. Per-PR; inert
+          until a <code>VECTORIZE</code> index exists for the repo.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_REPUTATION</code> — submitter-reputation spend control: downgrades
+          a new / burst / low-reputation submitter to a deterministic-only review. Internal-only,
+          never surfaced publicly. Per-PR.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
+          in-place unified comment instead of the legacy multi-panel comment. Per-PR; flag-off keeps
+          the legacy comment byte-identical.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_OPS</code> — read-only observability: a cron anomaly scan over
+          your own review-outcome data plus a bearer-gated stats aggregate. Global (not scoped by
+          the repo allowlist).
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_SELFTUNE</code> — self-improvement loop that computes tuning
+          recommendations from review outcomes, shadow-soaks any strictly-tightening recommendation,
+          and can <em>only ever tighten</em> the gate. Global.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_CONTENT_LANE</code> — routes content repos (curated lists,
+          registries) through the dedicated content lane instead of the code gate. Global.
+        </li>
+        <li>
+          <code>GITTENSORY_REVIEW_DRAFT</code> — public draft-submission flow (contributor draft →
+          GitHub OAuth → fork PR). Global; also needs the draft secrets set.
+        </li>
+      </ul>
+      <p>
+        A safe rollout for a per-PR feature is two flips: set the capability flag truthy, then add
+        the repo to <code>GITTENSORY_REVIEW_REPOS</code>. Because both must hold, a capability can
+        stay globally enabled while remaining dormant everywhere except the repos you have
+        explicitly added.
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`# Roll grounding + the unified comment onto one repo:
+GITTENSORY_REVIEW_GROUNDING="true"
+GITTENSORY_REVIEW_UNIFIED_COMMENT="true"
+GITTENSORY_REVIEW_REPOS="JSONbored/gittensory"`}
+      />
 
       <h2>Dogfood mode</h2>
       <p>

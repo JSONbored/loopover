@@ -23,6 +23,7 @@ import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as ApiIndexRouteImport } from './routes/api.index'
 import { Route as DocsUpstreamDriftRouteImport } from './routes/docs.upstream-drift'
+import { Route as DocsTuningRouteImport } from './routes/docs.tuning'
 import { Route as DocsTroubleshootingRouteImport } from './routes/docs.troubleshooting'
 import { Route as DocsScoreabilityRouteImport } from './routes/docs.scoreability'
 import { Route as DocsQuickstartRouteImport } from './routes/docs.quickstart'
@@ -33,6 +34,7 @@ import { Route as DocsMinerQuickstartRouteImport } from './routes/docs.miner-qui
 import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
 import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
+import { Route as DocsHowReviewsWorkRouteImport } from './routes/docs.how-reviews-work'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
@@ -121,6 +123,11 @@ const DocsUpstreamDriftRoute = DocsUpstreamDriftRouteImport.update({
   path: '/upstream-drift',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsTuningRoute = DocsTuningRouteImport.update({
+  id: '/tuning',
+  path: '/tuning',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsTroubleshootingRoute = DocsTroubleshootingRouteImport.update({
   id: '/troubleshooting',
   path: '/troubleshooting',
@@ -172,6 +179,11 @@ const DocsMaintainerInstallTrustRoute =
     path: '/maintainer-install-trust',
     getParentRoute: () => DocsRoute,
   } as any)
+const DocsHowReviewsWorkRoute = DocsHowReviewsWorkRouteImport.update({
+  id: '/how-reviews-work',
+  path: '/how-reviews-work',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsGithubAppRoute = DocsGithubAppRouteImport.update({
   id: '/github-app',
   path: '/github-app',
@@ -286,6 +298,7 @@ export interface FileRoutesByFullPath {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
@@ -296,6 +309,7 @@ export interface FileRoutesByFullPath {
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
+  '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
   '/api/': typeof ApiIndexRoute
   '/app/': typeof AppIndexRoute
@@ -326,6 +340,7 @@ export interface FileRoutesByTo {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
@@ -336,6 +351,7 @@ export interface FileRoutesByTo {
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
+  '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
   '/api': typeof ApiIndexRoute
   '/app': typeof AppIndexRoute
@@ -370,6 +386,7 @@ export interface FileRoutesById {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
+  '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
   '/docs/mcp-clients': typeof DocsMcpClientsRoute
@@ -380,6 +397,7 @@ export interface FileRoutesById {
   '/docs/quickstart': typeof DocsQuickstartRoute
   '/docs/scoreability': typeof DocsScoreabilityRoute
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
+  '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
   '/api/': typeof ApiIndexRoute
   '/app/': typeof AppIndexRoute
@@ -415,6 +433,7 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
@@ -425,6 +444,7 @@ export interface FileRouteTypes {
     | '/docs/quickstart'
     | '/docs/scoreability'
     | '/docs/troubleshooting'
+    | '/docs/tuning'
     | '/docs/upstream-drift'
     | '/api/'
     | '/app/'
@@ -455,6 +475,7 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
@@ -465,6 +486,7 @@ export interface FileRouteTypes {
     | '/docs/quickstart'
     | '/docs/scoreability'
     | '/docs/troubleshooting'
+    | '/docs/tuning'
     | '/docs/upstream-drift'
     | '/api'
     | '/app'
@@ -498,6 +520,7 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
+    | '/docs/how-reviews-work'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-workflow'
     | '/docs/mcp-clients'
@@ -508,6 +531,7 @@ export interface FileRouteTypes {
     | '/docs/quickstart'
     | '/docs/scoreability'
     | '/docs/troubleshooting'
+    | '/docs/tuning'
     | '/docs/upstream-drift'
     | '/api/'
     | '/app/'
@@ -627,6 +651,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsUpstreamDriftRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/tuning': {
+      id: '/docs/tuning'
+      path: '/tuning'
+      fullPath: '/docs/tuning'
+      preLoaderRoute: typeof DocsTuningRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/troubleshooting': {
       id: '/docs/troubleshooting'
       path: '/troubleshooting'
@@ -695,6 +726,13 @@ declare module '@tanstack/react-router' {
       path: '/maintainer-install-trust'
       fullPath: '/docs/maintainer-install-trust'
       preLoaderRoute: typeof DocsMaintainerInstallTrustRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/how-reviews-work': {
+      id: '/docs/how-reviews-work'
+      path: '/how-reviews-work'
+      fullPath: '/docs/how-reviews-work'
+      preLoaderRoute: typeof DocsHowReviewsWorkRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/github-app': {
@@ -870,6 +908,7 @@ interface DocsRouteChildren {
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
+  DocsHowReviewsWorkRoute: typeof DocsHowReviewsWorkRoute
   DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
   DocsMcpClientsRoute: typeof DocsMcpClientsRoute
@@ -880,6 +919,7 @@ interface DocsRouteChildren {
   DocsQuickstartRoute: typeof DocsQuickstartRoute
   DocsScoreabilityRoute: typeof DocsScoreabilityRoute
   DocsTroubleshootingRoute: typeof DocsTroubleshootingRoute
+  DocsTuningRoute: typeof DocsTuningRoute
   DocsUpstreamDriftRoute: typeof DocsUpstreamDriftRoute
   DocsIndexRoute: typeof DocsIndexRoute
 }
@@ -889,6 +929,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,
+  DocsHowReviewsWorkRoute: DocsHowReviewsWorkRoute,
   DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,
   DocsMcpClientsRoute: DocsMcpClientsRoute,
@@ -899,6 +940,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsQuickstartRoute: DocsQuickstartRoute,
   DocsScoreabilityRoute: DocsScoreabilityRoute,
   DocsTroubleshootingRoute: DocsTroubleshootingRoute,
+  DocsTuningRoute: DocsTuningRoute,
   DocsUpstreamDriftRoute: DocsUpstreamDriftRoute,
   DocsIndexRoute: DocsIndexRoute,
 }

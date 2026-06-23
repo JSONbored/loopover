@@ -165,6 +165,33 @@ describe("explainScoreBreakdown", () => {
     expect(breakdown.components.find((entry) => entry.component === "reviewPenaltyMultiplier")).toMatchObject({ band: "full" });
   });
 
+  it("marks penalty label multipliers as reduced strength (#994)", () => {
+    const penaltyRepo: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, labelMultipliers: { refactor: 0.5, bug: 1.2 } },
+    };
+    const preview = buildScorePreview({
+      repo: penaltyRepo,
+      snapshot,
+      input: {
+        repoFullName: penaltyRepo.fullName,
+        sourceTokenScore: 80,
+        totalTokenScore: 120,
+        sourceLines: 60,
+        openPrCount: 0,
+        credibility: 1,
+        labels: ["refactor"],
+        linkedIssueMode: "none",
+      },
+    });
+
+    const breakdown = explainScoreBreakdown(preview);
+    expect(breakdown.components.find((entry) => entry.component === "labelMultiplier")).toMatchObject({
+      band: "reduced",
+      summary: expect.stringMatching(/penalty label multiplier/i),
+    });
+  });
+
   it("explains failed base-token and invalid linked-issue branches", () => {
     const preview = buildScorePreview({
       repo,

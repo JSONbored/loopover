@@ -72,6 +72,9 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITHUB_WEBHOOK_SECRET: "test-webhook-secret",
     GITHUB_APP_PRIVATE_KEY: "test-private-key",
     ADMIN_GITHUB_LOGINS: "jsonbored",
+    // Per-repo review allowlist: default to the test repos so flag-ON wiring tests activate the
+    // gated review features. Override to "" to assert the dormant (no-repo) default.
+    GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory,acme/widgets",
     ...overrides,
   };
 }

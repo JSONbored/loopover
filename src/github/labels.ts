@@ -55,3 +55,15 @@ export async function ensurePullRequestLabel(
   });
   return { applied: true, created };
 }
+
+/** Remove a single label from a PR if present. Best-effort — a 404 (label not on the PR) is ignored. Used to
+ *  keep the mutually-exclusive managed TYPE labels (gittensor:bug/feature/priority) down to exactly one. */
+export async function removePullRequestLabel(env: Env, installationId: number, repoFullName: string, pullNumber: number, labelName: string): Promise<void> {
+  const [owner, repo] = repoFullName.split("/");
+  if (!owner || !repo) return;
+  const token = await createInstallationToken(env, installationId);
+  const octokit = new Octokit({ auth: token });
+  await octokit
+    .request("DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}", { owner, repo, issue_number: pullNumber, name: labelName })
+    .catch(() => undefined);
+}

@@ -24,6 +24,19 @@ Gittensory keeps sensitive context private by default.
 
 See [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-security) for the full boundary.
 
+## Review Capabilities
+
+Gittensory CI and gittensory review score, gate, and comment on pull requests. The review algorithm is open-source; operators tune behavior through per-repo settings and the `GITTENSORY_REVIEW_*` feature flags, every one of which ships **OFF** and is opt-in per repo.
+
+- **Safety scan** — defangs untrusted PR title/body/diff (prompt-injection neutralization) before the AI reviewer reads them, and scans the diff for leaked secrets, surfacing a `secret_leak` blocker.
+- **CI + full-file grounding** — grounds the AI reviewer with the PR's finished CI status and the full post-change content of the changed files, so claims are verified against reality instead of predicted.
+- **Codebase RAG** — retrieval-augmented context that queries the codebase vector index for related callers, modules, and conventions and appends them to the reviewer prompt (additive only; inert until an index exists).
+- **Submitter-reputation gating** — an internal-only spend control that downgrades new / burst / low-reputation submitters to a deterministic-only review, never surfaced on any public comment, label, or check.
+- **Unified review comment** — renders the public PR feedback as one in-place comment instead of multiple panels.
+- **Per-repo activation** — capabilities roll forward (and back) one flag and one repo at a time via the `GITTENSORY_REVIEW_REPOS` allowlist.
+
+See [Review configuration](https://gittensory.aethereal.dev/docs/review-configuration) for the full flag, setting, and `.gittensory.yml` reference.
+
 ## Start Here
 
 | Audience                  | Start                                                                    | Useful next links                                                                                                                                                                                                 |

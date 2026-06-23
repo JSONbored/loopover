@@ -3,6 +3,8 @@ import { z } from "zod";
 import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, routeClassForPath } from "../auth/rate-limit";
+import { handleShot } from "../review/visual/shot";
+import { isScreenshotsEnabled } from "../review/visual-wire";
 import {
   BROWSER_SESSION_COOKIE,
   GITHUB_OAUTH_STATE_COOKIE,
@@ -135,6 +137,7 @@ import {
   startAgentRun,
 } from "../services/agent-orchestrator";
 import { buildRemediationPlan } from "../services/remediation-plan";
+import { handleDraftCreate, handleDraftOAuthCallback, handleDraftStatus } from "../services/draft";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
@@ -220,6 +223,9 @@ import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings } from "../services/maintainer-activation";
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
+import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
+import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
+import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
@@ -816,6 +822,21 @@ export function createApp() {
     return c.json(buildSubnetInterfaceDescriptor({ origin, generatedAt: nowIso(), appSlug: c.env.GITHUB_APP_SLUG, upstreamRepo: c.env.GITTENSOR_UPSTREAM_REPO }));
   });
 
+  // Proof of Power (#1059): unauthenticated homepage stats counter — lifetime PRs handled / merged / closed,
+  // gate + slop blocks, and a reversal-grounded accuracy %. Aggregate counts only (no PR content, authors,
+  // scores, or reward internals). Flag-gated: 404s when GITTENSORY_PUBLIC_STATS is off so the worker is
+  // byte-identical to today. Excluded from requiresApiToken below.
+  app.get("/v1/public/stats", async (c) => {
+    if (!isPublicStatsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    try {
+      const stats = await getPublicStats(c.env);
+      c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      return c.json(stats);
+    } catch {
+      return c.json({ error: "public_stats_unavailable" }, 503);
+    }
+  });
+
   app.get("/v1/public/github/repos/:owner/:repo/stats", async (c) => {
     try {
       const stats = await fetchPublicRepoStats(c.env, c.req.param("owner"), c.req.param("repo"));
@@ -849,6 +870,24 @@ export function createApp() {
     }
     c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
     return c.json(buildShieldsBadge(quality, 600));
+  });
+
+  // Visual before/after screenshot endpoint (visual-capture port). PUBLIC + UNAUTHENTICATED by design: it
+  // lives OUTSIDE the /v1/ prefix, so requiresApiToken (which only gates path.startsWith('/v1/')) never
+  // touches it — GitHub's camo image proxy must fetch it without a bearer token. The handler itself enforces
+  // every security choke-point: ?key= validates the R2 prefix + rejects '..'; ?url= keeps the host allowlist
+  // (*.workers.dev / *.pages.dev / PUBLIC_SITE_ORIGIN) AND the isSafeHttpUrl SSRF guard. Inert flag-OFF: with
+  // GITTENSORY_REVIEW_SCREENSHOTS off nothing ever writes shots to R2, so ?key= 404s and ?url= still requires
+  // an allowlisted public host. The route's own Cache-Control headers (per mode) are set inside handleShot;
+  // the rate-limit middleware classifies it as 'normal' (a sane public class) via routeClassForPath.
+  // Flag-OFF = TRULY inert: when GITTENSORY_REVIEW_SCREENSHOTS is off nothing references this route (no comment
+  // carries a /gittensory/shot URL), so 404 it outright — that removes the on-demand `?url=` render surface
+  // entirely until the feature is deliberately enabled, rather than relying on the host allowlist alone.
+  app.get("/gittensory/shot", (c) => {
+    if (!isScreenshotsEnabled(c.env)) return c.notFound();
+    return handleShot(c.req.raw, c.env, {
+      ...(c.env.PUBLIC_SITE_ORIGIN ? { productionUrl: c.env.PUBLIC_SITE_ORIGIN } : {}),
+    });
   });
 
   app.get("/v1/auth/github/start", async (c) => {
@@ -902,6 +941,15 @@ export function createApp() {
       return c.redirect(authRedirectWithError(c.env, message), 302);
     }
   });
+
+  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT), ported from reviewbot. When the flag is OFF
+  // every handler returns 404, so the endpoints are effectively absent (the router still registers them
+  // but they short-circuit). The static `/auth/callback` route is registered before the `:id` param
+  // route so it is not captured as a draft id. These are public (unauthenticated) by design — submission
+  // is the unauthenticated entry point; the OAuth state hash + token exchange are the trust boundary.
+  app.post("/v1/drafts", (c) => handleDraftCreate(c.req.raw, c.env));
+  app.get("/v1/drafts/auth/callback", (c) => handleDraftOAuthCallback(c.req.raw, c.env));
+  app.get("/v1/drafts/:id", (c) => handleDraftStatus(c.req.raw, c.env, c.req.param("id")));
 
   app.post("/v1/auth/github/device/start", async (c) => {
     try {
@@ -2811,6 +2859,28 @@ export function createApp() {
   });
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
+
+  // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
+  // ledger + recommendation/slop calibration) for an operator dashboard. Bearer-gated by the `/v1/internal/*`
+  // middleware above (INTERNAL_JOB_TOKEN). Flag-OFF (default) → 404, so the endpoint does not exist and the
+  // worker is byte-identical to today. Aggregate counts only — no PR content / actor logins.
+  app.get("/v1/internal/ops/stats", async (c) => {
+    if (!isOpsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    return c.json(await computeOpsStats(c.env));
+  });
+
+  // Convergence prep (#preconv-parity, flag GITTENSORY_REVIEW_PARITY_AUDIT). The pre-cutover shadow-parity READINESS
+  // report: runs computeGateParity / isParityCutoverReady over the recorded review_audit rows and returns the
+  // per-project agreement rate + cutover-ready verdict (floor 0.98, min 30 paired samples, zero unsafe
+  // disagreements — all from parity.ts). Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN).
+  // Flag-OFF (default) → 404, so the endpoint does not exist and the worker is byte-identical to today. Reads
+  // WHATEVER is recorded: with only gittensory-native rows (no reviewbot dual-run yet) there are no pairs, so it
+  // honestly reports no signal. The comparison becomes meaningful once reviewbot's authoritative rows land via
+  // the deploy-time dual-run shadow step. Aggregate counts only — no PR content / actor logins.
+  app.get("/v1/internal/parity", async (c) => {
+    if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    return c.json(await computeParityReadiness(c.env));
+  });
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };
@@ -4728,8 +4798,12 @@ function requiresApiToken(path: string): boolean {
   if (/^\/v1\/public\/github\/repos\/[^/]+\/[^/]+\/stats$/.test(path)) return false;
   if (/^\/v1\/public\/repos\/[^/]+\/[^/]+\/badge\.(svg|json)$/.test(path)) return false;
   if (path === "/v1/public/subnet-interface") return false;
+  if (path === "/v1/public/stats") return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
+  // Public OAuth draft-submission flow (GITTENSORY_REVIEW_DRAFT): the submission entry points are unauthenticated
+  // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
+  if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
   if (path.startsWith("/v1/internal/")) return false;

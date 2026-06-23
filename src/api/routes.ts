@@ -225,6 +225,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
+import { computeStateMigrationReadiness } from "../review/state-migration";
 import { getPublicStats, isPublicStatsEnabled } from "../review/public-stats";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
 import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
@@ -2883,6 +2884,11 @@ export function createApp() {
     if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     return c.json(await computeParityReadiness(c.env));
   });
+
+  // Convergence prep (#1025): read-only migration dry-run over the stateful reviewbot→gittensory tables plus
+  // a storm guard over current cutover repos. Bearer-gated by the `/v1/internal/*` middleware. Always dry-run:
+  // no writes, no GitHub I/O, no re-enqueue. This is the acceptance check for "no mass re-enqueue post-migration".
+  app.get("/v1/internal/state-migration-readiness", async (c) => c.json(await computeStateMigrationReadiness(c.env)));
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };

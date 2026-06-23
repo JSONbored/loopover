@@ -130,14 +130,14 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(plan).not.toContain("merge");
     });
 
-    it("DOES auto-close a failing PR on a guarded path (the guardrail withholds GOOD PRs for review — it never rescues a bad one)", () => {
+    it("does NOT auto-close a failing PR on a guarded path", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [], slopRisk: 95 } })));
-      expect(plan).toContain("close");
+      expect(plan).not.toContain("close");
     });
 
-    it("APPROVES a passing PR on a guarded path (pre-cleared for the owner) but never auto-merges it", () => {
+    it("does NOT approve or auto-merge a passing PR on a guarded path", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto", merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean" } })));
-      expect(plan).toContain("approve");
+      expect(plan).not.toContain("approve");
       expect(plan).not.toContain("merge");
     });
 

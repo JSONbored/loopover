@@ -123,19 +123,19 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   if (input.ciState === "pending") return actions;
 
   const gatePassing = input.conclusion === "success";
-  // A changed path matching a hard guardrail forces manual review (suppresses auto-MERGE / auto-approve).
+  // A changed path matching a hard guardrail forces manual review (suppresses auto-MERGE / auto-approve / auto-close).
   // Fail SAFE on UNKNOWN paths (#1062): when guardrails are configured but the changed-file set is empty (cache
   // not yet / no longer populated), we cannot prove the PR doesn't touch a guarded path, so treat it as a hit —
-  // never auto-merge a PR whose diff we don't know. Repos with no guardrails configured stay permissive. (The
-  // gate verdict + CI — reviewGood — is computed from the real diff upstream, so a genuinely bad PR still closes.)
+  // never auto-merge, auto-approve, or auto-close a PR whose diff we don't know. Repos with no guardrails
+  // configured stay permissive.
   const guardrailHit =
     input.hardGuardrailGlobs.length > 0 &&
     (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
-  // one-shot CLOSE (taopedia model: resolve + open a fresh PR). The guardrail is handled SEPARATELY: it converts a
-  // would-MERGE into a manual hold (owner safety review), but it NEVER rescues a red/blocked PR from closure.
+  // one-shot CLOSE (taopedia model: resolve + open a fresh PR). The guardrail is handled SEPARATELY: it converts
+  // every would-approve/would-merge/would-close disposition into a manual hold (owner safety review).
   const ciUnverified = input.ciState === "unverified";
   const reviewGood = gatePassing && ciPassed;
   const isContributor = !input.authorIsOwner && !input.authorIsAutomationBot;
@@ -145,12 +145,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // the merge; it can't complete for this commit. A new commit makes the live head differ from mergeBlockedSha.
   const mergeTerminallyBlocked = input.pr.mergeBlockedSha != null && input.pr.headSha != null && input.pr.mergeBlockedSha === input.pr.headSha;
   const canMerge = reviewGood && !guardrailHit && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
-  // A good PR on a guarded path → held for the owner's manual safety review (NOT auto-merged, NOT closed).
-  const wouldMergeButGuarded = reviewGood && mergeableClean && guardrailHit;
-  // A CONTRIBUTOR PR is CLOSED one-shot when it isn't review-good OR it conflicts. request-changes is then
-  // redundant (the close comment carries the reasoning); it only fires as a FALLBACK when we are NOT closing —
-  // an owner/automation PR (never closed) or a repo where `close` isn't at an acting autonomy level.
-  const willClose = isContributor && acting("close") && (!reviewGood || isConflict);
+  // A good PR on a guarded path → held for the owner's manual safety review (NOT auto-approved, auto-merged, or auto-closed).
+  // A CONTRIBUTOR PR is CLOSED one-shot when it isn't review-good OR it conflicts, unless a hard guardrail
+  // requires manual review. request-changes is then redundant (the close comment carries the reasoning); it only
+  // fires as a FALLBACK when we are NOT closing — a guarded PR, an owner/automation PR (never closed), or a repo
+  // where `close` isn't at an acting autonomy level.
+  const willClose = !guardrailHit && isContributor && acting("close") && (!reviewGood || isConflict);
   const ciReason = ciFailed
     ? `CI is failing${failingCheckNames.length ? ` (${failingCheckNames.join(", ")})` : ""}`
     : ciUnverified
@@ -171,24 +171,25 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     }
   }
 
-  // 2) review — APPROVE a review-good PR (even on a guarded path: it's correct; the owner just merges it). The
-  // bot NEVER posts a formal CHANGES_REQUESTED review: a blocking review counts against required approvals and
-  // STRANDS a PR when it later goes green (a stale request-changes keeps it un-mergeable forever). A not-good
-  // CONTRIBUTOR PR is CLOSED below; a not-good OWNER/automation PR is HELD via the needs-human label + the
-  // (non-blocking) unified review comment — never a formal request-changes. (#no-request-changes) Either
-  // merge/approve, or close, with the rare manual hold left open + commented, never blocked.
-  if (reviewGood && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
+  // 2) review — APPROVE a review-good PR only when it is NOT on a guarded path; a guarded PR falls through to the
+  // owner's manual safety review (never auto-approved). The bot NEVER posts a formal CHANGES_REQUESTED review: a
+  // blocking review counts against required approvals and STRANDS a PR when it later goes green (a stale
+  // request-changes keeps it un-mergeable forever). A not-good CONTRIBUTOR PR is CLOSED below; a not-good
+  // OWNER/automation PR is HELD via the needs-human label + the (non-blocking) unified review comment — never a
+  // formal request-changes. (#no-request-changes) Either merge/approve, or close, with the rare manual hold left
+  // open + commented, never blocked.
+  if (reviewGood && !guardrailHit && acting("approve") && input.pr.reviewDecision !== "APPROVED") {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),
-      reason: wouldMergeButGuarded ? "gate passed, CI green (held for owner — guarded path)" : "gate passed, CI green",
+      reason: "gate passed, CI green",
       reviewBody: "Gittensory approves — the gate is satisfied and CI is green.",
     });
   }
 
   // 3) disposition — MERGE (review-good, unguarded, mergeable, approvals) / CLOSE (not-good OR conflicting
-  // CONTRIBUTOR PR, one-shot) / MANUAL (review-good-but-guarded, or any not-good OWNER/automation PR — held,
-  // never closed). Mutually exclusive.
+  // CONTRIBUTOR PR, one-shot) / MANUAL (guarded, or any not-good OWNER/automation PR — held, never closed).
+  // Mutually exclusive.
   if (canMerge) {
     actions.push({
       actionClass: "merge",
@@ -198,8 +199,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   } else if (willClose) {
     // Contributor PR that is NOT review-good (gate blockers / red / unverified CI) OR conflicts with base →
-    // CLOSE one-shot. Closes EVEN on a guarded path: a guardrail withholds a GOOD PR for review, it never
-    // rescues a bad/red/conflicting one. Cite the concrete reasons.
+    // CLOSE one-shot when no hard guardrail requires manual review. Cite the concrete reasons.
     const closeReasons: string[] = [];
     if (ciFailed || ciUnverified) closeReasons.push(ciReason);
     if (isConflict) closeReasons.push("conflicts with the base branch — resolve and open a fresh PR");
@@ -209,7 +209,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     if (closeReasons.length === 0) closeReasons.push("the review gate is not satisfied");
     actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: closeReasons.join("; "), closeComment: closeMessage(closeReasons) });
   }
-  // else: review-good-but-guarded → manual (approved + needs-human label above); not-good OWNER/automation → held
+  // else: guarded → manual (needs-human/changes label above); not-good OWNER/automation → held
   // (request-changes above); review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).
 
   return actions;

@@ -933,6 +933,8 @@ export const issueWatchSubscriptions = sqliteTable(
     login: text("login").notNull(),
     repoFullName: text("repo_full_name").notNull(),
     labelsJson: text("labels_json").notNull().default("[]"),
+    lanesJson: text("lanes_json").notNull().default("[]"),
+    freshnessDays: integer("freshness_days"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

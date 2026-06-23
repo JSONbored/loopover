@@ -1344,10 +1344,12 @@ export function buildContributorOpportunities(
       const quality = qualityByIssue?.get(issue.number);
       const bounty = bountyByIssue.get(bountyIssueKey(repo.fullName, issue.number)) ?? null;
       const bountyLifecycle = bounty ? classifyBountyLifecycle(bounty, issue) : null;
+      const ageDays = daysSince(issue.createdAt ?? issue.updatedAt);
       // Never steer contributors toward completed, cancelled, or otherwise historical bounty work.
       if (bountyLifecycle && isHistoricalBountyLifecycle(bountyLifecycle)) continue;
       const bountyPenalty = bountyLifecycle === "stale" || bountyLifecycle === "ambiguous" ? 30 : 0;
       const labelFit = issue.labels.filter((label) => labelHistory.has(label)).length;
+      const freshnessAdjustment = ageDays <= 3 ? 10 : ageDays <= 14 ? 6 : ageDays <= 30 ? 3 : ageDays > 120 ? -8 : 0;
       const qualityAdjustment =
         quality?.status === "ready"
           ? 10
@@ -1371,7 +1373,8 @@ export function buildContributorOpportunities(
           (lane.lane === "split" ? 8 : 0) +
           (lane.lane === "direct_pr" ? 5 : 0) -
           queuePenalty -
-          bountyPenalty -
+          bountyPenalty +
+          freshnessAdjustment -
           (lane.lane === "inactive" || lane.lane === "unknown" ? 35 : 0) +
           qualityAdjustment +
           multiplierBoost -
@@ -1395,6 +1398,7 @@ export function buildContributorOpportunities(
           ...(maintainerAuthored && !maintainerWip ? ["Maintainer-created issue — typically the highest contribution multiplier on Gittensor."] : []),
           ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
           ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
+          ...(ageDays <= 14 ? ["Issue opened recently, so freshness still favors moving now."] : []),
           ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),
         ],
@@ -1404,6 +1408,7 @@ export function buildContributorOpportunities(
           ...(repoPullRequests.length >= 8 ? ["This repo has a busy open PR queue."] : []),
           ...(lane.lane === "issue_discovery" ? ["This repo is not a direct-PR-first lane."] : []),
           ...(lane.lane === "unknown" || lane.lane === "inactive" ? ["Gittensory cannot recommend this as a strong contribution target right now."] : []),
+          ...(ageDays > 120 ? ["This issue is old enough that freshness no longer helps it."] : []),
           ...(bountyLifecycle === "stale" ? ["Attached bounty context looks stale; confirm it is still active before acting."] : []),
           ...(bountyLifecycle === "ambiguous" ? ["Attached bounty state is ambiguous; verify it before acting."] : []),
           ...(quality?.status === "needs_proof" ? ["Issue quality report flags this issue as needing more proof before acting."] : []),

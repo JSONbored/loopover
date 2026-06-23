@@ -10,6 +10,7 @@ const SUBNET_INTERFACE_SCHEMA_VERSION = "1.0";
 // Names mirror src/mcp/server.ts registrations; the list is intentionally a miner-facing subset (not all 33).
 const CONTRIBUTION_MCP_TOOLS: ReadonlyArray<{ name: string; summary: string }> = [
   { name: "gittensory_get_decision_pack", summary: "Surface contribution candidates across registered repos with duplicate-risk context." },
+  { name: "gittensory_find_opportunities", summary: "Rank the best cross-repo issues to build right now with lane, freshness, and queue context." },
   { name: "gittensory_check_before_start", summary: "Check whether an issue is already claimed or solved before writing code." },
   { name: "gittensory_validate_linked_issue", summary: "Confirm whether a planned PR has a linked issue before opening it." },
   { name: "gittensory_preflight_pr", summary: "Preflight a planned PR for lane fit, duplicate risk, and review burden." },
@@ -21,7 +22,7 @@ const CONTRIBUTION_MCP_TOOLS: ReadonlyArray<{ name: string; summary: string }> =
 const ONBOARDING_STEPS: ReadonlyArray<string> = [
   "Maintainers: install the Gittensory GitHub App on a gittensor-registered repository.",
   "Contributors (miners): connect the Gittensory MCP endpoint in your agent harness (Claude Code, Cursor, etc.).",
-  "Use gittensory_get_decision_pack to find high-fit, low-duplicate issues, then gittensory_check_before_start before writing code.",
+  "Use gittensory_find_opportunities or gittensory_get_decision_pack to find high-fit, low-duplicate issues, then gittensory_check_before_start before writing code.",
   "Preflight with gittensory_preflight_pr and open a focused PR linked to its issue.",
 ];
 

@@ -8,7 +8,7 @@ import {
   listNotificationSubscriptionsForLogin,
   markNotificationDeliveryDelivered,
 } from "../db/repositories";
-import { isGrabbableHighMultiplierIssue } from "../signals/engine";
+import { buildLaneAdvice, isGrabbableHighMultiplierIssue } from "../signals/engine";
 import { canLoginAccessRepo } from "../services/control-panel-roles";
 import type { DetectedNotificationEvent, IssueRecord, NotificationChannel, NotificationDeliveryRecord, NotificationSubscriptionRecord } from "../types";
 import { nowIso } from "../utils/json";
@@ -48,6 +48,18 @@ export function buildMergedOutcomeNotification(event: DetectedNotificationEvent)
 // `pullNumber` field carries the ISSUE number. Public-safe — "open to grab" framing, never raw reward/score.
 export function buildIssueWatchNotification(event: DetectedNotificationEvent): { title: string; body: string } {
   const ref = `${event.repoFullName}#${event.pullNumber}`;
+  if (event.trigger === "reprioritized") {
+    return {
+      title: sanitizePublicComment(`Best issue right now on ${ref}`),
+      body: sanitizePublicComment(`A watched issue on ${ref} moved into your strongest current cross-repo shortlist. Re-check it now if you want the best current fit from your lane and queue context.`),
+    };
+  }
+  if (event.trigger === "aging") {
+    return {
+      title: sanitizePublicComment(`Aging issue worth revisiting on ${ref}`),
+      body: sanitizePublicComment(`A watched issue on ${ref} is still a strong current fit and has aged in the queue. Re-check it now if you want a mature target that still lines up with your filters.`),
+    };
+  }
   return {
     title: sanitizePublicComment(`New issue to grab on ${ref}`),
     body: sanitizePublicComment(`A new maintainer-created issue opened on ${ref} that is open for you to grab. Maintainer-created issues are strong early targets on ${event.repoFullName} — claim it to line up your next contribution.`),
@@ -78,9 +90,14 @@ export async function detectIssueWatchEvents(env: Env, repoFullName: string, iss
   const detectedAt = nowIso();
   const issueLabels = new Set(issue.labels.map((label) => label.toLowerCase().trim()));
   const authorLogin = issue.authorLogin?.toLowerCase();
+  const issueAgeDays = (() => {
+    const parsed = Date.parse(issue.createdAt ?? issue.updatedAt ?? "");
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor((Date.now() - parsed) / 86_400_000)) : 0;
+  })();
   const matching = watchers
     // An empty label filter matches any issue; otherwise at least one watched label must be present.
     .filter((watcher) => watcher.labels.length === 0 || watcher.labels.some((label) => issueLabels.has(label)))
+    .filter((watcher) => !watcher.freshnessDays || issueAgeDays <= watcher.freshnessDays)
     // Don't ping the maintainer who opened the issue about their own issue.
     .filter((watcher) => watcher.login.toLowerCase() !== authorLogin);
 
@@ -89,15 +106,17 @@ export async function detectIssueWatchEvents(env: Env, repoFullName: string, iss
   // reach a non-collaborator. The repo is the same for all watchers, so resolve it once and only pay the
   // per-watcher access check on the private path.
   const repo = await getRepository(env, repoFullName);
+  const repoLane = buildLaneAdvice(repo, repoFullName).lane;
   const authorizedWatchers =
     repo && !repo.isPrivate
-      ? matching
-      : (await Promise.all(matching.map(async (watcher) => ((repo && (await canLoginAccessRepo(env, watcher.login, repoFullName))) ? watcher : null)))).filter(
-          (watcher) => watcher !== null,
-        );
+      ? matching.filter((watcher) => watcher.lanes.length === 0 || watcher.lanes.includes(repoLane))
+      : (
+          await Promise.all(matching.map(async (watcher) => ((repo && (await canLoginAccessRepo(env, watcher.login, repoFullName))) ? watcher : null)))
+        ).filter((watcher): watcher is NonNullable<typeof watcher> => watcher !== null && (watcher.lanes.length === 0 || watcher.lanes.includes(repoLane)));
 
   return authorizedWatchers.map((watcher) => ({
     eventType: "issue_watch_match" as const,
+    trigger: "opened" as const,
     recipientLogin: watcher.login,
     repoFullName,
     pullNumber: issue.number, // carries the ISSUE number for this eventType

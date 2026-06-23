@@ -95,6 +95,7 @@ import { refreshRegistry } from "../registry/sync";
 import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
 import { deliverNotification, detectIssueWatchEvents, evaluateNotificationEvent } from "../notifications/service";
+import { detectDecisionPackOpportunityEvents } from "../services/opportunity-discovery";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildAndPersistContributorDecisionPack, loadDecisionPackSharedInputs } from "../services/decision-pack";
 import {
@@ -372,7 +373,9 @@ async function buildContributorDecisionPacks(env: Env, login?: string): Promise<
   const shared = await loadDecisionPackSharedInputs(env);
   for (const contributorLogin of logins) {
     try {
-      await buildAndPersistContributorDecisionPack(env, contributorLogin, shared);
+      const pack = await buildAndPersistContributorDecisionPack(env, contributorLogin, shared);
+      const opportunityEvents = await detectDecisionPackOpportunityEvents(env, pack, shared.allIssues);
+      await Promise.all(opportunityEvents.map((event) => env.JOBS.send({ type: "notify-evaluate", requestedBy: "api", event })));
     } catch (error) {
       // Isolate per-login failures so one bad login can't fail the whole batch (which would re-run
       // from the first login on retry and poison-pill the queue) (#787).

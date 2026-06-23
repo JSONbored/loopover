@@ -1354,28 +1354,44 @@ export async function listNotificationSubscriptionsForLogin(env: Env, login: str
 // ─── Issue-watch subscriptions (#699 path B) ─────────────────────────────────────────────────────────
 
 function toIssueWatchSubscription(row: typeof issueWatchSubscriptions.$inferSelect): IssueWatchSubscription {
-  return { login: row.login, repoFullName: row.repoFullName, labels: parseJson<string[]>(row.labelsJson, []), createdAt: row.createdAt, updatedAt: row.updatedAt };
+  return {
+    login: row.login,
+    repoFullName: row.repoFullName,
+    labels: parseJson<string[]>(row.labelsJson, []),
+    lanes: parseJson<IssueWatchSubscription["lanes"]>(row.lanesJson, []),
+    freshnessDays: row.freshnessDays,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 /** Subscribe a miner to a repo's new grabbable issues; idempotent on (login, repo) — re-subscribing just
  *  updates the label filter. `login`, `repoFullName`, and `labels` ([]=any) are all lowercased so matching
  *  is case-insensitive: GitHub repo names are case-insensitive, and the delivery lookup keys off the
  *  webhook's canonical `repository.full_name`, so a watch stored under a different casing must still match. */
-export async function upsertIssueWatchSubscription(env: Env, input: { login: string; repoFullName: string; labels?: string[] | undefined }): Promise<IssueWatchSubscription> {
+export async function upsertIssueWatchSubscription(
+  env: Env,
+  input: { login: string; repoFullName: string; labels?: string[] | undefined; lanes?: IssueWatchSubscription["lanes"] | undefined; freshnessDays?: number | null | undefined },
+): Promise<IssueWatchSubscription> {
   const db = getDb(env.DB);
   const login = input.login.toLowerCase();
   const repoFullName = input.repoFullName.toLowerCase();
   const labels = [...new Set((input.labels ?? []).map((label) => label.toLowerCase().trim()).filter(Boolean))];
+  const lanes = [...new Set((input.lanes ?? []).map((lane) => lane.trim().toLowerCase()).filter(Boolean))] as IssueWatchSubscription["lanes"];
+  const freshnessDays = typeof input.freshnessDays === "number" && Number.isFinite(input.freshnessDays) ? Math.max(1, Math.floor(input.freshnessDays)) : null;
   await db
     .insert(issueWatchSubscriptions)
-    .values({ id: crypto.randomUUID(), login, repoFullName, labelsJson: jsonString(labels), updatedAt: nowIso() })
-    .onConflictDoUpdate({ target: [issueWatchSubscriptions.login, issueWatchSubscriptions.repoFullName], set: { labelsJson: jsonString(labels), updatedAt: nowIso() } });
+    .values({ id: crypto.randomUUID(), login, repoFullName, labelsJson: jsonString(labels), lanesJson: jsonString(lanes), freshnessDays, updatedAt: nowIso() })
+    .onConflictDoUpdate({
+      target: [issueWatchSubscriptions.login, issueWatchSubscriptions.repoFullName],
+      set: { labelsJson: jsonString(labels), lanesJson: jsonString(lanes), freshnessDays, updatedAt: nowIso() },
+    });
   const [row] = await db
     .select()
     .from(issueWatchSubscriptions)
     .where(and(eq(issueWatchSubscriptions.login, login), eq(issueWatchSubscriptions.repoFullName, repoFullName)));
   /* v8 ignore next -- the row always exists immediately after the upsert above; the literal is a type-safety fallback. */
-  return row ? toIssueWatchSubscription(row) : { login, repoFullName, labels };
+  return row ? toIssueWatchSubscription(row) : { login, repoFullName, labels, lanes, freshnessDays };
 }
 
 export async function listIssueWatchSubscriptionsForLogin(env: Env, login: string): Promise<IssueWatchSubscription[]> {

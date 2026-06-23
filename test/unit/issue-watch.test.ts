@@ -16,7 +16,18 @@ import type { IssueRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 function issue(over: Partial<IssueRecord> = {}): IssueRecord {
-  return { repoFullName: "owner/repo", number: 5, title: "Add retry to sync", state: "open", authorAssociation: "OWNER", authorLogin: "maintainer", labels: [], linkedPrs: [], ...over };
+  return {
+    repoFullName: "owner/repo",
+    number: 5,
+    title: "Add retry to sync",
+    state: "open",
+    authorAssociation: "OWNER",
+    authorLogin: "maintainer",
+    labels: [],
+    linkedPrs: [],
+    createdAt: "2026-06-14T00:00:00.000Z",
+    ...over,
+  };
 }
 
 describe("isGrabbableHighMultiplierIssue (#699)", () => {
@@ -31,16 +42,18 @@ describe("isGrabbableHighMultiplierIssue (#699)", () => {
 describe("issue-watch subscriptions (CRUD)", () => {
   it("subscribes idempotently, lists, normalizes labels, and unwatches", async () => {
     const env = createTestEnv();
-    await upsertIssueWatchSubscription(env, { login: "Miner", repoFullName: "owner/repo", labels: ["Bug", " good first issue "] });
+    await upsertIssueWatchSubscription(env, { login: "Miner", repoFullName: "owner/repo", labels: ["Bug", " good first issue "], lanes: ["split"], freshnessDays: 21 });
     let mine = await listIssueWatchSubscriptionsForLogin(env, "miner");
     expect(mine).toHaveLength(1);
-    expect(mine[0]).toMatchObject({ repoFullName: "owner/repo", labels: ["bug", "good first issue"] }); // lowercased + trimmed
+    expect(mine[0]).toMatchObject({ repoFullName: "owner/repo", labels: ["bug", "good first issue"], lanes: ["split"], freshnessDays: 21 }); // lowercased + trimmed
 
     // Re-subscribe (idempotent on login+repo) updates the label filter, not a duplicate row.
-    await upsertIssueWatchSubscription(env, { login: "miner", repoFullName: "owner/repo", labels: [] });
+    await upsertIssueWatchSubscription(env, { login: "miner", repoFullName: "owner/repo", labels: [], lanes: [], freshnessDays: undefined });
     mine = await listIssueWatchSubscriptionsForLogin(env, "miner");
     expect(mine).toHaveLength(1);
     expect(mine[0]!.labels).toEqual([]);
+    expect(mine[0]!.lanes).toEqual([]);
+    expect(mine[0]!.freshnessDays).toBeNull();
 
     // Watchers-for-repo lists across logins.
     await upsertIssueWatchSubscription(env, { login: "other", repoFullName: "owner/repo" });
@@ -131,7 +144,7 @@ describe("detectIssueWatchEvents", () => {
     await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: "owner/repo" });
     const events = await detectIssueWatchEvents(env, "owner/repo", issue({ number: 12, authorLogin: undefined, authorAssociation: "MEMBER" }));
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ recipientLogin: "alice", actorLogin: "unknown", pullNumber: 12 });
+    expect(events[0]).toMatchObject({ recipientLogin: "alice", actorLogin: "unknown", pullNumber: 12, trigger: "opened" });
   });
 });
 
@@ -155,6 +168,34 @@ describe("buildIssueWatchNotification", () => {
     const event = { eventType: "issue_watch_match" as const, recipientLogin: "alice", repoFullName: "owner/repo", pullNumber: 9, dedupKey: "k", deeplink: "https://github.com/owner/repo/issues/9", actorLogin: "maintainer", detectedAt: "2026-06-14T00:00:00.000Z" };
     expect(buildNotificationContent(event).title).toContain("New issue to grab on owner/repo#9");
   });
+
+  it("renders distinct copy for reprioritized and aging issue alerts", () => {
+    const reprioritized = buildIssueWatchNotification({
+      eventType: "issue_watch_match",
+      trigger: "reprioritized",
+      recipientLogin: "alice",
+      repoFullName: "owner/repo",
+      pullNumber: 9,
+      dedupKey: "k1",
+      deeplink: "https://github.com/owner/repo/issues/9",
+      actorLogin: "maintainer",
+      detectedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(reprioritized.title).toContain("Best issue right now");
+
+    const aging = buildIssueWatchNotification({
+      eventType: "issue_watch_match",
+      trigger: "aging",
+      recipientLogin: "alice",
+      repoFullName: "owner/repo",
+      pullNumber: 9,
+      dedupKey: "k2",
+      deeplink: "https://github.com/owner/repo/issues/9",
+      actorLogin: "maintainer",
+      detectedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(aging.title).toContain("Aging issue worth revisiting");
+  });
 });
 
 async function connect(env: Env, identity?: AuthIdentity) {
@@ -173,7 +214,7 @@ describe("MCP gittensory_watch_issues", () => {
 
     const watched = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "owner/repo", labels: ["bug"] } });
     expect(watched.isError).toBeFalsy();
-    expect((watched.structuredContent as { watching: Array<{ repoFullName: string }> }).watching).toEqual([{ repoFullName: "owner/repo", labels: ["bug"] }]);
+    expect((watched.structuredContent as { watching: Array<{ repoFullName: string }> }).watching).toEqual([{ repoFullName: "owner/repo", labels: ["bug"], lanes: [], freshnessDays: null }]);
 
     const listed = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "list" } });
     expect((listed.structuredContent as { watching: unknown[] }).watching).toHaveLength(1);
@@ -192,7 +233,7 @@ describe("MCP gittensory_watch_issues", () => {
     const result = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "owner/repo" } });
 
     expect(result.isError).toBeFalsy();
-    expect((result.structuredContent as { watching: Array<{ repoFullName: string }> }).watching).toEqual([{ repoFullName: "owner/repo", labels: [] }]);
+    expect((result.structuredContent as { watching: Array<{ repoFullName: string }> }).watching).toEqual([{ repoFullName: "owner/repo", labels: [], lanes: [], freshnessDays: null }]);
   });
 
   it("blocks session actors from watching inaccessible (private) repositories", async () => {

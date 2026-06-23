@@ -139,6 +139,7 @@ gittensory-mcp agent packet --login jsonbored --repo we-promise/sure --base orig
 
 The same capabilities are exposed to MCP clients as:
 
+- `gittensory_find_opportunities`
 - `gittensory_agent_plan_next_work`
 - `gittensory_agent_start_run`
 - `gittensory_agent_get_run`

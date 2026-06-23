@@ -13,6 +13,7 @@ import {
   createPendingAgentActionIfAbsent,
   getBounty,
   listBountiesByRepo,
+  listAllIssues,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
   getInstallation,
@@ -69,6 +70,7 @@ import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
+import { buildOpportunityDiscoveryResult } from "../services/opportunity-discovery";
 import {
   applyMcpPlanningChoices,
   buildMcpPlanningElicitationAudit,
@@ -714,11 +716,35 @@ const watchIssuesShape = {
   action: z.enum(["watch", "unwatch", "list"]).default("list"),
   repoFullName: z.string().min(3).max(200).optional(),
   labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+  lanes: z.array(z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"])).max(10).optional(),
+  freshnessDays: z.number().int().positive().max(365).optional(),
 };
 
 const watchIssuesOutputSchema = {
-  watching: z.array(z.object({ repoFullName: z.string(), labels: z.array(z.string()) })).optional(),
+  watching: z
+    .array(z.object({ repoFullName: z.string(), labels: z.array(z.string()), lanes: z.array(z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"])), freshnessDays: z.number().int().nullable().optional() }))
+    .optional(),
   changed: z.string().optional(),
+};
+
+const findOpportunitiesShape = {
+  login: z.string().min(1),
+  limit: z.number().int().positive().max(25).optional(),
+  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+  lanes: z.array(z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"])).max(10).optional(),
+  freshnessDays: z.number().int().positive().max(365).optional(),
+};
+
+const findOpportunitiesOutputSchema = {
+  login: z.string().optional(),
+  generatedAt: z.string().optional(),
+  freshness: z.string().optional(),
+  summary: z.string().optional(),
+  filters: z.unknown().optional(),
+  opportunities: z.unknown().optional(),
+  status: z.string().optional(),
+  reason: z.string().optional(),
+  rebuildEnqueued: z.boolean().optional(),
 };
 
 const explainRepoDecisionOutputSchema = {
@@ -1127,11 +1153,21 @@ export class GittensoryMcp {
       "gittensory_watch_issues",
       {
         description:
-          "Watch repos for NEW grabbable, high-multiplier issues (maintainer-created, not WIP). action=watch subscribes a repo (optional label filter), unwatch removes it, list (default) returns your watches. When a matching issue opens you're notified via gittensory_list_notifications. Self-scoped to the authenticated login.",
+          "Watch repos for proactive issue alerts. action=watch subscribes a repo with optional lane, label, and freshness filters; unwatch removes it; list (default) returns your watches. Matching new, aging, and newly-prioritized issues notify via gittensory_list_notifications. Self-scoped to the authenticated login.",
         inputSchema: watchIssuesShape,
         outputSchema: watchIssuesOutputSchema,
       },
       async (input) => this.toolResult(await this.watchIssues(input)),
+    );
+
+    server.registerTool(
+      "gittensory_find_opportunities",
+      {
+        description: "Return a deterministic cross-repo shortlist of the best issues to build right now, filtered by lane, label, and freshness. Metadata only; no raw reward or score exposure.",
+        inputSchema: findOpportunitiesShape,
+        outputSchema: findOpportunitiesOutputSchema,
+      },
+      async (input) => this.toolResult(await this.findOpportunities(input)),
     );
 
     server.registerTool(
@@ -2029,17 +2065,55 @@ export class GittensoryMcp {
       if (!input.repoFullName) return { summary: `${input.action} requires repoFullName.`, data: {} };
       await this.requireWatchableRepo(input.login, input.repoFullName);
       if (input.action === "watch") {
-        await upsertIssueWatchSubscription(this.env, { login: input.login, repoFullName: input.repoFullName, labels: input.labels });
-        changed = `watching ${input.repoFullName}${input.labels && input.labels.length > 0 ? ` (labels: ${input.labels.join(", ")})` : ""}`;
+        await upsertIssueWatchSubscription(this.env, {
+          login: input.login,
+          repoFullName: input.repoFullName,
+          labels: input.labels,
+          lanes: input.lanes,
+          freshnessDays: input.freshnessDays,
+        });
+        const filters = [
+          input.labels && input.labels.length > 0 ? `labels: ${input.labels.join(", ")}` : null,
+          input.lanes && input.lanes.length > 0 ? `lanes: ${input.lanes.join(", ")}` : null,
+          input.freshnessDays ? `freshness <= ${input.freshnessDays}d` : null,
+        ].filter(Boolean);
+        changed = `watching ${input.repoFullName}${filters.length > 0 ? ` (${filters.join("; ")})` : ""}`;
       } else {
         const removed = await deleteIssueWatchSubscription(this.env, input.login, input.repoFullName);
         changed = removed ? `unwatched ${input.repoFullName}` : `was not watching ${input.repoFullName}`;
       }
     }
-    const watching = (await listIssueWatchSubscriptionsForLogin(this.env, input.login)).map((sub) => ({ repoFullName: sub.repoFullName, labels: sub.labels }));
+    const watching = (await listIssueWatchSubscriptionsForLogin(this.env, input.login)).map((sub) => ({
+      repoFullName: sub.repoFullName,
+      labels: sub.labels,
+      lanes: sub.lanes,
+      ...(sub.freshnessDays !== undefined ? { freshnessDays: sub.freshnessDays } : {}),
+    }));
     return {
       summary: `Watching ${watching.length} repo(s) for new grabbable issues${changed ? ` (${changed})` : ""}.`,
       data: { watching, ...(changed ? { changed } : {}) } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async findOpportunities(input: z.infer<z.ZodObject<typeof findOpportunitiesShape>>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.login);
+    const serving = await loadContributorDecisionPackForServing(this.env, input.login);
+    if (serving.kind === "needs_refresh") {
+      return {
+        summary: `Cross-repo opportunity shortlist for ${input.login} needs a decision-pack refresh.`,
+        data: serving.refresh as unknown as Record<string, unknown>,
+      };
+    }
+    const issues = await listAllIssues(this.env);
+    const result = buildOpportunityDiscoveryResult(serving.pack, issues, {
+      limit: input.limit,
+      labels: input.labels,
+      lanes: input.lanes,
+      freshnessDays: input.freshnessDays,
+    });
+    return {
+      summary: `Cross-repo opportunity shortlist for ${input.login}.`,
+      data: result as unknown as Record<string, unknown>,
     };
   }
 

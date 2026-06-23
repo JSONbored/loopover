@@ -1283,6 +1283,8 @@ export type IssueWatchSubscription = {
   login: string;
   repoFullName: string;
   labels: string[];
+  lanes: Array<"direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown">;
+  freshnessDays?: number | null | undefined;
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
 };
@@ -1290,6 +1292,7 @@ export type IssueWatchSubscription = {
 // A notification-worthy event extracted from a webhook payload (src/notifications/events.ts).
 export type DetectedNotificationEvent = {
   eventType: NotificationEventType;
+  trigger?: "opened" | "aging" | "reprioritized" | undefined;
   recipientLogin: string;
   repoFullName: string;
   pullNumber: number;

@@ -48,6 +48,7 @@ describe("deriveUnifiedStatus", () => {
 
   it("blocked for a close verdict or consensus blockers", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "close" })).toBe("blocked");
+    expect(deriveUnifiedStatus({ ...base, decision: "close", readiness: { ciState: "unverified" } })).toBe("blocked");
     expect(deriveUnifiedStatus({ ...base, recommendations: [], blockers: ["leaks a secret"] })).toBe("blocked");
   });
 

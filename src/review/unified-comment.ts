@@ -217,35 +217,39 @@ const SIGNAL_ICON: Record<UnifiedSignalRow["state"], string> = { ok: "✅", warn
 /** Derive the single unified status from reviewbot's decision/recs/CI + the host override. */
 export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedCommentContext = {}): UnifiedCommentStatus {
   if (ctx.statusOverride) return ctx.statusOverride;
-  // CI gate — a PR is "safe to merge" ONLY when CI is GREEN. This runs BEFORE the explicit-verdict switch so an
-  // optimistic gate "merge" can never render a "safe to merge" headline over a CI that hasn't passed:
-  //   • failed     → BLOCKED (red CI; the disposition layer closes non-owner / holds owner)
-  //   • unverified / pending (chip "CI pending") → HELD (still running / not yet reported — NOT safe to merge)
-  // Only ciState === "passed" falls through to honor the gate verdict. (Bug this fixes: a PR with a failing
-  // codecov OR with CI still in progress showed "Approved — safe to merge".)
-  if (input.readiness && input.readiness.ciState !== "passed") {
-    return input.readiness.ciState === "failed" ? "blocked" : "held";
-  }
   // An explicit gate verdict is authoritative — it already weighed the reviewers + guardrails.
+  let status: UnifiedCommentStatus | undefined;
   switch (input.decision) {
     case "merge":
-      return "ready";
+      status = "ready";
+      break;
     case "close":
-      return "blocked";
+      status = "blocked";
+      break;
     case "manual":
-      return "held";
+      status = "held";
+      break;
     case "comment":
     case "ignore":
-      return "advisory";
+      status = "advisory";
+      break;
   }
   // No explicit decision → mirror reviewbot's unifiedStatus over the reviewers: a consensus blocker / close →
   // blocked; a lone blocker, a split, or a partial (failed) review → held; an empty review → advisory; all-merge → ready.
-  const recs = input.recommendations ?? [];
-  const hasConsensusBlocker = input.consensusBlocker ?? (input.blockers ?? []).length > 0;
-  if (recs.includes("close") || hasConsensusBlocker) return "blocked";
-  if (recs.length === 0) return "advisory";
-  if ((input.failedCount ?? 0) > 0 || recs.some((r) => r !== "merge")) return "held";
-  return "ready";
+  if (!status) {
+    const recs = input.recommendations ?? [];
+    const hasConsensusBlocker = input.consensusBlocker ?? (input.blockers ?? []).length > 0;
+    if (recs.includes("close") || hasConsensusBlocker) status = "blocked";
+    else if (recs.length === 0) status = "advisory";
+    else if ((input.failedCount ?? 0) > 0 || recs.some((r) => r !== "merge")) status = "held";
+    else status = "ready";
+  }
+  // CI gate — a PR is "safe to merge" ONLY when CI is GREEN. Apply this only to otherwise-ready statuses so
+  // pending/unverified CI cannot mask an authoritative close/block decision from the gate.
+  if (status === "ready" && input.readiness && input.readiness.ciState !== "passed") {
+    return input.readiness.ciState === "failed" ? "blocked" : "held";
+  }
+  return status;
 }
 
 function verb(status: UnifiedCommentStatus, input: UnifiedReviewInput): string {

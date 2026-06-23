@@ -13,7 +13,11 @@ function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
     bind: (...a: unknown[]) => make(sql, a),
     all: async () => ({ results: handler(sql, args) }),
   });
-  return { DB: { prepare: (sql: string) => make(sql, []) } } as unknown as Env;
+  return {
+    DB: { prepare: (sql: string) => make(sql, []) },
+    GITTENSORY_REVIEW_REPOS:
+      "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
+  } as unknown as Env;
 }
 
 const NOW = Date.parse("2026-06-22T00:00:00Z");
@@ -107,6 +111,101 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       "JSONbored/gittensory",
     ]);
     expect(out.updatedAt).toBe(out.generatedAt);
+  });
+
+  it("publishes only projects from the reviewed-repo allowlist", async () => {
+    const out = await getPublicStats(
+      stubEnv((sql, args) => {
+        if (sql.includes("FROM review_audit")) {
+          return [
+            { project: "JSONbored/gittensory", reversed: 1 },
+            { project: "CustomerCo/stealth-product", reversed: 1 },
+          ].filter((row) => args.includes(String(row.project).toLowerCase()));
+        }
+        if (sql.includes("created_at >= ?")) {
+          const allowed = args.slice(1);
+          const weeklyRows = [
+            {
+              project: "JSONbored/gittensory",
+              merged: 1,
+              closed: 1,
+              commented: 0,
+              manual: 0,
+            },
+            {
+              project: "CustomerCo/stealth-product",
+              merged: 3,
+              closed: 0,
+              commented: 0,
+              manual: 0,
+            },
+          ].filter((row) =>
+            allowed.includes(String(row.project).toLowerCase()),
+          );
+          return [
+            weeklyRows.reduce(
+              (acc, row) => ({
+                merged: acc.merged + row.merged,
+                closed: acc.closed + row.closed,
+                commented: acc.commented + row.commented,
+                manual: acc.manual + row.manual,
+              }),
+              { merged: 0, closed: 0, commented: 0, manual: 0 },
+            ),
+          ];
+        }
+        if (sql.includes("GROUP BY project")) {
+          return [
+            {
+              project: "JSONbored/gittensory",
+              handled: 2,
+              merged: 1,
+              closed: 1,
+              commented: 0,
+              ignored: 0,
+              manual: 0,
+              error: 0,
+            },
+            {
+              project: "CustomerCo/stealth-product",
+              handled: 3,
+              merged: 3,
+              closed: 0,
+              commented: 0,
+              ignored: 0,
+              manual: 0,
+              error: 0,
+            },
+          ].filter((row) => args.includes(String(row.project).toLowerCase()));
+        }
+        return [];
+      }),
+      NOW,
+    );
+
+    expect(out.totals.handled).toBe(2);
+    expect(out.totals.reviewed).toBe(2);
+    expect(out.totals.reversed).toBe(1);
+    expect(out.weekly).toEqual({ reviewed: 2, merged: 1 });
+    expect(out.byProject.map((p) => p.project)).toEqual([
+      "JSONbored/gittensory",
+    ]);
+  });
+
+  it("publishes no ledger data when the reviewed-repo allowlist is empty", async () => {
+    const env = {
+      DB: {
+        prepare: () => {
+          throw new Error("public stats must not query an unscoped ledger");
+        },
+      },
+      GITTENSORY_REVIEW_REPOS: "",
+    } as unknown as Env;
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.handled).toBe(0);
+    expect(out.totals.reviewed).toBe(0);
+    expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
+    expect(out.byProject).toEqual([]);
   });
 
   it("returns zeroed totals with null derived metrics when the ledger is empty", async () => {

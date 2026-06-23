@@ -21,7 +21,9 @@
 export const MINUTES_SAVED_PER_PR = 20;
 
 /** Truthy-string flag check, matching ops-wire / selftune-wire. */
-export function isPublicStatsEnabled(env: { GITTENSORY_PUBLIC_STATS?: string | undefined }): boolean {
+export function isPublicStatsEnabled(env: {
+  GITTENSORY_PUBLIC_STATS?: string | undefined;
+}): boolean {
   return /^(1|true|yes|on)$/i.test(env.GITTENSORY_PUBLIC_STATS ?? "");
 }
 
@@ -31,7 +33,11 @@ function storage(env: Env): D1Database {
 }
 
 /** Read-only helper that degrades a missing/empty table (or absent column in some envs) to []. */
-async function safeAll<T>(env: Env, sql: string, ...binds: unknown[]): Promise<T[]> {
+async function safeAll<T>(
+  env: Env,
+  sql: string,
+  ...binds: unknown[]
+): Promise<T[]> {
   try {
     const prepared = storage(env).prepare(sql);
     const stmt = binds.length > 0 ? prepared.bind(...binds) : prepared;
@@ -43,7 +49,12 @@ async function safeAll<T>(env: Env, sql: string, ...binds: unknown[]): Promise<T
 }
 
 /** reviewed = the PRs gittensory actually reviewed (excludes ignored drafts/bots + errors). */
-function reviewedOf(d: { merged: number; closed: number; commented: number; manual: number }): number {
+function reviewedOf(d: {
+  merged: number;
+  closed: number;
+  commented: number;
+  manual: number;
+}): number {
   return d.merged + d.closed + d.commented + d.manual;
 }
 
@@ -54,10 +65,29 @@ function filteredPct(reviewed: number, merged: number): number | null {
 }
 
 /** Reversal-grounded accuracy over the irreversible auto-actions (merged + closed); null until there is signal. */
-function accuracyPct(merged: number, closed: number, reversed: number): number | null {
+function accuracyPct(
+  merged: number,
+  closed: number,
+  reversed: number,
+): number | null {
   const decided = merged + closed;
   if (decided <= 0) return null;
   return Math.round((1 - reversed / decided) * 1000) / 10;
+}
+
+/** Public stats are intentionally constrained to the reviewed-repo allowlist. Empty allowlist => publish nothing. */
+function publicStatsProjects(env: {
+  GITTENSORY_REVIEW_REPOS?: string | undefined;
+}): string[] {
+  const seen = new Set<string>();
+  const projects: string[] = [];
+  for (const entry of (env.GITTENSORY_REVIEW_REPOS ?? "").split(",")) {
+    const project = entry.trim().toLowerCase();
+    if (!project || seen.has(project)) continue;
+    seen.add(project);
+    projects.push(project);
+  }
+  return projects;
 }
 
 interface DispositionRow {
@@ -91,7 +121,13 @@ export interface PublicStatsPayload {
   /** Trailing-7-day additions (by review time), for the "+N this week" hero delta. */
   weekly: { reviewed: number; merged: number };
   /** Per-repo split, busiest first. Public repo slugs only. */
-  byProject: Array<{ project: string; reviewed: number; merged: number; closed: number; accuracyPct: number | null }>;
+  byProject: Array<{
+    project: string;
+    reviewed: number;
+    merged: number;
+    closed: number;
+    accuracyPct: number | null;
+  }>;
 }
 
 const DISPOSITION_SELECT = `
@@ -103,24 +139,77 @@ const DISPOSITION_SELECT = `
   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error`;
 
 /** Assemble the public-safe payload from the LIVE review ledger (cheap: review_targets is one row per PR). */
-export async function getPublicStats(env: Env, nowMs: number = Date.now()): Promise<PublicStatsPayload> {
-  const sinceIso = new Date(nowMs - 7 * 86_400_000).toISOString().slice(0, 19).replace("T", " ");
+export async function getPublicStats(
+  env: Env,
+  nowMs: number = Date.now(),
+): Promise<PublicStatsPayload> {
+  const sinceIso = new Date(nowMs - 7 * 86_400_000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+  const projects = publicStatsProjects(env);
+  const generatedAt = new Date(nowMs).toISOString();
+  const empty = (): PublicStatsPayload => ({
+    generatedAt,
+    updatedAt: generatedAt,
+    totals: {
+      handled: 0,
+      reviewed: 0,
+      merged: 0,
+      closed: 0,
+      commented: 0,
+      ignored: 0,
+      manual: 0,
+      error: 0,
+      reversed: 0,
+      filteredPct: null,
+      accuracyPct: null,
+      minutesSaved: 0,
+    },
+    weekly: { reviewed: 0, merged: 0 },
+    byProject: [],
+  });
+  if (projects.length === 0) return empty();
+
+  const projectFilter = `LOWER(project) IN (${projects.map(() => "?").join(", ")})`;
   const [dispositions, reversalRows, weekly] = await Promise.all([
-    safeAll<DispositionRow>(env, `SELECT project, COUNT(*) AS handled,${DISPOSITION_SELECT} FROM review_targets GROUP BY project`),
+    safeAll<DispositionRow>(
+      env,
+      `SELECT project, COUNT(*) AS handled,${DISPOSITION_SELECT} FROM review_targets WHERE ${projectFilter} GROUP BY project`,
+      ...projects,
+    ),
     safeAll<{ project: string; reversed: number }>(
       env,
       `SELECT project, COUNT(*) AS reversed FROM review_audit
-       WHERE event_type IN ('reversal_reverted', 'reversal_reopened') GROUP BY project`,
+       WHERE event_type IN ('reversal_reverted', 'reversal_reopened') AND ${projectFilter} GROUP BY project`,
+      ...projects,
     ),
-    safeAll<{ merged: number; closed: number; commented: number; manual: number }>(
+    safeAll<{
+      merged: number;
+      closed: number;
+      commented: number;
+      manual: number;
+    }>(
       env,
-      `SELECT${DISPOSITION_SELECT.replace(/, $/, "")} FROM review_targets WHERE created_at >= ?`,
+      `SELECT${DISPOSITION_SELECT.replace(/, $/, "")} FROM review_targets WHERE created_at >= ? AND ${projectFilter}`,
       sinceIso,
+      ...projects,
     ),
   ]);
 
-  const reversedByProject = new Map(reversalRows.map((r) => [r.project, r.reversed ?? 0]));
-  const totals = { handled: 0, merged: 0, closed: 0, commented: 0, ignored: 0, manual: 0, error: 0, reversed: 0 };
+  const reversedByProject = new Map(
+    reversalRows.map((r) => [r.project, r.reversed ?? 0]),
+  );
+  const totals = {
+    handled: 0,
+    merged: 0,
+    closed: 0,
+    commented: 0,
+    ignored: 0,
+    manual: 0,
+    error: 0,
+    reversed: 0,
+  };
   const byProject = dispositions
     .map((d) => {
       const merged = d.merged ?? 0;
@@ -139,14 +228,19 @@ export async function getPublicStats(env: Env, nowMs: number = Date.now()): Prom
       totals.error += error;
       totals.reversed += reversed;
       const reviewed = reviewedOf({ merged, closed, commented, manual });
-      return { project: d.project, reviewed, merged, closed, accuracyPct: accuracyPct(merged, closed, reversed) };
+      return {
+        project: d.project,
+        reviewed,
+        merged,
+        closed,
+        accuracyPct: accuracyPct(merged, closed, reversed),
+      };
     })
     .filter((r) => r.reviewed > 0)
     .sort((a, b) => b.reviewed - a.reviewed);
 
   const reviewed = reviewedOf(totals);
   const w = weekly[0] ?? { merged: 0, closed: 0, commented: 0, manual: 0 };
-  const generatedAt = new Date(nowMs).toISOString();
   return {
     generatedAt,
     updatedAt: generatedAt,

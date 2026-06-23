@@ -68,6 +68,7 @@ import {
   fetchLiveCiAggregate,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
+  fetchOpenPullRequestNumbersForCommit,
   fetchRequiredStatusContexts,
   refreshContributorActivity,
   refreshInstallationHealth,
@@ -824,12 +825,58 @@ async function ciReReviewCoalesced(env: Env, repoFullName: string, prNumber: num
   }
 }
 
+/** Read the CI head SHA off a `check_suite`/`check_run` `completed` payload (the event node carries `head_sha`;
+ *  `check_run` also nests it under `check_suite.head_sha`). Returns "" when absent. The payload type doesn't model
+ *  these events, so we narrow off `Record<string, unknown>` the same way the `pull_requests[]` read does. */
+export function ciCompletionHeadSha(eventName: string, payload: GitHubWebhookPayload): string {
+  const node = (payload as Record<string, unknown>)[eventName] as { head_sha?: string | null; check_suite?: { head_sha?: string | null } | null } | undefined;
+  return (node?.head_sha ?? node?.check_suite?.head_sha ?? "").trim();
+}
+
+/**
+ * Resolve the OPEN PR number(s) a CI-completion event applies to. SAME-REPO PRs carry them in
+ * `payload[event].pull_requests[]` (reviewbot core/scope.ts parity) — that path is authoritative and tried FIRST.
+ * FORK (cross-repo) PRs get an EMPTY `pull_requests[]` from GitHub, so when that's empty we fall back to resolving
+ * by the CI head SHA: a fast STORED-DB lookup first (open `pull_requests` rows whose `headSha` matches), then the
+ * live GitHub `GET /commits/{sha}/pulls` (works for forks). Returns `{ numbers, viaHeadShaFallback }` so the caller
+ * can audit the fork-resume path. Fully FAIL-OPEN: any lookup error degrades to whatever was found so far / [].
+ */
+export async function resolveCiCompletionPrNumbers(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  populatedPrNumbers: number[],
+  headSha: string,
+): Promise<{ numbers: number[]; viaHeadShaFallback: boolean }> {
+  if (populatedPrNumbers.length > 0) return { numbers: populatedPrNumbers, viaHeadShaFallback: false };
+  if (!headSha) return { numbers: [], viaHeadShaFallback: false };
+  const resolved = new Set<number>();
+  // 1) Fast path: a stored open PR row whose head SHA matches the completed CI (no GitHub round-trip).
+  try {
+    const open = await listOpenPullRequests(env, repoFullName);
+    for (const pr of open) if (pr.headSha === headSha) resolved.add(pr.number);
+  } catch {
+    // fail-open: fall through to the live API
+  }
+  // 2) Fork fallback: GitHub's commit→PRs association, the only resolution that works for cross-repo PRs.
+  if (resolved.size === 0) {
+    const token = (await createInstallationToken(env, installationId).catch(() => undefined)) ?? env.GITHUB_PUBLIC_TOKEN;
+    if (token) {
+      const apiNumbers = await fetchOpenPullRequestNumbersForCommit(env, repoFullName, headSha, token).catch(() => []);
+      for (const number of apiNumbers) resolved.add(number);
+    }
+  }
+  return { numbers: [...resolved], viaHeadShaFallback: resolved.size > 0 };
+}
+
 /**
  * THE auto-merge / close-on-red TRIGGER. A `check_run`/`check_suite` `completed` event means a PR's CI just
  * settled — re-review the associated PR(s) so the now-green PR is merged and the now-red PR is closed (non-owner)
  * / held (owner). Without this, a PR reviewed at open-time (CI still pending → deferred) is never re-evaluated.
- * Resolves the PR number(s) from `payload[event].pull_requests[]` (reviewbot core/scope.ts parity), NOT from
- * the CI head SHA. COALESCED so one CI run's ~20 completions collapse to one re-review. Returns true (handled).
+ * SAME-REPO PRs are resolved from `payload[event].pull_requests[]` (reviewbot core/scope.ts parity). FORK PRs get
+ * an EMPTY `pull_requests[]` from GitHub, so they're resolved by the CI head SHA (stored DB → live commits/pulls)
+ * — without this fork PRs deferred at open-time never get their required gate posted and are BLOCKED forever.
+ * COALESCED so one CI run's ~20 completions collapse to one re-review. Returns true (handled).
  */
 async function maybeReReviewOnCiCompletion(env: Env, deliveryId: string, eventName: string, payload: GitHubWebhookPayload): Promise<boolean> {
   if (eventName !== "check_run" && eventName !== "check_suite") return false;
@@ -838,8 +885,22 @@ async function maybeReReviewOnCiCompletion(env: Env, deliveryId: string, eventNa
   const installationId = getInstallationId(payload);
   if (!repoFullName || !installationId) return false;
   const node = (payload as Record<string, unknown>)[eventName] as { pull_requests?: Array<{ number?: number | null }> } | undefined;
-  const prNumbers = [...new Set((node?.pull_requests ?? []).map((entry) => entry?.number).filter((value): value is number => typeof value === "number"))];
-  if (prNumbers.length > 0 && isConvergenceRepoAllowed(env, repoFullName)) {
+  const populatedPrNumbers = [...new Set((node?.pull_requests ?? []).map((entry) => entry?.number).filter((value): value is number => typeof value === "number"))];
+  if (isConvergenceRepoAllowed(env, repoFullName)) {
+    const { numbers: prNumbers, viaHeadShaFallback } = await resolveCiCompletionPrNumbers(env, installationId, repoFullName, populatedPrNumbers, ciCompletionHeadSha(eventName, payload)).catch(() => ({
+      numbers: populatedPrNumbers,
+      viaHeadShaFallback: false,
+    }));
+    if (viaHeadShaFallback && prNumbers.length > 0) {
+      await recordAuditEvent(env, {
+        eventType: "github_app.ci_completion_fork_resume",
+        actor: "gittensory",
+        targetKey: `${repoFullName}#${prNumbers.join(",")}`,
+        outcome: "queued",
+        detail: "resumed fork PR via head-SHA fallback (empty check pull_requests[])",
+        metadata: { deliveryId, repoFullName, eventName, prNumbers },
+      }).catch(() => undefined);
+    }
     for (const prNumber of prNumbers) {
       // Coalesce the CI-completion storm: skip if this PR was re-reviewed within the window.
       if (await ciReReviewCoalesced(env, repoFullName, prNumber)) continue;

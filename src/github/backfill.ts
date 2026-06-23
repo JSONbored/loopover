@@ -2053,6 +2053,29 @@ export async function fetchLivePullRequestMergeState(env: Env, repoFullName: str
   return result?.data.mergeable_state ?? undefined;
 }
 
+/** Resolve the OPEN PRs associated with a commit SHA via the REST `GET /repos/{owner}/{repo}/commits/{sha}/pulls`
+ *  endpoint. This is the only PR↔commit resolution that works for FORK (cross-repo) PRs, whose CI-completion
+ *  webhooks (`check_suite`/`check_run`) carry an EMPTY `pull_requests[]`. Returns the de-duplicated open PR numbers.
+ *  Best-effort: an empty/whitespace SHA or any API error yields `[]` (the caller must never stall a PR on a hiccup). */
+export async function fetchOpenPullRequestNumbersForCommit(env: Env, repoFullName: string, commitSha: string, token: string | undefined): Promise<number[]> {
+  const sha = commitSha.trim();
+  if (!sha) return [];
+  // GET /commits/{sha}/pulls returns the PRs (incl. cross-repo forks) whose head is this commit, on the default
+  // `application/vnd.github+json` accept that githubRestHeaders already sends.
+  const result = await githubJsonWithHeaders<Array<{ number?: number | null; state?: string | null }>>(
+    env,
+    repoFullName,
+    `/commits/${encodeURIComponent(sha)}/pulls?per_page=100`,
+    token,
+  ).catch(() => undefined);
+  if (!result) return [];
+  const numbers = result.data
+    .filter((pr) => pr?.state === "open")
+    .map((pr) => pr?.number)
+    .filter((value): value is number => typeof value === "number");
+  return [...new Set(numbers)];
+}
+
 /** RC1 (idempotent reviews): the PR's LIVE reviewDecision (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED) via
  *  GraphQL. The STORED reviewDecision is only written by the open-PR backfill and goes stale, so the action
  *  planner's approve/request-changes dedup was blind and re-posted a review every cycle — the re-review loop.

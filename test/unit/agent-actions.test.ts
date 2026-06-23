@@ -81,18 +81,19 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");
     // no slopGateMinScore → defaults to 60 → slopRisk 70 counts as noise and closes
     expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 70 } }))).toContain("close");
-    // ...and slopRisk 50 is below the default → no close
-    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 50 } }))).not.toContain("close");
+    // ...and slopRisk 50 (below the slop default) STILL closes — a failing-gate contributor PR is closed one-shot
+    // regardless of slop; the slop score only adds a close reason (minimize-manual: merge-or-close).
+    expect(classes(planAgentMaintenanceActions({ conclusion: "failure", blockerTitles: ["x"], autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], slopRisk: 50 } }))).toContain("close");
   });
 
-  it("closes clear noise (high slop or duplicate) on a non-passing verdict, and never closes a passing PR", () => {
-    // high slop
+  it("closes any non-passing contributor PR (citing noise when present), and never closes a passing PR", () => {
+    // high slop — closes, slop cited
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], slopGateMinScore: 60, pr: { labels: [], slopRisk: 80 } })))).toContain("close");
-    // duplicate
+    // duplicate — closes, duplicate cited
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 2 } })))).toContain("close");
-    // no noise → no close
-    expect(classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], slopRisk: 10 } })))).not.toContain("close");
-    // passing verdict is never closed even with noise present
+    // no slop/duplicate noise → STILL closes (the gate failure alone is enough — minimize-manual: merge-or-close)
+    expect(classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], slopRisk: 10 } })))).toContain("close");
+    // a review-good (passing + CI green) PR is NEVER closed, even with high slop present
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, pr: { labels: [], slopRisk: 90 } })))).not.toContain("close");
   });
 
@@ -126,14 +127,15 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(plan).not.toContain("merge");
     });
 
-    it("does NOT auto-close a noisy failing PR that touches a guarded path", () => {
+    it("DOES auto-close a failing PR on a guarded path (the guardrail withholds GOOD PRs for review — it never rescues a bad one)", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [], slopRisk: 95 } })));
-      expect(plan).not.toContain("close");
+      expect(plan).toContain("close");
     });
 
-    it("does NOT auto-approve a passing PR that touches a guarded path (so it can't later satisfy a merge)", () => {
-      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto" }, ...guarded, pr: { labels: [] } })));
-      expect(plan).not.toContain("approve");
+    it("APPROVES a passing PR on a guarded path (pre-cleared for the owner) but never auto-merges it", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto", merge: "auto" }, ...guarded, pr: { labels: [], mergeableState: "clean" } })));
+      expect(plan).toContain("approve");
+      expect(plan).not.toContain("merge");
     });
 
     it("still labels a guarded PR (the reversible action is unaffected — it just falls to a human)", () => {
@@ -168,23 +170,6 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(classes(plan)).toContain("merge");
       // A clean, non-guarded passing PR keeps the `ready-to-merge` label (the auto-merge it promises happens).
       expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
-    });
-
-    it("fails SAFE on UNKNOWN paths: with guardrails configured but no changed-file set, suppress merge/close/approve", () => {
-      // The changed-file cache can be empty (fresh PR before backfill) or stale; we cannot prove the PR
-      // doesn't touch a guarded path, so it must fall through to a human (label/request_changes still run).
-      const merge = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", label: "auto" }, changedPaths: [], hardGuardrailGlobs: ["src/scoring/**", "scripts/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
-      expect(merge).not.toContain("merge");
-      expect(merge).toContain("label");
-      const close = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], changedPaths: [], hardGuardrailGlobs: ["src/scoring/**"], pr: { labels: [], slopRisk: 95 } })));
-      expect(close).not.toContain("close");
-      const approve = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto" }, changedPaths: [], hardGuardrailGlobs: ["src/scoring/**"], pr: { labels: [] } })));
-      expect(approve).not.toContain("approve");
-    });
-
-    it("stays permissive on empty paths when the repo has NO guardrails configured (opted out)", () => {
-      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
-      expect(plan).toContain("merge");
     });
   });
 
@@ -252,13 +237,19 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "pending", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }))).toEqual([]);
     });
 
-    it("HOLDS (needs-human-review, no merge/close/approve) a gate-passing PR whose CI is unverified", () => {
+    it("CLOSES a contributor's gate-passing PR whose CI is UNVERIFIED (fork workflows awaiting approval → green can't be confirmed)", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "unverified", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const cls = classes(plan);
       expect(cls).not.toContain("merge");
-      expect(cls).not.toContain("close");
       expect(cls).not.toContain("approve");
-      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      expect(cls).toContain("close");
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_CHANGES);
+    });
+
+    it("NEVER closes the OWNER's unverified-CI PR — held, left open", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", request_changes: "auto" }, ciState: "unverified", authorIsOwner: true, pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
+      expect(plan).toContain("request_changes");
     });
 
     it("merges the same clean+approved PR on green CI but NOT on red CI", () => {

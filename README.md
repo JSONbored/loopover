@@ -11,6 +11,8 @@ Gittensory is a deterministic control plane for Gittensor OSS contribution work.
 
 It helps contributors plan cleaner work, helps maintainers review with less public noise, and keeps private scoring, wallet, hotkey, and reviewability context out of public GitHub output.
 
+It is also the single converged home of the native review system; the legacy separate reviewbot repo/runtime is not part of the active architecture described here.
+
 It is not a Gittensor explorer, public leaderboard, reward-farming bot, wallet dashboard, or autonomous PR agent.
 
 ## Privacy Boundary

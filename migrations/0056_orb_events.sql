@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS orb_events (
   outcome     TEXT    NOT NULL CHECK (outcome IN ('merged', 'closed')),
   gate_verdict TEXT,                -- 'approve' | 'block' | 'comment' | NULL (no review recorded)
   time_to_close_ms INTEGER,        -- ms from PR open to close; NULL if opened_at unavailable
-  created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   exported_at TEXT,                 -- NULL = pending export; set when batch-sent to collector
   UNIQUE (repo, pr_number, head_sha)  -- idempotent: same close event may arrive more than once
 );

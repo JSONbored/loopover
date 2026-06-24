@@ -1911,6 +1911,16 @@ export async function runAiReviewForAdvisory(
         detail: "One AI reviewer independently flagged a concrete must-fix defect in this change (the other did not). Under the quorum rule, a single rejection closes the PR; see the review notes for specifics.",
         action: "Resolve the flagged defect and open a new pull request, or override if the reviewers are mistaken.",
       });
+    } else if (result.inconclusive) {
+      // Fail-CLOSED (#ai-fail-closed): block-mode AI could not return a usable verdict. Hold the PR for a human
+      // (an evaluation-blocker code → neutral gate) rather than letting it pass to auto-merge uncertified.
+      args.advisory.findings.push({
+        code: "ai_review_inconclusive",
+        severity: "warning",
+        title: "AI review could not be completed",
+        detail: "The dual-model AI review did not return a usable verdict for this change.",
+        action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates on the next update.",
+      });
     }
     return result.advisoryNotes ? { notes: result.advisoryNotes, reviewerCount: result.reviewerCount } : undefined;
   } catch (error) {

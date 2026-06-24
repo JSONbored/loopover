@@ -33,8 +33,6 @@ export const RELIABLE_FALLBACK_MODELS: readonly [string, string] = [
   "@cf/mistralai/mistral-small-3.1-24b-instruct",
 ];
 
-/** Default consensus confidence floor: BOTH models must be at/above this to report a defect. */
-export const AI_CONSENSUS_FLOOR = 0.9;
 
 const REVIEW_SYSTEM_PROMPT = [
   "You are a senior open-source maintainer giving a FOCUSED, high-signal code review of a single pull request diff.",
@@ -99,7 +97,7 @@ export type GittensoryAiReviewResult =
   | { status: "disabled"; reason: string }
   | { status: "unavailable"; reason: string }
   | { status: "quota_exceeded"; estimatedNeurons: number; remainingBudget: number }
-  | { status: "ok"; advisoryNotes: string | null; consensusDefect: AiConsensusDefect | null; split: boolean; estimatedNeurons: number; reviewerCount: number };
+  | { status: "ok"; advisoryNotes: string | null; consensusDefect: AiConsensusDefect | null; split: boolean; inconclusive: boolean; estimatedNeurons: number; reviewerCount: number };
 
 type ModelReview = {
   assessment: string;
@@ -396,10 +394,10 @@ export function composeAdvisoryNotes(reviews: ModelReview[]): string | null {
 }
 
 /** A CONSENSUS defect = BOTH reviews independently name at least one concrete blocker (the severity-disciplined
- *  reviewbot model: a lone blocker in a dual review is a split, not a hard block). `floor` retained for the
- *  caller signature; the consensus here is blocker PRESENCE in both reviews (the prompt's rubric keeps nits out). */
-export function consensusDefectOf(a: ModelReview, b: ModelReview, floor: number): AiConsensusDefect | null {
-  void floor;
+ *  reviewbot model: a lone blocker in a dual review is a split, not a hard block). Requiring two independent
+ *  models to AGREE is itself the precision mechanism — the free Workers-AI models emit no calibrated confidence
+ *  score, so there is no numeric floor to enforce; agreement is the signal. */
+export function consensusDefectOf(a: ModelReview, b: ModelReview): AiConsensusDefect | null {
   if (a.blockers.length === 0 || b.blockers.length === 0) return null;
   const title = toPublicSafe(a.blockers[0] || b.blockers[0] || "AI reviewers agree on a likely blocking defect");
   if (!title) return null; // unsafe title → drop the block entirely (fail-safe)
@@ -481,6 +479,7 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
   let consensusDefect: AiConsensusDefect | null = null;
   let secondReview: ModelReview | null = null;
   let aiReviewSplit = false;
+  let inconclusive = false;
   if (input.mode === "block") {
     // Consensus blocker ALWAYS uses the free Workers-AI pair (provider-independent, never BYOK).
     const [a, b] = await Promise.all([
@@ -488,25 +487,33 @@ export async function runGittensoryAiReview(env: Env, input: GittensoryAiReviewI
       runWorkersOpinion(env, BEST_REVIEW_MODELS[1], RELIABLE_FALLBACK_MODELS[1], system, user, maxTokens),
     ]);
     secondReview = b;
+    // Fail-CLOSED: block mode requires BOTH independent reviews. If a model errored or returned unparseable
+    // output (a/b null), we cannot certify the change — signal `inconclusive` so the gate HOLDS the PR for a
+    // human instead of silently passing it through to auto-merge. A clean dual review (both present, no
+    // blocker) is NOT inconclusive and still passes normally.
     if (a && b) {
-      consensusDefect = consensusDefectOf(a, b, AI_CONSENSUS_FLOOR);
+      consensusDefect = consensusDefectOf(a, b);
       // SPLIT = the two reviewers DISAGREE (exactly one named a blocker). Lower confidence than a clean consensus,
       // so the gate HOLDS it for review instead of auto-merging (only when there is no real consensus defect —
       // a consensus is the stronger signal and blocks on its own). (#ai-review-split)
       aiReviewSplit = !consensusDefect && (a.blockers.length > 0) !== (b.blockers.length > 0);
+    } else {
+      inconclusive = true;
     }
   }
 
   const reviewsForNotes = [advisoryReview, secondReview].filter((r): r is ModelReview => Boolean(r));
   const advisoryNotes = reviewsForNotes.length > 0 ? composeAdvisoryNotes(reviewsForNotes) : null;
 
-  await record(env, input, "ok", estimatedNeurons, consensusDefect ? "consensus defect" : advisoryNotes ? "advisory notes" : "no usable output", {
+  await record(env, input, "ok", estimatedNeurons, consensusDefect ? "consensus defect" : aiReviewSplit ? "split" : inconclusive ? "inconclusive — held" : advisoryNotes ? "advisory notes" : "no usable output", {
     mode: input.mode,
     byok: Boolean(input.providerKey),
     consensus: Boolean(consensusDefect),
+    split: aiReviewSplit,
+    inconclusive,
     ...(byokFailure ? { byokFailure } : {}),
   });
-  return { status: "ok", advisoryNotes, consensusDefect, split: aiReviewSplit, estimatedNeurons, reviewerCount: reviewsForNotes.length };
+  return { status: "ok", advisoryNotes, consensusDefect, split: aiReviewSplit, inconclusive, estimatedNeurons, reviewerCount: reviewsForNotes.length };
 }
 
 async function record(

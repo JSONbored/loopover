@@ -351,6 +351,19 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
       warnings,
     };
   }
+  // Fail-CLOSED AI hold (#ai-fail-closed): the block-mode AI review could not return a usable verdict, so the
+  // gate is HELD (neutral) for a human rather than passed automatically. NEVER a failure → a contributor PR is
+  // never auto-CLOSED because an AI model hiccupped; it re-evaluates on the next update.
+  if (advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")) {
+    return {
+      enabled: true,
+      conclusion: "neutral",
+      title: "Gittensory Gate — held for human review",
+      summary: "The AI review could not be completed for this change, so the gate is held for a human reviewer rather than passed automatically. It re-evaluates on the next update.",
+      blockers: [],
+      warnings,
+    };
+  }
   // Merge-readiness composite (#551): when set, escalate every sub-gate to its mode so they roll into one
   // pass/fail. When off, this is a no-op and each sub-gate keeps its own mode.
   const effective = applyMergeReadinessGate(policy);

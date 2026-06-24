@@ -1,276 +1,191 @@
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
-import { exportOrbBatch, orbEnabled, recordOrbEvent } from "../../src/selfhost/orb-collector";
+import { bucketReasonCode, exportOrbBatch, orbEnabled } from "../../src/selfhost/orb-collector";
 import { resetMetrics, renderMetrics } from "../../src/selfhost/metrics";
 
-/** Spin up an in-memory SQLite DB with the orb_events table (and the _selfhost_migrations
- *  stub so the adapter resolves without running all 56 migrations). */
+/** In-memory DB with the review_audit + orb_export_cursor tables the exporter reads. */
 function makeDb(): D1Database {
-  const raw = new DatabaseSync(":memory:") as never;
-  const driver = nodeSqliteDriver(raw);
+  const driver = nodeSqliteDriver(new DatabaseSync(":memory:") as never);
   driver.exec(`
-    CREATE TABLE orb_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo TEXT NOT NULL,
-      pr_number INTEGER NOT NULL,
-      head_sha TEXT NOT NULL,
-      outcome TEXT NOT NULL CHECK (outcome IN ('merged', 'closed')),
-      gate_verdict TEXT,
-      time_to_close_ms INTEGER,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-      exported_at TEXT,
-      UNIQUE (repo, pr_number, head_sha)
+    CREATE TABLE review_audit (
+      id TEXT PRIMARY KEY NOT NULL, project TEXT NOT NULL, target_id TEXT NOT NULL,
+      event_type TEXT NOT NULL DEFAULT 'gate_decision', decision TEXT,
+      source TEXT NOT NULL DEFAULT 'gittensory-native', head_sha TEXT, summary TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     );
-    CREATE INDEX orb_events_repo_pr ON orb_events (repo, pr_number);
-    CREATE INDEX orb_events_export_pending ON orb_events (exported_at) WHERE exported_at IS NULL;
+    CREATE TABLE orb_export_cursor (
+      instance_hash TEXT PRIMARY KEY, last_exported_at TEXT NOT NULL DEFAULT '2000-01-01T00:00:00Z',
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    );
   `);
   return createD1Adapter(driver);
 }
 
-async function countRows(db: D1Database): Promise<number> {
-  const r = await db.prepare("SELECT COUNT(*) AS n FROM orb_events").first<{ n: number }>();
-  return r?.n ?? 0;
+let seq = 0;
+async function audit(db: D1Database, project: string, pr: number, eventType: string, decision: string | null, at: string, summary: string | null = null): Promise<void> {
+  await db
+    .prepare(`INSERT INTO review_audit (id, project, target_id, event_type, decision, source, summary, created_at) VALUES (?, ?, ?, ?, ?, 'gittensory-native', ?, ?)`)
+    .bind(`r${seq++}`, project, `${project}#${pr}`, eventType, decision, summary, at)
+    .run();
 }
 
-async function allRows(db: D1Database) {
-  return (await db.prepare("SELECT * FROM orb_events").all()).results;
-}
+describe("bucketReasonCode()", () => {
+  it("maps each reason family to a fixed low-cardinality bucket", () => {
+    expect(bucketReasonCode(null)).toBe("none");
+    expect(bucketReasonCode("")).toBe("none");
+    expect(bucketReasonCode("missing_linked_issue")).toBe("issue_policy");
+    expect(bucketReasonCode("duplicate_pr_risk")).toBe("duplicate_risk");
+    expect(bucketReasonCode("ai_slop_advisory")).toBe("slop_advisory");
+    expect(bucketReasonCode("ai_consensus_defect")).toBe("ai_quality");
+    expect(bucketReasonCode("self_authored_with_maintainer_cut")).toBe("author_policy");
+    expect(bucketReasonCode("ci_state failing")).toBe("ci_readiness");
+    expect(bucketReasonCode("something_unmapped")).toBe("other");
+  });
+});
 
 describe("orbEnabled()", () => {
   afterEach(() => { delete process.env.ORB_ENABLED; });
-
-  it("returns false when ORB_ENABLED is unset (default off)", () => {
-    delete process.env.ORB_ENABLED;
-    expect(orbEnabled()).toBe(false);
-  });
-
-  it("returns true for 'true', '1', 'yes' (case-insensitive)", () => {
-    for (const v of ["true", "True", "TRUE", "1", "yes", "Yes"]) {
-      process.env.ORB_ENABLED = v;
-      expect(orbEnabled()).toBe(true);
-    }
-  });
-
-  it("returns false for empty string and 'false'", () => {
-    for (const v of ["", "false", "0", "no"]) {
-      process.env.ORB_ENABLED = v;
-      expect(orbEnabled()).toBe(false);
-    }
+  it("true only for truthy values", () => {
+    for (const v of ["true", "1", "Yes"]) { process.env.ORB_ENABLED = v; expect(orbEnabled()).toBe(true); }
+    for (const v of ["", "false", "no"]) { process.env.ORB_ENABLED = v; expect(orbEnabled()).toBe(false); }
+    delete process.env.ORB_ENABLED; expect(orbEnabled()).toBe(false);
   });
 });
 
-describe("recordOrbEvent()", () => {
-  beforeEach(() => { resetMetrics(); process.env.ORB_ENABLED = "true"; });
-  afterEach(() => { delete process.env.ORB_ENABLED; });
-
-  it("inserts an event with all fields when ORB_ENABLED=true", async () => {
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "owner/repo", pr_number: 42, head_sha: "abc123", outcome: "merged", gate_verdict: "approve", time_to_close_ms: 3600000 });
-    expect(await countRows(db)).toBe(1);
-    const [row] = (await allRows(db)) as Array<Record<string, unknown>>;
-    expect(row?.repo).toBe("owner/repo");
-    expect(row?.pr_number).toBe(42);
-    expect(row?.outcome).toBe("merged");
-    expect(row?.gate_verdict).toBe("approve");
-    expect(row?.time_to_close_ms).toBe(3600000);
-    expect(row?.exported_at).toBeNull();
-  });
-
-  it("inserts with null gate_verdict and time_to_close_ms when omitted", async () => {
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "closed" });
-    const [row] = (await allRows(db)) as Array<Record<string, unknown>>;
-    expect(row?.gate_verdict).toBeNull();
-    expect(row?.time_to_close_ms).toBeNull();
-  });
-
-  it("is idempotent — INSERT OR IGNORE prevents duplicates for the same (repo, pr, sha)", async () => {
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha1", outcome: "merged" });
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha1", outcome: "merged" });
-    expect(await countRows(db)).toBe(1);
-  });
-
-  it("increments gittensory_orb_events_recorded_total on each successful insert", async () => {
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha1", outcome: "merged" });
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 2, head_sha: "sha2", outcome: "closed" });
-    expect(await renderMetrics()).toMatch(/gittensory_orb_events_recorded_total 2/);
-  });
-
-  it("does nothing when ORB_ENABLED=false", async () => {
-    process.env.ORB_ENABLED = "false";
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 99, head_sha: "sha", outcome: "merged" });
-    expect(await countRows(db)).toBe(0);
-  });
-
-  it("swallows DB errors and never throws (best-effort)", async () => {
-    const brokenDb = { prepare: () => ({ bind: () => ({ run: () => Promise.reject(new Error("disk full")) }) }) } as unknown as D1Database;
-    await expect(recordOrbEvent(brokenDb, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" })).resolves.not.toThrow();
-  });
-});
-
-describe("exportOrbBatch()", () => {
+describe("exportOrbBatch() — reads review_audit, ships anonymized reversal-aware signal", () => {
   beforeEach(() => {
     resetMetrics();
     process.env.ORB_ENABLED = "true";
     process.env.ORB_WEBHOOK_SECRET = "test-secret";
+    process.env.ORB_APP_ID = "555";
     process.env.ORB_ANONYMIZE = "true";
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
   });
   afterEach(() => {
-    delete process.env.ORB_ENABLED;
-    process.env.ORB_WEBHOOK_SECRET = undefined as unknown as string;
-    delete process.env.ORB_ANONYMIZE;
-    delete process.env.ORB_AIR_GAP;
-    delete process.env.ORB_COLLECTOR_URL;
+    for (const k of ["ORB_ENABLED", "ORB_WEBHOOK_SECRET", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
   });
 
-  it("returns 0 when ORB_ENABLED=false (no-op)", async () => {
+  it("returns 0 when disabled", async () => {
     process.env.ORB_ENABLED = "false";
-    const db = makeDb();
-    expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 200 }))).toBe(0);
+    expect(await exportOrbBatch(makeDb(), 200, async () => new Response(null, { status: 200 }))).toBe(0);
   });
 
-  it("returns 0 when ORB_AIR_GAP=true", async () => {
+  it("returns 0 in air-gap mode", async () => {
     process.env.ORB_AIR_GAP = "true";
+    expect(await exportOrbBatch(makeDb(), 200, async () => new Response(null, { status: 200 }))).toBe(0);
+  });
+
+  it("returns 0 when nothing is resolved", async () => {
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z"); // decision but no outcome
     expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 200 }))).toBe(0);
   });
 
-  it("returns 0 when there are no pending events", async () => {
+  it("exports a resolved PR with verdict, outcome, bucket, cycle-time; advances the cursor", async () => {
     const db = makeDb();
+    await audit(db, "owner/repo", 7, "gate_decision", "merge", "2026-01-01T00:00:00Z", "duplicate_pr_risk");
+    await audit(db, "owner/repo", 7, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
+
+    let captured: { instance_id: string; events: Array<Record<string, unknown>> } | undefined;
+    const n = await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(n).toBe(1);
+    const ev = captured!.events[0]!;
+    expect(ev.gate_verdict).toBe("merge");
+    expect(ev.outcome).toBe("merged");
+    expect(ev.reversal_flag).toBe("none");
+    expect(ev.gate_reasoncode_bucket).toBe("duplicate_risk");
+    expect(ev.time_to_close_ms).toBe(3_600_000); // 1h
+    expect(ev.repo_hash).not.toBe("owner/repo"); // anonymized
+    expect((ev.repo_hash as string)).toHaveLength(24);
+    // cursor advanced → a second run exports nothing new
     expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 200 }))).toBe(0);
   });
 
-  it("defaults to gittensory's hosted collector URL when ORB_COLLECTOR_URL is unset (regression: dead orb.gittensory.app)", async () => {
-    delete process.env.ORB_COLLECTOR_URL;
+  it("flags reversal_reverted and reversal_reopened", async () => {
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
-    let capturedUrl: string | undefined;
-    await exportOrbBatch(db, 200, async (url) => { capturedUrl = String(url); return new Response(null, { status: 200 }); });
-    expect(capturedUrl).toBe("https://gittensory-api.aethereal.dev/v1/orb/ingest");
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-02-01T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-02-01T01:00:00Z");
+    await audit(db, "o/r", 1, "reversal_reverted", null, "2026-02-01T05:00:00Z");
+    await audit(db, "o/r", 2, "gate_decision", "close", "2026-02-01T00:00:00Z");
+    await audit(db, "o/r", 2, "pr_outcome", "merged", "2026-02-01T02:00:00Z");
+    await audit(db, "o/r", 2, "reversal_reopened", null, "2026-02-01T03:00:00Z");
+    let captured: { events: Array<{ reversal_flag: string }> } | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    const flags = captured!.events.map((e) => e.reversal_flag).sort();
+    expect(flags).toEqual(["reopened", "reverted"]);
   });
 
-  it("exports pending events and marks them as exported", async () => {
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "owner/repo", pr_number: 1, head_sha: "sha1", outcome: "merged", gate_verdict: "approve" });
-    await recordOrbEvent(db, { repo: "owner/repo", pr_number: 2, head_sha: "sha2", outcome: "closed" });
-
-    let capturedBody: string | undefined;
-    const fakeFetch = async (_url: string | URL | Request, init?: RequestInit) => {
-      capturedBody = init?.body as string;
-      return new Response(null, { status: 200 });
-    };
-
-    const exported = await exportOrbBatch(db, 200, fakeFetch);
-    expect(exported).toBe(2);
-
-    // Verify the payload is signed and anonymized
-    const payload = JSON.parse(capturedBody!) as { instance_id: string; events: Array<{ repo_hash: string; pr_hash: string }> };
-    expect(payload.events).toHaveLength(2);
-    // Anonymized: repo_hash must NOT be the raw repo name
-    expect(payload.events[0]?.repo_hash).not.toBe("owner/repo");
-    expect(payload.events[0]?.repo_hash).toHaveLength(24); // HMAC slice
-
-    // Rows are marked as exported
-    const rows = (await allRows(db)) as Array<Record<string, unknown>>;
-    expect(rows.every((r) => r.exported_at !== null)).toBe(true);
-
-    // Counter incremented
-    expect(await renderMetrics()).toMatch(/gittensory_orb_events_exported_total 2/);
-  });
-
-  it("ORB_ANONYMIZE=false sends raw repo name in payload", async () => {
+  it("sends raw repo when ORB_ANONYMIZE=false", async () => {
     process.env.ORB_ANONYMIZE = "false";
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "owner/repo", pr_number: 1, head_sha: "sha1", outcome: "merged" });
-
-    let capturedBody: string | undefined;
-    await exportOrbBatch(db, 200, async (_u, init) => { capturedBody = init?.body as string; return new Response(null, { status: 200 }); });
-    const payload = JSON.parse(capturedBody!) as { events: Array<{ repo_hash: string }> };
-    expect(payload.events[0]?.repo_hash).toBe("owner/repo");
+    await audit(db, "owner/repo", 1, "gate_decision", "close", "2026-01-01T00:00:00Z");
+    await audit(db, "owner/repo", 1, "pr_outcome", "closed", "2026-01-01T00:30:00Z");
+    let captured: { events: Array<{ repo_hash: string }> } | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(captured!.events[0]!.repo_hash).toBe("owner/repo");
   });
 
-  it("does not re-export already-exported events", async () => {
+  it("null cycle-time when the resolution precedes the decision (negative delta)", async () => {
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha1", outcome: "merged" });
-    const fakeFetch = vi.fn(async () => new Response(null, { status: 200 }));
-    await exportOrbBatch(db, 200, fakeFetch); // exports 1
-    const second = await exportOrbBatch(db, 200, fakeFetch); // nothing left
-    expect(second).toBe(0);
-    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-02T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T00:00:00Z"); // outcome BEFORE decision → negative → null
+    let captured: { events: Array<{ time_to_close_ms: number | null }> } | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(captured!.events[0]!.time_to_close_ms).toBeNull();
   });
 
-  it("returns 0 and increments error counter on HTTP error from collector", async () => {
+  it("returns 0 + increments error counter on a non-OK collector response", async () => {
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
-    const result = await exportOrbBatch(db, 200, async () => new Response(null, { status: 503 }));
-    expect(result).toBe(0);
-    expect(await renderMetrics()).toContain("gittensory_orb_export_errors_total");
-    // Event still pending (not marked as exported)
-    const rows = (await allRows(db)) as Array<Record<string, unknown>>;
-    expect(rows[0]?.exported_at).toBeNull();
-  });
-
-  it("returns 0 and increments error counter when collector is unreachable (network error)", async () => {
-    const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
-    const result = await exportOrbBatch(db, 200, async () => { throw new Error("ECONNREFUSED"); });
-    expect(result).toBe(0);
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
+    expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 503 }))).toBe(0);
     expect(await renderMetrics()).toContain("gittensory_orb_export_errors_total");
   });
 
-  it("includes x-orb-signature header with sha256 HMAC", async () => {
+  it("returns 0 + increments error counter when the collector is unreachable", async () => {
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
-
-    let sigHeader: string | undefined;
-    await exportOrbBatch(db, 200, async (_u, init) => {
-      sigHeader = (init?.headers as Record<string, string>)?.["x-orb-signature"];
-      return new Response(null, { status: 200 });
-    });
-    expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
+    expect(await exportOrbBatch(db, 200, async () => { throw new Error("ECONNREFUSED"); })).toBe(0);
+    expect(await renderMetrics()).toContain("gittensory_orb_export_errors_total");
   });
 
-  it("uses empty-string HMAC key when ORB_WEBHOOK_SECRET is unset (covers ?? '' branch)", async () => {
-    delete (process.env as NodeJS.Dict<string>)["ORB_WEBHOOK_SECRET"];
+  it("signs the batch and respects batchSize", async () => {
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
-    let sigHeader: string | undefined;
-    const exported = await exportOrbBatch(db, 200, async (_u, init) => {
-      sigHeader = (init?.headers as Record<string, string>)?.["x-orb-signature"];
-      return new Response(null, { status: 200 });
-    });
-    expect(exported).toBe(1);
-    // Signature should still be formed (with empty-string key)
-    expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
+    for (let i = 1; i <= 5; i++) {
+      await audit(db, "o/r", i, "gate_decision", "merge", `2026-03-0${i}T00:00:00Z`);
+      await audit(db, "o/r", i, "pr_outcome", "merged", `2026-03-0${i}T01:00:00Z`);
+    }
+    let sig: string | undefined;
+    const n = await exportOrbBatch(db, 3, async (_u, init) => { sig = (init!.headers as Record<string, string>)["x-orb-signature"]; return new Response(null, { status: 200 }); });
+    expect(n).toBe(3); // batch cap
+    expect(sig).toMatch(/^sha256=[a-f0-9]{64}$/);
   });
 
-  it("defaults ORB_ANONYMIZE to true when unset (covers ?? 'true' branch)", async () => {
-    delete process.env.ORB_ANONYMIZE;
+  it("falls back to GITHUB_APP_ID for the instance id and applies secret/anonymize defaults when ORB_* are unset", async () => {
+    delete process.env.ORB_APP_ID; // → falls through to GITHUB_APP_ID
+    delete process.env.ORB_WEBHOOK_SECRET; // → secret defaults to ""
+    delete process.env.ORB_ANONYMIZE; // → defaults to "true"
+    (process.env as NodeJS.Dict<string>).GITHUB_APP_ID = "999";
     const db = makeDb();
-    await recordOrbEvent(db, { repo: "owner/repo", pr_number: 1, head_sha: "sha1", outcome: "merged" });
-    let capturedBody: string | undefined;
-    await exportOrbBatch(db, 200, async (_u, init) => { capturedBody = init?.body as string; return new Response(null, { status: 200 }); });
-    const payload = JSON.parse(capturedBody!) as { events: Array<{ repo_hash: string }> };
-    // Default is anonymize=true, so repo name must be hashed
-    expect(payload.events[0]?.repo_hash).not.toBe("owner/repo");
-    expect(payload.events[0]?.repo_hash).toHaveLength(24);
+    await audit(db, "owner/repo", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
+    await audit(db, "owner/repo", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
+    let captured: { events: Array<{ repo_hash: string }> } | undefined;
+    const n = await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(n).toBe(1);
+    expect(captured!.events[0]!.repo_hash).not.toBe("owner/repo"); // anonymize default = true
   });
 
-  it("respects batchSize — exports only the first N pending events", async () => {
+  it("uses an 'unknown' instance id when neither ORB_APP_ID nor GITHUB_APP_ID is set", async () => {
+    delete process.env.ORB_APP_ID;
+    delete (process.env as NodeJS.Dict<string>).GITHUB_APP_ID;
     const db = makeDb();
-    for (let i = 1; i <= 5; i++)
-      await recordOrbEvent(db, { repo: "o/r", pr_number: i, head_sha: `sha${i}`, outcome: "merged" });
-    const exported = await exportOrbBatch(db, 3, async () => new Response(null, { status: 200 }));
-    expect(exported).toBe(3);
-    // 2 events still pending
-    const rows = (await allRows(db)) as Array<Record<string, unknown>>;
-    expect(rows.filter((r) => r.exported_at === null)).toHaveLength(2);
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
+    let header: string | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { header = (init!.headers as Record<string, string>)["x-orb-instance"]; return new Response(null, { status: 200 }); });
+    expect(header).toMatch(/^[a-f0-9]{16}$/);
   });
 });

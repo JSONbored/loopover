@@ -10,6 +10,8 @@ const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
   system_flags: ["key"],
   tunables_overrides: ["project"],
   tunables_overrides_shadow: ["project"],
+  orb_export_cursor: ["instance_hash"],
+  orb_signals: ["instance_id", "repo_hash", "pr_hash"],
 };
 
 /** Replace `?` placeholders with `$1,$2,…`, skipping any `?` inside single-quoted string literals. */

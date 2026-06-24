@@ -1,5 +1,6 @@
-import { Octokit } from "@octokit/core";
 import { createInstallationToken } from "./app";
+import { makeInstallationOctokit } from "./client";
+import type { AgentActionMode } from "../settings/agent-execution";
 
 export const PR_PANEL_COMMENT_MARKER = "<!-- gittensory-pr-panel:v1 -->";
 export const PR_INTELLIGENCE_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
@@ -24,7 +25,7 @@ export async function createOrUpdatePrIntelligenceComment(
   repoFullName: string,
   pullNumber: number,
   body: string,
-  options: { createIfMissing?: boolean | undefined } = {},
+  options: { createIfMissing?: boolean | undefined; mode?: AgentActionMode } = {},
 ): Promise<{ id: number; html_url?: string } | null> {
   return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, pullNumber, body, PR_INTELLIGENCE_COMMENT_MARKER, options);
 }
@@ -35,8 +36,9 @@ export async function createOrUpdateAgentCommandComment(
   repoFullName: string,
   issueNumber: number,
   body: string,
+  mode: AgentActionMode = "live",
 ): Promise<{ id: number; html_url?: string } | null> {
-  return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, issueNumber, body, AGENT_COMMAND_COMMENT_MARKER);
+  return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, issueNumber, body, AGENT_COMMAND_COMMENT_MARKER, { mode });
 }
 
 async function createOrUpdateIssueCommentWithMarker(
@@ -46,13 +48,14 @@ async function createOrUpdateIssueCommentWithMarker(
   issueNumber: number,
   body: string,
   marker: string,
-  options: { createIfMissing?: boolean | undefined } = {},
+  options: { createIfMissing?: boolean | undefined; mode?: AgentActionMode } = {},
 ): Promise<{ id: number; html_url?: string } | null> {
   const [owner, repo] = repoFullName.split("/");
   if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  // Non-live mode suppresses the comment create/update writes; the GET marker-search probe below still runs.
+  const octokit = makeInstallationOctokit(env, token, options.mode ?? "live");
   const botLogin = `${env.GITHUB_APP_SLUG}[bot]`;
   const markers = markerAliases(marker);
   let existing: IssueComment | undefined;

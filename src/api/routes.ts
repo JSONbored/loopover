@@ -123,6 +123,7 @@ import {
 } from "../github/commands";
 import { handleGitHubWebhook } from "../github/webhook";
 import { handleOrbIngest } from "../orb/ingest";
+import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { generateSignalSnapshots } from "../queue/processors";
@@ -2863,15 +2864,23 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
-  // Gittensory Orb (#1219) — central collector. Receives anonymized outcome signal batches
-  // from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
-  // dedup is enforced via UNIQUE(instance_id, pr_hash) in orb_signals.
+  // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware
+  // outcome batches from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
+  // dedup is enforced via UNIQUE(instance_id, repo_hash, pr_hash) in orb_signals. Rate-limited (strict, #1254).
   app.post("/v1/orb/ingest", async (c) => {
     const body = await c.req.text().catch(() => null);
     if (!body) return c.json({ error: "invalid_request" }, 400);
     const result = await handleOrbIngest(body, c.env.DB);
     if ("error" in result) return c.json(result, 400);
     return c.json(result, 200);
+  });
+
+  // Fleet calibration analytics over the collected orb_signals — gate accuracy (precision / FP / reversal /
+  // cycle-time) aggregated median-robustly across the self-host fleet. Owner-only: bearer-gated by the
+  // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). `?days=` windows the lookback (default 90).
+  app.get("/v1/internal/fleet/analytics", async (c) => {
+    const days = parsePositiveInt(c.req.query("days")) ?? 90;
+    return c.json(await computeFleetAnalytics(c.env, { windowDays: days }));
   });
 
   // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block

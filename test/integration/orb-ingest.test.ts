@@ -3,240 +3,171 @@ import { createApp } from "../../src/api/routes";
 import { handleOrbIngest } from "../../src/orb/ingest";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
-// ── handleOrbIngest unit-style tests ──────────────────────────────────────────
-
 describe("handleOrbIngest()", () => {
   function makeDb(): D1Database {
     return new TestD1Database() as unknown as D1Database;
   }
+  const ev = (o: Record<string, unknown> = {}) => ({ repo_hash: "rh", pr_hash: "ph", outcome: "merged", ...o });
+  const ingest = (db: D1Database, events: Array<Record<string, unknown>>, instance_id = "inst1") => handleOrbIngest(JSON.stringify({ instance_id, events }), db);
+  const col = async (db: D1Database, pr: string, c: string) =>
+    (await (db as unknown as TestD1Database).prepare(`SELECT ${c} AS v FROM orb_signals WHERE pr_hash=?`).bind(pr).first<{ v: unknown }>())?.v;
 
-  function makePayload(overrides: Record<string, unknown> = {}): string {
-    return JSON.stringify({
-      instance_id: "abc123def456abc0",
-      events: [
-        {
-          repo_hash: "a1b2c3d4e5f6a1b2c3d4e5f6",
-          pr_hash: "f6e5d4c3b2a1f6e5d4c3b2a1",
-          outcome: "merged",
-          gate_verdict: "approve",
-          time_to_close_ms: 3600000,
-          created_at: "2024-01-01T00:00:00Z",
-        },
-      ],
-      ...overrides,
-    });
-  }
-
-  it("accepts a valid batch and returns accepted count", async () => {
-    const db = makeDb();
-    const result = await handleOrbIngest(makePayload(), db);
-    expect(result).toEqual({ accepted: 1 });
+  it("accepts a valid batch and returns the accepted count", async () => {
+    expect(await ingest(makeDb(), [ev({ pr_hash: "p1" })])).toEqual({ accepted: 1 });
   });
 
-  it("returns invalid_json when body is not valid JSON (covers JSON.parse catch branch)", async () => {
-    const db = makeDb();
-    expect(await handleOrbIngest("{not json}", db)).toEqual({ error: "invalid_json" });
+  it("returns invalid_json on unparseable body", async () => {
+    expect(await handleOrbIngest("{not json}", makeDb())).toEqual({ error: "invalid_json" });
   });
 
-  it("returns invalid_payload when instance_id is not a string", async () => {
+  it("returns invalid_payload: instance_id not a string / events not an array / empty instance / empty events", async () => {
     const db = makeDb();
     expect(await handleOrbIngest(JSON.stringify({ instance_id: 123, events: [] }), db)).toEqual({ error: "invalid_payload" });
-  });
-
-  it("returns invalid_payload when events is not an array (covers !Array.isArray branch)", async () => {
-    const db = makeDb();
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "abc", events: "bad" }), db)).toEqual({ error: "invalid_payload" });
-  });
-
-  it("returns invalid_payload when instance_id is an empty string (covers !instance_id branch)", async () => {
-    const db = makeDb();
-    expect(await handleOrbIngest(JSON.stringify({ instance_id: "", events: [{ repo_hash: "a", pr_hash: "b", outcome: "merged" }] }), db)).toEqual({ error: "invalid_payload" });
-  });
-
-  it("returns invalid_payload when events array is empty (covers events.length === 0 branch)", async () => {
-    const db = makeDb();
+    expect(await handleOrbIngest(JSON.stringify({ instance_id: "", events: [ev()] }), db)).toEqual({ error: "invalid_payload" });
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "abc", events: [] }), db)).toEqual({ error: "invalid_payload" });
   });
 
-  it("skips events with a non-string repo_hash (covers typeof repo_hash !== string branch)", async () => {
-    const db = makeDb();
-    const result = await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: 99, pr_hash: "hash", outcome: "merged" }] }),
-      db,
-    );
-    expect(result).toEqual({ accepted: 0 });
+  it("skips events with bad repo_hash / pr_hash / outcome", async () => {
+    expect(await ingest(makeDb(), [ev({ repo_hash: 99 })])).toEqual({ accepted: 0 });
+    expect(await ingest(makeDb(), [ev({ repo_hash: "" })])).toEqual({ accepted: 0 });
+    expect(await ingest(makeDb(), [ev({ pr_hash: null })])).toEqual({ accepted: 0 });
+    expect(await ingest(makeDb(), [ev({ pr_hash: "" })])).toEqual({ accepted: 0 });
+    expect(await ingest(makeDb(), [ev({ outcome: "opened" })])).toEqual({ accepted: 0 });
   });
 
-  it("skips events with an empty repo_hash (covers !repo_hash branch)", async () => {
+  it("stores gate_verdict string vs null", async () => {
     const db = makeDb();
-    const result = await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "", pr_hash: "hash", outcome: "merged" }] }),
-      db,
-    );
-    expect(result).toEqual({ accepted: 0 });
+    await ingest(db, [ev({ pr_hash: "v1", gate_verdict: "merge" }), ev({ pr_hash: "v2" })]);
+    expect(await col(db, "v1", "gate_verdict")).toBe("merge");
+    expect(await col(db, "v2", "gate_verdict")).toBeNull();
   });
 
-  it("skips events with a non-string pr_hash (covers typeof pr_hash !== string branch)", async () => {
+  it("whitelists reversal_flag: valid kept, invalid + absent → 'none'", async () => {
     const db = makeDb();
-    const result = await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rhash", pr_hash: null, outcome: "merged" }] }),
-      db,
-    );
-    expect(result).toEqual({ accepted: 0 });
+    await ingest(db, [
+      ev({ pr_hash: "r1", reversal_flag: "reverted" }),
+      ev({ pr_hash: "r2", reversal_flag: "bogus" }),
+      ev({ pr_hash: "r3" }),
+    ]);
+    expect(await col(db, "r1", "reversal_flag")).toBe("reverted");
+    expect(await col(db, "r2", "reversal_flag")).toBe("none");
+    expect(await col(db, "r3", "reversal_flag")).toBe("none");
   });
 
-  it("skips events with an empty pr_hash (covers !pr_hash branch)", async () => {
+  it("stores gate_reasoncode_bucket string vs null", async () => {
     const db = makeDb();
-    const result = await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rhash", pr_hash: "", outcome: "merged" }] }),
-      db,
-    );
-    expect(result).toEqual({ accepted: 0 });
+    await ingest(db, [ev({ pr_hash: "b1", gate_reasoncode_bucket: "duplicate_risk" }), ev({ pr_hash: "b2" })]);
+    expect(await col(db, "b1", "gate_reasoncode_bucket")).toBe("duplicate_risk");
+    expect(await col(db, "b2", "gate_reasoncode_bucket")).toBeNull();
   });
 
-  it("skips events with an invalid outcome (covers !VALID_OUTCOMES.has branch)", async () => {
+  it("clamps time_to_close_ms: valid kept; absent / <1s / >1y → null", async () => {
     const db = makeDb();
-    const result = await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh", pr_hash: "ph", outcome: "opened" }] }),
-      db,
-    );
-    expect(result).toEqual({ accepted: 0 });
+    await ingest(db, [
+      ev({ pr_hash: "c1", time_to_close_ms: 7_200_000 }),
+      ev({ pr_hash: "c2" }),
+      ev({ pr_hash: "c3", time_to_close_ms: 500 }),
+      ev({ pr_hash: "c4", time_to_close_ms: 40_000_000_000 }),
+      ev({ pr_hash: "c5", time_to_close_ms: "nope" }),
+    ]);
+    expect(await col(db, "c1", "time_to_close_ms")).toBe(7_200_000);
+    expect(await col(db, "c2", "time_to_close_ms")).toBeNull();
+    expect(await col(db, "c3", "time_to_close_ms")).toBeNull();
+    expect(await col(db, "c4", "time_to_close_ms")).toBeNull();
+    expect(await col(db, "c5", "time_to_close_ms")).toBeNull();
   });
 
-  it("stores null gate_verdict when field is absent (covers typeof gate_verdict !== string branch)", async () => {
+  it("stores decision_timestamp + outcome_timestamp (and mirrors outcome_timestamp to sent_at) — string vs null", async () => {
     const db = makeDb();
-    await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh1", pr_hash: "ph1", outcome: "closed" }] }),
-      db,
-    );
-    const row = await (db as unknown as TestD1Database).prepare("SELECT gate_verdict FROM orb_signals WHERE pr_hash='ph1'").first<{ gate_verdict: string | null }>();
-    expect(row?.gate_verdict).toBeNull();
+    await ingest(db, [
+      ev({ pr_hash: "t1", decision_timestamp: "2026-01-01T00:00:00Z", outcome_timestamp: "2026-01-01T01:00:00Z" }),
+      ev({ pr_hash: "t2" }),
+    ]);
+    expect(await col(db, "t1", "decision_timestamp")).toBe("2026-01-01T00:00:00Z");
+    expect(await col(db, "t1", "outcome_timestamp")).toBe("2026-01-01T01:00:00Z");
+    expect(await col(db, "t1", "sent_at")).toBe("2026-01-01T01:00:00Z");
+    expect(await col(db, "t2", "decision_timestamp")).toBeNull();
+    expect(await col(db, "t2", "sent_at")).toBeNull();
   });
 
-  it("stores gate_verdict string when field is present (covers typeof gate_verdict === string branch)", async () => {
+  it("UPSERTs on (instance, repo_hash, pr_hash): a re-export updates the freshest outcome (e.g. a later reversal)", async () => {
     const db = makeDb();
-    await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh2", pr_hash: "ph2", outcome: "merged", gate_verdict: "approve" }] }),
-      db,
-    );
-    const row = await (db as unknown as TestD1Database).prepare("SELECT gate_verdict FROM orb_signals WHERE pr_hash='ph2'").first<{ gate_verdict: string | null }>();
-    expect(row?.gate_verdict).toBe("approve");
+    await ingest(db, [ev({ pr_hash: "u1", reversal_flag: "none" })]);
+    expect(await col(db, "u1", "reversal_flag")).toBe("none");
+    // same PR re-exported with a reversal now present
+    const second = await ingest(db, [ev({ pr_hash: "u1", reversal_flag: "reverted" })]);
+    expect(second).toEqual({ accepted: 1 }); // OR REPLACE counts as a write
+    expect(await col(db, "u1", "reversal_flag")).toBe("reverted");
+    const cnt = await (db as unknown as TestD1Database).prepare("SELECT COUNT(*) AS n FROM orb_signals WHERE pr_hash='u1'").first<{ n: number }>();
+    expect(cnt?.n).toBe(1); // still one row (upsert, not duplicate)
   });
 
-  it("stores null time_to_close_ms when field is absent (covers typeof time_to_close_ms !== number branch)", async () => {
+  it("different instances reviewing the same repo#pr do NOT collide", async () => {
     const db = makeDb();
-    await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh3", pr_hash: "ph3", outcome: "closed" }] }),
-      db,
-    );
-    const row = await (db as unknown as TestD1Database).prepare("SELECT time_to_close_ms FROM orb_signals WHERE pr_hash='ph3'").first<{ time_to_close_ms: number | null }>();
-    expect(row?.time_to_close_ms).toBeNull();
+    await ingest(db, [ev({ pr_hash: "same" })], "instA");
+    await ingest(db, [ev({ pr_hash: "same" })], "instB");
+    const cnt = await (db as unknown as TestD1Database).prepare("SELECT COUNT(*) AS n FROM orb_signals WHERE pr_hash='same'").first<{ n: number }>();
+    expect(cnt?.n).toBe(2);
   });
 
-  it("stores time_to_close_ms when field is a number (covers typeof time_to_close_ms === number branch)", async () => {
+  it("counts accepted vs skipped in one batch; caps at 500", async () => {
     const db = makeDb();
-    await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh4", pr_hash: "ph4", outcome: "merged", time_to_close_ms: 7200000 }] }),
-      db,
-    );
-    const row = await (db as unknown as TestD1Database).prepare("SELECT time_to_close_ms FROM orb_signals WHERE pr_hash='ph4'").first<{ time_to_close_ms: number | null }>();
-    expect(row?.time_to_close_ms).toBe(7200000);
+    expect(await ingest(db, [ev({ pr_hash: "ok" }), ev({ repo_hash: "" }), ev({ outcome: "x" })])).toEqual({ accepted: 1 });
+    const many = Array.from({ length: 501 }, (_, i) => ev({ pr_hash: `m${i}` }));
+    expect(await ingest(makeDb(), many)).toEqual({ accepted: 500 });
   });
 
-  it("stores null sent_at when created_at is absent (covers typeof created_at !== string branch)", async () => {
-    const db = makeDb();
-    await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh5", pr_hash: "ph5", outcome: "merged" }] }),
-      db,
-    );
-    const row = await (db as unknown as TestD1Database).prepare("SELECT sent_at FROM orb_signals WHERE pr_hash='ph5'").first<{ sent_at: string | null }>();
-    expect(row?.sent_at).toBeNull();
+  it("swallows a DB error (inner catch)", async () => {
+    const brokenDb = { prepare: () => ({ bind: () => ({ run: () => Promise.reject(new Error("boom")) }) }) } as unknown as D1Database;
+    expect(await ingest(brokenDb, [ev()])).toEqual({ accepted: 0 });
   });
 
-  it("stores sent_at when created_at is a string (covers typeof created_at === string branch)", async () => {
-    const db = makeDb();
-    await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh6", pr_hash: "ph6", outcome: "merged", created_at: "2024-06-01T12:00:00Z" }] }),
-      db,
-    );
-    const row = await (db as unknown as TestD1Database).prepare("SELECT sent_at FROM orb_signals WHERE pr_hash='ph6'").first<{ sent_at: string | null }>();
-    expect(row?.sent_at).toBe("2024-06-01T12:00:00Z");
-  });
-
-  it("deduplicates via INSERT OR IGNORE — second insert is not counted (covers result.meta.changes === 0 branch)", async () => {
-    const db = makeDb();
-    const body = JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh7", pr_hash: "ph7", outcome: "merged" }] });
-    expect(await handleOrbIngest(body, db)).toEqual({ accepted: 1 });
-    expect(await handleOrbIngest(body, db)).toEqual({ accepted: 0 }); // duplicate ignored
-  });
-
-  it("counts both accepted and skipped events in the same batch", async () => {
-    const db = makeDb();
-    const result = await handleOrbIngest(
-      JSON.stringify({
-        instance_id: "inst1",
-        events: [
-          { repo_hash: "rh8", pr_hash: "ph8", outcome: "merged" },
-          { repo_hash: "", pr_hash: "ph9", outcome: "merged" }, // invalid — skipped
-          { repo_hash: "rh10", pr_hash: "ph10", outcome: "invalid" }, // invalid outcome — skipped
-        ],
-      }),
-      db,
-    );
-    expect(result).toEqual({ accepted: 1 });
-  });
-
-  it("caps batch at 500 events (MAX_BATCH) — extra events not inserted", async () => {
-    const db = makeDb();
-    const events = Array.from({ length: 501 }, (_, i) => ({
-      repo_hash: `rh${i}`,
-      pr_hash: `ph${i}`,
-      outcome: "merged" as const,
-    }));
-    const result = await handleOrbIngest(JSON.stringify({ instance_id: "inst-batch", events }), db);
-    expect(result).toEqual({ accepted: 500 });
-  });
-
-  it("does not throw when the DB throws on insert (covers inner catch branch)", async () => {
-    const brokenDb = {
-      prepare: () => ({ bind: () => ({ run: () => Promise.reject(new Error("disk full")) }) }),
-    } as unknown as D1Database;
-    const result = await handleOrbIngest(
-      JSON.stringify({ instance_id: "inst1", events: [{ repo_hash: "rh", pr_hash: "ph", outcome: "merged" }] }),
-      brokenDb,
-    );
-    expect(result).toEqual({ accepted: 0 });
+  it("does not count a row when the write reports no change (changes === 0)", async () => {
+    const db = { prepare: () => ({ bind: () => ({ run: () => Promise.resolve({ meta: { changes: 0 } }) }) }) } as unknown as D1Database;
+    expect(await ingest(db, [ev()])).toEqual({ accepted: 0 });
   });
 });
-
-// ── Route integration tests (covers routes.ts new lines) ──────────────────────
 
 describe("POST /v1/orb/ingest route", () => {
   const app = createApp();
 
-  it("returns 200 with accepted count for a valid batch", async () => {
+  it("returns 200 + accepted count for a valid batch", async () => {
     const env = createTestEnv();
-    const body = JSON.stringify({
-      instance_id: "abc123def456abc0",
-      events: [{ repo_hash: "rhash1234567890123456", pr_hash: "phash1234567890123456", outcome: "merged" }],
-    });
+    const body = JSON.stringify({ instance_id: "abc0", events: [{ repo_hash: "rhash", pr_hash: "phash", outcome: "merged", reversal_flag: "none" }] });
     const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body }, env);
     expect(res.status).toBe(200);
-    const json = await res.json() as { accepted: number };
-    expect(json.accepted).toBe(1);
+    expect(((await res.json()) as { accepted: number }).accepted).toBe(1);
   });
 
-  it("returns 400 for invalid JSON (covers error-in-result branch)", async () => {
-    const env = createTestEnv();
-    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" }, env);
+  it("returns 400 for invalid JSON", async () => {
+    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" }, createTestEnv());
     expect(res.status).toBe(400);
-    const json = await res.json() as { error: string };
-    expect(json.error).toBe("invalid_json");
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_json");
   });
 
-  it("returns 400 for an empty body (covers !body branch in route)", async () => {
-    const env = createTestEnv();
-    const res = await app.request("/v1/orb/ingest", { method: "POST", body: "" }, env);
+  it("returns 400 for an empty body", async () => {
+    const res = await app.request("/v1/orb/ingest", { method: "POST", body: "" }, createTestEnv());
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /v1/internal/fleet/analytics route", () => {
+  const app = createApp();
+
+  it("returns the fleet report, honoring ?days (bearer-gated)", async () => {
+    const res = await app.request("/v1/internal/fleet/analytics?days=30", { headers: { authorization: "Bearer dev-internal-token" } }, createTestEnv());
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { windowDays: number }).windowDays).toBe(30);
+  });
+
+  it("defaults the window when ?days is omitted", async () => {
+    const res = await app.request("/v1/internal/fleet/analytics", { headers: { authorization: "Bearer dev-internal-token" } }, createTestEnv());
+    expect(((await res.json()) as { windowDays: number }).windowDays).toBe(90);
+  });
+
+  it("401 without the internal token", async () => {
+    const res = await app.request("/v1/internal/fleet/analytics", {}, createTestEnv());
+    expect(res.status).toBe(401);
   });
 });

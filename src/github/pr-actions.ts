@@ -1,5 +1,5 @@
-import { Octokit } from "@octokit/core";
 import { createInstallationToken } from "./app";
+import { makeInstallationOctokit } from "./client";
 import type { AutoMergeMethod } from "../types";
 
 const ISSUE_EVENTS_PAGE_SIZE = 100;
@@ -29,7 +29,7 @@ export async function createPullRequestReview(
 ): Promise<{ id: number }> {
   const { owner, repo } = splitRepo(repoFullName);
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  const octokit = makeInstallationOctokit(env, token);
   const response = await octokit.request("POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
     owner,
     repo,
@@ -51,7 +51,7 @@ export async function mergePullRequest(
 ): Promise<{ merged: boolean; sha: string | null }> {
   const { owner, repo } = splitRepo(repoFullName);
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  const octokit = makeInstallationOctokit(env, token);
   const response = await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge", {
     owner,
     repo,
@@ -77,7 +77,7 @@ export async function updatePullRequestBranch(
 ): Promise<void> {
   const { owner, repo } = splitRepo(repoFullName);
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  const octokit = makeInstallationOctokit(env, token);
   await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch", {
     owner,
     repo,
@@ -90,7 +90,7 @@ export async function updatePullRequestBranch(
 export async function createIssueComment(env: Env, installationId: number, repoFullName: string, issueNumber: number, body: string): Promise<{ id: number }> {
   const { owner, repo } = splitRepo(repoFullName);
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  const octokit = makeInstallationOctokit(env, token);
   const response = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
     owner,
     repo,
@@ -104,7 +104,7 @@ export async function createIssueComment(env: Env, installationId: number, repoF
 export async function closePullRequest(env: Env, installationId: number, repoFullName: string, pullNumber: number): Promise<{ state: string }> {
   const { owner, repo } = splitRepo(repoFullName);
   const token = await createInstallationToken(env, installationId);
-  const octokit = new Octokit({ auth: token });
+  const octokit = makeInstallationOctokit(env, token);
   const response = await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
     owner,
     repo,
@@ -127,7 +127,7 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
   try {
     const { owner, repo } = splitRepo(repoFullName);
     const token = await createInstallationToken(env, installationId);
-    const octokit = new Octokit({ auth: token });
+    const octokit = makeInstallationOctokit(env, token);
     const requestPage = (page: number) =>
       octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: ISSUE_EVENTS_PAGE_SIZE, page });
     const firstResponse = await requestPage(1);

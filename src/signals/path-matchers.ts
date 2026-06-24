@@ -65,6 +65,17 @@ const CONFIG_FILE_NAMES: ReadonlySet<string> = new Set([
   ".nvmrc",
   ".npmrc",
   ".browserslistrc",
+  // Monorepo / task-runner config (Turborepo, Nx, Lerna).
+  "turbo.json",
+  "nx.json",
+  "lerna.json",
+  // Linter / formatter config that does not follow the `.eslintrc` / `*.config.*` shapes (Biome).
+  "biome.json",
+  "biome.jsonc",
+  // VCS and build ignore/attribute config (siblings to the existing Dockerfile entry).
+  ".gitignore",
+  ".gitattributes",
+  ".dockerignore",
 ]);
 
 // Filename prefixes that identify build, lint, test-runner, and environment config files.
@@ -83,6 +94,9 @@ const CONFIG_FILE_PREFIXES: readonly string[] = [
   ".eslint",
   ".prettier",
   ".babel",
+  // Cloudflare Workers deploy config (`wrangler.toml`, `wrangler.jsonc`, `wrangler.vitest.jsonc`).
+  // The trailing dot keeps unrelated names like `wranglers-guide.md` from matching.
+  "wrangler.",
 ];
 
 /** Machine-generated output (codegen, protobuf, source maps, typegen). */
@@ -126,9 +140,9 @@ export function isDependencyManifestFile(path: string): boolean {
 }
 
 /**
- * Build, lint, test-runner, and environment configuration files. Distinct from dependency manifests
- * (which declare external dependencies) and source code. Config-only diffs are lower-effort than
- * genuine source changes, so slop signals can weight them differently (#561).
+ * Build, lint, test-runner, monorepo, deploy, and environment configuration files. Distinct from
+ * dependency manifests (which declare external dependencies) and source code. Config-only diffs are
+ * lower-effort than genuine source changes, so slop signals can weight them differently (#561).
  */
 export function isConfigFile(path: string): boolean {
   const base = basename(path);

@@ -436,6 +436,27 @@ describe("GitHub backfill", () => {
     });
   });
 
+  it("surfaces pull_requests:write in the remediation when it is the missing permission (#audit-install-health display)", () => {
+    const health = enrichInstallationHealth({
+      installationId: 126,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 1,
+      status: "needs_attention",
+      missingPermissions: ["pull_requests"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-06-05T00:00:00.000Z",
+    });
+
+    expect(health.requiredPermissions).toMatchObject({ pull_requests: "write" }); // not the baseline read
+    expect(health.permissionRemediation).toEqual(
+      expect.arrayContaining([expect.objectContaining({ permission: "pull_requests", requiredAccess: "write", ok: false, action: "Set repository permission pull_requests to write." })]),
+    );
+  });
+
   it("requires Checks write only for repos with check runs enabled", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedRegisteredRepo(env);
@@ -481,6 +502,49 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("REGRESSION (#audit-install-health): an acting autonomy requires pull_requests:write, so read-only is needs_attention not healthy", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedRegisteredRepo(env);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+        events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+      },
+    });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
+    // close:auto ACTS on PR state → the App needs pull_requests:write, not the baseline read.
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto" } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/app/installations/123")) {
+        return Response.json({
+          id: 123,
+          account: { login: "JSONbored", id: 1, type: "User" },
+          repository_selection: "selected",
+          permissions: { metadata: "read", pull_requests: "read", issues: "write" }, // only READ granted
+          events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshInstallationHealth(env);
+
+    expect(refreshed.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          installationId: 123,
+          status: "needs_attention", // was falsely "healthy" before the fix
+          missingPermissions: ["pull_requests"],
+          requiredPermissions: expect.objectContaining({ pull_requests: "write" }),
+        }),
+      ]),
+    );
+  });
+
   it("marks comment, label, and check repair impacts disabled by repo settings", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
@@ -508,6 +572,7 @@ describe("GitHub backfill", () => {
 
     expect(repair.repairSteps).toEqual(["No repair needed."]);
     expect(repair.requiredPermissions).not.toHaveProperty("checks");
+    expect(repair.requiredPermissions.pull_requests).toBe("read"); // non-acting → baseline read, NOT upgraded to write
     expect(repair.modeImpacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ mode: "comment", enabled: false, affectedRepoCount: 0, action: "No change needed." }),
@@ -515,6 +580,28 @@ describe("GitHub backfill", () => {
         expect.objectContaining({ mode: "check_run", enabled: false, affectedRepoCount: 0, requiredPermissions: [expect.objectContaining({ optional: true })] }),
       ]),
     );
+  });
+
+  it("repair diagnostics upgrade pull_requests to write for an acting autonomy (#audit-install-health display)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
+
+    const repair = await buildInstallationRepairDiagnostics(env, {
+      installationId: 123,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 0,
+      status: "needs_attention",
+      missingPermissions: ["pull_requests"],
+      missingEvents: [],
+      permissions: { metadata: "read", pull_requests: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository", "installation_repositories"],
+      checkedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(repair.requiredPermissions.pull_requests).toBe("write");
   });
 
   it("counts comment-only and label-only repair surfaces separately", async () => {

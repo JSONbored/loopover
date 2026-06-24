@@ -39,6 +39,7 @@ import {
   persistRepoSnapshot,
   extractLinkedIssueNumbers,
 } from "../db/repositories";
+import { agentRequiresPrWrite } from "../settings/agent-execution";
 import type {
   ContributorRepoStatRecord,
   GitHubRateLimitObservationRecord,
@@ -690,6 +691,13 @@ export const REQUIRED_INSTALLATION_PERMISSIONS: Record<string, string> = {
 export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
   checks: "write",
 };
+// Conditionally required: an installation whose autonomy ACTS on PR state (merge/close/approve/request_changes/
+// update_branch) needs `pull_requests: write`, not the baseline `read`. Without this, install-health reported
+// "healthy" for a repo configured to act that could only ever 403 at runtime. Mirrors the checks:write pattern.
+// (#audit-install-health)
+export const OPTIONAL_PR_WRITE_PERMISSION: Record<string, string> = {
+  pull_requests: "write",
+};
 
 export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
@@ -723,6 +731,9 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(missingPermissions.has("checks") ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    // pull_requests is missing ONLY when the refresh required write (an acting autonomy) and it was not granted, so
+    // surface the write requirement in the remediation rather than the baseline read. (#audit-install-health)
+    ...(missingPermissions.has("pull_requests") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
   };
   return {
     ...health,
@@ -763,12 +774,14 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
   const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
+  const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
   const missingPermissions = new Set(health.missingPermissions);
   const requiredEventSet = new Set<string>(REQUIRED_INSTALLATION_EVENTS);
   const missingEvents = new Set(health.missingEvents.filter((event) => requiredEventSet.has(event)));
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}), // acting autonomy → pull_requests:write (#audit-install-health)
   };
   const optionalPermissions = checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
   const modeImpacts: InstallationModeImpact[] = [
@@ -928,9 +941,12 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     const registeredInstalled = installedRepos.filter((repo) => repo.isRegistered);
     const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
     const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
+    const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
     const requiredPermissions = {
       ...REQUIRED_INSTALLATION_PERMISSIONS,
       ...(requiresChecks ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+      // An acting autonomy upgrades the pull_requests requirement read -> write (spread last so it wins). (#audit-install-health)
+      ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}),
     };
     const missingPermissions = Object.entries(requiredPermissions)
       .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))

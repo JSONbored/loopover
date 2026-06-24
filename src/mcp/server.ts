@@ -1921,11 +1921,12 @@ export class GittensoryMcp {
       input.windowDays !== undefined ? input.windowDays : undefined,
     );
     const slop = report.slop;
+    const totalResolved = slop?.totalResolved ?? 0;
     const summary =
-      slop.discriminates === true
-        ? `Outcome calibration for ${fullName}: slop bands are predictive across ${slop.totalResolved} resolved PRs.`
-        : slop.discriminates === false
-          ? `Outcome calibration for ${fullName}: slop bands are NOT discriminating on current data (${slop.totalResolved} resolved PRs).`
+      slop?.discriminates === true
+        ? `Outcome calibration for ${fullName}: slop bands are predictive across ${totalResolved} resolved PRs.`
+        : slop?.discriminates === false
+          ? `Outcome calibration for ${fullName}: slop bands are NOT discriminating on current data (${totalResolved} resolved PRs).`
           : `Outcome calibration for ${fullName}: not enough resolved PR data to judge slop calibration yet.`;
     return {
       summary,

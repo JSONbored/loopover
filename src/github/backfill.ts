@@ -1994,6 +1994,12 @@ export async function fetchLiveCiAggregate(
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   let total = 0;
   let anyPending = false;
+  // CI visibility flags: a failed/short read of either source means we did NOT enumerate the commit's full check
+  // set, so we must not certify it "passed". They drive the fail-CLOSED degrade below. In enforce-required mode
+  // the absent-context guard already catches this; this additionally closes the fold-all (unknown-required) seam
+  // where a transient fetch failure plus one green check could otherwise read as "passed".
+  let checkRunsIncomplete = false;
+  let statusIncomplete = false;
   // Track which required context names actually appear in any API result. An absent required context
   // (never queued, in-progress, or complete) has no entry to push anyPending — without this guard it
   // would be silently ignored and ciState could become "passed" while it never ran.
@@ -2007,7 +2013,11 @@ export async function fetchLiveCiAggregate(
       `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
       token,
     ).catch(() => undefined);
-    if (!result) break;
+    // A failed check-runs fetch (page 1 or mid-pagination) leaves the check set partially read — fail closed.
+    if (!result) {
+      checkRunsIncomplete = true;
+      break;
+    }
     for (const run of result.data.check_runs ?? []) {
       seenContextNames?.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
       if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs (see above)
@@ -2029,14 +2039,25 @@ export async function fetchLiveCiAggregate(
 
   // 2) Classic commit-statuses (codecov/patch, codecov/project, and any other status-API context). The
   // combined endpoint returns the LATEST status per context, so a context that flipped red→green is counted
-  // once at its current state.
-  const statusResult = await githubJsonWithHeaders<{ statuses?: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> }>(
-    env,
-    repoFullName,
-    `/commits/${headSha}/status?per_page=100`,
-    token,
-  ).catch(() => undefined);
-  for (const ctx of statusResult?.data.statuses ?? []) {
+  // once at its current state. Paginated: the endpoint caps at 100 statuses/page, so a head with >100 contexts
+  // would silently drop the overflow (including a failing one) — accumulate every page before processing.
+  const commitStatuses: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> = [];
+  for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
+    const statusResult = await githubJsonWithHeaders<{ statuses?: Array<{ context?: string | null; state?: string | null; description?: string | null; target_url?: string | null }> }>(
+      env,
+      repoFullName,
+      `/commits/${headSha}/status?per_page=100&page=${page}`,
+      token,
+    ).catch(() => undefined);
+    // A failed status fetch leaves the status set partially read — fail closed (see the degrade below).
+    if (!statusResult) {
+      statusIncomplete = true;
+      break;
+    }
+    commitStatuses.push(...(statusResult.data.statuses ?? []));
+    if (!hasNextPage(statusResult.link)) break;
+  }
+  for (const ctx of commitStatuses) {
     const name = ctx.context ?? "status";
     total += 1;
     seenContextNames?.add(name);
@@ -2064,7 +2085,11 @@ export async function fetchLiveCiAggregate(
   // ciState reflects ONLY gate-failing (required, or all-when-unknown) checks. A repo whose only red check is a
   // non-required codecov/* therefore reports "passed" and is eligible to merge/approve, with the codecov
   // failure riding along in nonRequiredFailingDetails for the contributor to see.
-  const ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
+  let ciState: LiveCiAggregate["ciState"] = failingDetails.length > 0 ? "failed" : anyPending ? "pending" : total > 0 ? "passed" : "unverified";
+  // Fail CLOSED on incomplete visibility: if either CI source could not be fully read, we cannot certify the
+  // commit as passed/clean — hold (pending) so the gate waits and re-evaluates on the next sweep instead of
+  // auto-merging on partial data. An OBSERVED failure ("failed") is authoritative and preserved.
+  if ((checkRunsIncomplete || statusIncomplete) && ciState !== "failed") ciState = "pending";
   return { ciState, failingDetails, nonRequiredFailingDetails };
 }
 

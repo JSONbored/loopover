@@ -1041,6 +1041,7 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/commits/gate123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/gate123/status")) return Response.json({ statuses: [] });
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
       return new Response("not found", { status: 404 });
     });
@@ -1111,6 +1112,7 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/commits/gate123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/gate123/status")) return Response.json({ statuses: [] });
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
       return new Response("not found", { status: 404 });
     });
@@ -1292,6 +1294,7 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/commits/gate123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/gate123/status")) return Response.json({ statuses: [] });
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
       return new Response("not found", { status: 404 });
     });
@@ -1338,6 +1341,7 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/commits/gate123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/gate123/status")) return Response.json({ statuses: [] });
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
       return new Response("not found", { status: 404 });
     });
@@ -1425,6 +1429,7 @@ describe("queue processors", () => {
       if (url === "https://api.gittensor.io/miners") return Response.json([]);
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.includes("/commits/clean123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/clean123/status")) return Response.json({ statuses: [] });
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
       return new Response("not found", { status: 404 });
     });

@@ -50,6 +50,9 @@ export function buildMaintainerActivationPreview(args: {
   pullRequests: PullRequestRecord[];
   generatedAt: string;
   sampleSize?: number;
+  /** GITTENSORY_DUPLICATE_WINNER (#dup-winner): mirror the live pipeline so the demo's duplicate findings
+   *  match the real gate — when ON, the cluster winner is spared. Defaults to off (byte-identical preview). */
+  duplicateWinnerEnabled?: boolean;
 }): MaintainerActivationPreview {
   const sampleSize = Math.min(Math.max(args.sampleSize ?? DEFAULT_SAMPLE_SIZE, 1), 25);
   const recent = [...args.pullRequests].sort((left, right) => recencyKey(right).localeCompare(recencyKey(left))).slice(0, sampleSize);
@@ -57,8 +60,12 @@ export function buildMaintainerActivationPreview(args: {
   const codeCounts = new Map<string, number>();
   const samples: MaintainerActivationSample[] = recent.map((pr) => {
     const advisory = buildPullRequestAdvisory(args.repo, pr, {
-      otherOpenPullRequests: args.pullRequests.filter((other) => other.number !== pr.number),
+      // Open-only siblings: a closed/merged PR isn't competing, and isDuplicateClusterWinner's invariant
+      // requires open-only numbers — match the live pipeline (processors.ts:559/800), which feeds the
+      // winner adjudication the same open-filtered set.
+      otherOpenPullRequests: args.pullRequests.filter((other) => other.number !== pr.number && other.state === "open"),
       requireLinkedIssue: args.settings.requireLinkedIssue || args.settings.linkedIssueGateMode !== "off",
+      duplicateWinnerEnabled: Boolean(args.duplicateWinnerEnabled),
     });
     for (const finding of advisory.findings) codeCounts.set(finding.code, (codeCounts.get(finding.code) ?? 0) + 1);
     return {

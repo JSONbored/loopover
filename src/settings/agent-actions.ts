@@ -49,6 +49,13 @@ export type PlannedAgentAction = {
   reviewBody?: string;
   mergeMethod?: AutoMergeMethod;
   closeComment?: string;
+  // For a `close` action: WHICH kind of close this is, so the close-precision circuit-breaker can scope itself.
+  // "linked-issue-hard-rule" = the DETERMINISTIC flag-then-close state machine (zero hallucination risk — and on
+  // the verify path it posts a comment PROMISING closure); "heuristic" = a verdict-driven close (gate-verdict /
+  // duplicate / slop / CI). The breaker downgrades ONLY "heuristic" closes; the deterministic close is EXEMPT
+  // (silently holding a close whose comment already promised closure would be incoherent). Absent on non-close
+  // actions; treated as a heuristic close only when explicitly tagged "heuristic".
+  closeKind?: "linked-issue-hard-rule" | "heuristic";
   expectedHeadSha?: string;
 };
 
@@ -64,6 +71,10 @@ export type AgentActionPlanInput = {
   // neither auto-merge, auto-approve, nor auto-close such a PR; it falls through to a human.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
+  // Anti-farming (#anti-gaming-flood): true when this PR's author has exceeded the per-repo submission-flood
+  // limit (more than N PRs in the configured window). Forces the SAME manual hold as a guarded path — a flooding
+  // author's PR is never auto-merged/approved; a human reviews the batch. Does NOT force a close.
+  submissionFloodHit?: boolean | undefined;
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
@@ -149,8 +160,50 @@ export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: bo
   return next.filter((action) => !(action.actionClass === "label" && action.label === AGENT_LABEL_READY && action.labelOp !== "remove"));
 }
 
+/**
+ * CLOSE-precision circuit-breaker (the symmetric mirror of {@link downgradeMergeToHold}): when auto-CLOSE is
+ * DISABLED for a repo (the auto-tuner engaged the `closehold` flag after CLOSE precision dropped, or a human set
+ * it), DOWNGRADE a would-CLOSE into a human HOLD — drop the `close` action(s) and surface the needs-human-review
+ * label so the PR is held for a person instead of auto-closed.
+ *
+ * TIGHTENING-ONLY in the close direction: it can ONLY remove a `close` action + ADD a label. It NEVER adds or
+ * enables a close, merge, or approve, and it never touches an existing merge/approve action.
+ *
+ * OWNER-REQUIRED SCOPING: it downgrades ONLY HEURISTIC (verdict-driven) closes — those tagged
+ * `closeKind: "heuristic"` (gate-verdict / duplicate / slop / CI). It EXEMPTS the DETERMINISTIC linked-issue
+ * hard-rule close (`closeKind: "linked-issue-hard-rule"`): that close is zero-hallucination, and on the verify
+ * path it posts a comment PROMISING closure — silently downgrading it to a hold while a comment promises closure
+ * would be incoherent. So a plan whose only close is the deterministic one is returned UNCHANGED. A plan with a
+ * heuristic close gets it dropped; a deterministic close present alongside is KEPT.
+ *
+ * The existing changes-requested label is KEPT (it correctly says the PR is not mergeable). PURE + idempotent:
+ * with `closeHoldOnly` false this returns the plan UNCHANGED (the common path); with no HEURISTIC close planned
+ * it is also a no-op. Only ever makes the system MORE cautious.
+ */
+export function downgradeCloseToHold(planned: PlannedAgentAction[], closeHoldOnly: boolean): PlannedAgentAction[] {
+  const isHeuristicClose = (action: PlannedAgentAction): boolean => action.actionClass === "close" && action.closeKind === "heuristic";
+  if (!closeHoldOnly || !planned.some(isHeuristicClose)) return planned;
+  // Drop ONLY the heuristic close(s); a deterministic linked-issue-hard-rule close (if any) is left intact.
+  const next = planned.filter((action) => !isHeuristicClose(action));
+  // The dropped close means the PR is held for a person — surface needs-human-review. Idempotent: only add when
+  // absent (e.g. a guarded-but-passing plan may already carry it). NEVER adds a merge/approve.
+  const alreadyNeedsReview = next.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_NEEDS_REVIEW && action.labelOp !== "remove");
+  const droppedClose = planned.find(isHeuristicClose);
+  if (!alreadyNeedsReview) {
+    next.push({
+      actionClass: "label",
+      requiresApproval: droppedClose?.requiresApproval ?? false,
+      reason: "close-precision circuit-breaker engaged — would-close held for human review",
+      label: AGENT_LABEL_NEEDS_REVIEW,
+      labelOp: "add",
+    });
+  }
+  // KEEP the changes-requested label (it correctly states the PR is not mergeable) and every other action.
+  return next;
+}
+
 function closeMessage(reasons: string[]): string {
-  return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — if you believe it's mistaken, reopen the PR or ping a maintainer and it will be reviewed.`;
+  return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs are re-reviewed automatically, so an inaccurate close may be reopened, but that does not guarantee it can merge (e.g. if conflicts or failing CI remain).`;
 }
 
 /**
@@ -195,6 +248,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const guardrailHit =
     input.hardGuardrailGlobs.length > 0 &&
     (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
+  // A per-author submission FLOOD forces the SAME manual hold as a guarded path: a flooding author's PR is never
+  // auto-merged/approved — a human reviews the batch (anti-farming). It does NOT force a close (a clean flooding
+  // PR is HELD, not killed; a red-CI / conflict flooding PR still closes via the normal path). (#anti-gaming-flood)
+  const submissionFloodHit = input.submissionFloodHit === true;
+  const heldForManualReview = guardrailHit || submissionFloodHit;
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
@@ -213,7 +271,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // reviewDecision to APPROVED, so reviewDecision alone can't dedup). A new commit makes the heads differ →
   // approve may fire again. Absent approved-head SHA (never approved by the bot) ⇒ not idempotent-skipped.
   const alreadyApprovedThisHead = input.pr.approvedHeadSha != null && input.pr.headSha != null && input.pr.approvedHeadSha === input.pr.headSha;
-  const canMerge = reviewGood && !guardrailHit && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
+  const canMerge = reviewGood && !heldForManualReview && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
   // A guarded/CRUCIAL path (CI, the review engine, visual) → ALWAYS held for the owner, never auto-actioned —
   // not auto-approved, not auto-merged, AND not auto-closed. Operator decision (#hold-crucial-on-reject): a
   // hallucinated reject on a crucial PR must NOT auto-close a good change (the #1528 near-miss); the owner
@@ -222,8 +280,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // CLOSE a contributor PR ONLY on a REAL adverse signal — a confirmed gate FAILURE, a red required CI, or a base
   // CONFLICT. NEVER close merely because CI is UNVERIFIED (a fork whose Actions await approval, or unreadable
   // checks) or otherwise not-yet-mergeable — those are HELD for review, not killed (#harm-stop fork-false-close).
-  // Owner/automation PRs are never closed (isContributor); guarded paths are held (guardrailHit).
-  const willClose = !guardrailHit && isContributor && acting("close") && (input.conclusion === "failure" || ciFailed || isConflict);
+  // Owner/automation PRs are never closed (isContributor). A guarded path is HELD for the AI/gate VERDICT and for
+  // a base conflict (don't kill a crucial change on an AI call or a rebaseable conflict). But a red REQUIRED CI is
+  // an OBJECTIVE failure — a broken change that cannot merge regardless — so it CLOSES a contributor PR even on a
+  // guarded path; the contributor fixes CI and resubmits, and a GREEN guarded resubmission is then held for review.
+  // (Rebase-if-behind already ran above, so a red CI here is on the latest base — not a stale-base artifact.) (#ci-fail-closes-guarded)
+  const willClose = isContributor && acting("close") && (ciFailed || (!guardrailHit && (input.conclusion === "failure" || isConflict)));
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
   // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
   // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR
@@ -268,13 +330,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // linked-issue hard-rule close (flag OR close pass) forces the changes-requested label regardless of the gate
   // verdict (the PR is about to be closed for an ineligible linked issue). Idempotent.
   if (acting("label")) {
-    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : heldForManualReview ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
     const reason = linkedIssueCloseInFlight
       ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
       : !reviewGood
         ? `verdict=${input.conclusion}${ciReason ? `; ${ciReason}` : ""}`
-        : guardrailHit
-          ? `verdict=${input.conclusion}; guarded path → owner safety review`
+        : heldForManualReview
+          ? `verdict=${input.conclusion}; ${submissionFloodHit ? "submission flood → manual review (anti-farming)" : "guarded path → owner safety review"}`
           : `verdict=${input.conclusion}; CI green`;
     if (!hasLabel(input.pr.labels, label)) {
       actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
@@ -314,7 +376,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // OWNER/automation PR is HELD via the needs-human label + the (non-blocking) unified review comment — never a
   // formal request-changes. (#no-request-changes) Either merge/approve, or close, with the rare manual hold left
   // open + commented, never blocked.
-  if (reviewGood && !guardrailHit && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
+  if (reviewGood && !heldForManualReview && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),
@@ -338,7 +400,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     // exactly why. This is the FIRST disposition branch: it wins over an otherwise-mergeable verdict (a PR for
     // an ineligible issue must never auto-merge) and fires REGARDLESS of `guardrailHit` (deterministic, not AI).
     const reason = linkedIssueHardRule?.reason ?? "the linked issue is not eligible for a community PR";
-    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason, closeComment: closeMessage([reason]) });
+    // Tagged "linked-issue-hard-rule": the close-precision breaker EXEMPTS this deterministic close (it is not
+    // verdict-driven, and the verify path may already have promised closure in a comment).
+    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason, closeComment: closeMessage([reason]), closeKind: "linked-issue-hard-rule" });
   } else if (canMerge) {
     actions.push({
       actionClass: "merge",
@@ -356,7 +420,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) closeReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);
     if ((input.pr.linkedDuplicateCount ?? 0) > 0) closeReasons.push("duplicate of another open PR");
     if (closeReasons.length === 0) closeReasons.push("the review gate is not satisfied");
-    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: closeReasons.join("; "), closeComment: closeMessage(closeReasons) });
+    // Tagged "heuristic": a verdict-driven close (gate-verdict / duplicate / slop / CI). This is the ONLY close
+    // the close-precision breaker downgrades to a hold when close precision has dropped.
+    actions.push({ actionClass: "close", requiresApproval: approval("close"), reason: closeReasons.join("; "), closeComment: closeMessage(closeReasons), closeKind: "heuristic" });
   }
   // else: guarded → manual (needs-human/changes label above); not-good OWNER/automation → held
   // (request-changes above); review-good-but-not-yet-mergeable → held briefly (rebase/approve resolves it next pass).

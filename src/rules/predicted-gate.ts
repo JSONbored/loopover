@@ -136,6 +136,11 @@ export function buildPredictedGateVerdict(args: {
   // Linked-issue finding is surfaced when the repo's public policy treats it as anything but `off`, so the
   // gate can evaluate it; evaluateGateCheck decides whether it actually blocks (block) or stays advisory.
   const requireLinkedIssue = gate.linkedIssue !== null && gate.linkedIssue !== "off";
+  // `duplicateWinnerEnabled` is INTENTIONALLY omitted (#dup-winner): the prospective PR is synthetic #0, but a
+  // real new PR opened into an existing duplicate cluster gets the HIGHEST number ⇒ it is always a duplicate
+  // LOSER, never the winner. So the predictor must keep showing the duplicate finding (the honest pre-submit
+  // answer). Threading the flag here would let isDuplicateClusterWinner(0, …) treat #0 as the winner and
+  // falsely suppress the block — a false-optimism regression. Do NOT add it without modeling #0 as the loser.
   const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue });
 
   // Pack-aware (#693): under `oss-anti-slop` the gate blocks ANY author, so drop the confirmed-contributor

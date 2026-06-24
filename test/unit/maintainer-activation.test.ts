@@ -163,6 +163,47 @@ describe("buildMaintainerActivationPreview", () => {
     });
     expect(undatedPreview.evaluatedCount).toBe(2);
   });
+
+  it("spares the duplicate-cluster winner when GITTENSORY_DUPLICATE_WINNER is on, flagging only the losers", () => {
+    const preview = buildMaintainerActivationPreview({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings(),
+      // Two OPEN PRs link the same issue (#42) → a duplicate cluster. Winner = lowest open number = #1.
+      pullRequests: [pr(1, { linkedIssues: [42] }), pr(2, { linkedIssues: [42] })],
+      generatedAt: "2026-06-14T00:00:00.000Z",
+      duplicateWinnerEnabled: true,
+    });
+    const winner = preview.samples.find((sample) => sample.number === 1)!;
+    const loser = preview.samples.find((sample) => sample.number === 2)!;
+    expect(winner.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+    expect(loser.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
+  });
+
+  it("flags every duplicate-cluster member when GITTENSORY_DUPLICATE_WINNER is off (default)", () => {
+    const preview = buildMaintainerActivationPreview({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings(),
+      pullRequests: [pr(1, { linkedIssues: [42] }), pr(2, { linkedIssues: [42] })],
+      generatedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(preview.findingCodeCounts).toContainEqual({ code: "duplicate_pr_risk", count: 2 });
+  });
+
+  it("ignores closed/merged siblings when detecting duplicate overlap", () => {
+    const preview = buildMaintainerActivationPreview({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settings(),
+      // The only other PR linking #42 is CLOSED → not a live duplicate, so the open winner stays clean.
+      pullRequests: [pr(1, { linkedIssues: [42] }), pr(2, { state: "closed", linkedIssues: [42] })],
+      generatedAt: "2026-06-14T00:00:00.000Z",
+      duplicateWinnerEnabled: true,
+    });
+    const open = preview.samples.find((sample) => sample.number === 1)!;
+    expect(open.findings.map((finding) => finding.code)).not.toContain("duplicate_pr_risk");
+  });
 });
 
 describe("recommendedAdvisoryActivationSettings", () => {

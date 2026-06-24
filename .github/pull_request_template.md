@@ -14,7 +14,7 @@
 - [ ] `git diff --check`
 - [ ] `npm run actionlint`
 - [ ] `npm run typecheck`
-- [ ] `npm run test:coverage` locally; global coverage stays at or above **97%** for lines, statements, functions, and branches (aim for **98%+** branch coverage locally so CI variance does not fail near the threshold)
+- [ ] `npm run test:coverage` locally; **`codecov/patch` requires ≥97% coverage of the lines AND branches you changed** (aim for **98%+** on your diff so CI variance does not fail near the threshold). Global coverage is a non-blocking trend with a loose 90% backstop, not the gate.
 - [ ] `npm run test:workers`
 - [ ] `npm run build:mcp`
 - [ ] `npm run test:mcp-pack`

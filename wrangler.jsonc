@@ -117,6 +117,19 @@
     // reviewed repos. Flag-OFF the endpoint 404s and the homepage band renders nothing (counts only, no PR
     // content/authors/scores/rewards). See src/review/public-stats.ts.
     "GITTENSORY_PUBLIC_STATS": "true",
+    // Fallback REQUIRED CI contexts, used ONLY when the live branch-protection read fails (a 403 when the
+    // installation token lacks `administration:read`, or a transient error). Keeps required-only CI evaluation
+    // — review starts once these pass; a non-required red (e.g. codecov variance) does NOT drive an automated
+    // close — instead of conservatively folding ALL checks in. Mirrors the repos' actual branch protection.
+    // Granting the App `administration:read` makes the live (per-repo) read succeed and reduces this to a
+    // transient-failure safety net. Names MUST match the exact check contexts. See src/github/backfill.ts.
+    "GITTENSORY_REQUIRED_CI_CONTEXTS": "Superagent Security Scan,validate,Gittensory Gate",
+    // Duplicate-winner adjudication (#dup-winner): when a same-issue cluster of OPEN PRs forms, spare exactly
+    // ONE winner — the lowest-numbered (earliest opened) open PR — instead of blocking/closing every sibling.
+    // Only the LOSERS get the duplicate blocker + close reason + slop penalty + panel block; the winner is
+    // judged on its own merits. DEFAULT OFF — flag-OFF every duplicate sibling dies (today's behavior,
+    // byte-identical). See src/signals/duplicate-winner.ts.
+    "GITTENSORY_DUPLICATE_WINNER": "false",
   },
   "routes": [
     {

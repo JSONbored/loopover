@@ -26,6 +26,9 @@ import {
   buildRegistryChangeReport,
   buildRepoFitRecommendation,
   buildRoleContext,
+  type ContributorFit,
+  type ContributorOutcomeHistory,
+  type ContributorScoringProfile,
 } from "../../src/signals/engine";
 import {
   buildContributorRewardRiskStrategy,
@@ -598,6 +601,28 @@ describe("v2 signal builders", () => {
     expect(scoringProfile.evidence.credibilityAssumption).toBeGreaterThanOrEqual(0.8);
     expect(strategy.nextActions).toContain("Start with the highest-fit repo that has low duplicate and queue pressure.");
     expect(JSON.stringify(strategy)).not.toMatch(/wallet|farming|reward/i);
+  });
+
+  it("matches outcome history to opportunities case-insensitively despite registry-vs-API repo casing", () => {
+    // The opportunity uses registry casing; the outcome (Gittensor-API-sourced) carries a different casing for the
+    // SAME repo. A case-sensitive Map lookup would miss it, promoting a high-closed-rate repo and dropping its risks.
+    const fit = {
+      opportunities: [{ repoFullName: "Owner/Repo", lane: "direct_pr", fit: "good", score: 80, reasons: ["Good first target."], warnings: [] }],
+    } as unknown as ContributorFit;
+    const scoringProfile = {
+      evidence: { credibilityAssumption: 0.9, unlinkedPullRequests: 0, languageMatches: 1 },
+    } as unknown as ContributorScoringProfile;
+    const outcomeHistory = {
+      repoOutcomes: [
+        { repoFullName: "owner/repo", maintainerLane: false, closedPullRequestRate: 0.5, credibility: 1, openPullRequests: 0, strengths: ["Strong prior work here."], risks: ["High closed-PR rate."] },
+      ],
+    } as unknown as ContributorOutcomeHistory;
+
+    const strategy = buildContributorStrategy({ login: "dev", fit, scoringProfile, scoringSnapshot: scoringSnapshot(), outcomeHistory });
+    const best = strategy.bestFitRepos.find((entry) => entry.repoFullName === "Owner/Repo");
+    expect(best?.privateScoringReadiness).toBe("hold"); // 0.5 closed-PR rate now applies (was promoted to "good" pre-fix)
+    expect(best?.warnings).toEqual(expect.arrayContaining(["High closed-PR rate."]));
+    expect(best?.reasons).toEqual(expect.arrayContaining(["Strong prior work here."]));
   });
 
   it("builds role-aware maintainer lanes, outcome history, and review intelligence", () => {

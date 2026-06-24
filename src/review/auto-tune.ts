@@ -52,7 +52,10 @@ export interface GateEvalReport {
 export interface FlagStore {
   /** Circuit-breaker: is auto-merge disabled (would-merge → hold) for this project (or globally)? */
   isHoldOnly(project: string): Promise<boolean>;
-  /** Set (or clear) a flag key (e.g. `holdonly:<project>`). */
+  /** CLOSE-side circuit-breaker: is auto-CLOSE disabled (would-close → hold) for this project (or globally)?
+   *  The symmetric mirror of {@link isHoldOnly} for the close-precision breaker (`closehold:<scope>` rows). */
+  isCloseHoldOnly(project: string): Promise<boolean>;
+  /** Set (or clear) a flag key (e.g. `holdonly:<project>` or `closehold:<project>`). */
   setFlag(key: string, on: boolean): Promise<void>;
   /** When a flag was set (its updated_at, UTC) — or null if unset. Used to age-out an auto-engaged breaker. */
   flagSetAt(key: string): Promise<string | null>;
@@ -63,6 +66,11 @@ export interface FlagStore {
 // Engage the breaker only with a real sample AND a meaningful precision drop — never on noise.
 export const AUTOTUNE_MIN_DECIDED = 10;
 export const AUTOTUNE_MERGE_PRECISION_FLOOR = 0.85;
+// The CLOSE-side floor for the symmetric close-precision breaker: when the gate eval shows close precision
+// (would-close AND human closed / would-close) dropping below this over a real sample, the system DISABLES its
+// own auto-CLOSE for that project (sets `closehold:<scope>`) so would-closes HOLD for a person instead of firing
+// a wrong close. Same value as the merge floor (0.85) — both directions tighten on the same precision bar.
+export const AUTOTUNE_CLOSE_PRECISION_FLOOR = 0.85;
 // Auto-clear an AUTO-engaged breaker after a cooldown IF precision is no longer failing. While held there are
 // no new auto-merges to score, so this is a time-boxed retry: clear → auto-merge resumes → re-engages next
 // eval if still bad. A human-set global freeze/holdonly is NEVER auto-cleared. (#272)
@@ -131,6 +139,85 @@ export async function maybeAutoClearHoldOnly(flags: FlagStore, report: GateEvalR
     const setAt = await flags.flagSetAt(`holdonly:${project}`);
     if (!shouldAutoClear(report, project, setAt, nowMs)) return false;
     await flags.setFlag(`holdonly:${project}`, false);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── CLOSE-precision circuit-breaker (symmetric mirror of the merge breaker above) ───────────────────────────
+// The close-direction twin: when the gate eval shows close precision dropping below the floor over a real
+// sample, the system DISABLES its own auto-CLOSE for that project (`closehold:<scope>`) so would-closes HOLD
+// for a person instead of executing a bad close. TIGHTENING-ONLY in the close direction (it only ever removes a
+// close + holds for review; it NEVER adds/enables a close, merge, or approve). Reads r.closePrecision /
+// r.wouldClose where the merge breaker reads r.mergePrecision / r.wouldMerge. Reuses AUTOTUNE_MIN_DECIDED and
+// AUTOCLEAR_AFTER_MS. Same forward-measured retry contract: a human clears it early; the cooldown auto-clears it
+// once precision recovers so auto-close can resume.
+
+export interface CloseAutoTuneAction {
+  project: string;
+  closePrecision: number;
+  decided: number;
+  message: string;
+}
+
+/** PURE: which projects' CLOSE precision has dropped enough to warrant engaging the close-side breaker?
+ *  Mirrors planAutoTune, testing closePrecision against AUTOTUNE_CLOSE_PRECISION_FLOOR. */
+export function planCloseAutoTune(report: GateEvalReport): CloseAutoTuneAction[] {
+  const actions: CloseAutoTuneAction[] = [];
+  for (const r of report.rows) {
+    if (r.decided < AUTOTUNE_MIN_DECIDED || r.closePrecision == null) continue;
+    if (r.closePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR) {
+      actions.push({
+        project: r.project,
+        closePrecision: r.closePrecision,
+        decided: r.decided,
+        message: `Auto-CLOSE DISABLED for ${r.project}: close precision ${Math.round(r.closePrecision * 100)}% over ${r.decided} decided PR(s) (< ${Math.round(AUTOTUNE_CLOSE_PRECISION_FLOOR * 100)}%). Would-closes now HOLD for review. Investigate, then clear closehold:${r.project}.`,
+      });
+    }
+  }
+  return actions;
+}
+
+/** Engage the CLOSE-side breaker for each flagged project that isn't already close-held. Returns the NEWLY
+ *  engaged actions (so the caller audits + alerts once, not every cron tick). Fail-safe — a write error is
+ *  swallowed. Mirrors applyAutoTune over the `closehold:<project>` flag. */
+export async function applyCloseAutoTune(flags: FlagStore, report: GateEvalReport): Promise<CloseAutoTuneAction[]> {
+  const engaged: CloseAutoTuneAction[] = [];
+  for (const action of planCloseAutoTune(report)) {
+    try {
+      if (await flags.isCloseHoldOnly(action.project)) continue; // already engaged → don't re-alert
+      await flags.setFlag(`closehold:${action.project}`, true);
+      engaged.push(action);
+    } catch (error) {
+      console.log(JSON.stringify({ ev: "close_tune_error", project: action.project, message: String(error).slice(0, 120) }));
+    }
+  }
+  return engaged;
+}
+
+/** PURE: should an auto-engaged CLOSE breaker for `project` be cleared now? Mirrors shouldAutoClear but tests
+ *  closePrecision. True when the per-project closehold flag was set ≥ AUTOCLEAR_AFTER_MS ago AND close precision
+ *  is no longer failing (recovered, or no recent close predictions to judge). Never considers a human-set global
+ *  closehold (no per-project row → setAt is null). */
+export function shouldAutoClearClose(report: GateEvalReport, project: string, setAtIso: string | null, nowMs: number): boolean {
+  if (!setAtIso) return false; // not auto-engaged for THIS project (global breaker is human-only)
+  const t = setAtIso.includes("T") ? setAtIso : setAtIso.replace(" ", "T");
+  const hasZone = t.endsWith("Z") || /[+-]\d\d:?\d\d$/.test(t);
+  const setMs = Date.parse(hasZone ? t : `${t}Z`);
+  if (!Number.isFinite(setMs) || nowMs - setMs < AUTOCLEAR_AFTER_MS) return false; // still in cooldown
+  const row = report.rows.find((r) => r.project === project);
+  const stillFailing = !!row && row.closePrecision != null && row.decided >= AUTOTUNE_MIN_DECIDED && row.closePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR;
+  return !stillFailing; // cooldown elapsed + precision recovered (or no signal) → clear and let it retry
+}
+
+/** Clear `project`'s auto-engaged CLOSE breaker if the cooldown elapsed + close precision recovered. Returns
+ *  true if cleared. Fail-CLOSED on a thrown read (returns false, breaker stays engaged). */
+export async function maybeAutoClearCloseHoldOnly(flags: FlagStore, report: GateEvalReport, project: string, nowMs: number): Promise<boolean> {
+  try {
+    const setAt = await flags.flagSetAt(`closehold:${project}`);
+    if (!shouldAutoClearClose(report, project, setAt, nowMs)) return false;
+    await flags.setFlag(`closehold:${project}`, false);
     return true;
   } catch {
     return false;

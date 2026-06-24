@@ -4,6 +4,8 @@ import {
   buildRecommendationOutcomeCalibration,
   buildRepoOutcomeCalibration,
   buildSlopOutcomeCalibration,
+  outcomeCalibrationSummary,
+  type SlopOutcomeCalibration,
 } from "../../src/services/outcome-calibration";
 import { createAgentRun, replaceAgentActions, updatePullRequestSlopAssessment, upsertAgentRecommendationOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import type { SlopBand } from "../../src/signals/slop";
@@ -216,3 +218,30 @@ function actionRecord(id: string, runId: string): AgentActionRecord {
     createdAt: "2026-06-01T00:00:00.000Z",
   };
 }
+
+describe("outcomeCalibrationSummary", () => {
+  const slop = (discriminates: boolean | null, totalResolved: number): SlopOutcomeCalibration => ({
+    totalResolved,
+    bands: [],
+    overallMergeRate: null,
+    discriminates,
+  });
+
+  it("reports a predictive verdict when bands discriminate", () => {
+    expect(outcomeCalibrationSummary("octo/demo", slop(true, 12))).toBe(
+      "Outcome calibration for octo/demo: slop bands are predictive across 12 resolved PRs.",
+    );
+  });
+
+  it("reports a non-discriminating verdict when bands invert", () => {
+    expect(outcomeCalibrationSummary("octo/demo", slop(false, 11))).toBe(
+      "Outcome calibration for octo/demo: slop bands are NOT discriminating on current data (11 resolved PRs).",
+    );
+  });
+
+  it("reports an insufficient-data verdict when discrimination cannot be judged", () => {
+    expect(outcomeCalibrationSummary("octo/demo", slop(null, 2))).toBe(
+      "Outcome calibration for octo/demo: not enough resolved PR data to judge slop calibration yet.",
+    );
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
@@ -137,6 +137,20 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, pr: { labels: [], slopRisk: 90 } })))).not.toContain("close");
   });
 
+  it("#dup-winner disposition seam: the close reason includes the duplicate cause only when linkedDuplicateCount > 0", () => {
+    // Loser path (count > 0, the caller's real count): the duplicate cause IS cited in the close reason.
+    const loser = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 2 } }));
+    const loserClose = loser.find((a) => a.actionClass === "close")!;
+    expect(loserClose.reason).toContain("duplicate of another open PR");
+
+    // Winner path (count forced to 0 by dupWinnerLinkedDuplicateCount): the PR STILL closes on its own merits
+    // (the gate failure), but the close reason OMITS the duplicate cause.
+    const winner = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 0 } }));
+    const winnerClose = winner.find((a) => a.actionClass === "close")!;
+    expect(classes(winner)).toContain("close");
+    expect(winnerClose.reason).not.toContain("duplicate of another open PR");
+  });
+
   it("never plans both merge and close", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", close: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED", slopRisk: 95 } }));
     const cls = classes(plan);
@@ -173,6 +187,15 @@ describe("planAgentMaintenanceActions (#778)", () => {
       // BULK (non-guarded) still auto-closes on reject; only the small crucial set is held.
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], ...guarded, pr: { labels: [], slopRisk: 95 } })));
       expect(plan).not.toContain("close");
+    });
+
+    it("DOES auto-close a guarded contributor PR with red REQUIRED CI — a broken change can't merge regardless (#ci-fail-closes-guarded)", () => {
+      // The guardrail holds a crucial PR against the AI/gate VERDICT (the test above), but a red required CI is an
+      // OBJECTIVE failure: the change cannot merge no matter what, so it closes even on a guarded path. The
+      // contributor fixes CI and resubmits; a GREEN guarded resubmission is then held for review. conclusion is
+      // 'neutral' here to prove it is the CI — not a verdict — driving the close.
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, ...guarded, ciState: "failed", pr: { labels: [] } })));
+      expect(plan).toContain("close");
     });
 
     it("does NOT approve or auto-merge a passing PR on a guarded path", () => {
@@ -213,6 +236,25 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(classes(plan)).toContain("merge");
       // A clean, non-guarded passing PR keeps the `ready-to-merge` label (the auto-merge it promises happens).
       expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
+    });
+  });
+
+  describe("anti-farming: a per-author submission flood forces a manual hold (#anti-gaming-flood)", () => {
+    it("HOLDS a flooding author's clean+green+approved PR — needs-human, never merged/approved/closed", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, submissionFloodHit: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const cls = classes(plan);
+      expect(cls).not.toContain("merge");
+      expect(cls).not.toContain("approve");
+      expect(cls).not.toContain("close"); // a clean flooding PR is HELD for review, not killed
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+    });
+    it("still CLOSES a flooding author's red-CI PR (a broken PR closes regardless of the flood hold)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, submissionFloodHit: true, ciState: "failed", pr: { labels: [] } })));
+      expect(plan).toContain("close");
+    });
+    it("does NOT hold a normal author (submissionFloodHit false) — a clean PR still auto-merges", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", label: "auto" }, submissionFloodHit: false, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
     });
   });
 
@@ -461,5 +503,87 @@ describe("downgradeMergeToHold — accuracy circuit-breaker (#self-improve / GAP
   it("holdOnly=false leaves a real would-merge plan UNCHANGED (byte-identical common path)", () => {
     const plan = wouldMerge();
     expect(downgradeMergeToHold(plan, false)).toBe(plan);
+  });
+});
+
+describe("downgradeCloseToHold — close-precision circuit-breaker (#close-precision-breaker)", () => {
+  // A REAL heuristic would-close plan from the planner: red CI on a contributor PR → changes-requested label +
+  // a heuristic close.
+  const heuristicClosePlan = () =>
+    planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto", label: "auto" }, ciState: "failed", failingCheckNames: ["codecov/patch"], blockerTitles: ["x"], pr: { labels: [] } }));
+  // A REAL deterministic linked-issue-hard-rule close (the exempt kind).
+  const linkedIssueClosePlan = () =>
+    planAgentMaintenanceActions(
+      input({
+        conclusion: "success",
+        autonomy: { close: "auto", label: "auto" },
+        ciState: "passed",
+        linkedIssueHardRule: { violated: true, reason: "Linked issue #5 is labeled `maintainer-only` — it is not open for community PRs." },
+        linkedIssueVerify: { verifyBeforeClose: false, closeDelaySeconds: 0 },
+        pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+      }),
+    );
+
+  it("a real heuristic would-CLOSE plan drops the close + adds needs-human-review + KEEPS changes-requested", () => {
+    const plan = heuristicClosePlan();
+    // sanity: the planner really would heuristically close, with a changes-requested label.
+    expect(plan.some((a) => a.actionClass === "close" && a.closeKind === "heuristic")).toBe(true);
+    expect(plan.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(true);
+    const held = downgradeCloseToHold(plan, true);
+    expect(held.some((a) => a.actionClass === "close")).toBe(false); // the would-close is downgraded...
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add")).toBe(true); // ...to a human hold
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_CHANGES)).toBe(true); // changes-requested KEPT
+    expect(held.some((a) => a.actionClass === "merge" || a.actionClass === "approve")).toBe(false); // NEVER adds merge/approve
+  });
+
+  it("a deterministic linked-issue-hard-rule close is EXEMPT (NOT dropped, no needs-human-review added)", () => {
+    const plan = linkedIssueClosePlan();
+    expect(plan.some((a) => a.actionClass === "close" && a.closeKind === "linked-issue-hard-rule")).toBe(true);
+    const held = downgradeCloseToHold(plan, true);
+    // The deterministic close survives untouched (no heuristic close present → the whole plan is returned as-is).
+    expect(held).toBe(plan);
+    expect(held.some((a) => a.actionClass === "close" && a.closeKind === "linked-issue-hard-rule")).toBe(true);
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toBe(false);
+  });
+
+  it("when BOTH a heuristic and a deterministic close are present, drops ONLY the heuristic one", () => {
+    const linkedIssueClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "ineligible issue", closeKind: "linked-issue-hard-rule" };
+    const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "CI failing", closeKind: "heuristic" };
+    const held = downgradeCloseToHold([linkedIssueClose, heuristicClose], true);
+    expect(held.some((a) => a.actionClass === "close" && a.closeKind === "heuristic")).toBe(false); // heuristic dropped
+    expect(held.some((a) => a.actionClass === "close" && a.closeKind === "linked-issue-hard-rule")).toBe(true); // deterministic KEPT
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add")).toBe(true);
+  });
+
+  it("closeHoldOnly=false leaves a real would-close plan UNCHANGED (byte-identical common path)", () => {
+    const plan = heuristicClosePlan();
+    expect(downgradeCloseToHold(plan, false)).toBe(plan);
+  });
+
+  it("closeHoldOnly=true but NO heuristic close planned (e.g. a would-merge) → no-op (returns plan unchanged)", () => {
+    const mergePlan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", label: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean" } }));
+    expect(mergePlan.some((a) => a.actionClass === "merge")).toBe(true);
+    const out = downgradeCloseToHold(mergePlan, true);
+    expect(out).toBe(mergePlan); // unchanged: no heuristic close to drop, merge untouched
+    expect(out.some((a) => a.actionClass === "merge")).toBe(true);
+  });
+
+  it("does NOT re-add needs-human-review when it is already present (idempotent)", () => {
+    const needsReview: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "guarded", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add" };
+    const heuristicClose: PlannedAgentAction = { actionClass: "close", requiresApproval: false, reason: "CI failing", closeKind: "heuristic" };
+    const held = downgradeCloseToHold([needsReview, heuristicClose], true);
+    expect(held.filter((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)).toHaveLength(1);
+    expect(held.some((a) => a.actionClass === "close")).toBe(false);
+  });
+
+  it("carries the dropped close's requiresApproval onto the new label, and defaults to false when it is nullish", () => {
+    // requiresApproval=true → carried through (the ?? false LEFT arm with a defined value).
+    const approvalClose: PlannedAgentAction = { actionClass: "close", requiresApproval: true, reason: "CI failing", closeKind: "heuristic" };
+    const heldApproval = downgradeCloseToHold([approvalClose], true);
+    expect(heldApproval.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)?.requiresApproval).toBe(true);
+    // requiresApproval nullish (defensive ?? false RIGHT arm) → the label defaults to requiresApproval=false.
+    const nullishClose = { actionClass: "close", reason: "CI failing", closeKind: "heuristic" } as unknown as PlannedAgentAction;
+    const heldNullish = downgradeCloseToHold([nullishClose], true);
+    expect(heldNullish.find((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW)?.requiresApproval).toBe(false);
   });
 });

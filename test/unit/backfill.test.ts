@@ -31,8 +31,10 @@ import {
   buildInstallationRepairDiagnostics,
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
+  configuredRequiredCiContexts,
   fetchAndStorePullRequestFilesForReview,
   fetchLiveCiAggregate,
+  fetchRequiredStatusContexts,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -2748,6 +2750,109 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Gate", summary: "External status failed" })]);
     });
 
+    it("treats a required context that never ran (absent from results) as pending, not passed", async () => {
+      // Bypass: requiredContexts = {"validate"}, but CI only returns non-required checks (e.g. CodeQL). The
+      // "validate" job never triggered (fork workflow skipped, matrix split, etc.). Without the absent-check
+      // guard, total > 0 (CodeQL passed) → ciState = "passed" even though the required check never ran.
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              // Only non-required checks ran — "validate" is absent.
+              { name: "CodeQL", status: "completed", conclusion: "success", app: { slug: "github-advanced-security" } },
+              { name: "Superagent Security Scan", status: "completed", conclusion: "success", app: { slug: "superagent" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["validate"]));
+
+      expect(aggregate.ciState).toBe("pending"); // required "validate" never ran — must not be "passed"
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+
+    it("keeps bot-owned required contexts as seen (not absent) even though they are excluded from gate logic", async () => {
+      // The existing deadlock-avoidance test: bot-owned required contexts (Gate, Context) in in_progress are
+      // skipped from gate logic, but seenContextNames must still mark them to avoid the absent-check guard
+      // treating them as missing and re-introducing a false anyPending.
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              { name: "Gittensory Gate", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "sha", "tok", new Set(["validate", "Gittensory Gate"]));
+
+      // "Gittensory Gate" is a bot check: present in results (so not absent), excluded from gate logic → passed
+      expect(aggregate.ciState).toBe("passed");
+    });
+
+  });
+
+  describe("configuredRequiredCiContexts", () => {
+    it("returns null when the var is unset (preserves the fold-all default)", () => {
+      expect(configuredRequiredCiContexts({})).toBeNull();
+    });
+
+    it("returns null when the var is empty or only separators/whitespace", () => {
+      expect(configuredRequiredCiContexts({ GITTENSORY_REQUIRED_CI_CONTEXTS: "" })).toBeNull();
+      expect(configuredRequiredCiContexts({ GITTENSORY_REQUIRED_CI_CONTEXTS: "  , ,, " })).toBeNull();
+    });
+
+    it("parses a comma-separated set, trimming whitespace and dropping empty entries", () => {
+      const parsed = configuredRequiredCiContexts({ GITTENSORY_REQUIRED_CI_CONTEXTS: "Superagent Security Scan, validate ,,Gittensory Gate" });
+      expect(parsed).not.toBeNull();
+      expect([...(parsed as Set<string>)].sort()).toEqual(["Gittensory Gate", "Superagent Security Scan", "validate"]);
+    });
+  });
+
+  describe("fetchRequiredStatusContexts", () => {
+    it("returns null without fetching when baseRef is missing", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REQUIRED_CI_CONTEXTS: "validate" });
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", null, "public-token")).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns the live required set when branch protection is readable (both contexts and checks shapes)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REQUIRED_CI_CONTEXTS: "ignored-when-live-read-works" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/protection/required_status_checks")) {
+          return Response.json({ contexts: ["validate", "", null], checks: [{ context: "Superagent Security Scan" }, { context: "  " }] });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const required = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+      expect([...(required as Set<string>)].sort()).toEqual(["Superagent Security Scan", "validate"]);
+    });
+
+    it("falls back to the configured set when the live read fails (e.g. 403, no admin:read)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REQUIRED_CI_CONTEXTS: "Superagent Security Scan,validate,Gittensory Gate" });
+      vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
+      const required = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+      expect([...(required as Set<string>)].sort()).toEqual(["Gittensory Gate", "Superagent Security Scan", "validate"]);
+    });
+
+    it("returns null when the live read fails and no fallback is configured (conservative fold-all)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+    });
   });
 
 });

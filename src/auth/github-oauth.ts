@@ -25,6 +25,10 @@ type GitHubUserResponse = {
   message?: string;
 };
 
+type GitHubAppTokenCheck = {
+  app?: { client_id?: string };
+};
+
 type GitHubWebOAuthState = {
   nonce: string;
   returnTo: string;
@@ -161,7 +165,19 @@ export async function createSessionFromGitHubToken(
   env: Env,
   githubToken: string,
   metadata: Record<string, JsonValue> = {},
+  options: { verifyAppAudience?: boolean } = {},
 ): Promise<{ token: string; login: string; expiresAt: string; scopes: string[] }> {
+  // A caller-supplied token (the github_token_exchange route) carries no proof it was minted for THIS
+  // OAuth app. Without an audience check, any token a victim issued to an unrelated app would mint a
+  // gittensory session as that login. The device/web flows skip this — they minted the token themselves.
+  if (options.verifyAppAudience && !(await verifyTokenBelongsToApp(env, githubToken))) {
+    await recordAuditEvent(env, {
+      eventType: "auth.github_session",
+      outcome: "denied",
+      detail: "github_token_audience_mismatch",
+    });
+    throw new Error("github_token_audience_invalid");
+  }
   const response = await fetch("https://api.github.com/user", {
     headers: {
       accept: "application/vnd.github+json",
@@ -183,6 +199,27 @@ export async function createSessionFromGitHubToken(
   const githubUser = user.id === undefined ? { login: user.login } : { login: user.login, id: user.id };
   const { token, session } = await createSessionForGitHubUser(env, githubUser, { scopes, metadata });
   return { token, login: session.login, expiresAt: session.expiresAt, scopes: session.scopes };
+}
+
+// Confirms an access token was issued for this OAuth app via GitHub's token-introspection endpoint
+// (POST /applications/{client_id}/token, Basic client_id:client_secret). Fail-closed: if the app
+// isn't configured, the token can't be vouched for, so it is rejected.
+async function verifyTokenBelongsToApp(env: Env, githubToken: string): Promise<boolean> {
+  if (!env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) return false;
+  const response = await fetch(`https://api.github.com/applications/${env.GITHUB_OAUTH_CLIENT_ID}/token`, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Basic ${btoa(`${env.GITHUB_OAUTH_CLIENT_ID}:${env.GITHUB_OAUTH_CLIENT_SECRET}`)}`,
+      "content-type": "application/json",
+      "user-agent": "gittensory-api",
+      "x-github-api-version": "2022-11-28",
+    },
+    body: JSON.stringify({ access_token: githubToken }),
+  });
+  if (!response.ok) return false;
+  const payload = (await response.json().catch(() => ({}))) as GitHubAppTokenCheck;
+  return payload.app?.client_id === env.GITHUB_OAUTH_CLIENT_ID;
 }
 
 function parseScopes(scopeHeader: string | undefined): string[] {

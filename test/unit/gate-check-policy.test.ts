@@ -98,6 +98,18 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
   });
 });
 
+describe("AI fail-closed hold (#ai-fail-closed)", () => {
+  it("holds the gate NEUTRAL (held for human, never a failure-close) when an AI review is inconclusive", () => {
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{ code: "ai_review_inconclusive", title: "AI review could not be completed", severity: "warning", detail: "no usable verdict", action: "held for human" }],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toEqual([]);
+  });
+});
+
 describe("policy pack (#692)", () => {
   it("gittensor pack hard-blocks every author the same — confirmed status no longer changes the verdict (#gate-nonconfirmed)", () => {
     const gittensor = settings({ gatePack: "gittensor", linkedIssueGateMode: "block" });

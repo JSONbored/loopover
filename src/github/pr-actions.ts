@@ -110,3 +110,21 @@ export async function closePullRequest(env: Env, installationId: number, repoFul
   });
   return { state: (response.data as { state: string }).state };
 }
+
+/** Reopen-prevention (#one-shot-reopen): the login of whoever LAST closed this PR (most recent `closed` event in
+ *  the issue-events timeline), or null if none / on error. Lets the reopen handler distinguish a maintainer/bot
+ *  close (one-shot — a contributor may not reopen) from a contributor self-close (which they MAY reopen). */
+export async function getLastCloserLogin(env: Env, installationId: number, repoFullName: string, issueNumber: number): Promise<string | null> {
+  try {
+    const { owner, repo } = splitRepo(repoFullName);
+    const token = await createInstallationToken(env, installationId);
+    const octokit = new Octokit({ auth: token });
+    // issue-events are returned oldest-first, so the LAST `closed` entry is the most recent close.
+    const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: 100 });
+    const events = response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>;
+    const closes = events.filter((entry) => entry.event === "closed");
+    return closes.length > 0 ? (closes[closes.length - 1]?.actor?.login ?? null) : null;
+  } catch {
+    return null;
+  }
+}

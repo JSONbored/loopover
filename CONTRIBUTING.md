@@ -9,6 +9,26 @@ This project is maintained with a high review bar. PRs that ignore these guideli
 unrelated work, reintroduce retired architecture, or repeatedly fail the required gates may be
 closed without an extended review cycle.
 
+## What Happens to Your PR (reviewed and acted on automatically)
+
+gittensory reviews every PR with an automated gate (a GitHub App) and **acts on the outcome within a
+few minutes** — there is no extended human back-and-forth. For a contributor PR (you are not the repo
+owner or an automation bot):
+
+- **Auto-merged** when the gate passes, **all CI is green**, the branch is conflict-free, and any
+  required approvals are satisfied.
+- **Auto-closed (one-shot)** on a clear adverse signal: a failing CI check (including coverage,
+  `codecov/patch`), a gate failure, a base/merge conflict, or a linked issue that is ineligible
+  (assigned to someone else, maintainer-only, or missing a required label). To recover, fix the
+  problem and open a **fresh** PR; **reopening** the closed PR is how you dispute the decision.
+- **Held for a maintainer** (not closed) when CI is still running/unverified — e.g. a first-time fork
+  PR whose Actions await maintainer approval — or when the PR touches a protected/crucial path.
+
+So **get it green and correct before you push**: run the full local gate (`npm run test:ci`), keep your
+branch current with `main` (a conflict closes the PR), and link an eligible issue. If you use Claude
+Code or Codex, the `.claude/skills/contributing-to-gittensory` skill (and the root `AGENTS.md`) encode
+the whole procedure step by step.
+
 ## What We Accept
 
 Focused contributions are welcome in these areas:

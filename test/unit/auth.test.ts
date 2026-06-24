@@ -713,6 +713,39 @@ describe("private-beta auth and rate limiting", () => {
     await expect(createSessionFromGitHubToken(env, "github-token")).resolves.toMatchObject({ login: "jsonbored", scopes: [] });
   });
 
+  it("verifies the GitHub token audience before minting a session on the token-exchange path", async () => {
+    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
+    const introspect = (appClientId: string | undefined) =>
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "https://api.github.com/applications/client-id/token") {
+          return appClientId === undefined ? new Response("{", { status: 200 }) : Response.json({ app: { client_id: appClientId } });
+        }
+        if (url === "https://api.github.com/user") return Response.json({ login: "jsonbored", id: 42 });
+        return Response.json({});
+      });
+
+    introspect("client-id");
+    await expect(createSessionFromGitHubToken(env, "valid-token", {}, { verifyAppAudience: true })).resolves.toMatchObject({ login: "jsonbored" });
+
+    introspect("someone-elses-app");
+    await expect(createSessionFromGitHubToken(env, "foreign-token", {}, { verifyAppAudience: true })).rejects.toThrow(/audience_invalid/);
+
+    introspect(undefined);
+    await expect(createSessionFromGitHubToken(env, "unparseable-introspection", {}, { verifyAppAudience: true })).rejects.toThrow(/audience_invalid/);
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString() === "https://api.github.com/applications/client-id/token" ? Response.json({}, { status: 404 }) : Response.json({}),
+    );
+    await expect(createSessionFromGitHubToken(env, "revoked-token", {}, { verifyAppAudience: true })).rejects.toThrow(/audience_invalid/);
+
+    vi.stubGlobal("fetch", async () => Response.json({ login: "jsonbored", id: 42 }));
+    await expect(
+      createSessionFromGitHubToken(createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" }), "no-secret", {}, { verifyAppAudience: true }),
+    ).rejects.toThrow(/audience_invalid/);
+    await expect(createSessionFromGitHubToken(createTestEnv(), "no-oauth", {}, { verifyAppAudience: true })).rejects.toThrow(/audience_invalid/);
+  });
+
   it("polls GitHub device flow and creates a session only after authorization", async () => {
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", ADMIN_GITHUB_LOGINS: "jsonbored,scopefree" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

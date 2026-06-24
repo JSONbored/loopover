@@ -18,6 +18,17 @@ describe("change-guardrail glob matching", () => {
     expect(matchesAny("src/auth/session.ts", ["src/*.ts"])).toBe(false);
   });
 
+  it("matches case-insensitively and canonicalizes `./`, leading `/`, and `\\` separators (evasion-proof)", () => {
+    expect(matchesAny(".github/Workflows/ci.yml", [".github/workflows/**"])).toBe(true); // capital W
+    expect(matchesAny("Scripts/Deploy.SH", ["scripts/**"])).toBe(true); // mixed case path
+    expect(matchesAny("scripts/build.mjs", ["Scripts/**"])).toBe(true); // mixed case glob
+    expect(matchesAny("./scripts/build.mjs", ["scripts/**"])).toBe(true); // leading ./
+    expect(matchesAny("/scripts/build.mjs", ["scripts/**"])).toBe(true); // leading /
+    expect(matchesAny("scripts\\win\\build.ps1", ["scripts/**"])).toBe(true); // backslash separators
+    expect(matchesAny("src/a/deep/model.ts", ["src/**/model.ts"])).toBe(true); // mid-path `**/` consumes the separator
+    expect(changedPathsHittingGuardrail([".github/Workflows/deploy.yml"], [".github/workflows/**"])).toEqual([".github/Workflows/deploy.yml"]);
+  });
+
   it("does not match unrelated paths", () => {
     expect(matchesAny("docs/readme.md", ["scripts/**", "src/scoring/**"])).toBe(false);
     expect(matchesAny("src/ui/button.tsx", ["src/scoring/**", "src/auth/**"])).toBe(false);

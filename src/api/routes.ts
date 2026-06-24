@@ -991,7 +991,7 @@ export function createApp() {
     const githubToken = typeof body?.githubToken === "string" ? body.githubToken : "";
     if (!githubToken) return c.json({ error: "github_token_required" }, 400);
     try {
-      const session = await createSessionFromGitHubToken(c.env, githubToken, { source: "github_token_exchange" });
+      const session = await createSessionFromGitHubToken(c.env, githubToken, { source: "github_token_exchange" }, { verifyAppAudience: true });
       await recordRouteProductUsage(c, {
         surface: "api",
         eventName: "auth_session_created",
@@ -2163,7 +2163,7 @@ export function createApp() {
       getRepositorySettings(c.env, fullName),
       listPullRequests(c.env, fullName),
     ]);
-    return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso() }));
+    return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso(), duplicateWinnerEnabled: c.env.GITTENSORY_DUPLICATE_WINNER === "true" }));
   });
 
   // #543 outcome-learning loop: is the slop score predictive, and are recommendations panning out? Read-only

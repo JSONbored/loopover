@@ -130,6 +130,13 @@ function sameRepo(a: string | null | undefined, b: string): boolean {
   return (a ?? "").toLowerCase() === b.toLowerCase();
 }
 
+/** One-line human summary of a repo's slop-band calibration verdict (mirrors the discriminates signal). Pure. */
+export function outcomeCalibrationSummary(fullName: string, slop: SlopOutcomeCalibration): string {
+  if (slop.discriminates === true) return `Outcome calibration for ${fullName}: slop bands are predictive across ${slop.totalResolved} resolved PRs.`;
+  if (slop.discriminates === false) return `Outcome calibration for ${fullName}: slop bands are NOT discriminating on current data (${slop.totalResolved} resolved PRs).`;
+  return `Outcome calibration for ${fullName}: not enough resolved PR data to judge slop calibration yet.`;
+}
+
 /** Load a repo's PRs + recommendation outcomes and assemble the calibration report. */
 export async function buildRepoOutcomeCalibration(env: Env, repoFullName: string, windowDays?: number): Promise<OutcomeCalibration> {
   const [pullRequests, outcomes] = await Promise.all([

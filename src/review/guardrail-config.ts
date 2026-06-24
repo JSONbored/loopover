@@ -13,6 +13,23 @@ import type { JsonValue } from "../types";
 // these, it never opens the gate wide.
 export const DEFAULT_CRUCIAL_GUARDRAIL_GLOBS = [".github/workflows/**", "scripts/**"];
 
+// The gate's OWN policy files, guarded for EVERY repo regardless of KV tuning. A PR that edits the
+// config-as-code that defines the gate or coverage policy (the `.gittensory.*` focus manifest the loader
+// reads, or `codecov.yml`) must always be HELD for the owner — otherwise one auto-merged config-only PR
+// could weaken the gate repo-wide before any subsequent PR is evaluated against the new policy. The
+// manifest filenames mirror signals/focus-manifest-loader's candidates; this only ever WIDENS the guard.
+export const CONFIG_AS_CODE_GUARDRAIL_GLOBS = [
+  ".gittensory.yml",
+  ".gittensory.yaml",
+  ".gittensory.json",
+  ".github/gittensory.yml",
+  ".github/gittensory.yaml",
+  ".github/gittensory.json",
+  "**/codecov.yml",
+  "**/codecov.yaml",
+  "**/.codecov.yml",
+];
+
 // A KV READ FAULT (binding present but the read threw — an outage/transient error) must fail CLOSED, NOT fall
 // back to the narrow default: a config-read fault correlated with a contributor flood would otherwise silently
 // shrink the guarded surface to CI+scripts and let crown-jewel edits (scoring/auth/rules/the gate) auto-merge.
@@ -34,11 +51,32 @@ function asNonEmptyStringArray(value: unknown): string[] | null {
  */
 export async function loadHardGuardrailGlobs(env: Env, repoFullName: string): Promise<string[]> {
   const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
-  if (!env.REVIEW_CONFIG) return DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
+  // The config-as-code policy files are guarded for every repo; the fail-closed `**` already covers them.
+  if (!env.REVIEW_CONFIG) return [...DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ...CONFIG_AS_CODE_GUARDRAIL_GLOBS];
   try {
     const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { hardGuardrailGlobs?: JsonValue } | null;
-    return asNonEmptyStringArray(config?.hardGuardrailGlobs) ?? DEFAULT_CRUCIAL_GUARDRAIL_GLOBS;
+    return [...(asNonEmptyStringArray(config?.hardGuardrailGlobs) ?? DEFAULT_CRUCIAL_GUARDRAIL_GLOBS), ...CONFIG_AS_CODE_GUARDRAIL_GLOBS];
   } catch {
     return FAIL_CLOSED_GUARDRAIL_GLOBS;
+  }
+}
+
+/**
+ * Anti-farming submission-flood limit for a repo, read from the same shared REVIEW_CONFIG KV (key = repo slug):
+ * `maxSubmissionsPerAuthorWindow` (the per-author cap) + `submissionWindowHours` (the window, default 24h). Returns
+ * null when unset/invalid (the feature is DISABLED for that repo) or on a KV fault — never throws, and a fault
+ * disables rather than false-holding a contributor. (#anti-gaming-flood)
+ */
+export async function loadSubmissionFloodLimit(env: Env, repoFullName: string): Promise<{ maxPerWindow: number; windowHours: number } | null> {
+  const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
+  if (!env.REVIEW_CONFIG) return null;
+  try {
+    const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { maxSubmissionsPerAuthorWindow?: JsonValue; submissionWindowHours?: JsonValue } | null;
+    const maxPerWindow = Number(config?.maxSubmissionsPerAuthorWindow);
+    if (!Number.isFinite(maxPerWindow) || maxPerWindow <= 0) return null; // unset / invalid → disabled
+    const hours = Number(config?.submissionWindowHours);
+    return { maxPerWindow, windowHours: Number.isFinite(hours) && hours > 0 ? hours : 24 };
+  } catch {
+    return null; // KV fault → disabled (never false-hold)
   }
 }

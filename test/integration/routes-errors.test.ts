@@ -15,9 +15,10 @@ describe("api route guards and error branches", () => {
 
   it("creates, verifies, and revokes GitHub-backed API sessions", async () => {
     const app = createApp();
-    const env = createTestEnv();
+    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
+      if (url.includes("/applications/")) return Response.json({ app: { client_id: "client-id" } });
       if (url === "https://api.github.com/user") return Response.json({ login: "jsonbored", id: 42 });
       return Response.json({});
     });
@@ -383,7 +384,7 @@ describe("api route guards and error branches", () => {
 
   it("keeps auth route failures generic for non-Error provider failures", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" });
+    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
     vi.stubGlobal("fetch", async () => {
       throw "provider down";
     });

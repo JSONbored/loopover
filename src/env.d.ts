@@ -135,6 +135,13 @@ declare global {
      *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
      *  See review/public-stats.ts. */
     GITTENSORY_PUBLIC_STATS?: string;
+    /** Comma-separated fallback set of REQUIRED CI contexts (e.g. "Superagent Security Scan,validate,Gittensory Gate").
+     *  Used ONLY when the live branch-protection read in fetchRequiredStatusContexts fails — usually a 403 because the
+     *  installation token lacks `administration:read`. It keeps required-only CI evaluation (review starts once the
+     *  required checks pass; a non-required red does not drive an automated close) instead of conservatively folding
+     *  ALL checks. Unset/empty preserves the byte-identical fold-all default. The names MUST match the exact
+     *  check-run/status contexts. See github/backfill.ts:configuredRequiredCiContexts. */
+    GITTENSORY_REQUIRED_CI_CONTEXTS?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */
@@ -164,6 +171,16 @@ declare global {
      *  deploy). The cron/endpoint flags (ops / selftune / parity / content-lane / draft) are NOT scoped by
      *  this allowlist — they stay global. See src/review/cutover-gate.ts. */
     GITTENSORY_REVIEW_REPOS?: string;
+    /** Duplicate-winner adjudication (#dup-winner): when truthy, a same-issue duplicate cluster of OPEN PRs
+     *  spares exactly ONE winner — the EARLIEST opened = the LOWEST PR number among the OPEN siblings — instead
+     *  of gate-blocking + auto-closing every sibling. Only the LOSERS get the `duplicate_pr_risk` blocker, the
+     *  "duplicate of another open PR" close reason, the slop duplicate-cluster penalty, and the panel hard
+     *  duplicate block; the winner is judged on its OWN merits (CI / conflict / gate / linked-issue / slop).
+     *  Default OFF — unset/false ⇒ every duplicate sibling dies (today's behavior, byte-identical: the new
+     *  guards short-circuit so the advisory finding, gate conclusion, close reason, slop, and panels are
+     *  unchanged). Once a winner closes, the next-lowest OPEN sibling becomes the winner on re-eval. See
+     *  src/signals/duplicate-winner.ts. */
+    GITTENSORY_DUPLICATE_WINNER?: string;
   }
 }
 

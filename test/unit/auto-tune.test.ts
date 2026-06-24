@@ -2,13 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AUTOCLEAR_AFTER_MS,
   applyAutoTune,
+  applyCloseAutoTune,
   computeTuningRecommendations,
   type FlagStore,
   type GateEvalReport,
   type GateEvalRow,
+  maybeAutoClearCloseHoldOnly,
   maybeAutoClearHoldOnly,
   planAutoTune,
+  planCloseAutoTune,
   shouldAutoClear,
+  shouldAutoClearClose,
 } from "../../src/review/auto-tune";
 
 const row = (over: Partial<GateEvalRow>): GateEvalRow => ({
@@ -31,14 +35,16 @@ const report = (rows: GateEvalRow[]): GateEvalReport => ({ rows, hasSignal: rows
 function stubFlags(over: Partial<FlagStore> = {}): {
   flags: FlagStore;
   isHoldOnly: ReturnType<typeof vi.fn>;
+  isCloseHoldOnly: ReturnType<typeof vi.fn>;
   setFlag: ReturnType<typeof vi.fn>;
   flagSetAt: ReturnType<typeof vi.fn>;
 } {
   const isHoldOnly = vi.fn(async (_project: string) => false);
+  const isCloseHoldOnly = vi.fn(async (_project: string) => false);
   const setFlag = vi.fn(async (_key: string, _on: boolean) => undefined);
   const flagSetAt = vi.fn(async (_key: string): Promise<string | null> => null);
-  const flags: FlagStore = { isHoldOnly, setFlag, flagSetAt, ...over };
-  return { flags, isHoldOnly, setFlag, flagSetAt };
+  const flags: FlagStore = { isHoldOnly, isCloseHoldOnly, setFlag, flagSetAt, ...over };
+  return { flags, isHoldOnly, isCloseHoldOnly, setFlag, flagSetAt };
 }
 
 describe("planAutoTune (#self-improve) — circuit-breaker is one-directional", () => {
@@ -121,12 +127,113 @@ describe("shouldAutoClear (#272 recovery-gated breaker auto-clear)", () => {
     const setFlag = vi.fn(async () => undefined);
     const flags: FlagStore = {
       isHoldOnly: vi.fn(async () => true),
+      isCloseHoldOnly: vi.fn(async () => true),
       setFlag,
       flagSetAt: vi.fn(async () => {
         throw new Error("d1 read down");
       }),
     };
     expect(await maybeAutoClearHoldOnly(flags, recovered, "g", now)).toBe(false);
+    expect(setFlag).not.toHaveBeenCalled();
+  });
+});
+
+// ── CLOSE-precision circuit-breaker (symmetric mirror of the merge breaker) ─────────────────────────────────
+
+describe("planCloseAutoTune (#close-precision-breaker) — tightening-only, close direction", () => {
+  it("engages when CLOSE precision drops below the floor over a real sample", () => {
+    const a = planCloseAutoTune(report([row({ project: "gittensory", decided: 20, wouldClose: 12, closeConfirmed: 8, closePrecision: 0.66 })]));
+    expect(a).toHaveLength(1);
+    expect(a[0]?.project).toBe("gittensory");
+    expect(a[0]?.message).toMatch(/Auto-CLOSE DISABLED/);
+    expect(a[0]?.message).toContain("closehold:gittensory");
+  });
+  it("does NOT engage on a thin sample (< min decided)", () => {
+    expect(planCloseAutoTune(report([row({ project: "p", decided: 5, wouldClose: 5, closeConfirmed: 2, closePrecision: 0.4 })]))).toHaveLength(0);
+  });
+  it("does NOT engage when close precision is null (no would-close predictions with a known outcome)", () => {
+    expect(planCloseAutoTune(report([row({ project: "p", decided: 30, wouldClose: 0, closeConfirmed: 0, closePrecision: null })]))).toHaveLength(0);
+  });
+  it("does NOT engage when close precision is healthy (it only ever tightens, never loosens)", () => {
+    expect(planCloseAutoTune(report([row({ project: "p", decided: 30, wouldClose: 30, closeConfirmed: 29, closePrecision: 0.97 })]))).toHaveLength(0);
+  });
+});
+
+describe("applyCloseAutoTune", () => {
+  it("sets the closehold flag for a newly-flagged project", async () => {
+    const { flags, setFlag } = stubFlags();
+    const engaged = await applyCloseAutoTune(flags, report([row({ project: "g", decided: 20, wouldClose: 10, closeConfirmed: 5, closePrecision: 0.5 })]));
+    expect(engaged).toHaveLength(1);
+    expect(setFlag).toHaveBeenCalledWith("closehold:g", true);
+  });
+  it("does not re-engage (or re-alert) a project already close-held", async () => {
+    const { flags, setFlag } = stubFlags({ isCloseHoldOnly: vi.fn(async () => true) });
+    const engaged = await applyCloseAutoTune(flags, report([row({ project: "g", decided: 20, wouldClose: 10, closeConfirmed: 5, closePrecision: 0.5 })]));
+    expect(engaged).toHaveLength(0);
+    expect(setFlag).not.toHaveBeenCalled();
+  });
+  it("swallows a write error and continues (fail-safe, ev:close_tune_error)", async () => {
+    const { flags } = stubFlags({
+      setFlag: vi.fn(async () => {
+        throw new Error("d1 down");
+      }),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const engaged = await applyCloseAutoTune(flags, report([row({ project: "g", decided: 20, wouldClose: 10, closeConfirmed: 5, closePrecision: 0.5 })]));
+    expect(engaged).toHaveLength(0); // not pushed because the write threw
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("close_tune_error"));
+    log.mockRestore();
+  });
+});
+
+describe("shouldAutoClearClose (#close-precision-breaker recovery-gated auto-clear)", () => {
+  const now = Date.parse("2026-06-20T12:00:00Z");
+  const past = new Date(now - AUTOCLEAR_AFTER_MS - 3_600_000).toISOString(); // >24h ago
+  const recent = new Date(now - 3_600_000).toISOString(); // 1h ago
+  const recovered = report([row({ project: "g", decided: 20, wouldClose: 20, closeConfirmed: 20, closePrecision: 1.0 })]);
+  const failing = report([row({ project: "g", decided: 20, wouldClose: 10, closeConfirmed: 5, closePrecision: 0.5 })]);
+  it("never clears when not auto-engaged for this project (setAt null = global/human breaker)", () => {
+    expect(shouldAutoClearClose(recovered, "g", null, now)).toBe(false);
+  });
+  it("waits out the cooldown", () => {
+    expect(shouldAutoClearClose(recovered, "g", recent, now)).toBe(false);
+  });
+  it("clears after cooldown once close precision recovered (or there's no recent close signal)", () => {
+    expect(shouldAutoClearClose(recovered, "g", past, now)).toBe(true);
+    expect(shouldAutoClearClose(report([]), "g", past, now)).toBe(true);
+  });
+  it("keeps the breaker engaged if close precision is STILL failing after cooldown", () => {
+    expect(shouldAutoClearClose(failing, "g", past, now)).toBe(false);
+  });
+  it("parses a SQLite 'YYYY-MM-DD HH:MM:SS' (UTC, no zone) timestamp as UTC, not local", () => {
+    const sqlite = new Date(now - AUTOCLEAR_AFTER_MS - 3_600_000).toISOString().slice(0, 19).replace("T", " "); // 25h ago, SQLite format
+    expect(shouldAutoClearClose(recovered, "g", sqlite, now)).toBe(true);
+    const sqliteRecent = new Date(now - 3_600_000).toISOString().slice(0, 19).replace("T", " "); // 1h ago
+    expect(shouldAutoClearClose(recovered, "g", sqliteRecent, now)).toBe(false);
+  });
+  it("maybeAutoClearCloseHoldOnly clears the flag when due", async () => {
+    const { flags, setFlag } = stubFlags({ flagSetAt: vi.fn(async () => past) });
+    expect(await maybeAutoClearCloseHoldOnly(flags, recovered, "g", now)).toBe(true);
+    expect(setFlag).toHaveBeenCalledWith("closehold:g", false);
+  });
+  it("maybeAutoClearCloseHoldOnly does NOT clear while still in cooldown", async () => {
+    const { flags, setFlag } = stubFlags({ flagSetAt: vi.fn(async () => recent) });
+    expect(await maybeAutoClearCloseHoldOnly(flags, recovered, "g", now)).toBe(false);
+    expect(setFlag).not.toHaveBeenCalled();
+  });
+  it("maybeAutoClearCloseHoldOnly swallows a read error and stays held (fail-CLOSED catch)", async () => {
+    // flagSetAt throwing exercises the try/catch around the clear path: it must fail CLOSED (return false,
+    // breaker stays engaged) and never call setFlag — a DB blip can't silently re-enable auto-close.
+    const setFlag = vi.fn(async () => undefined);
+    const flags: FlagStore = {
+      isHoldOnly: vi.fn(async () => true),
+      isCloseHoldOnly: vi.fn(async () => true),
+      setFlag,
+      flagSetAt: vi.fn(async () => {
+        throw new Error("d1 read down");
+      }),
+    };
+    expect(await maybeAutoClearCloseHoldOnly(flags, recovered, "g", now)).toBe(false);
     expect(setFlag).not.toHaveBeenCalled();
   });
 });

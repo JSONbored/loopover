@@ -56,10 +56,6 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
 
 export const DEFAULT_GITTENSOR_UPSTREAM_REPO = "entrius/gittensor";
 export const DEFAULT_GITTENSOR_UPSTREAM_REF = "test";
-export const SCORING_CONSTANTS_URL =
-  "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/constants.py";
-export const PROGRAMMING_LANGUAGES_URL =
-  "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/programming_languages.json";
 
 function scoringUpstreamConfig(env: Env): { repo: string; ref: string } {
   return {
@@ -72,6 +68,19 @@ function upstreamRawUrl(config: { repo: string; ref: string }, path: string): st
   return `https://raw.githubusercontent.com/${config.repo}/${encodeURIComponent(config.ref)}/${path}`;
 }
 
+// Fetch the HEAD commit SHA of the upstream ref for audit trail. Fail-open: a network hiccup or a
+// missing administration token must never block the constants refresh itself.
+async function fetchUpstreamRefSha(upstream: { repo: string; ref: string }, token: string | undefined): Promise<string | null> {
+  try {
+    const response = await fetch(`https://api.github.com/repos/${upstream.repo}/commits/${encodeURIComponent(upstream.ref)}`, { headers: githubHeaders(token, "application/vnd.github+json") });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { sha?: string };
+    return typeof data.sha === "string" && data.sha.length > 0 ? data.sha : null;
+  } catch {
+    return null;
+  }
+}
+
 const SCORING_CONSTANT_NAMES = new Set([...Object.keys(DEFAULT_SCORING_CONSTANTS), "MIN_TOKEN_SCORE_FOR_BASE_SCORE", "MAX_CODE_DENSITY_MULTIPLIER"]);
 
 export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringModelSnapshotRecord> {
@@ -80,10 +89,11 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
   const upstream = scoringUpstreamConfig(env);
   const constantsUrl = upstreamRawUrl(upstream, "gittensor/constants.py");
   const programmingLanguagesUrl = upstreamRawUrl(upstream, "gittensor/validator/weights/programming_languages.json");
-  const [registrySnapshot, constantsResult, languagesResult] = await Promise.all([
+  const [registrySnapshot, constantsResult, languagesResult, upstreamSourceSha] = await Promise.all([
     getLatestRegistrySnapshot(env),
     fetchText(constantsUrl, env.GITHUB_PUBLIC_TOKEN),
     fetchJson(programmingLanguagesUrl, env.GITHUB_PUBLIC_TOKEN),
+    fetchUpstreamRefSha(upstream, env.GITHUB_PUBLIC_TOKEN),
   ]);
 
   let sourceKind: ScoringModelSnapshotRecord["sourceKind"] = "raw-github";
@@ -126,13 +136,14 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
       constants: constantsPayload,
       programmingLanguagesSourceUrl: programmingLanguagesUrl,
       registryRepoCount: registrySnapshot?.repoCount ?? 0,
+      ...(upstreamSourceSha ? { upstreamSourceSha } : {}),
     },
   };
   await persistScoringModelSnapshot(env, snapshot);
   if (constantsResult.ok) {
     await syncUnmodeledScoringConstantDrift(env, {
       unmodeledConstants: findUnmodeledUpstreamConstants(constantsResult.value),
-      source: { repo: upstream.repo, ref: upstream.ref, commitSha: null },
+      source: { repo: upstream.repo, ref: upstream.ref, commitSha: upstreamSourceSha },
     });
   }
   return snapshot;

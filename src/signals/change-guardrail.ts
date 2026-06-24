@@ -4,16 +4,26 @@
 // reviewbot core/change-classifier.ts — the mechanism that prevents the awesome-claude #4196 incident class
 // (a weakened policy script auto-merging because its path wasn't guarded). Pure + dependency-free.
 
-/** Convert a path glob (`*` matches within a segment, `**` matches across `/`) to an anchored RegExp. */
+// Canonicalize a path or glob so matching is case- and separator-insensitive: backslashes → `/`, drop a
+// leading `./` or `/`, and case-fold. Mirrors signals/focus-manifest `normalizePathForMatch` — without it a
+// guarded path is evaded with `.github/Workflows/` (capital W), a `./`-prefix, or a `\` separator, turning a
+// mandatory human hold on CI/policy files into an auto-merge.
+function canonicalize(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").toLowerCase();
+}
+
+/** Convert a path glob (`*` matches within a segment, `**` matches across `/`) to an anchored RegExp. The
+ *  glob is canonicalized first, so matching is case-insensitive against a canonicalized path. */
 function globToRegExp(glob: string): RegExp {
+  const canonical = canonicalize(glob);
   let re = "";
-  for (let i = 0; i < glob.length; i += 1) {
-    const c = glob.charAt(i);
+  for (let i = 0; i < canonical.length; i += 1) {
+    const c = canonical.charAt(i);
     if (c === "*") {
-      if (glob.charAt(i + 1) === "*") {
+      if (canonical.charAt(i + 1) === "*") {
         re += ".*";
         i += 1;
-        if (glob.charAt(i + 1) === "/") i += 1; // `**/` also matches zero segments
+        if (canonical.charAt(i + 1) === "/") i += 1; // `**/` also matches zero segments
       } else {
         re += "[^/]*";
       }
@@ -26,9 +36,10 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-/** True if `path` matches any of the globs (`*` within a segment, `**` across `/`). */
+/** True if `path` matches any of the globs (`*` within a segment, `**` across `/`), case-insensitively. */
 export function matchesAny(path: string, globs: string[]): boolean {
-  return globs.some((g) => globToRegExp(g).test(path));
+  const canonicalPath = canonicalize(path);
+  return globs.some((g) => globToRegExp(g).test(canonicalPath));
 }
 
 /**

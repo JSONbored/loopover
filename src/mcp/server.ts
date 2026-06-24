@@ -68,6 +68,7 @@ import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -135,6 +136,12 @@ function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: 
 const ownerRepoShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
+};
+
+const ownerRepoWindowShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  windowDays: z.number().int().positive().optional(),
 };
 
 const loginShape = {
@@ -587,6 +594,16 @@ const freshnessResponseOutputSchema = {
   report: z.unknown().optional(),
 };
 
+const maintainerMeasurementReportOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  windowDays: z.number().nullable().optional(),
+  slop: z.unknown().optional(),
+  recommendations: z.unknown().optional(),
+  signals: z.array(z.string()).optional(),
+  status: z.string().optional(),
+};
+
 const contributorProfileOutputSchema = {
   login: z.string().optional(),
   github: z.unknown().optional(),
@@ -1024,6 +1041,17 @@ export class GittensoryMcp {
         outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoOutcomePatterns(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_outcome_calibration",
+      {
+        description:
+          "Return slop-band and recommendation outcome calibration for a repo: whether higher-slop bands merge less often and how agent recommendations are panning out. Maintainer-authenticated; measurement only.",
+        inputSchema: ownerRepoWindowShape,
+        outputSchema: maintainerMeasurementReportOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getOutcomeCalibration(input)),
     );
 
     server.registerTool(
@@ -1881,6 +1909,16 @@ export class GittensoryMcp {
           ? `Gittensory repo outcome patterns for ${fullName} (cached, ${response.freshness}).`
           : `Gittensory repo outcome patterns for ${fullName} (computed from cached metadata).`,
       data: response as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getOutcomeCalibration(input: { owner: string; repo: string; windowDays?: number | undefined }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const report = await buildRepoOutcomeCalibration(this.env, fullName, input.windowDays);
+    return {
+      summary: outcomeCalibrationSummary(fullName, report.slop),
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

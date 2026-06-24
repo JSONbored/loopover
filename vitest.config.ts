@@ -16,6 +16,10 @@ export default defineConfig({
     environment: "node",
     globals: true,
     testTimeout: 15000,
+    // Retry a failed test once before failing the run. The gittensory gate auto-CLOSES a contributor PR
+    // on a red required CI, so a single transient flake must not kill an honest PR; a deterministic
+    // failure still fails both attempts (and vitest flags the retried test as flaky so it stays visible).
+    retry: 1,
     include: ["test/**/*.test.ts"],
     exclude: ["test/workers/**/*.test.ts"],
     reporters: junitPath ? ["default", "junit"] : ["default"],

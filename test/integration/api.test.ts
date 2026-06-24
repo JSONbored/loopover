@@ -4872,6 +4872,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("gittensory_preflight_local_diff");
     expect(toolNames).toContain("gittensory_preview_local_pr_score");
     expect(toolNames).toContain("gittensory_explain_score_breakdown");
+    expect(toolNames).toContain("gittensory_get_gate_precision");
     expect(toolNames).toContain("gittensory_get_registry_changes");
     expect(toolNames).toContain("gittensory_get_upstream_drift");
     expect(toolNames).toContain("gittensory_explain_review_risk");

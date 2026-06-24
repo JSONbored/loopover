@@ -68,6 +68,7 @@ import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
+import { loadGatePrecisionReport } from "../services/gate-precision";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -135,6 +136,12 @@ function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: 
 const ownerRepoShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
+};
+
+const ownerRepoWindowShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  windowDays: z.number().int().positive().optional(),
 };
 
 const loginShape = {
@@ -587,6 +594,18 @@ const freshnessResponseOutputSchema = {
   report: z.unknown().optional(),
 };
 
+const maintainerMeasurementReportOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  windowDays: z.number().nullable().optional(),
+  perGateType: z.unknown().optional(),
+  overall: z.unknown().optional(),
+  slop: z.unknown().optional(),
+  recommendations: z.unknown().optional(),
+  signals: z.array(z.string()).optional(),
+  status: z.string().optional(),
+};
+
 const contributorProfileOutputSchema = {
   login: z.string().optional(),
   github: z.unknown().optional(),
@@ -1024,6 +1043,17 @@ export class GittensoryMcp {
         outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoOutcomePatterns(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_gate_precision",
+      {
+        description:
+          "Return per-gate-type false-positive measurement for a repo: how often blocked PRs merged anyway, maintainer overrides, and overall blocked-then-merged rate. Maintainer-authenticated; measurement only — never auto-adjusts gates.",
+        inputSchema: ownerRepoWindowShape,
+        outputSchema: maintainerMeasurementReportOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getGatePrecision(input)),
     );
 
     server.registerTool(
@@ -1881,6 +1911,29 @@ export class GittensoryMcp {
           ? `Gittensory repo outcome patterns for ${fullName} (cached, ${response.freshness}).`
           : `Gittensory repo outcome patterns for ${fullName} (computed from cached metadata).`,
       data: response as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getGatePrecision(input: { owner: string; repo: string; windowDays?: number | undefined }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const report = await loadGatePrecisionReport(
+      this.env,
+      fullName,
+      input.windowDays !== undefined ? { windowDays: input.windowDays } : {},
+    );
+    const worst = report.perGateType
+      .filter((type) => type.falsePositiveRate !== null)
+      .reduce<(typeof report.perGateType)[number] | null>(
+        (acc, type) => (acc === null || type.falsePositiveRate! > acc.falsePositiveRate! ? type : acc),
+        null,
+      );
+    const summary = worst
+      ? `Gate precision for ${fullName}: highest false-positive rate is ${Math.round(worst.falsePositiveRate! * 100)}% on \`${worst.gateType}\` (${worst.blocked} blocks).`
+      : `Gate precision for ${fullName}: no gate type with enough sample is producing false positives yet.`;
+    return {
+      summary,
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

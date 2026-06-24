@@ -1,7 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import {
+  persistSignalSnapshot,
+  recordGateBlockOutcome,
+  upsertBounty,
+  upsertIssueFromGitHub,
+  upsertPullRequestFromGitHub,
+  upsertRepositoryFromGitHub,
+} from "../../src/db/repositories";
 import { GittensoryMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -13,6 +20,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "gittensory_get_repo_context",
   "gittensory_get_burden_forecast",
   "gittensory_get_repo_outcome_patterns",
+  "gittensory_get_gate_precision",
   "gittensory_get_contributor_profile",
   "gittensory_get_decision_pack",
   "gittensory_monitor_open_prs",
@@ -379,6 +387,31 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const cached = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "cached" } });
     expect(cached.isError).toBeFalsy();
     expect(cached.structuredContent).toMatchObject({ status: "ready", source: "snapshot", freshness: "fresh", repoFullName: "owner/cached" });
+  });
+
+  it("gittensory_get_gate_precision returns structured gate precision for a repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    await recordGateBlockOutcome(env, { repoFullName: "octo/demo", pullNumber: 1, headSha: "sha1", blockerCodes: ["slop_risk"] });
+    await upsertPullRequestFromGitHub(env, "octo/demo", {
+      number: 1,
+      title: "merged anyway",
+      state: "closed",
+      user: { login: "alice" },
+      merged_at: "2026-06-01T00:00:00.000Z",
+    });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({
+      name: "gittensory_get_gate_precision",
+      arguments: { owner: "octo", repo: "demo", windowDays: 30 },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.repoFullName).toBe("octo/demo");
+    expect(data.windowDays).toBe(30);
+    expect(Array.isArray(data.perGateType)).toBe(true);
+    expect(Array.isArray(data.signals)).toBe(true);
+    expect(data.overall).toBeTruthy();
   });
 });
 

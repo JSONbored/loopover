@@ -93,6 +93,10 @@ export type AgentActionPlanInput = {
   // The names of the failing checks, surfaced in the close/request-changes reason so the contributor knows
   // WHY (e.g. "codecov/patch"). Empty unless ciState === "failed".
   failingCheckNames?: string[] | undefined;
+  // True only when the caller proved the failing CI names are required branch-protection contexts. When required
+  // contexts are unavailable, ciState conservatively folds in all red checks; that fallback must not bypass hard
+  // guardrails because an optional or third-party check may be the only red signal.
+  ciRequiredContextsVerified?: boolean | undefined;
   // Linked-issue HARD-RULE result (#linked-issue-hard-rules). A DETERMINISTIC verdict about the issue(s) this PR
   // links (owner-assigned / missing point-label / maintainer-only), pre-computed by the trigger. When
   // `violated`, a CONTRIBUTOR PR is one-shot CLOSED citing `reason` — and because it is deterministic (no
@@ -281,11 +285,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // CONFLICT. NEVER close merely because CI is UNVERIFIED (a fork whose Actions await approval, or unreadable
   // checks) or otherwise not-yet-mergeable — those are HELD for review, not killed (#harm-stop fork-false-close).
   // Owner/automation PRs are never closed (isContributor). A guarded path is HELD for the AI/gate VERDICT and for
-  // a base conflict (don't kill a crucial change on an AI call or a rebaseable conflict). But a red REQUIRED CI is
-  // an OBJECTIVE failure — a broken change that cannot merge regardless — so it CLOSES a contributor PR even on a
-  // guarded path; the contributor fixes CI and resubmits, and a GREEN guarded resubmission is then held for review.
+  // a base conflict (don't kill a crucial change on an AI call or a rebaseable conflict). A red CI may close a
+  // guarded path only after the caller proves required-context data was available; otherwise the live aggregate may
+  // have folded in optional / third-party checks and must keep the hard-guardrail manual hold.
   // (Rebase-if-behind already ran above, so a red CI here is on the latest base — not a stale-base artifact.) (#ci-fail-closes-guarded)
-  const willClose = isContributor && acting("close") && (ciFailed || (!guardrailHit && (input.conclusion === "failure" || isConflict)));
+  const redVerifiedRequiredCi = ciFailed && input.ciRequiredContextsVerified === true;
+  const willClose = isContributor && acting("close") && (redVerifiedRequiredCi || (!guardrailHit && (ciFailed || input.conclusion === "failure" || isConflict)));
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
   // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
   // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR

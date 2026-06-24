@@ -148,7 +148,10 @@ describe("planCloseAutoTune (#close-precision-breaker) — tightening-only, clos
     expect(a[0]?.message).toMatch(/Auto-CLOSE DISABLED/);
     expect(a[0]?.message).toContain("closehold:gittensory");
   });
-  it("does NOT engage on a thin sample (< min decided)", () => {
+  it("does NOT engage on a thin would-close sample even with enough total decided PRs", () => {
+    expect(planCloseAutoTune(report([row({ project: "p", decided: 20, wouldClose: 1, closeConfirmed: 0, closePrecision: 0 })]))).toHaveLength(0);
+  });
+  it("does NOT engage when both decided and would-close samples are thin", () => {
     expect(planCloseAutoTune(report([row({ project: "p", decided: 5, wouldClose: 5, closeConfirmed: 2, closePrecision: 0.4 })]))).toHaveLength(0);
   });
   it("does NOT engage when close precision is null (no would-close predictions with a known outcome)", () => {
@@ -202,8 +205,12 @@ describe("shouldAutoClearClose (#close-precision-breaker recovery-gated auto-cle
     expect(shouldAutoClearClose(recovered, "g", past, now)).toBe(true);
     expect(shouldAutoClearClose(report([]), "g", past, now)).toBe(true);
   });
-  it("keeps the breaker engaged if close precision is STILL failing after cooldown", () => {
+  it("keeps the breaker engaged if close precision is STILL failing over a real close sample after cooldown", () => {
     expect(shouldAutoClearClose(failing, "g", past, now)).toBe(false);
+  });
+  it("clears after cooldown when the only failing close precision signal is undersampled", () => {
+    const sparseFalseClose = report([row({ project: "g", decided: 20, wouldClose: 1, closeConfirmed: 0, closePrecision: 0 })]);
+    expect(shouldAutoClearClose(sparseFalseClose, "g", past, now)).toBe(true);
   });
   it("parses a SQLite 'YYYY-MM-DD HH:MM:SS' (UTC, no zone) timestamp as UTC, not local", () => {
     const sqlite = new Date(now - AUTOCLEAR_AFTER_MS - 3_600_000).toISOString().slice(0, 19).replace("T", " "); // 25h ago, SQLite format

@@ -535,3 +535,71 @@ describe("MCP output schemas validate on real tool calls (#550)", () => {
     expect(fetched.structuredContent).toBeDefined();
   }, 30_000);
 });
+
+// ── Slop oracle blunting (#mcp-slop-blunt) ────────────────────────────────────
+
+function mockRateLimiter(status: number, body: Record<string, unknown> = {}): NonNullable<Env["RATE_LIMITER"]> {
+  return {
+    idFromName: (name: string) => name as unknown as DurableObjectId,
+    get: () => ({
+      async fetch(_url: string, _init?: RequestInit) {
+        return Response.json(body, { status });
+      },
+    }),
+  } as unknown as NonNullable<Env["RATE_LIMITER"]>;
+}
+
+async function callSlopTool(env: Env, toolName: string, args: Record<string, unknown>) {
+  const server = new GittensoryMcp(env).createServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "test", version: "0.0.1" }, { capabilities: {} });
+  await client.connect(clientTransport);
+  return client.callTool({ name: toolName, arguments: args });
+}
+
+describe("MCP slop oracle blunting", () => {
+  const slopArgs = { changedFiles: [{ path: "src/foo.ts", additions: 5 }] };
+
+  it("omits the exact slopRisk score and rubric from gittensory_check_slop_risk response", async () => {
+    const result = await callSlopTool(createTestEnv(), "gittensory_check_slop_risk", slopArgs);
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data).not.toHaveProperty("slopRisk");
+    expect(data).not.toHaveProperty("rubric");
+    expect(data).toHaveProperty("band");
+    expect(data).toHaveProperty("findings");
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
+    expect(text).not.toMatch(/\/100/);
+  });
+
+  it("omits the exact slopRisk score and rubric from gittensory_check_issue_slop response", async () => {
+    const result = await callSlopTool(createTestEnv(), "gittensory_check_issue_slop", { title: "Fix bug", body: "Description." });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data).not.toHaveProperty("slopRisk");
+    expect(data).not.toHaveProperty("rubric");
+    expect(data).toHaveProperty("band");
+  });
+
+  it("skips the tool rate-limit when RATE_LIMITER is absent (test/local env)", async () => {
+    // createTestEnv() has no RATE_LIMITER — enforceToolRateLimit must return early without throwing.
+    const result = await callSlopTool(createTestEnv(), "gittensory_check_slop_risk", slopArgs);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it("allows the call when the tool rate-limit returns 200", async () => {
+    const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(200, { allowed: true, remaining: 19 }) });
+    const result = await callSlopTool(env, "gittensory_check_slop_risk", slopArgs);
+    expect(result.isError).toBeFalsy();
+    expect((result.structuredContent as Record<string, unknown>).band).toBeDefined();
+  });
+
+  it("returns an error when the tool rate-limit returns 429", async () => {
+    const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(429, { retryAfterSeconds: 42 }) });
+    const result = await callSlopTool(env, "gittensory_check_slop_risk", slopArgs);
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
+    expect(text).toMatch(/rate limit exceeded/i);
+  });
+});

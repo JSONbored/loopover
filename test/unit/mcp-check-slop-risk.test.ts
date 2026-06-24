@@ -14,19 +14,20 @@ async function connect() {
 }
 
 describe("MCP gittensory_check_slop_risk", () => {
-  it("assesses slop from local diff metadata (no repo/auth needed) and returns the rubric", async () => {
+  it("assesses slop from local diff metadata (no repo/auth needed) and returns band + findings", async () => {
     const client = await connect();
     const result = await client.callTool({
       name: "gittensory_check_slop_risk",
       arguments: { changedFiles: [{ path: "src/api/routes.ts", additions: 6, deletions: 1 }], description: "" },
     });
     expect(result.isError).toBeFalsy();
-    const data = result.structuredContent as { slopRisk: number; band: string; findings: Array<{ code: string }>; rubric: string };
-    expect(data.slopRisk).toBeGreaterThan(0);
+    const data = result.structuredContent as { band: string; findings: Array<{ code: string }> };
     expect(["low", "elevated", "high"]).toContain(data.band);
     // Code change + no tests + empty description → both signals.
     expect(data.findings.map((f) => f.code)).toEqual(expect.arrayContaining(["missing_test_evidence", "empty_pr_description"]));
-    expect(data.rubric).toContain("slop assessment rubric");
+    // Blunted: exact numeric score and rubric thresholds are NOT returned (#mcp-slop-blunt).
+    expect(data).not.toHaveProperty("slopRisk");
+    expect(data).not.toHaveProperty("rubric");
     expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward|payout|trust score/i);
   });
 
@@ -39,21 +40,23 @@ describe("MCP gittensory_check_slop_risk", () => {
         description: "Adds a retry path with regression coverage.",
       },
     });
-    const data = result.structuredContent as { slopRisk: number; band: string };
-    expect(data.slopRisk).toBe(0);
+    const data = result.structuredContent as { band: string };
     expect(data.band).toBe("clean");
+    expect(data).not.toHaveProperty("slopRisk");
   });
 });
 
 describe("MCP gittensory_check_issue_slop (#533)", () => {
-  it("flags a low-effort issue (empty body) from title+body alone and returns the issue rubric", async () => {
+  it("flags a low-effort issue (empty body) from title+body alone and returns band + findings", async () => {
     const client = await connect();
     const result = await client.callTool({ name: "gittensory_check_issue_slop", arguments: { title: "broken", body: "  " } });
     expect(result.isError).toBeFalsy();
-    const data = result.structuredContent as { slopRisk: number; band: string; findings: Array<{ code: string }>; rubric: string };
-    expect(data.slopRisk).toBeGreaterThan(0);
+    const data = result.structuredContent as { band: string; findings: Array<{ code: string }> };
+    expect(["low", "elevated", "high"]).toContain(data.band);
     expect(data.findings.map((f) => f.code)).toEqual(["empty_issue_body"]);
-    expect(data.rubric).toContain("issue slop triage rubric");
+    // Blunted: exact numeric score and rubric thresholds are NOT returned (#mcp-slop-blunt).
+    expect(data).not.toHaveProperty("slopRisk");
+    expect(data).not.toHaveProperty("rubric");
     expect(JSON.stringify(data)).not.toMatch(/wallet|hotkey|reward|payout|trust score/i);
   });
 
@@ -63,8 +66,8 @@ describe("MCP gittensory_check_issue_slop (#533)", () => {
       name: "gittensory_check_issue_slop",
       arguments: { title: "500 on save", body: "Clicking Save on /settings returns a 500; expected a redirect. Repro: open /settings, submit." },
     });
-    const data = result.structuredContent as { slopRisk: number; band: string };
-    expect(data.slopRisk).toBe(0);
+    const data = result.structuredContent as { band: string };
     expect(data.band).toBe("clean");
+    expect(data).not.toHaveProperty("slopRisk");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedPathsForGuardrail } from "../../src/queue/processors";
+import { changedPathsForGuardrail, hasVerifiedRequiredContexts } from "../../src/queue/processors";
 import type { PullRequestFileRecord } from "../../src/types";
 
 function file(path: string, previousFilename?: string | null): PullRequestFileRecord {
@@ -23,5 +23,19 @@ describe("changedPathsForGuardrail", () => {
 
   it("deduplicates current and previous filenames", () => {
     expect(changedPathsForGuardrail([file("scripts/deploy.sh", "scripts/deploy.sh")])).toEqual(["scripts/deploy.sh"]);
+  });
+});
+
+describe("hasVerifiedRequiredContexts (#1177)", () => {
+  it("verifies only a non-empty required-context set", () => {
+    expect(hasVerifiedRequiredContexts(new Set(["validate"]))).toBe(true);
+  });
+
+  it("does NOT verify when branch protection was unreadable (null)", () => {
+    expect(hasVerifiedRequiredContexts(null)).toBe(false);
+  });
+
+  it("does NOT verify when no contexts are required (empty set) — a red check is then optional/third-party", () => {
+    expect(hasVerifiedRequiredContexts(new Set())).toBe(false);
   });
 });

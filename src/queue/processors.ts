@@ -609,6 +609,16 @@ export function applyPrecisionBreakers(planned: PlannedAgentAction[], holdOnly: 
 }
 
 /**
+ * #1177: a red CI may bypass the hard-guardrail manual hold (#ci-fail-closes-guarded) ONLY when we proved the
+ * failing checks are required branch-protection contexts. A null fetch (unreadable branch protection) or an
+ * EMPTY required set means `fetchLiveCiAggregate` may have folded an optional / third-party red into `failed`,
+ * which must keep a guarded PR held for a human rather than auto-close it.
+ */
+export function hasVerifiedRequiredContexts(requiredContexts: Set<string> | null): boolean {
+  return requiredContexts != null && requiredContexts.size > 0;
+}
+
+/**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
  * GitHub state actions, and run them through the
@@ -714,6 +724,7 @@ async function maybeRunAgentMaintenance(
     submissionFloodHit,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
+    ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
     // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
     // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).
@@ -2173,6 +2184,11 @@ async function maybePublishPrPublicSurface(
     if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return undefined;
   }
 
+  // Respect the per-repo agent pause: suppress all public surface mutations (label, comment, context
+  // check run) so a paused repo sees no gittensory-authored GitHub content. The Gittensory Gate check
+  // run still posts so the required-check status is not broken (#agent-pause).
+  if (settings.agentPaused) decision = { ...decision, willLabel: false, willComment: false, willCheckRun: false };
+
   let pendingGateCheckRunId: number | undefined;
   if (gateEnabled) {
     const pendingGateResult = await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory);
@@ -2228,20 +2244,21 @@ async function maybePublishPrPublicSurface(
       repoPullRequests,
       repoBounties,
     );
+    // Duplicate-winner adjudication (#dup-winner): compute the winner ONCE for this review run from the SAME
+    // open-only sibling source the gate uses, and thread the flag/result consistently into readiness, the slop
+    // penalty (below), and the public panel builders (further down) so they agree by construction. Flag-OFF
+    // (default) ⇒ duplicateWinnerEnabled is false and isDupWinner is false ⇒ every guard short-circuits
+    // (byte-identical).
+    const linkedDuplicatePrsForGate = linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests);
+    const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+    const isDupWinner = duplicateWinnerEnabled && isDuplicateClusterWinner(pr.number, linkedDuplicatePrsForGate);
     const readiness = buildPublicReadinessScore({
       pr,
       preflight,
       queueHealth,
-      linkedDuplicatePrs: linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests),
+      linkedDuplicatePrs: isDupWinner ? [] : linkedDuplicatePrsForGate,
       scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
     });
-
-    // Duplicate-winner adjudication (#dup-winner): compute the winner ONCE for this review run from the SAME
-    // open-only sibling source the gate uses, and thread the flag/result consistently into the slop penalty
-    // (below) and the public panel builders (further down) so they agree by construction. Flag-OFF (default)
-    // ⇒ duplicateWinnerEnabled is false and isDupWinner is false ⇒ every guard short-circuits (byte-identical).
-    const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
-    const isDupWinner = duplicateWinnerEnabled && isDuplicateClusterWinner(pr.number, linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests));
 
     if (gateEnabled && author && !publicSurfaceSkipped && !official) {
       official = await getCachedOfficialMinerDetection(env, author, {
@@ -3095,12 +3112,16 @@ async function maybeRecloseDisallowedReopen(
   if (reopener === botLogin) return false; // the bot's own nightly re-review reopen is allowed
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
   const admins = (env.ADMIN_GITHUB_LOGINS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const isMaintainer = (login: string): boolean => login === repoOwner || admins.includes(login);
-  if (isMaintainer(reopener)) return false; // owner / admin may reopen
+  const hasMaintainerPermission = async (login: string): Promise<boolean> => {
+    if (login === repoOwner || admins.includes(login)) return true;
+    const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, login).catch(() => null);
+    return permission === "admin" || permission === "maintain" || permission === "write";
+  };
+  if (await hasMaintainerPermission(reopener)) return false; // owner / admin / write collaborators may reopen
   // A non-maintainer reopened: re-close ONLY if gittensory or a maintainer closed it (one-shot). A contributor
   // reopening a PR they closed themselves is allowed (fail-open on an unknown closer).
   const closer = (await getLastCloserLogin(env, installationId, repoFullName, pr.number))?.toLowerCase() ?? null;
-  if (!closer || !(closer === botLogin || isMaintainer(closer))) return false;
+  if (!closer || !(closer === botLogin || (await hasMaintainerPermission(closer)))) return false;
   await createIssueComment(
     env,
     installationId,

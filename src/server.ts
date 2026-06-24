@@ -46,8 +46,33 @@ interface Backend {
   shutdown(): Promise<void>;
 }
 
+/** Retry a Postgres connection until it succeeds (up to maxWaitMs). Prevents crash-restart loops when
+ *  gittensory starts before Postgres is ready (common in `--profile postgres` compose stacks). */
+async function waitForPostgres(url: string, maxWaitMs = 30_000): Promise<void> {
+  const pg = (await import("pg")).default;
+  const start = Date.now();
+  let attempt = 0;
+  while (true) {
+    const client = new pg.Client({ connectionString: url });
+    try {
+      await client.connect();
+      await client.end();
+      return;
+    } catch {
+      await client.end().catch(() => undefined);
+      attempt++;
+      const elapsed = Date.now() - start;
+      if (elapsed >= maxWaitMs) throw new Error(`Postgres not ready after ${maxWaitMs}ms (${attempt} attempts)`);
+      const delay = Math.min(2000, 200 * attempt);
+      console.log(JSON.stringify({ event: "selfhost_pg_wait", attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 /** Build the Postgres backend (shared DB + queue) when DATABASE_URL is a postgres:// URL. */
 async function buildPostgresBackend(url: string, consume: (m: JobMessage) => Promise<void>): Promise<Backend> {
+  await waitForPostgres(url);
   const pg = (await import("pg")).default;
   pg.types.setTypeParser(20, (v: string) => Number.parseInt(v, 10)); // int8 (COUNT) → number, like D1
   const pool = new pg.Pool({ connectionString: url });
@@ -116,13 +141,26 @@ async function main(): Promise<void> {
   const ai = createSelfHostAi(process.env);
   if (ai) console.log(JSON.stringify({ event: "selfhost_ai_provider", provider: process.env.AI_PROVIDER }));
 
-  // Redis fixed-window rate limiter (else absent → enforceRateLimit is a no-op, as today).
+  // Redis fixed-window rate limiter + webhook dedup cache (else absent when REDIS_URL is unset).
   let rateLimiter: DurableObjectNamespace | undefined;
+  let webhookCache: import("./selfhost/redis-cache").RedisCache | undefined;
   if (process.env.REDIS_URL) {
     const { Redis } = await import("ioredis");
+    const redisClient = new Redis(process.env.REDIS_URL);
     const { createRedisRateLimiter } = await import("./selfhost/redis-ratelimit");
-    rateLimiter = createRedisRateLimiter(new Redis(process.env.REDIS_URL));
+    const { createRedisCache } = await import("./selfhost/redis-cache");
+    rateLimiter = createRedisRateLimiter(redisClient);
+    webhookCache = createRedisCache(redisClient);
     console.log(JSON.stringify({ event: "selfhost_rate_limiter", backend: "redis" }));
+  }
+
+  // Qdrant vector store — overrides the backend's built-in sqlite-vec / pgvector when QDRANT_URL is set.
+  let vectorizeOverride: Vectorize | undefined;
+  if (process.env.QDRANT_URL) {
+    const { createQdrantVectorize, initQdrantCollection } = await import("./selfhost/qdrant-vectorize");
+    await initQdrantCollection(process.env.QDRANT_URL);
+    vectorizeOverride = createQdrantVectorize(process.env.QDRANT_URL);
+    console.log(JSON.stringify({ event: "selfhost_vectorize", backend: "qdrant" }));
   }
 
   env = {
@@ -130,7 +168,8 @@ async function main(): Promise<void> {
     DB: backend.db,
     JOBS: backend.queue.binding,
     AI: ai,
-    ...(backend.vectorize ? { VECTORIZE: backend.vectorize } : {}),
+    // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
+    ...(vectorizeOverride ? { VECTORIZE: vectorizeOverride } : backend.vectorize ? { VECTORIZE: backend.vectorize } : {}),
     ...(rateLimiter ? { RATE_LIMITER: rateLimiter } : {}),
     // Visual review: when BROWSER_WS_ENDPOINT is set, expose a truthy BROWSER binding so shot.ts's
     // `if (!env.BROWSER) return` guard is bypassed; the puppeteer stub then connects via WS.
@@ -140,6 +179,15 @@ async function main(): Promise<void> {
   gauge("gittensory_queue_pending", () => backend.queue.size());
   gauge("gittensory_queue_dead", () => backend.queue.deadCount());
   gauge("gittensory_uptime_seconds", () => Math.floor((Date.now() - startedAt) / 1000));
+  // Pre-initialize job counters to 0 so they appear in the first Prometheus scrape (lazy counters
+  // created on first use would otherwise cause "No data" in Grafana until the first job event).
+  for (const c of [
+    "gittensory_jobs_enqueued_total", "gittensory_jobs_processed_total",
+    "gittensory_jobs_failed_total", "gittensory_jobs_dead_total",
+    "gittensory_http_requests_total", "gittensory_webhook_dedup_total",
+    "gittensory_qdrant_queries_total", "gittensory_qdrant_upserts_total",
+  ])
+    incr(c, undefined, 0);
 
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void Promise.resolve(p).catch(() => undefined),
@@ -192,7 +240,23 @@ async function main(): Promise<void> {
           }
         }
         incr("gittensory_http_requests_total");
-        return worker.fetch(request, env, ctx);
+        // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.
+        // We mark only AFTER a successful response — failed/rejected webhooks must be retryable.
+        const isWebhook = webhookCache && path === "/v1/github/webhook" && request.method === "POST";
+        const deliveryId = isWebhook ? request.headers.get("x-github-delivery") : null;
+        if (deliveryId) {
+          const seen = await webhookCache!.get(`delivery:${deliveryId}`);
+          if (seen) {
+            incr("gittensory_webhook_dedup_total");
+            return new Response(null, { status: 204 });
+          }
+        }
+        const response = await worker.fetch(request, env, ctx);
+        if (deliveryId && response.ok) {
+          // Best-effort — never block the response on a cache write failure
+          void webhookCache!.set(`delivery:${deliveryId}`, "1", 300).catch(() => undefined);
+        }
+        return response;
       },
       port,
     },

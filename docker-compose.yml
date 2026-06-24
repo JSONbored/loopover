@@ -77,24 +77,23 @@ services:
   # Transaction-mode pooler — allows hundreds of app clients with a small PG connection cap.
   # Set DATABASE_URL in gittensory to: postgres://gittensory:<pw>@pgbouncer:5432/gittensory
   pgbouncer:
-    image: bitnami/pgbouncer:1
+    image: edoburu/pgbouncer:latest
     restart: unless-stopped
     profiles: ["pgbouncer"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      POSTGRESQL_HOST: postgres
-      POSTGRESQL_PORT: "5432"
-      POSTGRESQL_DATABASE: gittensory
-      POSTGRESQL_USERNAME: gittensory
-      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-CHANGEME}
-      PGBOUNCER_DATABASE: gittensory
-      PGBOUNCER_PORT: "5432"
-      PGBOUNCER_POOL_MODE: transaction
-      PGBOUNCER_MAX_CLIENT_CONN: "200"
-      PGBOUNCER_DEFAULT_POOL_SIZE: "20"
-      PGBOUNCER_AUTH_TYPE: scram-sha-256
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: gittensory
+      DB_USER: gittensory
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-CHANGEME}
+      LISTEN_PORT: "5432"
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+      AUTH_TYPE: md5
 
   # ── Redis (--profile redis) ────────────────────────────────────────────────
   redis:
@@ -107,6 +106,22 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       retries: 5
+
+  # ── Qdrant (--profile qdrant) ─────────────────────────────────────────────
+  # Dedicated vector database for RAG — replaces the built-in sqlite-vec / pgvector when
+  # QDRANT_URL=http://qdrant:6333 is set. Scales to millions of vectors with ANN search.
+  # REST API: http://localhost:6333  gRPC: localhost:6334  Dashboard: http://localhost:6333/dashboard
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    profiles: ["qdrant"]
+    ports:
+      - "6333:6333"   # REST API + Web UI
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    # Qdrant's minimal image has no curl/wget/nc — healthcheck omitted.
+    # The service is ready when the gittensory startup log shows {"event":"selfhost_vectorize","backend":"qdrant"}.
 
   # ── Ollama (--profile ollama) ──────────────────────────────────────────────
   # After `docker compose --profile ollama up -d`, pull a model:
@@ -239,6 +254,7 @@ volumes:
   gittensory-data:
   gittensory-pg:
   gittensory-redis:
+  qdrant-data:
   ollama-models:
   caddy-data:
   caddy-config:

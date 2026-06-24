@@ -10,6 +10,7 @@ import {
 import type { CheckSummaryRecord, PullRequestFileRecord, PullRequestRecord, PullRequestReviewRecord } from "../types";
 import { nowIso } from "../utils/json";
 import { buildRoleContext } from "./engine";
+import { isTestPath } from "./test-evidence";
 
 export type OpenPrWorkClassification =
   | "approved"
@@ -253,14 +254,6 @@ function missingTestsFromFiles(files: PullRequestFileRecord[]): boolean {
   const codeFiles = files.filter((file) => file.path && !isTestPath(file.path));
   const testFiles = files.filter((file) => file.path && isTestPath(file.path));
   return codeFiles.length > 0 && testFiles.length === 0;
-}
-
-function isTestPath(path: string): boolean {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(path) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|go|rs)$/i.test(path) ||
-    /(^|\/)[^/]+_test\.go$/i.test(path)
-  );
 }
 
 function priorityRank(classification: OpenPrWorkClassification): number {

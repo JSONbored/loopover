@@ -32,8 +32,15 @@ async function auditEventRows(env: Env, eventType: string): Promise<Array<{ targ
 }
 
 /** Seed the bot's own last action on a PR into the agent-action audit ledger (audit_events). */
-async function seedBotAction(env: Env, targetKey: string, actionClass: "close" | "merge" | "approve", outcome: "success" | "denied" = "success"): Promise<void> {
-  await recordAuditEvent(env, { eventType: `agent.action.${actionClass}`, targetKey, outcome });
+// Default outcome "completed" mirrors what the executor actually writes for a performed action (buildAgentActionAudit).
+async function seedBotAction(
+  env: Env,
+  targetKey: string,
+  actionClass: "close" | "merge" | "approve",
+  outcome: "success" | "completed" | "denied" = "completed",
+  mode?: "live" | "dry_run",
+): Promise<void> {
+  await recordAuditEvent(env, { eventType: `agent.action.${actionClass}`, targetKey, outcome, metadata: mode ? { mode } : undefined });
 }
 
 function pullRequestPayload(over: Partial<GitHubPullRequestPayload> = {}): GitHubPullRequestPayload {
@@ -142,8 +149,52 @@ describe("recordReversalSignals — reversal_reopened", () => {
     expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
   });
 
-  it("records reversal_reverted against PR #N for a merged \"Reverts #N\" PR", async () => {
+  it("still records reversal_reopened when the bot close was logged with the legacy 'success' outcome", async () => {
     const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close", "success");
+    await recordReversalSignals(env, "pull_request", {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "open" }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
+  });
+
+  it("does NOT record reversal_reopened when the latest bot close was only a dry-run shadow", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close", "completed", "dry_run");
+    await recordReversalSignals(env, "pull_request", {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "open" }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
+    expect(await auditEventRows(env, "reversal_reopened")).toHaveLength(0);
+  });
+
+  it("still records reversal_reopened when the latest bot close was completed in live mode", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close", "completed", "live");
+    await recordReversalSignals(env, "pull_request", {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "open" }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
+  });
+
+  it("records reversal_reverted against PR #N for a merged \"Reverts #N\" PR — when #N's merge was recorded", async () => {
+    const env = createTestEnv();
+    // Corroboration: our ledger must have observed PR #50 merge first.
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 50, merged_at: "2026-06-19T00:00:00.000Z" }),
+      sender: { login: "owner", type: "User" },
+    });
     await recordReversalSignals(env, "pull_request", {
       action: "closed",
       repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
@@ -154,6 +205,32 @@ describe("recordReversalSignals — reversal_reopened", () => {
     expect(eval_).toHaveLength(1);
     expect(eval_[0]).toMatchObject({ target_id: "owner/repo#50" });
     expect(await auditEventRows(env, "reversal_reverted")).toHaveLength(1);
+  });
+
+  it("does NOT record reversal_reverted when the cited PR #N has no recorded merge (anti-forgery, #audit-3.2)", async () => {
+    const env = createTestEnv();
+    // No pr_outcome=merged recorded for #50 → a contributor's merged \"Reverts #50\" must not forge a reversal.
+    await recordReversalSignals(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 99, merged_at: "2026-06-20T00:00:00.000Z", body: "Reverts #50\n\nThis reverts the change." }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "reversal_reverted")).toHaveLength(0);
+    expect(await auditEventRows(env, "reversal_reverted")).toHaveLength(0);
+  });
+
+  it("is fail-safe when the corroboration read throws — records nothing without throwing", async () => {
+    const env = createTestEnv();
+    const broken = { ...env, DB: null } as unknown as typeof env; // wasMergeRecorded's read throws → caught → false
+    await expect(
+      recordReversalSignals(broken, "pull_request", {
+        action: "closed",
+        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+        pull_request: pullRequestPayload({ number: 99, merged_at: "2026-06-20T00:00:00.000Z", body: "Reverts #50" }),
+        sender: { login: "contributor", type: "User" },
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("does NOT record reversal_reverted for a merged PR whose body is not a revert", async () => {

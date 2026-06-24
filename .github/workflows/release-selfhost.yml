@@ -1,0 +1,94 @@
+# Self-host image releases (#980). Cutting a `selfhost-v<semver>` tag builds the multi-arch image, pushes it
+# to GHCR with version + latest + sha tags (with provenance + SBOM), and opens a GitHub Release.
+#
+#   git tag selfhost-v0.1.0 && git push origin selfhost-v0.1.0
+#
+# Pull:  docker pull ghcr.io/<owner>/gittensory-selfhost:0.1.0
+name: release-selfhost
+
+on:
+  push:
+    tags:
+      - "selfhost-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: write # create the GitHub Release
+  packages: write # push to GHCR
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Environment gate — requires reviewer approval before a release runs (configure under repo Settings > Environments).
+    environment: release
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "v=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "v=${GITHUB_REF_NAME#selfhost-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/gittensory-selfhost
+          tags: |
+            type=raw,value=${{ steps.version.outputs.v }}
+            type=raw,value=latest
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=gittensory-selfhost
+            org.opencontainers.image.description=Self-hostable Gittensory review engine
+            org.opencontainers.image.version=${{ steps.version.outputs.v }}
+
+      - name: Build + push (linux/amd64 + linux/arm64)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+      - name: GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          body: |
+            Self-host container image:
+
+            ```bash
+            docker pull ghcr.io/${{ github.repository_owner }}/gittensory-selfhost:${{ steps.version.outputs.v }}
+            ```
+
+            Multi-arch (linux/amd64 + linux/arm64). See [docs/self-hosting.md](docs/self-hosting.md) for setup.
+            To include the Claude Code / Codex subscription CLIs, build locally with
+            `--build-arg INSTALL_AI_CLIS=true`.

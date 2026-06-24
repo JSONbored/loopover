@@ -7,6 +7,10 @@
 #
 # `project` (whole-repo total) is informational only: it is reported as a trend
 # but never blocks a merge. vitest keeps a loose 90% local backstop separately.
+codecov:
+  # Don't post a verdict until the CI run that produced the report has finished.
+  require_ci_to_pass: true
+
 coverage:
   status:
     patch:
@@ -19,9 +23,6 @@ coverage:
       default:
         informational: true
 
-# Don't post a verdict until the CI run that produced the report has finished.
-require_ci_to_pass: true
-
 comment:
   layout: "condensed_header, diff, flags, files"
   require_changes: false
@@ -33,3 +34,12 @@ ignore:
   - "apps/**"
   - "test/**"
   - "scripts/**"
+  # Self-host process entry + build-time stubs: exercised by the Docker build+boot smoke test
+  # (.github/workflows/selfhost.yml), not unit-coverable without booting a server/subprocess.
+  - "src/server.ts"
+  - "src/selfhost/cf-workers-shim.ts"
+  - "src/selfhost/stubs/**"
+  # Postgres runtime adapters: validated by the real-Postgres integration test (test/integration/selfhost-pg.ts,
+  # gated on PG_TEST_URL) + the real-PG boot. The dialect translation itself IS unit-tested (pg-dialect.ts).
+  - "src/selfhost/pg-adapter.ts"
+  - "src/selfhost/pg-queue.ts"

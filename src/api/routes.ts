@@ -122,6 +122,7 @@ import {
   type GittensoryMentionCommandName,
 } from "../github/commands";
 import { handleGitHubWebhook } from "../github/webhook";
+import { handleOrbIngest } from "../orb/ingest";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { generateSignalSnapshots } from "../queue/processors";
@@ -2862,6 +2863,17 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
+  // Gittensory Orb (#1219) — central collector. Receives anonymized outcome signal batches
+  // from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
+  // dedup is enforced via UNIQUE(instance_id, pr_hash) in orb_signals.
+  app.post("/v1/orb/ingest", async (c) => {
+    const body = await c.req.text().catch(() => null);
+    if (!body) return c.json({ error: "invalid_request" }, 400);
+    const result = await handleOrbIngest(body, c.env.DB);
+    if ("error" in result) return c.json(result, 400);
+    return c.json(result, 200);
+  });
+
   // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
   // ledger + recommendation/slop calibration) for an operator dashboard. Bearer-gated by the `/v1/internal/*`
   // middleware above (INTERNAL_JOB_TOKEN). Flag-OFF (default) → 404, so the endpoint does not exist and the
@@ -4808,6 +4820,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
+  if (path === "/v1/orb/ingest") return false;
   if (path.startsWith("/v1/internal/")) return false;
   return path.startsWith("/v1/");
 }

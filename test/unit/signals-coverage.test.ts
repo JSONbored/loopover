@@ -1292,6 +1292,24 @@ describe("signal coverage edge cases", () => {
     expect(scoreComponent(missingValidation, "pr_state")).toMatchObject({ score: 6, evidence: "PR is open as draft.", action: "Mark ready when done." });
     expect(scoreComponent(missingValidation, "queue_pressure")).toMatchObject({ score: 5, action: "Expect slower review." });
 
+    // A body validation NOTE without accompanying test files is capped at 12 (was 25): a one-line "tested" can no
+    // longer fake full validation evidence and lift readiness over a gate threshold on a zero-test PR. (#audit-2.3)
+    const notedButUntested = buildPublicReadinessScore({
+      pr: pr(directRepo.fullName, 43, "Claims tested, no tests", { body: "Tested locally, works fine.", linkedIssues: [1] }),
+      preflight: {
+        ...readyPreflight,
+        status: "ready",
+        reviewBurden: "low",
+        findings: [{ code: "missing_tests", severity: "warning", title: "Tests missing", detail: "No tests found." }],
+      },
+      queueHealth: queueHealthFixture(directRepo.fullName, "low"),
+    });
+    expect(scoreComponent(notedButUntested, "validation")).toMatchObject({
+      score: 12,
+      evidence: "PR body claims validation but no test files accompany the change.",
+      action: "Add tests covering the change.",
+    });
+
     const closedPr = pr(directRepo.fullName, 42, "Closed cleanup", { state: "closed", body: "cleanup", linkedIssues: [] });
     const weak = buildPublicReadinessScore({
       pr: closedPr,

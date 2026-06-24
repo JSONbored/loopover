@@ -255,7 +255,7 @@ describe("secret-leak finding in the advisory build", () => {
     expect(out).toContain("### ok.ts (added) +2/-1\n@@\n+const a = 1;");
   });
 
-  it("FLAG-OFF (default): no secret_leak finding is produced — the advisory is unchanged", async () => {
+  it("FLAG-OFF: a concrete leaked secret STILL produces the secret_leak finding (unconditional, #audit-3.4)", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false" });
     const adv = advisory();
     const files = [
@@ -278,7 +278,8 @@ describe("secret-leak finding in the advisory build", () => {
       pullNumber: 7,
       files,
     });
-    expect(adv.findings).toEqual([]);
+    // The concrete-credential hard block does not depend on GITTENSORY_REVIEW_SAFETY.
+    expect(adv.findings.map((f) => f.code)).toContain("secret_leak");
   });
 
   it("FLAG-ON + files=null: lazily loads the changed files from D1 and still finds the leaked secret", async () => {

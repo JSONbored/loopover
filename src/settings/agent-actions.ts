@@ -414,6 +414,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       requiresApproval: approval("merge"),
       reason: `gate passed, CI green, mergeable, ${autoMaintain.requireApprovals} approval(s) satisfied`,
       mergeMethod: autoMaintain.mergeMethod,
+      // Pin the merge to the EXACT reviewed head. For an `auto_with_approval` stage this travels into the pending
+      // row (actionParams persists expectedHeadSha), so a force-push after staging can never be merged: the
+      // executor pins GitHub's merge `sha` to this commit → a moved head yields a 409 (terminal hold) instead of
+      // merging un-reviewed code. A live sweep sets this == ctx.headSha, so its behavior is unchanged.
+      ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
     });
   } else if (willClose) {
     // Contributor PR that is NOT review-good (gate blockers / red / unverified CI) OR conflicts with base →

@@ -22,6 +22,12 @@ function isMergeConflictMessage(message: string): boolean {
   return /merge conflict|not mergeable|cannot be merged|has conflicts|conflicts? with the base/i.test(message);
 }
 
+/** True for the transient "Base branch was modified. Review and try the merge again." 405 — a benign
+ *  TOCTOU race (the base advanced between plan and merge) that a re-attempt against the new base resolves. */
+function isBaseBranchMovedMessage(message: string): boolean {
+  return /base branch was modified/i.test(message);
+}
+
 /** Read the HTTP status off an Octokit RequestError (it sets `.status`); undefined for non-HTTP errors. */
 function httpStatus(error: unknown): number | undefined {
   const status = (error as { status?: unknown } | null | undefined)?.status;
@@ -35,6 +41,9 @@ export function classifyMergeFailure(error: unknown): { terminal: boolean; reaso
   const message = errorMessage(error);
   const status = httpStatus(error);
   if (status === 403) return { terminal: true, reason: `merge forbidden (403 — pull_requests:write or branch protection): ${message}` };
+  // A 405 "Base branch was modified" is a benign TOCTOU race, not a policy rejection — retry against the new base
+  // (the executor caps retries at MERGE_RETRY_CAP before escalating to the same terminal hold).
+  if (status === 405 && isBaseBranchMovedMessage(message)) return { terminal: false, reason: `base branch moved during merge — retrying: ${message}` };
   if (status === 405) return { terminal: true, reason: `merge not allowed (405 — repo merge policy forbids an automated merge): ${message}` };
   if (status === 409) return { terminal: true, reason: `merge conflict / required check absent (409): ${message}` };
   if (status !== undefined && TERMINAL_MERGE_STATUSES.has(status)) return { terminal: true, reason: `merge rejected (${status}): ${message}` };

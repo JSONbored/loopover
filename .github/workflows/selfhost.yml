@@ -1,0 +1,97 @@
+# Self-host stack CI (#980/#982). Provides integration coverage the main CI can't:
+#   1. Postgres integration test — needs a real PG service container
+#   2. Self-host bundle build validation (build-selfhost.mjs)
+#   3. Docker image build + container smoke test (/health, /ready, /metrics)
+# Unit tests and typecheck are NOT duplicated here — the main CI validate job covers them.
+name: self-host
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/selfhost/**"
+      - "src/server.ts"
+      - "scripts/build-selfhost.mjs"
+      - "scripts/register-selfhost.mjs"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "migrations/**"
+      - "test/unit/selfhost-*"
+      - "test/integration/selfhost-pg*"
+      - ".github/workflows/selfhost.yml"
+  pull_request:
+    paths:
+      - "src/selfhost/**"
+      - "src/server.ts"
+      - "scripts/build-selfhost.mjs"
+      - "scripts/register-selfhost.mjs"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "migrations/**"
+      - "test/unit/selfhost-*"
+      - "test/integration/selfhost-pg*"
+      - ".github/workflows/selfhost.yml"
+
+# Least privilege — the smoke test only reads the repo; no writes, no packages.
+permissions:
+  contents: read
+
+jobs:
+  build-boot:
+    name: build + boot smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: devpw
+          POSTGRES_DB: gittensory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci --ignore-scripts
+
+      - name: Postgres integration test (real PG)
+        run: PG_TEST_URL=postgres://postgres:devpw@localhost:5432/gittensory npx vitest run test/integration/selfhost-pg.test.ts
+
+      - name: Build the self-host bundle
+        run: node scripts/build-selfhost.mjs
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build the Docker image
+        run: |
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            -t gittensory:selfhost-ci .
+
+      - name: Boot the container + smoke-test /health, /ready, /metrics, migrations
+        run: |
+          docker run -d --name gt -p 8787:8787 gittensory:selfhost-ci
+          ok=0
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8787/health >/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then echo "::error::container did not become healthy"; docker logs gt; exit 1; fi
+          curl -sf http://127.0.0.1:8787/health  | grep -q '"status":"ok"'
+          curl -sf http://127.0.0.1:8787/ready   | grep -q '"ok":true'
+          curl -sf http://127.0.0.1:8787/metrics | grep -q 'gittensory_uptime_seconds'
+          docker logs gt 2>&1 | grep -q 'selfhost_migrations_applied'
+          echo "self-host smoke test passed"
+          docker rm -f gt

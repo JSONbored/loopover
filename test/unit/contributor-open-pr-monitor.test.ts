@@ -271,6 +271,12 @@ describe("contributor open PR monitor", () => {
     expect(missingTestsFromFiles([{ path: "pkg/foo_test.go" } as never])).toBe(false);
     expect(missingTestsFromFiles([{ path: "pkg/foo.go" } as never])).toBe(true);
     expect(missingTestsFromFiles([{ path: "tests/integration.spec.ts" } as never])).toBe(false);
+
+    // Python/Ruby test conventions outside a test/ or spec/ directory are real test evidence
+    // and must not be classified as missing_tests (regression: the local matcher only knew _test.go).
+    expect(missingTestsFromFiles([{ path: "service.py" } as never, { path: "service_test.py" } as never])).toBe(false);
+    expect(missingTestsFromFiles([{ path: "lib/widget.rb" } as never, { path: "models/widget_test.rb" } as never])).toBe(false);
+    expect(missingTestsFromFiles([{ path: "lib/widget.rb" } as never, { path: "widget_spec.rb" } as never])).toBe(false);
   });
 
   it("returns an empty monitor when the contributor has no cached open PRs", async () => {

@@ -15216,6 +15216,26 @@
           }
         ]
       }
+    },
+    "/v1/orb/ingest": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Batch accepted; returns { accepted: number }"
+          },
+          "400": {
+            "description": "Malformed JSON or invalid payload shape"
+          }
+        },
+        "security": [
+          {
+            "GittensoryBearer": []
+          },
+          {
+            "GittensorySessionCookie": []
+          }
+        ]
+      }
     }
   },
   "servers": [

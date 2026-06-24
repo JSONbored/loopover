@@ -127,7 +127,9 @@ export function isAuthorizedGitHubSessionLogin(env: Env, login: string): boolean
   return allowedLogins.has(login.toLowerCase());
 }
 
-function parseGitHubLoginList(value: string | undefined): Set<string> {
+/** Parse a GitHub-login allowlist env (e.g. ADMIN_GITHUB_LOGINS) into a lowercased Set. Splits on whitespace OR
+ *  commas so every caller agrees on the same parse (#audit-3.13). */
+export function parseGitHubLoginList(value: string | undefined): Set<string> {
   return new Set(
     (value ?? "")
       .split(/[\s,]+/)

@@ -594,8 +594,9 @@ export function changedPathsForGuardrail(files: Awaited<ReturnType<typeof listPu
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
  * GitHub state actions, and run them through the
  * executor's deny-toward-safety gate stack (pause → approval → write-permission → mode). Decoupled and
- * best-effort: a failure here never affects the gate or the public surface. gittensory never acts on a
- * non-confirmed contributor's PR — the same rule the gate uses to never block one.
+ * best-effort: a failure here never affects the gate or the public surface. The agent acts purely off the
+ * gate verdict + CI state — every author is handled identically (auto-merge on a clean pass, one-shot close
+ * on a real blocker), since confirmed-status no longer changes the gate. (#gate-nonconfirmed)
  */
 async function maybeRunAgentMaintenance(
   env: Env,
@@ -1621,9 +1622,9 @@ export function gateCheckPolicy(
 ) {
   // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
   // resolveRepositorySettings, so the blocker modes here reflect the repo's config file directly.
-  // The `oss-anti-slop` pack (#692) is repo-agnostic: it blocks ANY author whose PR trips an opted-in
-  // deterministic rule, so it drops the confirmed-contributor gate entirely (no Gittensor coupling). The
-  // `gittensor` pack keeps the contributor gate — only confirmed contributors are hard-blocked.
+  // The `oss-anti-slop` pack (#692) is repo-agnostic and carries no confirmed-contributor field at all (no
+  // Gittensor coupling). The `gittensor` pack still threads confirmedContributor for context/telemetry, but
+  // it no longer changes the verdict — every author is gated identically. (#gate-nonconfirmed)
   const confirmedContributorForPack = settings.gatePack === "oss-anti-slop" ? undefined : confirmedContributor;
   return {
     linkedIssueGateMode: settings.linkedIssueGateMode,
@@ -1963,7 +1964,7 @@ async function maybePublishPrPublicSurface(
   const unifiedCommentAllowed = isUnifiedReviewCommentEnabled(env) && isConvergenceRepoAllowed(env, repoFullName);
   // `settings` is the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved by the caller via
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
-  // file. The gate only chooses what to do; confirmedContributor governs WHO can be blocked.
+  // file. The gate verdict is the same for every author; confirmedContributor feeds only on-chain scoring.
   const gateEnabled = settings.gateCheckMode === "enabled" && Boolean(advisory.headSha);
   // Cheap, network-free skip checks (also avoids the miner lookup when it would be wasted).
   const prelim = decidePublicSurface({
@@ -2097,9 +2098,9 @@ async function maybePublishPrPublicSurface(
       });
     }
 
-    // Only CONFIRMED gittensor contributors can be hard-blocked; everyone else (or an unavailable
-    // detection) gets a neutral, non-blocking gate. Gate-only runs still verify confirmation before
-    // evaluating blockers so confirmed contributors cannot bypass a required Gate check.
+    // Resolve the author's confirmed-Gittensor status. It feeds on-chain SCORING and the public surface, but
+    // it no longer gates the verdict — every author is hard-blocked the same way on a configured blocker, and
+    // a clean PR passes the same way. (#gate-nonconfirmed)
     const confirmedContributor = official?.status === "confirmed";
 
     // Anti-slop (#530/#532): only when opted in (slopGateMode !== "off"). Surface the deterministic slop

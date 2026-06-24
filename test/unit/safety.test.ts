@@ -27,8 +27,9 @@ async function generatePrivateKeyPem(): Promise<string> {
   return `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----\n`;
 }
 
-// A confirmed-miner snapshot — only a confirmed contributor can be hard-blocked (the safety blocker must be
-// able to FAIL the gate for the flag-ON assertion to be observable through the finalized conclusion).
+// A confirmed-miner snapshot. The author confirmation no longer changes whether the gate can block
+// (#gate-nonconfirmed); this just stands up a representative confirmed author so the flag-ON safety blocker's
+// FAILURE is observable through the finalized conclusion.
 function safetyMinerSnapshot(login: string) {
   return {
     source: "gittensor_api" as const,

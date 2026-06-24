@@ -246,7 +246,8 @@ async function generatePrivateKeyPem(): Promise<string> {
   return `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----\n`;
 }
 
-// A confirmed-miner snapshot so the gate can hard-BLOCK (a non-confirmed author always gets a neutral gate).
+// A confirmed-miner snapshot (confirmed status now feeds only on-chain scoring; the gate blocks every author
+// the same on a configured blocker — #gate-nonconfirmed).
 function parityMinerSnapshot(login: string) {
   return {
     source: "gittensor_api" as const,
@@ -293,7 +294,8 @@ async function seedGateEnabledRepo(env: Env): Promise<void> {
 }
 
 // The miner-list/token/check-run endpoints the gate finalize touches; `confirmedAuthor` toggles whether the
-// gittensor miner list confirms the PR author (a confirmed author can be hard-blocked → a `failure` gate).
+// gittensor miner list confirms the PR author. Confirmed status no longer changes the gate verdict (it feeds
+// scoring); the configured blocker fails the gate for either author (#gate-nonconfirmed).
 function stubFinalizeFetch(confirmedAuthor: string | null): void {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
@@ -341,18 +343,21 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (GITTENSO
     expect(rows[0]!.summary).toBe("missing_linked_issue");
   });
 
-  it("FLAG-ON, NON-confirmed author → NEUTRAL gate: the call site still runs (non-failure reasonCode side) but a neutral conclusion is non-comparable → NO native row", async () => {
+  it("FLAG-ON, NON-confirmed author + linked-issue block: gated NORMALLY → FAILURE → a comparable 'hold' native row (#gate-nonconfirmed)", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_PARITY_AUDIT: "true", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedGateEnabledRepo(env);
-    stubFinalizeFetch(null); // miner list empty → author unconfirmed → gate cannot hard-block → neutral
+    stubFinalizeFetch(null); // miner list empty → author unconfirmed, but confirmed status no longer changes the verdict
     try {
-      await processJob(env, prWebhook("parity-finalize-neutral", "contributor"));
+      await processJob(env, prWebhook("parity-finalize-nonconfirmed", "contributor"));
     } finally {
       vi.unstubAllGlobals();
     }
-    // reasonCode took the non-"failure" branch (= the neutral conclusion); recordNativeGateDecision no-ops on a
-    // non-comparable (neutral) conclusion, so nothing is written — the call site ran, the recorder declined.
-    expect(await nativeRows(env)).toEqual([]);
+    // The blocker (missing linked issue) fails the gate regardless of confirmed status → failure → native action
+    // "hold", which IS comparable → recordNativeGateDecision writes one row with the blocker code as the reason.
+    const rows = await nativeRows(env);
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE });
+    expect(rows[0]!.summary).toBe("missing_linked_issue");
   });
 
   it("FLAG-OFF (default): the finalize path records NOTHING — byte-identical review path, no native row", async () => {

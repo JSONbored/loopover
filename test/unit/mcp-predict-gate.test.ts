@@ -46,10 +46,10 @@ describe("MCP gittensory_predict_gate", () => {
     expect((minimal.structuredContent as { pack: string }).pack).toBe("oss-anti-slop");
   });
 
-  // Parity regression (#627-class): under the default `gittensor` pack, only CONFIRMED Gittensor
-  // contributors are ever hard-blocked. The prediction must resolve the caller's confirmed status — if it
-  // doesn't (the bug), a non-confirmed contributor whose synthetic PR trips a blocker is wrongly told
-  // `failure` when the real maintainer gate would return `neutral`.
+  // Parity (#gate-nonconfirmed): every author is gated identically now — a synthetic PR that trips a blocker
+  // predicts `failure` regardless of confirmed status, matching the real maintainer gate. The prediction still
+  // resolves + surfaces the caller's confirmed status (transparency / on-chain scoring context) but it no
+  // longer changes the verdict.
   describe("contributor-confirmation parity under the gittensor pack", () => {
     afterEach(() => vi.unstubAllGlobals());
 
@@ -64,12 +64,12 @@ describe("MCP gittensory_predict_gate", () => {
       });
     }
 
-    it("stays NEUTRAL for a non-confirmed contributor even when a blocker fires", async () => {
+    it("predicts FAILURE for a non-confirmed contributor when a blocker fires (#gate-nonconfirmed)", async () => {
       const env = createTestEnv();
       await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
       // gittensor pack, linked-issue blocks; the contributor supplies no linked issue → blocker fires.
       await upsertRepoFocusManifest(env, "acme/widgets", { gate: { pack: "gittensor", linkedIssue: "block" } });
-      stubGittensorMiners([]); // miner1 is NOT a confirmed Gittensor contributor
+      stubGittensorMiners([]); // miner1 is NOT a confirmed Gittensor contributor — gated the same regardless
       const client = await connect(env);
 
       const result = await client.callTool({
@@ -77,9 +77,11 @@ describe("MCP gittensory_predict_gate", () => {
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
       });
       expect(result.isError).toBeFalsy();
-      const data = result.structuredContent as { pack: string; conclusion: string; confirmedContributor: boolean | undefined };
+      const data = result.structuredContent as { pack: string; conclusion: string; confirmedContributor: boolean | undefined; blockers: Array<{ code: string }> };
       expect(data.pack).toBe("gittensor");
-      expect(data.conclusion).toBe("neutral");
+      expect(data.conclusion).toBe("failure");
+      expect(data.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+      // Confirmed status is still surfaced (transparency / scoring) — it just no longer changes the verdict.
       expect(data.confirmedContributor).toBe(false);
     });
 
@@ -101,7 +103,7 @@ describe("MCP gittensory_predict_gate", () => {
       expect(data.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
     });
 
-    it("treats a Gittensor API failure as non-confirmed (fail-safe NEUTRAL, never a false FAILURE)", async () => {
+    it("treats a Gittensor API failure as non-confirmed, but the gate verdict is unaffected by it (#gate-nonconfirmed)", async () => {
       const env = createTestEnv();
       await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets" });
       // No explicit pack → defaults to the gittensor pack, which still resolves confirmed status via the API.
@@ -109,7 +111,9 @@ describe("MCP gittensory_predict_gate", () => {
       // The confirmation lookup is the only network call on the prediction path (the URL is a fixed constant
       // base; the login is never interpolated into it — it is filtered client-side — so there is no SSRF
       // surface). When that call fails/times out, fetchGittensorContributorSnapshot resolves to null, so the
-      // contributor is treated as non-confirmed → the gate stays neutral rather than wrongly blocking them.
+      // contributor is surfaced as non-confirmed. Confirmed status no longer changes the verdict, so the gate
+      // is computed purely from the public config and still predicts FAILURE on the configured blocker — an API
+      // outage can neither falsely block nor falsely un-block a contributor.
       vi.stubGlobal("fetch", async () => {
         throw new Error("network down");
       });
@@ -120,9 +124,10 @@ describe("MCP gittensory_predict_gate", () => {
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
       });
       expect(result.isError).toBeFalsy();
-      const data = result.structuredContent as { conclusion: string; confirmedContributor: boolean | undefined };
+      const data = result.structuredContent as { conclusion: string; confirmedContributor: boolean | undefined; blockers: Array<{ code: string }> };
       expect(data.confirmedContributor).toBe(false);
-      expect(data.conclusion).toBe("neutral");
+      expect(data.conclusion).toBe("failure");
+      expect(data.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
     });
   });
 

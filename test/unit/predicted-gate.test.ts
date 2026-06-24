@@ -134,17 +134,17 @@ describe("buildPredictedGateVerdict", () => {
     expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
   });
 
-  it("forces a neutral prediction for a self-declared non-confirmed contributor", () => {
+  it("predicts a non-confirmed contributor NORMALLY — a blocker → failure, matching the real gate (#gate-nonconfirmed)", () => {
     const result = buildPredictedGateVerdict({
       input: { ...BASE_INPUT, body: "no issue", linkedIssues: [] },
       manifest: parseFocusManifest({ gate: { linkedIssue: "block" } }),
       repo: REPO,
       issues: [],
       pullRequests: [],
-      confirmedContributor: false, // a non-confirmed contributor is never hard-blocked by the real gate
+      confirmedContributor: false, // confirmed status no longer changes the verdict — every author is gated the same
     });
-    expect(result.conclusion).toBe("neutral");
-    expect(result.blockers).toHaveLength(0);
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
   });
 });
 
@@ -177,7 +177,7 @@ describe("pack-aware prediction (#693)", () => {
     expect(result.confirmedContributor).toBeUndefined();
   });
 
-  it("under gittensor, the same non-confirmed contributor stays neutral (matches the real gate)", () => {
+  it("under gittensor, a non-confirmed contributor is predicted FAILURE on a blocker (matches the real gate, #gate-nonconfirmed)", () => {
     const result = buildPredictedGateVerdict({
       input: { ...BASE_INPUT, body: "no issue", linkedIssues: [] },
       manifest: parseFocusManifest({ gate: { pack: "gittensor", linkedIssue: "block" } }),
@@ -187,7 +187,10 @@ describe("pack-aware prediction (#693)", () => {
       confirmedContributor: false,
     });
     expect(result.pack).toBe("gittensor");
-    expect(result.conclusion).toBe("neutral");
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "missing_linked_issue")).toBe(true);
+    // Confirmed status is still surfaced for transparency — it just no longer changes the verdict.
+    expect(result.confirmedContributor).toBe(false);
   });
 
   it("runs on a non-Gittensor (app-installed, unregistered) repo under oss-anti-slop with no Gittensor account", () => {

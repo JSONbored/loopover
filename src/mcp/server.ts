@@ -1964,11 +1964,11 @@ export class GittensoryMcp {
       loadOrComputeIssueQualityResponse(this.env, repoFullName),
       loadRepoFocusManifest(this.env, repoFullName),
     ]);
-    // Parity with the maintainer gate: only CONFIRMED Gittensor contributors are ever hard-blocked, so the
-    // prediction must know the caller's own confirmed status — otherwise it over-reports `failure` for a
-    // non-confirmed contributor whose synthetic PR trips a blocker. Resolve it the same way the pipeline
-    // does (official Gittensor API → confirmed). The oss-anti-slop pack drops the contributor gate entirely,
-    // so skip the lookup there (keeps the prediction account-free for non-Gittensor adopters).
+    // Resolve the caller's own confirmed-Gittensor status the same way the maintainer pipeline does (official
+    // Gittensor API → confirmed). It is surfaced in the verdict for transparency but no longer changes the
+    // predicted conclusion — every author is gated identically, so a blocker predicts `failure` regardless of
+    // confirmed status (parity with the new real gate). The oss-anti-slop pack carries no contributor field at
+    // all, so skip the lookup there (keeps the prediction account-free for non-Gittensor adopters).
     const pack = manifest.gate.pack ?? "gittensor";
     const confirmedContributor = pack === "oss-anti-slop" ? undefined : (await fetchGittensorContributorSnapshot(input.login)) !== null;
     const verdict = buildPredictedGateVerdict({

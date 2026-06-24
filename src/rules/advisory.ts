@@ -45,9 +45,10 @@ export type GateCheckPolicy = {
   authorMergedPrCount?: number | undefined;
   /** The PR author's closed-unmerged PR count in THIS repo (repeat offender = >= 3). Used only by grace. */
   authorClosedUnmergedPrCount?: number | undefined;
-  /** ONLY confirmed gittensor contributors can be hard-blocked. When explicitly `false`, the gate is
-   *  forced to a neutral (non-blocking) conclusion regardless of blockers — gittensory must never block
-   *  a non-confirmed contributor. `undefined` = the caller did not gate on contributor status. */
+  /** The PR author's confirmed-Gittensor status. Carried for context/telemetry only — it no longer
+   *  changes the gate verdict (every author is gated identically; a configured blocker fails the gate
+   *  regardless of confirmed status, which now affects only on-chain scoring). `undefined` = unresolved.
+   *  (#gate-nonconfirmed) */
   confirmedContributor?: boolean | undefined;
 };
 
@@ -348,19 +349,12 @@ export function evaluateGateCheck(advisoryResult: Advisory, policy: GateCheckPol
   const qualityBlocker = buildQualityGateBlocker(effective);
   const slopBlocker = buildSlopGateBlocker(effective);
   const blockers = [...configuredBlockers, ...(qualityBlocker ? [qualityBlocker] : []), ...(slopBlocker ? [slopBlocker] : [])];
-  // Contributor-gated: ONLY confirmed Gittensor contributors can be hard-blocked. For everyone else the
-  // gate is neutral (non-blocking) + the minimal advisory comment — gittensory must never block a
-  // non-confirmed contributor, regardless of what blockers fired.
-  if (effective.confirmedContributor === false && blockers.length > 0) {
-    return {
-      enabled: true,
-      conclusion: "neutral",
-      title: "Gittensory Gate — advisory only",
-      summary: "The PR author is not a confirmed Gittensor contributor, so gittensory does not block this PR. Findings stay advisory.",
-      blockers: [],
-      warnings,
-    };
-  }
+  // Non-confirmed contributors are gated NORMALLY (real blockers → failure → one-shot close; clean → success →
+  // merge), the SAME as confirmed contributors: the review + CI + guardrail vet every PR, and confirmed-status
+  // affects only on-chain SCORING, never the merge/close decision. (#gate-nonconfirmed) The old blanket
+  // "never block a non-confirmed contributor" forced every non-confirmed PR with a blocker to a neutral → HELD
+  // state, burying the maintainer in manual review. Genuine newcomers stay protected by the opt-in first-time-
+  // contributor grace immediately below; everyone else is auto-merged/closed so the queue stays automated.
   // First-time-contributor grace (#552): when the maintainer opted in, a genuine newcomer (0 merged PRs in
   // this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs) gets a neutral, non-blocking gate even
   // when blockers fired — they keep the advisory findings without the hard block. Repeat offenders, authors

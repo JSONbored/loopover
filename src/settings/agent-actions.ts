@@ -170,9 +170,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const acting = (actionClass: AgentActionClass) => isActingAutonomyLevel(level(actionClass));
   const approval = (actionClass: AgentActionClass) => autonomyRequiresApproval(level(actionClass));
 
-  // Only a SKIPPED gate (genuinely not evaluated) drives no action. A NEUTRAL gate (advisory-only blockers on a
-  // non-confirmed contributor, or eval-not-ready) is gate-NON-BLOCKING: it flows to the disposition so the PR is
-  // merged (clean+green) or HELD with a label — never left silently undecided. (#harm-stop neutral-silent-stuck)
+  // Only a SKIPPED gate (genuinely not evaluated) drives no action. A NEUTRAL gate (first-time-contributor
+  // grace, or eval-not-ready while state is still syncing) is gate-NON-BLOCKING: it flows to the disposition so
+  // the PR is merged (clean+green) or HELD with a label — never left silently undecided. (#harm-stop neutral-silent-stuck)
   if (input.conclusion === "skipped") return actions;
 
   // CI state over ALL of the PR's checks (required OR not — codecov/patch included) — reviewbot's ci_red
@@ -184,8 +184,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   if (input.ciState === "pending") return actions;
 
   // Only SUCCESS earns the review-good auto-merge. A NEUTRAL gate flows (no longer silently returns []) but is
-  // NOT auto-merged — it falls through to a HELD + labeled state for review. (Auto-merging neutral / non-confirmed
-  // contributor PRs is a separate trust/policy decision, deliberately NOT bundled into the harm-stop.) (#harm-stop)
+  // NOT auto-merged — it falls through to a HELD + labeled state for review. (Auto-merging a neutral / grace
+  // PR is a separate trust/policy decision, deliberately NOT bundled into the harm-stop.) (#harm-stop)
   const gatePassing = input.conclusion === "success";
   // A changed path matching a hard guardrail forces manual review (suppresses auto-MERGE / auto-approve / auto-close).
   // Fail SAFE on UNKNOWN paths (#1062): when guardrails are configured but the changed-file set is empty (cache

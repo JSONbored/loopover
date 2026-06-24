@@ -836,7 +836,7 @@ describe("queue processors", () => {
     );
   });
 
-  it("publishes an opt-in gate without comment output but keeps it advisory for a non-confirmed author", async () => {
+  it("publishes an opt-in gate without comment output, blocking a non-confirmed author normally (#gate-nonconfirmed)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -875,7 +875,8 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs/900") && (init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string; status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ name: "Gittensory Gate", status: "completed", conclusion: "neutral", output: { title: "Gittensory Gate — advisory only" } });
+        // Non-confirmed author + linked-issue block + no issue → gated normally → failure (#gate-nonconfirmed).
+        expect(body).toMatchObject({ name: "Gittensory Gate", status: "completed", conclusion: "failure", output: { title: "Gittensory Gate: No linked issue detected" } });
         calls.gateChecks += 1;
         return Response.json({ id: 900 });
       }
@@ -1182,7 +1183,7 @@ describe("queue processors", () => {
     expect(count?.n).toBe(0);
   });
 
-  it("auto-maintain (#778): never acts on a non-confirmed contributor's PR (gate stays advisory)", async () => {
+  it("auto-maintain (#778): takes no terminal action when merge/close/approve autonomy is not granted (gate now fails normally for a non-confirmed author)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
@@ -1198,8 +1199,10 @@ describe("queue processors", () => {
       gateCheckMode: "enabled",
       autonomy: { label: "auto", request_changes: "auto" },
     });
-    // No confirmed-miner seed → author is unconfirmed; with a blocker the gate neutralizes (never blocks one).
-    // requireLinkedIssue is unset here, so the manifest's linkedIssue:block is what makes the blocker fire.
+    // No confirmed-miner seed → author is unconfirmed; the manifest's linkedIssue:block + no issue fires a
+    // blocker, so the gate now FAILS the author normally (#gate-nonconfirmed — confirmed status no longer
+    // neutralizes the verdict). But this repo grants only label/request_changes autonomy — NOT merge/close/
+    // approve — so the failing gate yields a request-changes/label action at most, never a terminal action.
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { gate: { linkedIssue: "block" } });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -1222,9 +1225,9 @@ describe("queue processors", () => {
       },
     });
 
-    // A non-confirmed contributor (neutral/advisory gate) is no longer left SILENT — the bot may surface it with a
-    // label so it's visible, but it takes NO TERMINAL action (never auto-merge/close/approve a non-confirmed or
-    // not-review-good PR). (#harm-stop: neutral flows to held+labeled instead of an empty plan.)
+    // The failing gate is surfaced (request-changes/label), but with no merge/close/approve autonomy granted the
+    // bot takes NO TERMINAL action — proving terminal actions require their own autonomy grant, independent of the
+    // gate verdict. (Auto-close on a failing gate is exercised by the #778 close-autonomy tests below.)
     const terminal = await env.DB.prepare("select count(*) as n from audit_events where event_type in ('agent.action.merge','agent.action.close','agent.action.approve')").first<{ n: number }>();
     expect(terminal?.n).toBe(0);
   });
@@ -1358,7 +1361,8 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs/910") && method === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ status: "completed", conclusion: "neutral", output: { title: "Gittensory Gate — advisory only" } });
+        // The bot author is gated normally now (no confirmation gate); linked-issue block + no issue → failure (#gate-nonconfirmed).
+        expect(body).toMatchObject({ status: "completed", conclusion: "failure", output: { title: "Gittensory Gate: No linked issue detected" } });
         calls.gateChecks += 1;
         return Response.json({ id: 910 });
       }
@@ -1429,7 +1433,8 @@ describe("queue processors", () => {
       }
       if (url.includes("/check-runs/920") && method === "PATCH") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string } };
-        expect(body).toMatchObject({ status: "completed", conclusion: "neutral", output: { title: "Gittensory Gate — advisory only" } });
+        // The unconfirmed miner is gated normally now; linked-issue block + no issue → failure (#gate-nonconfirmed).
+        expect(body).toMatchObject({ status: "completed", conclusion: "failure", output: { title: "Gittensory Gate: No linked issue detected" } });
         calls.gateChecks += 1;
         return Response.json({ id: 920 });
       }

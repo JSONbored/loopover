@@ -454,10 +454,11 @@ export type BountyRecord = {
 
 export type GateRuleMode = "off" | "advisory" | "block";
 
-/** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: only confirmed
- *  Gittensor contributors are hard-blocked (registry/emissions-aware). `oss-anti-slop` = a general, repo-
- *  agnostic pack: the same deterministic rules (slop/duplicate/linked-issue/readiness/AI-consensus) block
- *  ANY author, with no emissions/registry/confirmed-contributor coupling — so the gate runs on any repo. */
+/** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: registry/emissions-
+ *  aware, and it threads the author's confirmed status for on-chain scoring (the gate verdict itself blocks
+ *  every author the same — confirmed status no longer changes it, #gate-nonconfirmed). `oss-anti-slop` = a
+ *  general, repo-agnostic pack: the same deterministic rules (slop/duplicate/linked-issue/readiness/AI-
+ *  consensus) block ANY author, with no emissions/registry/Gittensor coupling — so the gate runs on any repo. */
 export type GatePolicyPack = "gittensor" | "oss-anti-slop";
 
 export type RepositorySettings = {
@@ -468,8 +469,8 @@ export type RepositorySettings = {
   checkRunMode: "off" | "enabled";
   checkRunDetailLevel: "minimal" | "standard" | "deep";
   gateCheckMode: "off" | "enabled";
-  /** Policy pack the gate evaluates under (#692). Default `gittensor` (confirmed-contributor-gated,
-   *  registry-aware). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
+  /** Policy pack the gate evaluates under (#692). Default `gittensor` (registry-aware; threads confirmed
+   *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;
   linkedIssueGateMode: GateRuleMode;
   duplicatePrGateMode: GateRuleMode;
@@ -477,7 +478,7 @@ export type RepositorySettings = {
   qualityGateMinScore?: number | null | undefined;
   /** Deterministic anti-slop signal (#530/#532). `off` = no slop score; `advisory` = surface the slop
    *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
-   *  only, confirmed-contributor-gated like every blocker). Default `off` — opt-in via .gittensory.yml. */
+   *  only, applies to every author like every blocker). Default `off` — opt-in via .gittensory.yml. */
   slopGateMode: GateRuleMode;
   /** Merge-readiness gate (#merge-readiness). `off`/`advisory`/`block`. No min-score. Default `off`. */
   mergeReadinessGateMode: GateRuleMode;

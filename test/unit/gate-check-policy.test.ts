@@ -89,18 +89,19 @@ describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
     expect(evaluateGateCheck(missingIssueAdvisory(), newcomerPolicy).conclusion).toBe("neutral");
   });
 
-  it("still only blocks confirmed contributors regardless of the config", () => {
+  it("blocks a non-confirmed contributor identically to a confirmed one (#gate-nonconfirmed)", () => {
     const eff = resolveEffectiveSettings(settings({ linkedIssueGateMode: "advisory" }), parseFocusManifest({ gate: { linkedIssue: "block" } }));
+    // Non-confirmed now gates NORMALLY: a configured blocker → failure, the same verdict a confirmed author gets.
     const nonConfirmed = evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(eff, null, false));
-    expect(nonConfirmed.conclusion).toBe("neutral");
-    expect(nonConfirmed.blockers).toEqual([]);
+    expect(nonConfirmed.conclusion).toBe("failure");
+    expect(nonConfirmed.blockers.map((finding) => finding.code)).toEqual(["missing_linked_issue"]);
   });
 });
 
 describe("policy pack (#692)", () => {
-  it("gittensor pack hard-blocks only confirmed contributors", () => {
+  it("gittensor pack hard-blocks every author the same — confirmed status no longer changes the verdict (#gate-nonconfirmed)", () => {
     const gittensor = settings({ gatePack: "gittensor", linkedIssueGateMode: "block" });
-    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(gittensor, null, false)).conclusion).toBe("neutral");
+    expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(gittensor, null, false)).conclusion).toBe("failure");
     expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(gittensor, null, true)).conclusion).toBe("failure");
   });
 
@@ -145,10 +146,10 @@ describe("AI consensus defect gate blocker", () => {
     expect(evaluateGateCheck(aiDefectAdvisory(), gateCheckPolicy(eff, null, true)).conclusion).toBe("failure");
   });
 
-  it("never blocks a non-confirmed contributor even with aiReview: block", () => {
+  it("blocks a non-confirmed contributor under aiReview: block, the same as a confirmed one (#gate-nonconfirmed)", () => {
     const result = evaluateGateCheck(aiDefectAdvisory(), gateCheckPolicy(settings({ aiReviewMode: "block" }), null, false));
-    expect(result.conclusion).toBe("neutral");
-    expect(result.blockers).toEqual([]);
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
   });
 });
 
@@ -177,8 +178,10 @@ describe("slop gate (#530/#532)", () => {
     expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopRisk: 59, confirmedContributor: true }).conclusion).toBe("success");
   });
 
-  it("respects the confirmed-contributor gate (never blocks a non-confirmed author)", () => {
-    expect(evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopGateMinScore: 60, slopRisk: 90, confirmedContributor: false }).conclusion).toBe("neutral");
+  it("blocks a non-confirmed author on slop the same as a confirmed one (#gate-nonconfirmed)", () => {
+    const result = evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopGateMinScore: 60, slopRisk: 90, confirmedContributor: false });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((finding) => finding.code)).toContain("slop_risk_above_threshold");
   });
 
   it("gateCheckPolicy threads slop settings + the live slopRisk into the policy (incl. .gittensory.yml)", () => {
@@ -327,10 +330,10 @@ describe("focus-manifest policy gate (#555)", () => {
         expect(evaluateGateCheck(manifestAdvisory(code), { manifestPolicyGateMode: "advisory", confirmedContributor: true }).conclusion).toBe("success");
       });
 
-      it("never blocks a non-confirmed contributor even with manifestPolicy: block", () => {
+      it("blocks a non-confirmed contributor under manifestPolicy: block, the same as a confirmed one (#gate-nonconfirmed)", () => {
         const result = evaluateGateCheck(manifestAdvisory(code), { manifestPolicyGateMode: "block", confirmedContributor: false });
-        expect(result.conclusion).toBe("neutral");
-        expect(result.blockers).toEqual([]);
+        expect(result.conclusion).toBe("failure");
+        expect(result.blockers.map((finding) => finding.code)).toContain(code);
       });
     });
   }

@@ -276,27 +276,25 @@ describe("advisory rules", () => {
     expect(gate.warnings.map((finding) => finding.code)).toEqual(["busy_pr_queue"]);
   });
 
-  it("only hard-blocks confirmed Gittensor contributors — non-confirmed authors stay neutral regardless of blockers", () => {
+  it("gates NON-confirmed contributors normally — a real blocker closes them like a confirmed author (#gate-nonconfirmed)", () => {
     const blockingAdvisory = {
       ...buildPullRequestAdvisory(repo, null),
       findings: [{ code: "duplicate_pr_risk", title: "Linked issue overlaps another open PR", severity: "warning" as const, detail: "Duplicate." }],
     };
 
-    // Non-confirmed author: the gate is forced neutral (non-blocking) even though a real blocker fired.
+    // Non-confirmed author: gated NORMALLY now — a real blocker → failure (one-shot close), no longer forced to a
+    // neutral/held state. Confirmed-status affects only on-chain scoring, never the gate verdict. (#gate-nonconfirmed)
     const nonConfirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: false });
-    expect(nonConfirmed.conclusion).toBe("neutral");
-    expect(nonConfirmed.title).toBe("Gittensory Gate — advisory only");
-    expect(nonConfirmed.summary).toContain("not a confirmed Gittensor contributor");
-    expect(nonConfirmed.blockers).toEqual([]);
+    expect(nonConfirmed.conclusion).toBe("failure");
+    expect(nonConfirmed.title).toBe("Gittensory Gate: Linked issue overlaps another open PR");
+    expect(nonConfirmed.blockers.map((finding) => finding.code)).toEqual(["duplicate_pr_risk"]);
 
-    // Confirmed author with the same blocker: the gate blocks and names the blocker in the title.
+    // Confirmed author with the same blocker: identical verdict.
     const confirmed = evaluateGateCheck(blockingAdvisory, { duplicatePrGateMode: "block", confirmedContributor: true });
     expect(confirmed.conclusion).toBe("failure");
-    expect(confirmed.title).toBe("Gittensory Gate: Linked issue overlaps another open PR");
     expect(confirmed.blockers.map((finding) => finding.code)).toEqual(["duplicate_pr_risk"]);
 
-    // A clean PR from a non-confirmed author stays a normal success (the neutral override only kicks in
-    // when there is actually a blocker to suppress).
+    // A clean PR from a non-confirmed author is a normal success → auto-merges.
     const cleanNonConfirmed = evaluateGateCheck({ ...buildPullRequestAdvisory(repo, null), findings: [] }, { confirmedContributor: false });
     expect(cleanNonConfirmed.conclusion).toBe("success");
   });

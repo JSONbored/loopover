@@ -309,7 +309,8 @@ describe("GitHub check runs", () => {
       output: { title: "Gittensory Gate is evaluating" },
     });
     expect(capturedBody).not.toHaveProperty("conclusion");
-    expect(capturedBody.output?.text).toContain("only blocks confirmed Gittensor contributors");
+    // The Gate blocks every author the same on a configured blocker (confirmed status no longer gates the verdict).
+    expect(capturedBody.output?.text).toContain("blocks every author");
   });
 
   it("finalizes a known pending Gate check by id without listing check runs first", async () => {

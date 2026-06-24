@@ -55,7 +55,8 @@ export type PredictedGateVerdict = {
 const PREDICTED_GATE_NOTE =
   "Predicted from the repo's public .gittensory.yml gate config + safe defaults. The maintainer may have " +
   "private dashboard overrides not reflected here, and the dual-model AI-consensus blocker is only " +
-  "evaluated on a real PR. Only confirmed Gittensor contributors are ever hard-blocked.";
+  "evaluated on a real PR. Every author is gated the same: a configured hard blocker fails the gate " +
+  "regardless of confirmed-contributor status (which affects only on-chain scoring).";
 
 export type PredictedGateInput = {
   repoFullName: string;
@@ -84,8 +85,9 @@ export function buildPredictedGateVerdict(args: {
   pullRequests: PullRequestRecord[];
   bounties?: BountyRecord[] | undefined;
   issueQuality?: IssueQualityReport | null | undefined;
-  /** The contributor's OWN confirmed-Gittensor status (self-data). `false` → the real gate would stay
-   *  neutral for them; `undefined` → not gated on contributor status. */
+  /** The contributor's OWN confirmed-Gittensor status (self-data). Carried through for transparency only —
+   *  it no longer changes the predicted verdict (the real gate fails any author on a configured blocker;
+   *  confirmed-status affects only on-chain scoring). `undefined` → not resolved. */
   confirmedContributor?: boolean | undefined;
 }): PredictedGateVerdict {
   const { input, manifest, repo, issues, pullRequests } = args;

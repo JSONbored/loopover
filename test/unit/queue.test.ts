@@ -44,6 +44,22 @@ import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { createTestEnv } from "../helpers/d1";
 
+// The re-gate sweep now FANS OUT the heavy re-review + marker stamp into per-PR `agent-regate-pr` jobs
+// (#audit-sweep-fanout). A test asserting the re-review/stamp side effects must run the sweep AND drain the
+// per-PR jobs it enqueues. Returns the captured agent-regate-pr jobs for assertions.
+async function sweepAndDrainPerPr(env: Env, repoFullName: string): Promise<import("../../src/types").JobMessage[]> {
+  const fanned: import("../../src/types").JobMessage[] = [];
+  const send = env.JOBS.send.bind(env.JOBS);
+  env.JOBS.send = (async (message: import("../../src/types").JobMessage, options?: QueueSendOptions) => {
+    if (message.type === "agent-regate-pr") fanned.push(message);
+    return send(message, options);
+  }) as typeof env.JOBS.send;
+  await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName });
+  env.JOBS.send = send;
+  for (const job of fanned) await processJob(env, job);
+  return fanned;
+}
+
 describe("queue processors", () => {
   // Freshness-SLO fixtures are dated relative to late May 2026; pin the clock so staleness windows
   // stay deterministic regardless of when CI runs.
@@ -691,7 +707,7 @@ describe("queue processors", () => {
     });
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
 
-    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
 
     expect(aiCalls).toBeGreaterThanOrEqual(2);
     const blocker = await env.DB.prepare("select blocker_codes_json from gate_outcomes where repo_full_name = ? and pull_number = ? order by rowid desc limit 1").bind("owner/agent-repo", 7).first<{ blocker_codes_json: string }>();
@@ -718,7 +734,7 @@ describe("queue processors", () => {
       return realPrepare(sql);
     }) as typeof env.DB.prepare;
 
-    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
 
     const audit = await realPrepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.sweep.regate").first<{
       outcome: string;
@@ -741,10 +757,10 @@ describe("queue processors", () => {
     expect(before?.last_regated_at).toBeNull(); // never swept yet
     vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
 
-    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
 
     const after = await env.DB.prepare("select last_regated_at from pull_requests where repo_full_name = ? and number = 7").bind("owner/agent-repo").first<{ last_regated_at: string | null }>();
-    expect(typeof after?.last_regated_at).toBe("string"); // stamped via a D1 write — convergence does not need a GitHub write
+    expect(typeof after?.last_regated_at).toBe("string"); // stamped via a D1 write in the per-PR job — convergence does not need a GitHub write
   });
 
   it("agent re-gate sweep swallows a failing last_regated_at stamp and still completes (#audit-sweep-converge)", async () => {
@@ -757,10 +773,10 @@ describe("queue processors", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const stamp = vi.spyOn(repositoriesModule, "markPullRequestRegated").mockRejectedValueOnce(new Error("D1 write error"));
 
-    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+    await sweepAndDrainPerPr(env, "owner/agent-repo");
 
     const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.sweep.regate").first<{ outcome: string }>();
-    expect(audit?.outcome).toBe("completed"); // the sweep still records its verdict despite the stamp failure
+    expect(audit?.outcome).toBe("completed"); // the sweep still records its verdict; the per-PR stamp failure is swallowed
     expect(errors.mock.calls.some((call) => String(call[0]).includes("sweep_mark_regated_failed"))).toBe(true);
     stamp.mockRestore();
     errors.mockRestore();
@@ -808,6 +824,79 @@ describe("queue processors", () => {
 
     const count = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.sweep.regate").first<{ n: number }>();
     expect(count?.n).toBe(0);
+  });
+
+  it("INVARIANT: the sweep fans out one agent-regate-pr job per candidate onto the JOBS lane, not inline (#audit-sweep-fanout)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9100, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9100);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 8, title: "PR8", state: "open", user: { login: "c" }, head: { sha: "a8" }, labels: [], body: "" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    const perPr = sent.filter((m): m is Extract<import("../../src/types").JobMessage, { type: "agent-regate-pr" }> => m.type === "agent-regate-pr");
+    expect(perPr.map((m) => m.prNumber).sort()).toEqual([7, 8]); // one per candidate
+    expect(perPr.every((m) => m.installationId === 9100 && m.repoFullName === "owner/agent-repo")).toBe(true);
+    expect(sent.every((m) => m.type === "agent-regate-pr")).toBe(true); // the heavy work is enqueued, never done inline
+  });
+
+  it("INVARIANT (in-flight guard): the fan-out SKIPS a repo whose prior sweep is still draining, enqueues an idle one (#audit-sweep-fanout)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9101, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    for (const name of ["draining", "idle"]) {
+      await upsertRepositoryFromGitHub(env, { name, full_name: `owner/${name}`, private: false, owner: { login: "owner" } }, 9101);
+      await upsertRepositorySettings(env, { repoFullName: `owner/${name}`, autonomy: { merge: "auto" } });
+      await upsertPullRequestFromGitHub(env, `owner/${name}`, { number: 1, title: "PR1", state: "open", user: { login: "c" }, head: { sha: "h1" }, labels: [], body: "" });
+    }
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // owner/draining was just regated (a sweep is mid-drain); owner/idle has never been swept.
+    await repositoriesModule.markPullRequestRegated(env, "owner/draining", 1);
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "schedule" }); // no repoFullName → fan-out path
+
+    const sweepRepos = sent.filter((m): m is Extract<import("../../src/types").JobMessage, { type: "agent-regate-sweep" }> => m.type === "agent-regate-sweep").map((m) => m.repoFullName);
+    expect(sweepRepos).toEqual(["owner/idle"]); // the draining repo is skipped, the idle one enqueued
+    const fanout = await env.DB.prepare("select metadata_json from audit_events where event_type = ?").bind("agent.sweep.fanout").first<{ metadata_json: string }>();
+    expect(JSON.parse(fanout?.metadata_json ?? "{}")).toMatchObject({ repoCount: 1, skippedDraining: 1 });
+  });
+
+  it("the sweep stamps the marker INLINE when the repo has no installation (audit-only, still converges) (#audit-sweep-fanout)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    // Configured but NOT installed (no installationId) — there is no installation to re-review with.
+    await upsertRepositoryFromGitHub(env, { name: "no-install", full_name: "owner/no-install", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/no-install", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/no-install", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/no-install" });
+
+    expect(sent.filter((m) => m.type === "agent-regate-pr")).toEqual([]); // no installation → no per-PR fan-out
+    const after = await env.DB.prepare("select last_regated_at from pull_requests where repo_full_name = ? and number = 7").bind("owner/no-install").first<{ last_regated_at: string | null }>();
+    expect(typeof after?.last_regated_at).toBe("string"); // stamped inline so the sweep still advances
+  });
+
+  it("the sweep swallows a failing INLINE stamp on a no-installation repo and still completes (#audit-sweep-fanout)", async () => {
+    const env = createTestEnv({ JOBS: { async send() {} } as unknown as Queue });
+    await upsertRepositoryFromGitHub(env, { name: "no-install", full_name: "owner/no-install", private: false, owner: { login: "owner" } });
+    await upsertRepositorySettings(env, { repoFullName: "owner/no-install", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/no-install", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stamp = vi.spyOn(repositoriesModule, "markPullRequestRegated").mockRejectedValueOnce(new Error("D1 write error"));
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/no-install" });
+
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.sweep.regate").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("completed"); // the inline stamp failure is swallowed; the sweep still records its verdict
+    expect(errors.mock.calls.some((call) => String(call[0]).includes("sweep_mark_regated_failed"))).toBe(true);
+    stamp.mockRestore();
+    errors.mockRestore();
   });
 
   it("routes repo-scoped backfill jobs into resumable segment and detail processors", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SWEEP_FRESHNESS_MS, SWEEP_MAX_PRS, selectRegateCandidates } from "../../src/settings/agent-sweep";
+import { SWEEP_FRESHNESS_MS, SWEEP_MAX_PRS, isRegateSweepDraining, selectRegateCandidates } from "../../src/settings/agent-sweep";
 import type { PullRequestRecord } from "../../src/types";
 
 const NOW = "2026-06-17T12:00:00.000Z";
@@ -132,5 +132,25 @@ describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
     expect(SWEEP_MAX_PRS).toBe(25);
     const pulls = Array.from({ length: 40 }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(120 + i) }));
     expect(selectRegateCandidates({ pulls, now: NOW })).toHaveLength(25);
+  });
+});
+
+describe("isRegateSweepDraining (#audit-sweep-fanout in-flight guard)", () => {
+  it("returns false when no PR has ever been regated (null/undefined marker → no sweep in flight)", () => {
+    expect(isRegateSweepDraining(null, NOW)).toBe(false);
+    expect(isRegateSweepDraining(undefined, NOW)).toBe(false);
+  });
+
+  it("returns true when the freshest regate is within the window (a sweep is actively draining)", () => {
+    expect(isRegateSweepDraining(minutesAgo(1), NOW)).toBe(true); // 1m ago < 2m window
+  });
+
+  it("returns false when the freshest regate is older than the window (prior sweep already drained)", () => {
+    expect(isRegateSweepDraining(minutesAgo(5), NOW)).toBe(false); // 5m ago > 2m window
+  });
+
+  it("returns false for an unparseable timestamp or unparseable now (fail-open: proceed)", () => {
+    expect(isRegateSweepDraining("not-a-date", NOW)).toBe(false);
+    expect(isRegateSweepDraining(minutesAgo(1), "not-a-date")).toBe(false);
   });
 });

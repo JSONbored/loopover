@@ -2591,6 +2591,20 @@ export async function markPullRequestRegated(env: Env, fullName: string, number:
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
 }
 
+/** In-flight guard input for the re-gate sweep fan-out (#audit-sweep-fanout): the MOST RECENT last_regated_at
+ *  across a repo's OPEN PRs (the freshest sweep stamp), or null if none has been swept. fanOutAgentRegateSweepJobs
+ *  passes this to isRegateSweepDraining to skip re-arming a repo whose prior sweep is still draining. */
+export async function getLatestRegatedAt(env: Env, fullName: string): Promise<string | null> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ latest: sql<string | null>`max(${pullRequests.lastRegatedAt})` })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open")));
+  /* v8 ignore next -- max() always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return null;
+  return row.latest;
+}
+
 export async function getIssue(env: Env, fullName: string, number: number): Promise<IssueRecord | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(issues).where(and(eq(issues.repoFullName, fullName), eq(issues.number, number))).limit(1);

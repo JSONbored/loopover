@@ -23,6 +23,16 @@ export type JobMessage =
       attempt: number;
     }
   | {
+      // One bounded re-gate unit fanned out by the scheduled sweep (#audit-sweep-fanout): re-review + stamp a
+      // single PR. Each candidate becomes its own individually-retryable, rate-limited queue message so the heavy
+      // re-review work interleaves with other jobs instead of monopolizing the consumer for all 25 at once.
+      type: "agent-regate-pr";
+      deliveryId: string;
+      repoFullName: string;
+      prNumber: number;
+      installationId: number;
+    }
+  | {
       type: "refresh-registry";
       requestedBy: "schedule" | "api" | "test";
     }

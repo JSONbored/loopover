@@ -80,6 +80,7 @@ describe("private-beta auth and rate limiting", () => {
 
   it("classifies rate-limit route costs", () => {
     expect(routeClassForPath("/v1/github/webhook")).toBe("strict");
+    expect(routeClassForPath("/v1/orb/ingest")).toBe("strict"); // open telemetry ingest — abuse-capped per IP
     expect(routeClassForPath("/v1/auth/github/device/start")).toBe("strict");
     expect(routeClassForPath("/v1/local/branch-analysis")).toBe("expensive");
     expect(routeClassForPath("/v1/scoring/preview")).toBe("expensive");

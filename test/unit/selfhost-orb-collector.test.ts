@@ -147,6 +147,15 @@ describe("exportOrbBatch()", () => {
     expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 200 }))).toBe(0);
   });
 
+  it("defaults to gittensory's hosted collector URL when ORB_COLLECTOR_URL is unset (regression: dead orb.gittensory.app)", async () => {
+    delete process.env.ORB_COLLECTOR_URL;
+    const db = makeDb();
+    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
+    let capturedUrl: string | undefined;
+    await exportOrbBatch(db, 200, async (url) => { capturedUrl = String(url); return new Response(null, { status: 200 }); });
+    expect(capturedUrl).toBe("https://gittensory-api.aethereal.dev/v1/orb/ingest");
+  });
+
   it("exports pending events and marks them as exported", async () => {
     const db = makeDb();
     await recordOrbEvent(db, { repo: "owner/repo", pr_number: 1, head_sha: "sha1", outcome: "merged", gate_verdict: "approve" });

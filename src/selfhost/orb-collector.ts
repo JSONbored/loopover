@@ -4,7 +4,7 @@
 //
 // Collection is always local (DB only). Export to the central collector is opt-in:
 //   ORB_ENABLED=true          — activates collection (off by default)
-//   ORB_COLLECTOR_URL=<url>   — endpoint to export batches to (default: https://orb.gittensory.app/v1/ingest)
+//   ORB_COLLECTOR_URL=<url>   — endpoint to export batches to (default: gittensory's hosted collector)
 //   ORB_AIR_GAP=true          — keep all events local, never send externally
 //   ORB_ANONYMIZE=true        — HMAC-hash repo/owner before export (default: true)
 //
@@ -92,7 +92,10 @@ export async function exportOrbBatch(
   if (!orbEnabled()) return 0;
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
-  const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://orb.gittensory.app/v1/ingest";
+  // gittensory's hosted collector (the deployed /v1/orb/ingest receiver). No shared secret is sent:
+  // the batch is anonymized (HMAC of each operator's OWN ORB_WEBHOOK_SECRET) and accepted as untrusted,
+  // rate-limited telemetry. Override only to point at your own self-hosted collector.
+  const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://gittensory-api.aethereal.dev/v1/orb/ingest";
   const secret = process.env.ORB_WEBHOOK_SECRET ?? "";
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
 

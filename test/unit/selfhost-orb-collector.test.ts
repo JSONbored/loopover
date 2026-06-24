@@ -228,6 +228,32 @@ describe("exportOrbBatch()", () => {
     expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
   });
 
+  it("uses empty-string HMAC key when GITHUB_WEBHOOK_SECRET is unset (covers ?? '' branch)", async () => {
+    delete (process.env as NodeJS.Dict<string>)["GITHUB_WEBHOOK_SECRET"];
+    const db = makeDb();
+    await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
+    let sigHeader: string | undefined;
+    const exported = await exportOrbBatch(db, 200, async (_u, init) => {
+      sigHeader = (init?.headers as Record<string, string>)?.["x-orb-signature"];
+      return new Response(null, { status: 200 });
+    });
+    expect(exported).toBe(1);
+    // Signature should still be formed (with empty-string key)
+    expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
+  });
+
+  it("defaults ORB_ANONYMIZE to true when unset (covers ?? 'true' branch)", async () => {
+    delete process.env.ORB_ANONYMIZE;
+    const db = makeDb();
+    await recordOrbEvent(db, { repo: "owner/repo", pr_number: 1, head_sha: "sha1", outcome: "merged" });
+    let capturedBody: string | undefined;
+    await exportOrbBatch(db, 200, async (_u, init) => { capturedBody = init?.body as string; return new Response(null, { status: 200 }); });
+    const payload = JSON.parse(capturedBody!) as { events: Array<{ repo_hash: string }> };
+    // Default is anonymize=true, so repo name must be hashed
+    expect(payload.events[0]?.repo_hash).not.toBe("owner/repo");
+    expect(payload.events[0]?.repo_hash).toHaveLength(24);
+  });
+
   it("respects batchSize — exports only the first N pending events", async () => {
     const db = makeDb();
     for (let i = 1; i <= 5; i++)

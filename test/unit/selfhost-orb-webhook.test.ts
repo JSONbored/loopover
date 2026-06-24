@@ -71,6 +71,12 @@ describe("verifyOrbSignature()", () => {
   it("returns false for empty sig", () => {
     expect(verifyOrbSignature("body", "", SECRET)).toBe(false);
   });
+
+  it("returns false when sig hex is malformed/wrong length (timingSafeEqual throws — covers catch branch)", () => {
+    // "sha256=" prefix passes, but odd-length hex → Buffer.from(..., 'hex') produces
+    // a different byte length than the 32-byte expected HMAC → timingSafeEqual throws ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH
+    expect(verifyOrbSignature("body", "sha256=abc", SECRET)).toBe(false);
+  });
 });
 
 // ── lookupGateVerdict ─────────────────────────────────────────────────────────
@@ -159,6 +165,31 @@ describe("handleOrbWebhook() — pull_request events", () => {
     expect(row?.gate_verdict).toBeNull();
   });
 
+  it("records null time_to_close_ms when closed_at or created_at is absent (covers ternary null branches)", async () => {
+    const db = makeDb();
+    const payload = JSON.stringify({
+      action: "closed",
+      pull_request: { number: 5, head: { sha: "sha5" }, merged: true, created_at: null, closed_at: null },
+      repository: { full_name: "owner/repo" },
+    });
+    const result = await handleOrbWebhook("pull_request", payload, db);
+    expect(result.status).toBe(204);
+    const row = await db.prepare("SELECT time_to_close_ms FROM orb_events WHERE pr_number=5").first<{ time_to_close_ms: number | null }>();
+    expect(row?.time_to_close_ms).toBeNull();
+  });
+
+  it("records null time_to_close_ms when only closed_at is absent", async () => {
+    const db = makeDb();
+    const payload = JSON.stringify({
+      action: "closed",
+      pull_request: { number: 6, head: { sha: "sha6" }, merged: false, created_at: "2024-01-01T00:00:00Z", closed_at: null },
+      repository: { full_name: "owner/repo" },
+    });
+    await handleOrbWebhook("pull_request", payload, db);
+    const row = await db.prepare("SELECT time_to_close_ms FROM orb_events WHERE pr_number=6").first<{ time_to_close_ms: number | null }>();
+    expect(row?.time_to_close_ms).toBeNull();
+  });
+
   it("returns 204 and does NOT record for non-closed pull_request actions", async () => {
     const db = makeDb();
     const result = await handleOrbWebhook("pull_request", prPayload("opened", false), db);
@@ -226,6 +257,43 @@ describe("handleOrbWebhook() — installation events", () => {
     await handleOrbWebhook("installation_repositories", payload, db);
     const row = await db.prepare("SELECT removed_at FROM orb_installations WHERE repo='owner/gone-repo'").first<{ removed_at: string | null }>();
     expect(row?.removed_at).not.toBeNull();
+  });
+
+  it("handles installation_repositories removed event with missing repositories_removed field (covers ?? [] branch)", async () => {
+    const db = makeDb();
+    await db.prepare("INSERT INTO orb_installations (installation_id, repo) VALUES (?, ?)").bind(300, "owner/repo-x").run();
+    // No repositories_removed key — falls back to []
+    const payload = JSON.stringify({
+      action: "removed",
+      installation: { id: 300 },
+      repositories_added: [],
+      // repositories_removed intentionally absent
+    });
+    const result = await handleOrbWebhook("installation_repositories", payload, db);
+    expect(result.status).toBe(204);
+    // No rows should be marked removed (empty list was used)
+    const row = await db.prepare("SELECT removed_at FROM orb_installations WHERE repo='owner/repo-x'").first<{ removed_at: string | null }>();
+    expect(row?.removed_at).toBeNull();
+  });
+
+  it("does not increment installs counter when repositories list is empty (covers if(repos.length) false branch)", async () => {
+    const db = makeDb();
+    const payload = JSON.stringify({ action: "created", installation: { id: 1 }, repositories: [] });
+    await handleOrbWebhook("installation", payload, db);
+    // Counter must not have been incremented
+    expect(await renderMetrics()).not.toMatch(/gittensory_orb_installs_total [^0]/);
+  });
+
+  it("handles deleted event when repositories field is absent (covers repositories ?? [] branch)", async () => {
+    const db = makeDb();
+    await db.prepare("INSERT INTO orb_installations (installation_id, repo) VALUES (?, ?)").bind(400, "owner/to-delete").run();
+    // 'deleted' with no repositories key → falls back to []
+    const payload = JSON.stringify({ action: "deleted", installation: { id: 400 } });
+    const result = await handleOrbWebhook("installation", payload, db);
+    expect(result.status).toBe(204);
+    // Nothing removed since repos list was empty
+    const row = await db.prepare("SELECT removed_at FROM orb_installations WHERE repo='owner/to-delete'").first<{ removed_at: string | null }>();
+    expect(row?.removed_at).toBeNull();
   });
 
   it("increments gittensory_orb_installs_total for each repo installed", async () => {

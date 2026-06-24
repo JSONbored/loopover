@@ -2144,7 +2144,7 @@ export async function fetchLivePullRequestReviewDecision(env: Env, repoFullName:
 }
 
 /** The deterministic linked-issue facts the hard-rule evaluator needs (labels / assignees / open-state). */
-export type LinkedIssueFactsResult = { number: number; labels: string[]; assignees: string[]; state: string };
+export type LinkedIssueFactsResult = { number: number; labels: string[]; assignees: string[]; state: string; authorLogin: string | null };
 
 /**
  * FETCH the facts for one linked issue via the REST issues endpoint. FAIL-OPEN: any fetch/parse error returns
@@ -2159,6 +2159,7 @@ export async function fetchLinkedIssueFacts(env: Env, repoFullName: string, issu
     state?: string | null;
     labels?: Array<{ name?: string | null } | string | null> | null;
     assignees?: Array<{ login?: string | null } | null> | null;
+    user?: { login?: string | null } | null;
   }>(env, repoFullName, `/issues/${issueNumber}`, token).catch(() => undefined);
   if (!result) return undefined;
   const data = result.data;
@@ -2172,6 +2173,7 @@ export async function fetchLinkedIssueFacts(env: Env, repoFullName: string, issu
     labels,
     assignees,
     state: String(data.state ?? "open").toLowerCase(),
+    authorLogin: data.user?.login ?? null,
   };
 }
 

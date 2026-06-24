@@ -67,6 +67,7 @@ import {
   backfillRepositorySegment,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
+  fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
@@ -812,7 +813,7 @@ async function reReviewStoredPullRequest(
   if (!(await prReadyForReview(env, installationId, repoFullName, pr, settings, deliveryId))) return;
   const [otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
     listOtherOpenPullRequests(env, repoFullName, prNumber),
-    resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
+    resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
   ]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
@@ -1569,11 +1570,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       if (payload.action === "reopened" && installationId && (await maybeRecloseDisallowedReopen(env, deliveryId, installationId, repoFullName, pr, payload).catch(() => false))) {
         return;
       }
-      const [repo, settings, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
+      // Resolve settings first so the self-authored live-fetch fallback only fires when its gate is in block mode.
+      const settings = await resolveRepositorySettings(env, repoFullName);
+      const [repo, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
         getRepository(env, repoFullName),
-        resolveRepositorySettings(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
-        resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
+        resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
       ]);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
@@ -1752,14 +1754,25 @@ export function shouldCollectLinkedIssueEvidence(settings: Pick<RepositorySettin
   return settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
 
-// Fetch the author login for each linked issue number from the local DB. Returns a parallel array of
-// logins (null when the issue is not in the DB or has no recorded author). Errors are swallowed per-issue
-// so a DB hiccup on one issue never prevents the advisory from running — the detection is fail-open
-// (an unknown author login never triggers the self_authored_linked_issue finding).
-export async function resolveLinkedIssueAuthorLogins(env: Env, repoFullName: string, linkedIssues: number[]): Promise<(string | null)[]> {
+// Resolve the author login for each linked issue number. Prefers the local DB cache; on a cache MISS (issue not
+// cached, or no recorded author), falls back to a LIVE GitHub fetch so a stale/missing cache can't silently void
+// the self_authored_linked_issue anti-farming detection (#audit-3.11). The live token is minted lazily — only
+// when at least one issue misses the cache — so the common (fully-cached) path adds no fetch. Each lookup is
+// fail-safe: a per-issue error yields null (the detection stays fail-open only on a genuine inability to resolve).
+export async function resolveLinkedIssueAuthorLogins(env: Env, installationId: number | null | undefined, repoFullName: string, linkedIssues: number[], liveFallback = false): Promise<(string | null)[]> {
   if (linkedIssues.length === 0) return [];
-  const results = await Promise.all(linkedIssues.map((n) => getIssue(env, repoFullName, n).then((i) => i?.authorLogin ?? null).catch(() => null)));
-  return results;
+  const cached = await Promise.all(linkedIssues.map((n) => getIssue(env, repoFullName, n).then((i) => i?.authorLogin ?? null).catch(() => null)));
+  // The live-fetch fallback only fires when the self-authored gate can actually BLOCK (caller passes
+  // liveFallback) — so quiet/advisory paths add no API calls, and we pay the fetch only where a cache miss
+  // could otherwise void a hard block.
+  if (!liveFallback || !installationId || cached.every((login) => login != null)) return cached;
+  const token = await createInstallationToken(env, installationId).catch(() => undefined);
+  if (!token) return cached;
+  return Promise.all(
+    cached.map((login, index) =>
+      login != null ? Promise.resolve(login) : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token).then((facts) => facts?.authorLogin ?? null).catch(() => null),
+    ),
+  );
 }
 
 export function shouldCollectSlopEvidence(settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">): boolean {

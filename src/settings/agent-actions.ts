@@ -119,6 +119,36 @@ function hasLabel(labels: string[], name: string): boolean {
   return labels.some((label) => label.toLowerCase() === name.toLowerCase());
 }
 
+/**
+ * Accuracy circuit-breaker (#self-improve / GAP-4): when auto-merge is DISABLED for a repo (the auto-tuner
+ * engaged the holdonly flag after merge precision dropped, or a human set it), DOWNGRADE a would-MERGE into a
+ * human HOLD — drop the `merge` action and surface the needs-human-review label so the PR is held for a person
+ * instead of auto-merged. Mirrors reviewbot non-content-gate.ts (~212: a would-merge becomes a hold under the
+ * breaker; close/label/approve are untouched).
+ *
+ * PURE + idempotent: with `holdOnly` false this returns the plan UNCHANGED (byte-identical, the common path);
+ * with it true and no merge planned it is also a no-op. Only ever makes the system MORE cautious.
+ */
+export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: boolean): PlannedAgentAction[] {
+  if (!holdOnly || !planned.some((action) => action.actionClass === "merge")) return planned;
+  const next = planned.filter((action) => action.actionClass !== "merge");
+  // The dropped merge implies the PR is review-good — re-label it needs-human-review (replacing a stale
+  // ready-to-merge promise) so the held PR is clearly flagged for a person. Idempotent: only add when absent.
+  const alreadyNeedsReview = next.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_NEEDS_REVIEW && action.labelOp !== "remove");
+  const stagedMerge = planned.find((action) => action.actionClass === "merge");
+  if (!alreadyNeedsReview) {
+    next.push({
+      actionClass: "label",
+      requiresApproval: stagedMerge?.requiresApproval ?? false,
+      reason: "accuracy circuit-breaker engaged (merge precision dropped) — would-merge held for human review",
+      label: AGENT_LABEL_NEEDS_REVIEW,
+      labelOp: "add",
+    });
+  }
+  // Drop any ready-to-merge label add (the auto-merge it promised is now suppressed).
+  return next.filter((action) => !(action.actionClass === "label" && action.label === AGENT_LABEL_READY && action.labelOp !== "remove"));
+}
+
 function closeMessage(reasons: string[]): string {
   return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — if you believe it's mistaken, reopen the PR or ping a maintainer and it will be reviewed.`;
 }

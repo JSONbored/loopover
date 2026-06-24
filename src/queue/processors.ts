@@ -109,7 +109,7 @@ import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetecti
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
 import { selectRegateCandidates } from "../settings/agent-sweep";
-import { isProtectedAutomationAuthor, planAgentMaintenanceActions } from "../settings/agent-actions";
+import { downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions } from "../settings/agent-actions";
 import { executeAgentMaintenanceActions } from "../services/agent-action-executor";
 import { processSubmitDraft } from "../services/draft";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
@@ -180,6 +180,7 @@ import { loadHardGuardrailGlobs } from "../review/guardrail-config";
 import { AGENT_LABEL_PENDING_CLOSURE, evaluateLinkedIssueHardRules, loadLinkedIssueHardRules } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
+import { isHoldOnly, recordPrOutcome, recordReversalSignals, runSelfTuneBreaker } from "../review/outcomes-wire";
 import { recordNativeGateDecision } from "../review/parity-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
@@ -347,7 +348,15 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // ENQUEUES this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still
       // no-op, so flag-OFF does zero work here too. TIGHTENING-ONLY + shadow-soak + audited; never throws into
       // the queue (runSelfTune fails safe).
-      if (isSelfTuneEnabled(env)) await runSelfTune(env);
+      if (isSelfTuneEnabled(env)) {
+        await runSelfTune(env);
+        // GAP-4 accuracy circuit-breaker: read the gate-eval confusion matrix over the recorded pr_outcome
+        // ground truth and ENGAGE holdonly (would-merge → hold) for any repo whose merge precision dropped
+        // below the floor, plus AUTO-CLEAR a recovered breaker. Fail-safe: with no pr_outcome history the eval
+        // reads neutral → nothing engages → byte-identical. (applyAutoTune / maybeAutoClearHoldOnly, previously
+        // unwired — zero call-sites.)
+        await runSelfTuneBreaker(env);
+      }
       return;
     case "rag-index-repo":
       // Convergence (RAG / codebase index, flag GITTENSORY_REVIEW_RAG). Defense-in-depth: the cron + webhook only
@@ -689,7 +698,12 @@ async function maybeRunAgentMaintenance(
       approvedHeadSha: pr.approvedHeadSha,
     },
   });
-  if (planned.length === 0) return;
+  // Accuracy circuit-breaker (#self-improve / GAP-4): when the holdonly flag is set for this repo (the
+  // auto-tuner engaged it after merge precision dropped, or a human set it), convert a would-MERGE into a human
+  // HOLD before executing. Fail-safe: isHoldOnly reads false until a breaker actually engages, so the common
+  // path is byte-identical (downgradeMergeToHold returns the plan unchanged).
+  const breakerOnPlan = (await isHoldOnly(env, repoFullName)) ? downgradeMergeToHold(planned, true) : planned;
+  if (breakerOnPlan.length === 0) return;
 
   const installation = await getInstallation(env, installationId);
   /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive. */
@@ -707,7 +721,7 @@ async function maybeRunAgentMaintenance(
       installationPermissions,
       authorLogin: pr.authorLogin,
     },
-    planned,
+    breakerOnPlan,
   );
 
   // Flag-then-close double-check, Pass 2 trigger: when this pass FLAGGED the PR (added the pending-closure
@@ -715,7 +729,7 @@ async function maybeRunAgentMaintenance(
   // instead of waiting for the next CI-completion event or the hourly sweep. Best-effort — if the enqueue fails,
   // the next sweep / CI event is the backstop Pass 2. Reuses the existing `recapture-preview` delayed-re-review
   // job (it just re-runs reReviewStoredPullRequest), so no new job type is needed.
-  const flaggedForLinkedIssue = planned.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add");
+  const flaggedForLinkedIssue = breakerOnPlan.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add");
   if (flaggedForLinkedIssue) {
     const delaySeconds = Math.max(0, linkedIssueRulesConfig.closeDelaySeconds);
     const verifyJob = { type: "recapture-preview" as const, deliveryId: `linked-issue-verify:${repoFullName}#${pr.number}`, repoFullName, prNumber: pr.number, installationId, attempt: 0 };
@@ -1413,6 +1427,19 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
 
     if (payload.repository?.full_name && payload.pull_request) {
       const repoFullName = payload.repository.full_name;
+      // Accuracy/eval feedback loop (#self-improve / GAP-4). Independent of the review path + best-effort:
+      //   • pr_outcome — on `closed`, record the REALIZED merge-vs-close ground truth so computeGateEval can
+      //     score the gate's prediction against what the human actually did.
+      //   • reversal — on `reopened` of a bot-CLOSED PR (contributor dispute) / a merged "Reverts #N" PR,
+      //     record the human override so reversalRate/calibration are no longer blind. Both fail safe.
+      await recordPrOutcome(env, eventName, payload).catch((error) => {
+        /* v8 ignore next -- best-effort: outcome recording never blocks the webhook. */
+        console.warn(JSON.stringify({ level: "warn", event: "pr_outcome_record_failed", deliveryId, repository: repoFullName, error: errorMessage(error) }));
+      });
+      await recordReversalSignals(env, eventName, payload).catch((error) => {
+        /* v8 ignore next -- best-effort: reversal recording never blocks the webhook. */
+        console.warn(JSON.stringify({ level: "warn", event: "reversal_record_failed", deliveryId, repository: repoFullName, error: errorMessage(error) }));
+      });
       const pr = await upsertPullRequestFromGitHub(env, repoFullName, payload.pull_request);
       const [repo, settings, otherOpenPullRequests] = await Promise.all([
         getRepository(env, repoFullName),

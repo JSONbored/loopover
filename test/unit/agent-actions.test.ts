@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
 
@@ -422,5 +422,25 @@ describe("isProtectedAutomationAuthor", () => {
     expect(isProtectedAutomationAuthor("some-contributor")).toBe(false);
     expect(isProtectedAutomationAuthor(null)).toBe(false);
     expect(isProtectedAutomationAuthor(undefined)).toBe(false);
+  });
+});
+
+describe("downgradeMergeToHold — accuracy circuit-breaker (#self-improve / GAP-4)", () => {
+  // A REAL would-merge plan from the planner: gate success + clean + approvals satisfied.
+  const wouldMerge = () =>
+    planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", label: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean" } }));
+
+  it("a real would-MERGE plan becomes a HOLD when the breaker is engaged (holdOnly=true)", () => {
+    const plan = wouldMerge();
+    expect(classes(plan)).toContain("merge"); // sanity: the planner really would auto-merge
+    const held = downgradeMergeToHold(plan, true);
+    expect(classes(held)).not.toContain("merge"); // the would-merge is downgraded...
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "add")).toBe(true); // ...to a human hold
+    expect(held.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_READY)).toBe(false); // the ready-to-merge promise is dropped
+  });
+
+  it("holdOnly=false leaves a real would-merge plan UNCHANGED (byte-identical common path)", () => {
+    const plan = wouldMerge();
+    expect(downgradeMergeToHold(plan, false)).toBe(plan);
   });
 });

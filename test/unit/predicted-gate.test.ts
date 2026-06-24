@@ -148,6 +148,97 @@ describe("buildPredictedGateVerdict", () => {
   });
 });
 
+describe("case-insensitive author-history matching", () => {
+  it("matches author history when the login differs only by case", () => {
+    // Prior merged PR has authorLogin "Miner1" (uppercase M), but the contributor input has "miner1" (lowercase).
+    // Before the fix, authorHistory would be empty → the contributor falsely gets first-time grace.
+    const result = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(9, "Earlier fix", [], "Miner1"), state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    });
+    // "miner1" (BASE_INPUT.contributorLogin) must match "Miner1" → authorMergedPrCount >= 1 → no grace → blocked.
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+  });
+
+  it("matches author history when the repoFullName differs only by case", () => {
+    // Prior merged PR has repoFullName "Acme/Widgets" but input uses "acme/widgets".
+    const result = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(9, "Earlier fix", [], "miner1"), repoFullName: "Acme/Widgets", state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+  });
+
+  it("counts closed-unmerged history correctly even with mixed-case logins", () => {
+    // Repeat-offender detection: 3 closed-unmerged PRs with "MINER1" must still count for "miner1".
+    const closedUnmerged = (number: number, title: string): PullRequestRecord => ({
+      ...openPr(number, title, [], "MINER1"),
+      state: "closed",
+    });
+    const result = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        closedUnmerged(11, "Attempt one"),
+        closedUnmerged(12, "Attempt two"),
+        closedUnmerged(13, "Attempt three"),
+      ],
+    });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+  });
+
+  it("does NOT match author history from a different login", () => {
+    // A PR from "other-miner" must not count toward "miner1" history even with case folding.
+    const result = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(9, "Earlier fix", [], "other-miner"), state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    });
+    // "other-miner" does not match "miner1" → authorMergedPrCount === 0 → newcomer → grace applies.
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toHaveLength(0);
+  });
+
+  it("does NOT match author history from a different repo", () => {
+    // A merged PR in "acme/other-repo" must not count toward "acme/widgets" history.
+    const result = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(9, "Earlier fix", [], "miner1"), repoFullName: "acme/other-repo", state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    });
+    // Different repo → authorMergedPrCount === 0 → newcomer → grace.
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toHaveLength(0);
+  });
+
+  it("handles a null authorLogin in the PR record without crashing", () => {
+    // Some PR records may have null authorLogin (deleted users); sameLogin must handle it.
+    const result = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(9, "Ghost PR", [], "miner1"), authorLogin: null as unknown as string, state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    });
+    // null authorLogin does not match "miner1" → newcomer → grace.
+    expect(result.conclusion).toBe("neutral");
+    expect(result.blockers).toHaveLength(0);
+  });
+});
+
 describe("pack-aware prediction (#693)", () => {
   it("defaults to the gittensor pack and surfaces it", () => {
     expect(verdict({ gate: { duplicates: "block" } }).pack).toBe("gittensor");

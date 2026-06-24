@@ -148,7 +148,7 @@ export function buildPredictedGateVerdict(args: {
   const pack: GatePolicyPack = gate.pack ?? "gittensor";
   const effectiveConfirmedContributor = pack === "oss-anti-slop" ? undefined : args.confirmedContributor;
 
-  const authorHistory = pullRequests.filter((pr) => pr.repoFullName === input.repoFullName && pr.authorLogin === input.contributorLogin);
+  const authorHistory = pullRequests.filter((pr) => sameRepo(pr.repoFullName, input.repoFullName) && sameLogin(pr.authorLogin, input.contributorLogin));
 
   const evaluation = evaluateGateCheck(advisory, {
     linkedIssueGateMode: gate.linkedIssue ?? undefined,
@@ -179,4 +179,12 @@ export function buildPredictedGateVerdict(args: {
     funnel: pack === "oss-anti-slop" ? { ...OSS_ANTI_SLOP_FUNNEL } : null,
     note: PREDICTED_GATE_NOTE,
   };
+}
+
+function sameLogin(value: string | null | undefined, login: string): boolean {
+  return value?.toLowerCase() === login.toLowerCase();
+}
+
+function sameRepo(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
 }

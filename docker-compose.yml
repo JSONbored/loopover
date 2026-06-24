@@ -267,8 +267,8 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
 
   # ── Log pipeline (--profile observability) ─────────────────────────────────
-  # Loki stores logs; Promtail discovers every container in this compose project via the
-  # Docker socket (read-only) and ships their logs to Loki. Browse in Grafana → Explore →
+  # Loki stores logs; Promtail discovers every container in this compose project via the read-only
+  # docker-proxy (NOT a raw socket) and ships their logs to Loki. Browse in Grafana → Explore →
   # Loki, e.g. {service="gittensory"} | json | level="error".
   loki:
     image: grafana/loki:latest
@@ -283,19 +283,37 @@ services:
     # at GET /ready; Promtail retries/backs off until Loki accepts pushes and Grafana retries the
     # datasource, so nothing depends on a Docker health gate here.
 
+  # Read-only Docker-API proxy that fronts the socket for Promtail's service discovery. Promtail must
+  # NOT be given the raw /var/run/docker.sock: a `:ro` socket bind-mount only protects the socket inode,
+  # it does NOT restrict the Docker API, so socket access is effectively host root (enumerate containers,
+  # read env/secrets + all container logs, create a privileged container and escape to the host — the
+  # same risk the `runner` service notes below). This proxy is the ONLY container touching the socket; it
+  # allows just the read-only `/containers/*` endpoints docker_sd needs (list/inspect/logs) and blocks
+  # every mutating call (POST=0 → no create/exec/start). It publishes no host port — reachable only on the
+  # internal compose network.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      CONTAINERS: "1"   # GET /containers/* (list, inspect, logs)
+      NETWORKS: "1"     # GET /networks/* — docker_sd computes per-target network labels
+      POST: "0"         # deny every mutating call; strictly read-only (no create/exec/start)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
   promtail:
     image: grafana/promtail:latest
     restart: unless-stopped
     profiles: ["observability"]
     command: ["-config.file=/etc/promtail/promtail-config.yml"]
-    depends_on: [loki]
+    depends_on: [loki, docker-proxy]
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
-      # Read-only Docker socket — required for docker_sd_configs discovery. Promtail only
-      # reads container metadata + log files; the :ro mount blocks any writes to the daemon.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Persist read positions so restarts don't re-ship the whole log history.
       - promtail-data:/tmp/positions
+    # No Docker-socket mount — Promtail discovers containers via the docker-proxy above (read-only
+    # Docker API). See that service for why a direct `:ro` socket mount would still be host-root-equivalent.
 
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
   # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no

@@ -2,10 +2,10 @@
 # Verified against the Promtail config schema (Loki release-3.4.x docs; the Promtail
 # binary is in LTS and its config is stable against current Loki v3.7.x).
 #
-# docker_sd_configs talks to the Docker daemon over a READ-ONLY socket mount and
-# discovers every container in the compose project. We relabel each stream with the
-# compose service + container name, then parse our JSON log lines so operators can
-# filter by level and event.
+# docker_sd_configs talks to the Docker API through the docker-proxy service (a read-only
+# Docker-API filter) — NOT a raw socket mount, which would be host-root-equivalent even with :ro.
+# It discovers every container in the compose project; we relabel each stream with the compose
+# service + container name, then parse our JSON log lines so operators can filter by level and event.
 
 server:
   http_listen_port: 9080
@@ -29,7 +29,8 @@ clients:
 scrape_configs:
   - job_name: docker
     docker_sd_configs:
-      - host: unix:///var/run/docker.sock
+      # Read-only Docker API exposed by the docker-proxy service (no raw socket in this container).
+      - host: tcp://docker-proxy:2375
         refresh_interval: 15s
         # Only containers in THIS compose project (set automatically by compose).
         # Avoids scraping unrelated containers on a shared host.

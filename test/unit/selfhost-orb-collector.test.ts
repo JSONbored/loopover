@@ -116,14 +116,14 @@ describe("exportOrbBatch()", () => {
   beforeEach(() => {
     resetMetrics();
     process.env.ORB_ENABLED = "true";
-    process.env.GITHUB_WEBHOOK_SECRET = "test-secret";
+    process.env.ORB_WEBHOOK_SECRET = "test-secret";
     process.env.ORB_ANONYMIZE = "true";
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
   });
   afterEach(() => {
     delete process.env.ORB_ENABLED;
-    process.env.GITHUB_WEBHOOK_SECRET = undefined as unknown as string;
+    process.env.ORB_WEBHOOK_SECRET = undefined as unknown as string;
     delete process.env.ORB_ANONYMIZE;
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
@@ -228,8 +228,8 @@ describe("exportOrbBatch()", () => {
     expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
   });
 
-  it("uses empty-string HMAC key when GITHUB_WEBHOOK_SECRET is unset (covers ?? '' branch)", async () => {
-    delete (process.env as NodeJS.Dict<string>)["GITHUB_WEBHOOK_SECRET"];
+  it("uses empty-string HMAC key when ORB_WEBHOOK_SECRET is unset (covers ?? '' branch)", async () => {
+    delete (process.env as NodeJS.Dict<string>)["ORB_WEBHOOK_SECRET"];
     const db = makeDb();
     await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
     let sigHeader: string | undefined;

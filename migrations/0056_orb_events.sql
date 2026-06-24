@@ -3,7 +3,7 @@
 -- export job to batch-send calibration signals to the central collector (opt-in) or
 -- to keep them local for operator-only analysis (ORB_AIR_GAP=true).
 CREATE TABLE IF NOT EXISTS orb_events (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          INTEGER PRIMARY KEY,
   repo        TEXT    NOT NULL,
   pr_number   INTEGER NOT NULL,
   head_sha    TEXT    NOT NULL,

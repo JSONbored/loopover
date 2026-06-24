@@ -46,9 +46,9 @@ interface OrbExportPayload {
   }>;
 }
 
-/** Stable instance identifier (hash of the App ID — no PII). */
+/** Stable instance identifier (hash of the Orb App ID — no PII). */
 function instanceId(): string {
-  return createHash("sha256").update(process.env.GITHUB_APP_ID ?? "unknown").digest("hex").slice(0, 16);
+  return createHash("sha256").update(process.env.ORB_APP_ID ?? "unknown").digest("hex").slice(0, 16);
 }
 
 /** HMAC a string with the webhook secret for anonymized export. */
@@ -93,7 +93,7 @@ export async function exportOrbBatch(
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://orb.gittensory.app/v1/ingest";
-  const secret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
+  const secret = process.env.ORB_WEBHOOK_SECRET ?? "";
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
 
   const { results } = await db

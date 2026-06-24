@@ -159,6 +159,39 @@ describe("secret-leak finding in the advisory build", () => {
     expect(finding?.title).toContain("github_token");
   });
 
+  it("FLAG-ON: scans a lower-priority file even when the AI review diff budget would omit it", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const adv = advisory();
+    const noisySourcePatch = `@@\n${Array.from({ length: 2600 }, (_, i) => `+export const generated${i} = "${"x".repeat(20)}";`).join("\n")}`;
+    const files = [
+      { repoFullName: "acme/widgets", pullNumber: 7, path: "src/noisy.ts", status: "modified", additions: 2600, deletions: 0, changes: 2600, payload: { patch: noisySourcePatch } },
+      { repoFullName: "acme/widgets", pullNumber: 7, path: "docs/release.md", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: '@@\n+token: "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"' } },
+    ];
+    await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 7, files });
+    expect(adv.findings.find((f) => f.code === "secret_leak")).toBeDefined();
+  });
+
+  it("FLAG-ON: scans low-signal hunks that the AI review diff reducer would drop", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "true" });
+    const adv = advisory();
+    const highSignalHunk = `@@ -1,0 +1,2200 @@\n${Array.from({ length: 2200 }, (_, i) => `+const filler${i} = "${"x".repeat(32)}";`).join("\n")}`;
+    const secretHunk = '@@ -9000,0 +9000,1 @@\n+const token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";';
+    const files = [
+      {
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        path: "src/oversized.ts",
+        status: "modified",
+        additions: 2201,
+        deletions: 0,
+        changes: 2201,
+        payload: { patch: `${highSignalHunk}\n${secretHunk}` },
+      },
+    ];
+    await maybeAddSecretLeakFinding(env, { advisory: adv, repoFullName: "acme/widgets", pullNumber: 7, files });
+    expect(adv.findings.find((f) => f.code === "secret_leak")).toBeDefined();
+  });
+
   it("FLAG-OFF (default): no secret_leak finding is produced — the advisory is unchanged", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false" });
     const adv = advisory();

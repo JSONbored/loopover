@@ -2,6 +2,9 @@ import { Octokit } from "@octokit/core";
 import { createInstallationToken } from "./app";
 import type { AutoMergeMethod } from "../types";
 
+const ISSUE_EVENTS_PAGE_SIZE = 100;
+const ISSUE_EVENTS_RECENT_PAGE_LIMIT = 10;
+
 // The GitHub write primitives the maintainer auto-maintain layer (#778) uses to act on a PR's STATE — never
 // its source. Thin wrappers over the installation-scoped REST API, mirroring labels.ts / comments.ts. Each
 // throws on a non-2xx response; the action executor owns the try/catch + audit so a failed mutation is
@@ -119,19 +122,38 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
     const { owner, repo } = splitRepo(repoFullName);
     const token = await createInstallationToken(env, installationId);
     const octokit = new Octokit({ auth: token });
-    let lastCloser: string | null = null;
-    // Cap at 10 pages (1 000 events) — enough for any real PR timeline without risking API rate exhaustion.
-    for (let page = 1; page <= 10; page += 1) {
-      // issue-events are returned oldest-first; walk every page so the final `closed` entry is truly the latest.
-      const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: 100, page });
-      const events = response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>;
-      for (const entry of events) {
-        if (entry.event === "closed") lastCloser = entry.actor?.login ?? null;
-      }
-      if (events.length < 100) return lastCloser;
+    const requestPage = (page: number) =>
+      octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: ISSUE_EVENTS_PAGE_SIZE, page });
+    const firstResponse = await requestPage(1);
+    const firstEvents = firstResponse.data as Array<{ event?: string; actor?: { login?: string | null } | null }>;
+    const lastPage = issueEventsLastPage(firstResponse.headers.link);
+    if (lastPage <= 1) return latestCloserInPage(firstEvents) ?? null;
+
+    // GitHub returns issue-events oldest-first. Use the Link header to inspect the newest bounded window instead
+    // of the oldest prefix, so a long self-generated timeline cannot hide a later maintainer/bot close.
+    const firstPageToRead = Math.max(2, lastPage - ISSUE_EVENTS_RECENT_PAGE_LIMIT + 1);
+    for (let page = lastPage; page >= firstPageToRead; page -= 1) {
+      const response = await requestPage(page);
+      const closer = latestCloserInPage(response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>);
+      if (closer !== undefined) return closer;
     }
-    return lastCloser;
+    return firstPageToRead === 2 ? (latestCloserInPage(firstEvents) ?? null) : null;
   } catch {
     return null;
   }
+}
+
+function latestCloserInPage(events: Array<{ event?: string; actor?: { login?: string | null } | null }>): string | null | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const entry = events[i];
+    if (entry?.event === "closed") return entry.actor?.login ?? null;
+  }
+  return undefined;
+}
+
+function issueEventsLastPage(linkHeader: string | undefined): number {
+  if (!linkHeader) return 1;
+  const lastLink = linkHeader.split(",").find((link) => /rel="last"/.test(link));
+  const page = lastLink?.match(/[?&]page=(\d+)/)?.[1];
+  return page ? Number(page) : 1;
 }

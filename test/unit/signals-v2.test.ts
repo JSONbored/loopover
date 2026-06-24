@@ -1655,6 +1655,7 @@ describe("v2 signal builders", () => {
         slopGateMode: "off",
         mergeReadinessGateMode: "off",
         manifestPolicyGateMode: "off",
+        selfAuthoredLinkedIssueGateMode: "advisory",
         firstTimeContributorGrace: false,
         slopAiAdvisory: false,
         qualityGateMinScore: null,

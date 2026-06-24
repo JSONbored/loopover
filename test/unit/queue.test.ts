@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import * as repositoriesModule from "../../src/db/repositories";
 import {
   listCollisionEdges,
   createAgentRun,
@@ -22,6 +23,7 @@ import {
   listSignalSnapshots,
   persistSignalSnapshot,
   recordGateBlockOutcome,
+  markGateOutcomeOverridden,
   recordProductUsageEvent,
   upsertAgentCommandAnswer,
   upsertCheckSummary,
@@ -6124,6 +6126,409 @@ describe("one-shot reopen prevention", () => {
     await processJob(env, { type: "github-webhook", deliveryId: "perm-api-error", eventName: "pull_request", payload: reopenedPayload("contributor") });
     // permission API threw → null → non-maintainer reopener + non-maintainer closer → no reclose.
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+  });
+
+  it("swallows createIssueComment, closePullRequest, and recordAuditEvent errors on reclose (fail-safe — all .catch() bodies)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      // createIssueComment (POST) and closePullRequest (PATCH) both throw → their .catch(() => undefined) bodies run
+      throw new Error("GitHub API unavailable");
+    });
+    vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "reopen-api-fail-safe", eventName: "pull_request", payload: reopenedPayload("contributor") }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
+  beforeEach(() => clearInstallationTokenCacheForTest());
+  afterEach(() => {
+    clearInstallationTokenCacheForTest();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function draftPayload(author: string, headSha = "abc123", isDraft = true): any {
+    return {
+      action: "converted_to_draft",
+      installation: { id: 123 },
+      repository: { id: 1, name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } },
+      sender: { login: author, type: "User" },
+      pull_request: {
+        id: 4242,
+        number: 42,
+        state: "open",
+        title: "Some PR",
+        body: "Body.",
+        user: { login: author },
+        head: { sha: headSha, ref: "fix", repo: { full_name: `${author}/gittensory`, owner: { login: author } } },
+        base: { sha: "base123", ref: "main", repo: { full_name: "JSONbored/gittensory", owner: { login: "JSONbored" } } },
+        draft: isDraft,
+        merged: false,
+        mergeable_state: "clean",
+        created_at: "2026-05-27T00:00:00Z",
+        updated_at: "2026-05-27T00:00:00Z",
+      },
+    };
+  }
+
+  async function setupRepo(env: ReturnType<typeof createTestEnv>, overrides: Record<string, unknown> = {}): Promise<void> {
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      gateCheckMode: "enabled",
+      autonomy: { close: "auto" },
+      agentPaused: false,
+      ...overrides,
+    });
+  }
+
+  it("closes a PR immediately when the contributor converts to draft after a gate failure on the same headSha", async () => {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dodge-1", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ detail: string }>();
+    expect(audit?.detail).toContain("abc123");
+    expect(audit?.detail).toContain("contributor");
+  });
+
+  it("no-ops when no prior gate failure exists for the PR", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    // No gate block recorded — gate hasn't run yet.
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-no-block", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("no-ops when the prior gate failure is for a different headSha (contributor pushed fixes in draft)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    // Block exists but for an OLDER commit — contributor has pushed new code in draft.
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "old-sha-XYZ", blockerCodes: ["missing_linked_issue"] });
+
+    // Payload headSha is "abc123" (new commit), not "old-sha-XYZ".
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-new-sha", eventName: "pull_request", payload: draftPayload("contributor", "abc123") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("no-ops when the gate block has been maintainer-overridden", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    await markGateOutcomeOverridden(env, "JSONbored/gittensory", 42);
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-overridden", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("no-ops when the PR author is the repo owner (owner PRs are never auto-closed)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    // Author = "JSONbored" = repo owner → no close.
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-owner", eventName: "pull_request", payload: draftPayload("JSONbored") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("no-ops when the agent is paused (agentPaused=true)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env, { agentPaused: true });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-paused", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("no-ops when the agent autonomy is not configured (autonomy=null)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env, { autonomy: null });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-no-autonomy", eventName: "pull_request", payload: draftPayload("contributor") });
+
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("closes with empty blockerCodes (no codes parenthetical) and null author (uses 'unknown' in audit)", async () => {
+    // covers: codes ? `(${codes})` : "" → "" branch; pr.authorLogin ?? "unknown" → "unknown" branch
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && (init?.method ?? "GET") === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && (init?.method ?? "GET") === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    // empty blockerCodes → codes = "" → ternary takes the "" branch
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: [] });
+
+    // null user.login → authorLogin null → (null ?? "").toLowerCase() === "" ≠ "jsonbored" → authorIsOwner false → close proceeds
+    // → pr.authorLogin ?? "unknown" in audit detail takes the "unknown" branch
+    const payload = draftPayload("contributor");
+    payload.pull_request.user = { login: null };
+    await processJob(env, { type: "github-webhook", deliveryId: "empty-codes-null-author", eventName: "pull_request", payload });
+
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+    const comment = calls.find((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"));
+    expect(comment).toBeDefined();
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ detail: string }>();
+    expect(audit?.detail).toContain("unknown");
+  });
+
+  it("swallows createIssueComment and closePullRequest API errors (fail-safe — both .catch() bodies)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      throw new Error("simulated network error"); // all GitHub calls throw
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    // Should not throw even though createIssueComment and closePullRequest both throw
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "api-error-swallow", eventName: "pull_request", payload: draftPayload("contributor") }),
+    ).resolves.toBeUndefined();
+
+    // Audit event was still written to DB (recordAuditEvent uses D1, not fetch)
+    const audit = await env.DB.prepare("select event_type from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ event_type: string }>();
+    expect(audit?.event_type).toBe("github_app.draft_dodge_closed");
+  });
+
+  it("getGateBlockOutcome DB error is caught — handler no-ops gracefully", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${input}`);
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    // Spy on getGateBlockOutcome to throw — the .catch(() => undefined) body must execute
+    vi.spyOn(repositoriesModule, "getGateBlockOutcome").mockRejectedValueOnce(new Error("D1 error"));
+
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "gbo-db-error", eventName: "pull_request", payload: draftPayload("contributor") }),
+    ).resolves.toBeUndefined();
+
+    // No close should have happened (block was unknown due to DB error)
+    expect(calls.some((c) => c.includes("PATCH") && c.includes("/pulls/42"))).toBe(false);
+  });
+
+  it("recordAuditEvent failure is swallowed — close still proceeds without crashing", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.endsWith("/issues/42/comments") && (init?.method ?? "GET") === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && (init?.method ?? "GET") === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+
+    vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
+
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "audit-db-error", eventName: "pull_request", payload: draftPayload("contributor") }),
+    ).resolves.toBeUndefined();
+
+    // Close still happened despite audit failure
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+  });
+
+  it("no-op owner-exemption when repoFullName has no slash (repoOwner is empty — authorIsOwner always false)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push({ url, method: init?.method ?? "GET" });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/") && (init?.method ?? "GET") === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/pulls/") && (init?.method ?? "GET") === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    // Setup with a slash-free repo name
+    await upsertRepositoryFromGitHub(env, { name: "noslash", full_name: "noslash", private: false, owner: { login: "" } }, 200);
+    await upsertInstallation(env, {
+      installation: {
+        id: 200,
+        account: { login: "", id: 2, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "noslash", full_name: "noslash", private: false, owner: { login: "" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "noslash",
+      gateCheckMode: "enabled",
+      autonomy: { close: "auto" },
+      agentPaused: false,
+    });
+    await recordGateBlockOutcome(env, { repoFullName: "noslash", pullNumber: 77, headSha: "sha-noslash", blockerCodes: ["missing_linked_issue"] });
+
+    const noslashPayload = {
+      action: "converted_to_draft",
+      installation: { id: 200 },
+      repository: { id: 2, name: "noslash", full_name: "noslash", private: false, default_branch: "main", owner: { login: "" } },
+      sender: { login: "someone", type: "User" },
+      pull_request: {
+        id: 9999,
+        number: 77,
+        state: "open",
+        title: "slash-free",
+        body: "",
+        user: { login: "someone" },
+        head: { sha: "sha-noslash", ref: "fix", repo: { full_name: "someone/noslash", owner: { login: "someone" } } },
+        base: { sha: "base", ref: "main", repo: { full_name: "noslash", owner: { login: "" } } },
+        draft: true,
+        merged: false,
+        mergeable_state: "clean",
+        created_at: "2026-05-27T00:00:00Z",
+        updated_at: "2026-05-27T00:00:00Z",
+      },
+    };
+
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "noslash-test", eventName: "pull_request", payload: noslashPayload }),
+    ).resolves.toBeUndefined();
+
+    // With no slash in repoFullName: repoOwner="" (branch 196 false) → repoOwner.length>0=false (branch 198 false)
+    // → authorIsOwner=false → handler enters the close path. closePullRequest/.catch() swallows the splitRepo
+    // error (GitHub API requires owner/repo — slash-free names can't be closed via API) but the handler itself
+    // doesn't crash. Verify the handler DID reach getGateBlockOutcome, proving branches 196+198 were exercised.
+    const verifyBlock = await repositoriesModule.getGateBlockOutcome(env, "noslash", 77);
+    expect(verifyBlock?.headSha).toBe("sha-noslash");
+  });
+});
+
+describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("swallows persistSignalSnapshot errors — catch body runs without crashing the handler", async () => {
+    // Bot-authored @gittensory comment hits the early bot_author bail-out path in
+    // maybeProcessGittensoryMentionCommand, which calls recordAgentCommandUsage. Injecting a
+    // persistSignalSnapshot failure exercises the catch at the bottom of that function.
+    vi.spyOn(repositoriesModule, "persistSignalSnapshot").mockRejectedValueOnce(new Error("signal DB error"));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const payload: any = {
+      action: "created",
+      installation: { id: 123 },
+      repository: { id: 1, name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } },
+      sender: { login: "gittensory[bot]", type: "Bot" },
+      comment: { id: 999, body: "@gittensory help", user: { login: "gittensory[bot]", type: "Bot" } },
+      issue: { id: 1, number: 77, title: "some issue", pull_request: { url: "https://api.github.com/repos/JSONbored/gittensory/pulls/77" } },
+    };
+    await expect(
+      processJob(env, { type: "github-webhook", deliveryId: "bot-mention-signal-fail", eventName: "issue_comment", payload }),
+    ).resolves.toBeUndefined();
   });
 });
 

@@ -415,6 +415,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       slopGateMode: "off",
       mergeReadinessGateMode: "off",
       manifestPolicyGateMode: "off",
+      selfAuthoredLinkedIssueGateMode: "advisory",
       firstTimeContributorGrace: false,
       slopGateMinScore: null,
       slopAiAdvisory: false,
@@ -454,6 +455,7 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     slopGateMode: parseGateRuleMode(row.slopGateMode),
     mergeReadinessGateMode: parseGateRuleMode(row.mergeReadinessGateMode),
     manifestPolicyGateMode: parseGateRuleMode(row.manifestPolicyGateMode),
+    selfAuthoredLinkedIssueGateMode: parseGateRuleMode(row.selfAuthoredLinkedIssueGateMode),
     firstTimeContributorGrace: row.firstTimeContributorGrace,
     slopGateMinScore: normalizeQualityGateMinScore(row.slopGateMinScore),
     slopAiAdvisory: row.slopAiAdvisory,
@@ -497,6 +499,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     slopGateMode: settings.slopGateMode ?? "off",
     mergeReadinessGateMode: settings.mergeReadinessGateMode ?? "off",
     manifestPolicyGateMode: settings.manifestPolicyGateMode ?? "off",
+    selfAuthoredLinkedIssueGateMode: settings.selfAuthoredLinkedIssueGateMode ?? "advisory",
     firstTimeContributorGrace: settings.firstTimeContributorGrace ?? false,
     slopGateMinScore: normalizeQualityGateMinScore(settings.slopGateMinScore),
     slopAiAdvisory: settings.slopAiAdvisory ?? false,
@@ -538,6 +541,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       slopGateMode: resolved.slopGateMode,
       mergeReadinessGateMode: resolved.mergeReadinessGateMode,
       manifestPolicyGateMode: resolved.manifestPolicyGateMode,
+      selfAuthoredLinkedIssueGateMode: resolved.selfAuthoredLinkedIssueGateMode,
       firstTimeContributorGrace: resolved.firstTimeContributorGrace,
       slopGateMinScore: resolved.slopGateMinScore,
       slopAiAdvisory: resolved.slopAiAdvisory,
@@ -580,6 +584,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         slopGateMode: resolved.slopGateMode,
         mergeReadinessGateMode: resolved.mergeReadinessGateMode,
         manifestPolicyGateMode: resolved.manifestPolicyGateMode,
+        selfAuthoredLinkedIssueGateMode: resolved.selfAuthoredLinkedIssueGateMode,
         firstTimeContributorGrace: resolved.firstTimeContributorGrace,
         slopGateMinScore: resolved.slopGateMinScore,
         slopAiAdvisory: resolved.slopAiAdvisory,
@@ -3407,6 +3412,23 @@ export async function markGateOutcomeOverridden(env: Env, repoFullName: string, 
     .update(gateOutcomes)
     .set({ overridden: true, updatedAt: nowIso() })
     .where(and(eq(gateOutcomes.repoFullName, boundedString(repoFullName, 200)), eq(gateOutcomes.pullNumber, pullNumber)));
+}
+
+// Retrieve the latest gate-block outcome for a PR. Returns undefined when no block exists.
+// Used to detect draft-dodge attempts: a contributor converting an already-gate-rejected PR to draft
+// is trying to keep the PR open past the verdict — this lets the caller enforce the verdict immediately.
+export async function getGateBlockOutcome(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+): Promise<{ headSha: string | null; blockerCodes: string[]; overridden: boolean } | undefined> {
+  const row = await getDb(env.DB)
+    .select()
+    .from(gateOutcomes)
+    .where(and(eq(gateOutcomes.repoFullName, boundedString(repoFullName, 200)), eq(gateOutcomes.pullNumber, pullNumber)))
+    .get();
+  if (!row) return undefined;
+  return { headSha: row.headSha, blockerCodes: parseJson<string[]>(row.blockerCodesJson, []), overridden: row.overridden };
 }
 
 export async function listGateOutcomes(

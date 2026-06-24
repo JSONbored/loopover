@@ -48,6 +48,27 @@ describe("pruneExpiredRecords", () => {
     expect(aiCount?.n).toBe(1);
   });
 
+  it("keeps published public-surface audit events because public stats use them as durable review keys", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO audit_events (id, event_type, target_key, outcome, created_at)
+       VALUES
+         ('published-old', 'github_app.pr_public_surface_published', 'JSONbored/gittensory#1', 'completed', ?),
+         ('rate-limit-old', 'rate_limit.denied', 'actor', 'completed', ?),
+         ('rate-limit-recent', 'rate_limit.denied', 'actor', 'completed', ?)`,
+    )
+      .bind(daysAgo(100), daysAgo(100), daysAgo(2))
+      .run();
+
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "audit_events", column: "created_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT id FROM audit_events ORDER BY id").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["published-old", "rate-limit-recent"]);
+  });
+
   it("deletes across multiple batches and stops at the per-table cap", async () => {
     const env = createTestEnv();
     const db = getDb(env.DB);

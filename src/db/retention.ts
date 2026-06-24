@@ -11,6 +11,8 @@ import { nowIso } from "../utils/json";
  */
 export type RetentionRule = { table: string; column: string; days: number };
 
+const DURABLE_AUDIT_EVENT_TYPES = ["github_app.pr_public_surface_published"] as const;
+
 export const RETENTION_POLICY: readonly RetentionRule[] = [
   { table: "audit_events", column: "created_at", days: 90 },
   { table: "ai_usage_events", column: "created_at", days: 90 },
@@ -29,6 +31,15 @@ const BATCH_SIZE = 1000;
 // the daily cron drains any remainder over subsequent runs.
 const MAX_DELETED_PER_TABLE = 50_000;
 const MS_PER_DAY = 86_400_000;
+
+function retentionWhere(rule: RetentionRule): string {
+  const base = `${rule.column} < ?1`;
+  if (rule.table === "audit_events") {
+    const durableTypes = DURABLE_AUDIT_EVENT_TYPES.map((type) => `'${type}'`).join(", ");
+    return `${base} AND event_type NOT IN (${durableTypes})`;
+  }
+  return base;
+}
 
 function cutoffIso(days: number, nowMs: number): string {
   return new Date(nowMs - days * MS_PER_DAY).toISOString();
@@ -57,7 +68,7 @@ export async function pruneExpiredRecords(
     const cutoff = cutoffIso(rule.days, nowMs);
 
     if (dryRun) {
-      const row = await env.DB.prepare(`SELECT count(*) AS n FROM ${rule.table} WHERE ${rule.column} < ?1`).bind(cutoff).first<{ n: number }>();
+      const row = await env.DB.prepare(`SELECT count(*) AS n FROM ${rule.table} WHERE ${retentionWhere(rule)}`).bind(cutoff).first<{ n: number }>();
       results.push({ table: rule.table, column: rule.column, cutoff, deleted: Number(row?.n ?? 0) });
       continue;
     }
@@ -65,7 +76,7 @@ export async function pruneExpiredRecords(
     let deleted = 0;
     // Batched delete by rowid so each statement is bounded; loop until a short batch or the per-run cap.
     for (;;) {
-      const result = await env.DB.prepare(`DELETE FROM ${rule.table} WHERE rowid IN (SELECT rowid FROM ${rule.table} WHERE ${rule.column} < ?1 LIMIT ${batchSize})`)
+      const result = await env.DB.prepare(`DELETE FROM ${rule.table} WHERE rowid IN (SELECT rowid FROM ${rule.table} WHERE ${retentionWhere(rule)} LIMIT ${batchSize})`)
         .bind(cutoff)
         .run();
       const changes = Number(result.meta?.changes ?? 0);

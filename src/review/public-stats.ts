@@ -203,6 +203,7 @@ export async function getPublicStats(
            FROM audit_events
           WHERE event_type IN ('agent.action.close', 'agent.action.merge')
             AND outcome = 'completed' AND instr(target_key, '#') > 0
+            AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
        ) ev
        JOIN pull_requests pr ON pr.repo_full_name = ev.project AND pr.number = ev.pr_number
         WHERE LOWER(ev.project) IN (${inList})

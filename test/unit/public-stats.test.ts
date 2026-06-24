@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createTestEnv } from "../helpers/d1";
 import {
   getPublicStats,
   isPublicStatsEnabled,
@@ -172,6 +173,67 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.byProject.map((p) => p.project)).toEqual([
       "JSONbored/gittensory",
     ]);
+  });
+
+  it("excludes dry-run terminal actions from live reversal counts", async () => {
+    const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+    const db = env.DB;
+
+    await db
+      .prepare(
+        `INSERT INTO pull_requests (id, repo_full_name, number, title, state, merged_at)
+         VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "pr-real",
+        "JSONbored/gittensory",
+        1,
+        "real auto-closed PR",
+        "closed",
+        null,
+        "pr-dry-run",
+        "JSONbored/gittensory",
+        2,
+        "dry-run close shadow",
+        "open",
+        null,
+      )
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO audit_events (id, event_type, target_key, outcome, metadata_json)
+         VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        "published-real",
+        "github_app.pr_public_surface_published",
+        "JSONbored/gittensory#1",
+        "completed",
+        "{}",
+        "published-dry-run",
+        "github_app.pr_public_surface_published",
+        "JSONbored/gittensory#2",
+        "completed",
+        "{}",
+        "live-close",
+        "agent.action.close",
+        "JSONbored/gittensory#1",
+        "completed",
+        JSON.stringify({ mode: "live" }),
+        "dry-run-close",
+        "agent.action.close",
+        "JSONbored/gittensory#2",
+        "completed",
+        JSON.stringify({ mode: "dry_run" }),
+      )
+      .run();
+
+    const out = await getPublicStats(env, NOW);
+
+    expect(out.totals.closed).toBe(1);
+    expect(out.totals.commented).toBe(1);
+    expect(out.totals.reversed).toBe(0);
+    expect(out.totals.accuracyPct).toBe(100);
   });
 
   it("publishes no ledger data when the reviewed-repo allowlist is empty", async () => {

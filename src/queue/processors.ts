@@ -2184,6 +2184,11 @@ async function maybePublishPrPublicSurface(
     if (!gateEnabled && decision.actions.length === 1 && decision.actions[0] === "none") return undefined;
   }
 
+  // Respect the per-repo agent pause: suppress all public surface mutations (label, comment, context
+  // check run) so a paused repo sees no gittensory-authored GitHub content. The Gittensory Gate check
+  // run still posts so the required-check status is not broken (#agent-pause).
+  if (settings.agentPaused) decision = { ...decision, willLabel: false, willComment: false, willCheckRun: false };
+
   let pendingGateCheckRunId: number | undefined;
   if (gateEnabled) {
     const pendingGateResult = await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory);

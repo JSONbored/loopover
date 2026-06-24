@@ -148,6 +148,33 @@ describe("isConfigFile", () => {
     }
   });
 
+  it("matches monorepo, linter, and VCS/build config by exact basename", () => {
+    for (const path of [
+      "turbo.json",
+      "nx.json",
+      "lerna.json",
+      "biome.json",
+      "biome.jsonc",
+      "packages/app/.gitignore",
+      ".gitattributes",
+      "services/api/.dockerignore",
+    ]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("matches Cloudflare Workers deploy config by the wrangler prefix", () => {
+    for (const path of ["wrangler.toml", "wrangler.jsonc", "apps/ui/wrangler.vitest.jsonc"]) {
+      expect(isConfigFile(path)).toBe(true);
+    }
+  });
+
+  it("does not treat names that merely start with wrangler as config", () => {
+    for (const path of ["docs/wranglers-guide.md", "src/wrangler-helpers.ts"]) {
+      expect(isConfigFile(path)).toBe(false);
+    }
+  });
+
   it("matches config files by known filename prefix", () => {
     for (const path of ["tsconfig.build.json", "vitest.config.ts", ".env.local", ".eslintrc.json", ".prettierrc.js"]) {
       expect(isConfigFile(path)).toBe(true);
@@ -183,6 +210,8 @@ describe("classifyChangedFile", () => {
       ["package.json", "dependency_manifest"],
       ["tsconfig.json", "config"],
       ["vitest.config.ts", "config"],
+      ["wrangler.jsonc", "config"],
+      ["turbo.json", "config"],
       ["test/unit/app.test.ts", "test"],
       ["README.md", "docs"],
       ["src/app.ts", "source"],

@@ -10,7 +10,7 @@ type Row = Record<string, unknown>;
 // Stub D1: route reads by SQL signature. The three reads are distinguished by:
 //   - weekly:       contains `first_seen`
 //   - dispositions: contains `github_app.pr_public_surface_published` (and is NOT the weekly read)
-//   - reversals:    contains `FROM review_audit`
+//   - reversals:    inspects engine auto-actions (`agent.action.close`)
 function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
   const make = (sql: string, args: unknown[]) => ({
     bind: (...a: unknown[]) => make(sql, a),
@@ -32,6 +32,10 @@ function isDispositions(sql: string): boolean {
   return (
     sql.includes("github_app.pr_public_surface_published") && !isWeekly(sql)
   );
+}
+// The reversal read is the only one that inspects engine auto-actions (close/merge) against pull_requests state.
+function isReversal(sql: string): boolean {
+  return sql.includes("agent.action.close");
 }
 
 describe("isPublicStatsEnabled", () => {
@@ -75,7 +79,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
         },
       ];
     }
-    if (sql.includes("FROM review_audit")) {
+    if (isReversal(sql)) {
       return [
         { project: "JSONbored/awesome-claude", reversed: 20 },
         { project: "JSONbored/metagraphed", reversed: 10 },
@@ -114,7 +118,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   it("publishes only projects from the reviewed-repo allowlist", async () => {
     const out = await getPublicStats(
       stubEnv((sql, args) => {
-        if (sql.includes("FROM review_audit")) {
+        if (isReversal(sql)) {
           return [
             { project: "JSONbored/gittensory", reversed: 1 },
             { project: "CustomerCo/stealth-product", reversed: 1 },
@@ -215,8 +219,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     // the `reversedByProject.get(...) ?? 0` fallback; the weekly row is present but its fields are null.
     const out = await getPublicStats(
       stubEnv((sql) => {
-        if (sql.includes("FROM review_audit"))
-          return [{ project: "p1", reversed: null }];
+        if (isReversal(sql)) return [{ project: "p1", reversed: null }];
         if (isWeekly(sql)) return [{ reviewed: null, merged: null }];
         if (isDispositions(sql)) {
           return [

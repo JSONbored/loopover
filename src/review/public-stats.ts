@@ -13,7 +13,7 @@
 // got a published surface (skipped drafts/bots, errors) simply don't appear — there is no ignored/manual/error.
 //   reviewed   = merged + closed + commented            (every distinct PR a review surface was published for)
 //   filteredPct = (reviewed - merged) / reviewed         (share resolved WITHOUT a merge — noise kept off humans)
-//   accuracyPct = 1 - reversed / (merged + closed)       (reversal-grounded; reversed from review_audit history)
+//   accuracyPct = 1 - reversed / (merged + closed)       (reversed = engine auto-actions a human overturned, live)
 //   minutesSaved = reviewed * MINUTES_SAVED_PER_PR        (estimated maintainer review time saved)
 //
 // PRIVACY: counts only — no PR content, authors, scores, or reward internals. Safe to serve publicly.
@@ -133,8 +133,8 @@ export interface PublicStatsPayload {
 // `github_app.pr_public_surface_published`, target_key "owner/repo#number"). Its terminal DISPOSITION
 // (merged / closed-without-merge / still-open-in-review) comes from the pull_requests cache. This replaces the
 // legacy review_targets ledger, which the convergence cutover orphaned (nothing writes it anymore). `reversed`
-// (the accuracy denominator) still comes from review_audit's historical reversal events — there is no live
-// reversal signal yet, so it acts as a floor. All reads are public-safe COUNTs and degrade to 0 via safeAll.
+// (the accuracy numerator) is computed LIVE from the same ledger: a terminal engine auto-action (close/merge)
+// that a human later overturned (see the reversal query below). All reads are public-safe COUNTs, degrade to 0.
 const PUBLISHED_PR_KEYS = `
   SELECT
     substr(target_key, 1, instr(target_key, '#') - 1) AS repo,
@@ -192,8 +192,22 @@ export async function getPublicStats(
     ),
     safeAll<{ project: string; reversed: number }>(
       env,
-      `SELECT project, COUNT(*) AS reversed FROM review_audit
-        WHERE event_type IN ('reversal_reverted', 'reversal_reopened') AND LOWER(project) IN (${inList})
+      // A "reversal" = a terminal engine auto-action (close/merge) a human later OVERTURNED, detected LIVE from the
+      // PR's current state: an engine-closed PR now reopened/merged, or an engine-merged PR now reopened. Counts
+      // the detectable subset — a merge undone via a SEPARATE revert PR isn't visible here yet (the revert detector
+      // is the follow-up). Replaces the orphaned review_audit reversal events, frozen at the convergence cutover.
+      `SELECT project, COUNT(DISTINCT pr_number) AS reversed FROM (
+         SELECT substr(target_key, 1, instr(target_key, '#') - 1) AS project,
+                CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS pr_number,
+                event_type
+           FROM audit_events
+          WHERE event_type IN ('agent.action.close', 'agent.action.merge')
+            AND outcome = 'completed' AND instr(target_key, '#') > 0
+       ) ev
+       JOIN pull_requests pr ON pr.repo_full_name = ev.project AND pr.number = ev.pr_number
+        WHERE LOWER(ev.project) IN (${inList})
+          AND ( (ev.event_type = 'agent.action.close' AND (pr.state = 'open' OR pr.merged_at IS NOT NULL))
+             OR (ev.event_type = 'agent.action.merge' AND pr.state = 'open') )
         GROUP BY project`,
       ...projects,
     ),

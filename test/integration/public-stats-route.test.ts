@@ -3,7 +3,7 @@ import { createApp } from "../../src/api/routes";
 import { createTestEnv } from "../helpers/d1";
 
 /** Seed the LIVE ledger: a published-review surface per reviewed PR (audit_events) + each PR's terminal
- *  disposition (pull_requests state/merged_at), plus one reversal (review_audit). */
+ *  disposition (pull_requests state/merged_at), plus one live reversal (an engine close on a now-reopened PR). */
 async function seed(env: Env) {
   // [repo, number, state, mergedAt] — merged (merged_at set) / closed (state closed, no merge) / open (in review).
   const prs: Array<[string, number, string, string | null]> = [
@@ -32,9 +32,10 @@ async function seed(env: Env) {
       )
       .run();
   }
-  // One human reversal of a gittensory auto-merge (awesome-claude has none → exercises the per-project ?? 0).
+  // One live reversal: the engine CLOSED gittensory#3, but it is now reopened (state 'open') — a human overturned
+  // the auto-action. awesome-claude has none → exercises the per-project ?? 0 fallback.
   await env.DB.prepare(
-    `INSERT INTO review_audit (id, project, target_id, event_type, decision) VALUES ('rev1', 'JSONbored/gittensory', 'JSONbored/gittensory#1', 'reversal_reverted', 'merge')`,
+    `INSERT INTO audit_events (id, event_type, target_key, outcome) VALUES ('rev1', 'agent.action.close', 'JSONbored/gittensory#3', 'completed')`,
   ).run();
 }
 

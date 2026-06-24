@@ -67,6 +67,7 @@ function queue(overrides: Partial<QueueHealth> = {}): QueueHealth {
       openPullRequests: 1,
       unlinkedPullRequests: 0,
       stalePullRequests: 0,
+      draftPullRequests: 0,
       maintainerAuthoredPullRequests: 0,
       collisionClusters: 0,
       ageBuckets: { under7Days: 1, days7To30: 0, over30Days: 0 },

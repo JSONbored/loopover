@@ -665,6 +665,14 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
+    method: "post",
+    path: "/v1/orb/ingest",
+    responses: {
+      200: { description: "Batch accepted; returns { accepted: number }" },
+      400: { description: "Malformed JSON or invalid payload shape" },
+    },
+  });
+  registry.registerPath({
     method: "get",
     path: "/v1/auth/github/start",
     responses: {

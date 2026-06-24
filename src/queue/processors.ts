@@ -177,6 +177,7 @@ import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
 import { loadHardGuardrailGlobs, loadSubmissionFloodLimit } from "../review/guardrail-config";
+import { closePullRequest, createIssueComment, getLastCloserLogin } from "../github/pr-actions";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
@@ -1515,6 +1516,13 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
         console.warn(JSON.stringify({ level: "warn", event: "reversal_record_failed", deliveryId, repository: repoFullName, error: errorMessage(error) }));
       });
       const pr = await upsertPullRequestFromGitHub(env, repoFullName, payload.pull_request);
+      // Reopen-prevention (#one-shot-reopen): a CONTRIBUTOR may not reopen a PR that gittensory or a maintainer
+      // closed — closes are one-shot (resubmit, don't reopen). If a non-maintainer reopened a PR whose last close
+      // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
+      // closed their own PR) stay reopenable; the bot's own nightly-re-review reopens are exempt.
+      if (payload.action === "reopened" && installationId && (await maybeRecloseDisallowedReopen(env, deliveryId, installationId, repoFullName, pr, payload).catch(() => false))) {
+        return;
+      }
       const [repo, settings, otherOpenPullRequests] = await Promise.all([
         getRepository(env, repoFullName),
         resolveRepositorySettings(env, repoFullName),
@@ -2991,6 +2999,48 @@ async function recordPrPanelRetriggerSkip(
     outcome: "skipped",
     metadata: { reason },
   });
+}
+
+/** Reopen-prevention (#one-shot-reopen): re-close a contributor's reopen of a PR that gittensory / a maintainer
+ *  closed (closes are one-shot). Returns true when it re-closed (caller skips the re-review). Exempt: the bot's
+ *  own re-review reopens, owner/admin reopens, and a contributor reopening a PR they CLOSED THEMSELVES. */
+async function maybeRecloseDisallowedReopen(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  pr: PullRequestRecord,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  const reopener = (payload.sender?.login ?? "").toLowerCase();
+  if (!reopener) return false;
+  const botLogin = `${env.GITHUB_APP_SLUG}[bot]`.toLowerCase();
+  if (reopener === botLogin) return false; // the bot's own nightly re-review reopen is allowed
+  const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
+  const admins = (env.ADMIN_GITHUB_LOGINS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const isMaintainer = (login: string): boolean => login === repoOwner || admins.includes(login);
+  if (isMaintainer(reopener)) return false; // owner / admin may reopen
+  // A non-maintainer reopened: re-close ONLY if gittensory or a maintainer closed it (one-shot). A contributor
+  // reopening a PR they closed themselves is allowed (fail-open on an unknown closer).
+  const closer = (await getLastCloserLogin(env, installationId, repoFullName, pr.number))?.toLowerCase() ?? null;
+  if (!closer || !(closer === botLogin || isMaintainer(closer))) return false;
+  await createIssueComment(
+    env,
+    installationId,
+    repoFullName,
+    pr.number,
+    "This pull request was closed by Gittensory and can't be reopened — reviews are one-shot. Please open a new pull request with the issues resolved.",
+  ).catch(() => undefined);
+  await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
+  await recordAuditEvent(env, {
+    eventType: "github_app.reopen_reclosed",
+    actor: "gittensory",
+    targetKey: `${repoFullName}#${pr.number}`,
+    outcome: "completed",
+    detail: `re-closed a disallowed reopen by ${payload.sender?.login ?? reopener} (originally closed by ${closer}) — one-shot; resubmit a new PR`,
+    metadata: { deliveryId, repoFullName },
+  }).catch(() => undefined);
+  return true;
 }
 
 async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {

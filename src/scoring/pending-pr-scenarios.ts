@@ -220,6 +220,7 @@ export function applyPendingPrDetectionToScoreInput(
 }
 
 function isDraftPullRequest(pr: PullRequestRecord): boolean {
+  if (pr.isDraft) return true;
   const title = pr.title.trim();
   if (/^\[?\s*draft\s*\]?/i.test(title) || /^draft:/i.test(title)) return true;
   return pr.labels.some((label) => label.toLowerCase() === "draft" || label.toLowerCase() === "wip");

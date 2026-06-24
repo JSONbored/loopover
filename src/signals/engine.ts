@@ -85,6 +85,7 @@ export type QueueHealth = {
     openPullRequests: number;
     unlinkedPullRequests: number;
     stalePullRequests: number;
+    draftPullRequests: number;
     maintainerAuthoredPullRequests: number;
     collisionClusters: number;
     ageBuckets: {
@@ -913,6 +914,7 @@ export function buildQueueHealth(
     countOverrides.likelyReviewablePullRequests !== undefined ? "authoritative" : openPullRequestCount > openPullRequests.length ? "sampled_cache" : "cache";
   const unlinkedPullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length === 0);
   const stalePullRequests = openPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) >= 14);
+  const draftPullRequests = openPullRequests.filter((pr) => pr.isDraft);
   const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAssociation(pr.authorAssociation));
   const cachedLikelyReviewablePullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length > 0 && daysSince(pr.updatedAt ?? pr.createdAt) < 30).length;
   const likelyReviewablePullRequests = Math.min(openPullRequestCount, Math.max(cachedLikelyReviewablePullRequests, countOverrides.likelyReviewablePullRequests ?? 0));
@@ -963,6 +965,16 @@ export function buildQueueHealth(
       detail: `${stalePullRequests.length} open pull request(s) have not updated in at least 14 days.`,
     });
   }
+  const inactiveDraftPullRequests = draftPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) >= 14);
+  if (inactiveDraftPullRequests.length > 0) {
+    findings.push({
+      code: "inactive_draft_prs",
+      severity: "info",
+      title: "Draft PRs have been open without recent activity",
+      detail: `${inactiveDraftPullRequests.length} draft pull request(s) have not updated in at least 14 days — they may be abandoned or blocked.`,
+      action: "Mark as ready for review when work resumes, or close if the approach has been abandoned.",
+    });
+  }
   return {
     repoFullName,
     generatedAt: nowIso(),
@@ -974,6 +986,7 @@ export function buildQueueHealth(
       openPullRequests: openPullRequestCount,
       unlinkedPullRequests: unlinkedPullRequests.length,
       stalePullRequests: stalePullRequests.length,
+      draftPullRequests: draftPullRequests.length,
       maintainerAuthoredPullRequests: maintainerAuthoredPullRequests.length,
       collisionClusters: collisions.summary.clusterCount,
       ageBuckets,

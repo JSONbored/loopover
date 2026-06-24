@@ -457,6 +457,27 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("keeps baseline pull_requests:read remediation when the permission is absent (#audit-install-health least privilege)", () => {
+    const health = enrichInstallationHealth({
+      installationId: 127,
+      accountLogin: "JSONbored",
+      repositorySelection: "selected",
+      installedReposCount: 1,
+      registeredInstalledCount: 1,
+      status: "needs_attention",
+      missingPermissions: ["pull_requests"],
+      missingEvents: [],
+      permissions: { metadata: "read", issues: "write" },
+      events: ["issues", "issue_comment", "pull_request", "repository"],
+      checkedAt: "2026-06-05T00:00:00.000Z",
+    });
+
+    expect(health.requiredPermissions).toMatchObject({ pull_requests: "read" });
+    expect(health.permissionRemediation).toEqual(
+      expect.arrayContaining([expect.objectContaining({ permission: "pull_requests", requiredAccess: "read", ok: false, action: "Set repository permission pull_requests to read." })]),
+    );
+  });
+
   it("requires Checks write only for repos with check runs enabled", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedRegisteredRepo(env);

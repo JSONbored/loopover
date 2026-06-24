@@ -731,9 +731,9 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(missingPermissions.has("checks") ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
-    // pull_requests is missing ONLY when the refresh required write (an acting autonomy) and it was not granted, so
-    // surface the write requirement in the remediation rather than the baseline read. (#audit-install-health)
-    ...(missingPermissions.has("pull_requests") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
+    // Persisted health stores only the missing permission name. If pull_requests is already granted at read level,
+    // a missing pull_requests entry can only mean an acting autonomy needs write; otherwise preserve baseline read.
+    ...(missingPermissions.has("pull_requests") && permissionSatisfies(health.permissions.pull_requests, "read") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
   };
   return {
     ...health,

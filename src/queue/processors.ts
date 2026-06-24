@@ -1584,39 +1584,50 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       await persistAdvisory(env, advisory);
       // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
       // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current
-      // headSha (and the block has not been maintainer-overridden), close the PR immediately — the gate
-      // verdict stands and does not reset on draft conversion. Skipped when the agent is unconfigured or
-      // paused (the gate doesn't act on paused repos) and for owner / automation PRs.
-      if (
-        payload.action === "converted_to_draft" &&
-        installationId &&
-        pr.headSha &&
-        pr.state === "open" &&
-        isAgentConfigured(settings.autonomy) &&
-        !settings.agentPaused &&
-        !isProtectedAutomationAuthor(pr.authorLogin)
-      ) {
+      // headSha (and the block has not been maintainer-overridden), plan a close through the SAME agent action
+      // executor used by normal maintenance so close-specific autonomy, approval, dry-run, global pause, and
+      // permission readiness are all enforced. Owner / automation PRs remain exempt.
+      if (payload.action === "converted_to_draft" && installationId && pr.headSha && pr.state === "open" && !isProtectedAutomationAuthor(pr.authorLogin)) {
         const block = await getGateBlockOutcome(env, repoFullName, pr.number).catch(() => undefined);
         const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
         const authorIsOwner = (pr.authorLogin ?? "").toLowerCase() === repoOwner && repoOwner.length > 0;
         if (block && block.headSha === pr.headSha && !block.overridden && !authorIsOwner) {
           const codes = block.blockerCodes.join(", ");
-          await createIssueComment(
+          const closeReason = `draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`;
+          const installation = await getInstallation(env, installationId);
+          const [outcome] = await executeAgentMaintenanceActions(
             env,
-            installationId,
-            repoFullName,
-            pr.number,
-            `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
-          ).catch(() => undefined);
-          await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
-          await recordAuditEvent(env, {
-            eventType: "github_app.draft_dodge_closed",
-            actor: "gittensory",
-            targetKey: `${repoFullName}#${pr.number}`,
-            outcome: "completed",
-            detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
-            metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
-          }).catch(() => undefined);
+            {
+              installationId,
+              repoFullName,
+              pullNumber: pr.number,
+              headSha: pr.headSha,
+              autonomy: settings.autonomy,
+              agentPaused: settings.agentPaused,
+              agentDryRun: settings.agentDryRun,
+              installationPermissions: installation?.permissions ?? null,
+              authorLogin: pr.authorLogin,
+            },
+            [
+              {
+                actionClass: "close",
+                requiresApproval: autonomyRequiresApproval(resolveAutonomy(settings.autonomy, "close")),
+                reason: closeReason,
+                closeKind: "linked-issue-hard-rule",
+                closeComment: `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
+              },
+            ],
+          );
+          if (outcome?.outcome === "completed") {
+            await recordAuditEvent(env, {
+              eventType: "github_app.draft_dodge_closed",
+              actor: "gittensory",
+              targetKey: `${repoFullName}#${pr.number}`,
+              outcome: "completed",
+              detail: `closed ${closeReason}`,
+              metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
+            }).catch(() => undefined);
+          }
         }
       }
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {

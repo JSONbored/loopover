@@ -155,6 +155,7 @@ import {
   unionScopedOverlapClusters,
   type ContributorProfile,
 } from "../signals/engine";
+import { isDuplicateClusterWinner } from "../signals/duplicate-winner";
 import { buildUnifiedReviewDiff } from "../review/review-diff";
 import { buildUnifiedCommentBody, isUnifiedReviewCommentEnabled } from "../review/unified-comment-bridge";
 import { screenshotsAllowed } from "../review/visual-wire";
@@ -553,9 +554,10 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
   const verdicts: Record<string, string> = {};
   const flaggedPulls: number[] = [];
   const sweepInstallationId = repo?.installationId ?? null;
+  const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
   for (const pr of candidates) {
     const others = openPullRequests.filter((other) => other.number !== pr.number);
-    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: others, requireLinkedIssue });
+    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: others, requireLinkedIssue, duplicateWinnerEnabled });
     const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
     verdicts[String(pr.number)] = gate.conclusion;
     if (gate.conclusion === "failure" || gate.conclusion === "action_required") flaggedPulls.push(pr.number);
@@ -706,7 +708,12 @@ async function maybeRunAgentMaintenance(
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,
       slopRisk: pr.slopRisk,
       labels: pr.labels,
-      linkedDuplicateCount: linkedIssueDuplicatePullRequestsForGate(pr, otherOpenPullRequests).length,
+      // Duplicate-winner adjudication (#dup-winner): the gate's open-only duplicate siblings drive the close
+      // reason ("duplicate of another open PR" via agent-actions when count > 0). When the flag is ON and this
+      // PR is the cluster winner, force the count to 0 so the winner's close reason OMITS the duplicate cause
+      // (it can still close on its own merits — CI/conflict/blockers). Flag-OFF short-circuits ⇒ the real
+      // count is used (byte-identical). The sibling numbers are open-only, so the lowest is the open winner.
+      linkedDuplicateCount: dupWinnerLinkedDuplicateCount(linkedIssueDuplicatePullRequestsForGate(pr, otherOpenPullRequests), pr.number, env.GITTENSORY_DUPLICATE_WINNER === "true"),
       headSha: pr.headSha,
       mergeBlockedSha: pr.mergeBlockedSha,
       approvedHeadSha: pr.approvedHeadSha,
@@ -773,7 +780,11 @@ async function reReviewStoredPullRequest(
   // once the head is current and CI has settled (the sweep backstops a missed event).
   if (!(await prReadyForReview(env, installationId, repoFullName, pr, settings, deliveryId))) return;
   const otherOpenPullRequests = await listOtherOpenPullRequests(env, repoFullName, prNumber);
-  const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests, requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings) });
+  const advisory = buildPullRequestAdvisory(repo, pr, {
+    otherOpenPullRequests,
+    requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
+    duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+  });
   await persistAdvisory(env, advisory);
   if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
     await refreshPullRequestDetails(env, repoFullName, prNumber).catch(() => undefined);
@@ -1531,6 +1542,7 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
         requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
+        duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
@@ -1976,6 +1988,18 @@ export async function runAiSlopForAdvisory(
   }
 }
 
+/**
+ * Duplicate-winner adjudication (#dup-winner) seam for the close-reason disposition. Given a PR's open
+ * duplicate-sibling numbers (from {@link linkedIssueDuplicatePullRequestsForGate}, open-only), return the
+ * `linkedDuplicateCount` the agent planner reads. When the flag is ON and this PR is the cluster winner, return
+ * 0 so the winner's close reason OMITS the "duplicate of another open PR" cause (agent-actions only adds it
+ * when count > 0). Flag-OFF (default) returns the real sibling count — byte-identical to today.
+ */
+export function dupWinnerLinkedDuplicateCount(openSiblingNumbers: number[], prNumber: number, duplicateWinnerEnabled: boolean): number {
+  if (duplicateWinnerEnabled && isDuplicateClusterWinner(prNumber, openSiblingNumbers)) return 0;
+  return openSiblingNumbers.length;
+}
+
 function linkedIssueDuplicatePullRequestsForGate(pr: PullRequestRecord, pullRequests: PullRequestRecord[]): number[] {
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return [];
@@ -2173,6 +2197,13 @@ async function maybePublishPrPublicSurface(
       scopedOverlapCount: unionScopedOverlapClusters(collisions, pr, preflight.collisions).length,
     });
 
+    // Duplicate-winner adjudication (#dup-winner): compute the winner ONCE for this review run from the SAME
+    // open-only sibling source the gate uses, and thread the flag/result consistently into the slop penalty
+    // (below) and the public panel builders (further down) so they agree by construction. Flag-OFF (default)
+    // ⇒ duplicateWinnerEnabled is false and isDupWinner is false ⇒ every guard short-circuits (byte-identical).
+    const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+    const isDupWinner = duplicateWinnerEnabled && isDuplicateClusterWinner(pr.number, linkedIssueDuplicatePullRequestsForGate(pr, repoPullRequests));
+
     if (gateEnabled && author && !publicSurfaceSkipped && !official) {
       official = await getCachedOfficialMinerDetection(env, author, {
         targetKey: `${repoFullName}#${pr.number}`,
@@ -2201,7 +2232,9 @@ async function maybePublishPrPublicSurface(
         changedFiles: slopFiles.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions })),
         description: pr.body,
         // Reuse the collision report already built for this gate run so a duplicate-cluster PR is flagged (#563).
-        inDuplicateCluster: isPullRequestInDuplicateCluster(collisions, pr.number),
+        // Duplicate-winner adjudication (#dup-winner): the winner is judged on its OWN merits, so it is NOT
+        // penalized for the cluster. Flag-OFF ⇒ isDupWinner is false ⇒ byte-identical to today.
+        inDuplicateCluster: !isDupWinner && isPullRequestInDuplicateCluster(collisions, pr.number),
       });
       slopRisk = slop.slopRisk;
       advisory.findings.push(...slop.findings);
@@ -2420,7 +2453,11 @@ async function maybePublishPrPublicSurface(
     // Maintainer review-content overrides from `.gittensory.yml` (footer text, row toggles, intro note).
     // Cached, so this is a DB read after the settings resolution already loaded the manifest.
     const reviewConfig = (await loadRepoFocusManifest(env, repoFullName)).review;
-    const commentArgs = { repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation, review: reviewConfig, aiReview };
+    // Duplicate-winner adjudication (#dup-winner): thread the flag into the public panel builders so the
+    // winner's hard-duplicate block is suppressed (they recompute the winner from their own open-only sibling
+    // list). Flag-OFF (default) ⇒ false ⇒ the panels are byte-identical to today.
+    const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+    const commentArgs = { repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation, review: reviewConfig, aiReview, duplicateWinnerEnabled };
     let deterministicBody: string;
     // Convergence (Stage D): when the unified-review-comment flag is ON, render the single converged comment
     // (gittensory shape + reviewbot's review folded in). The gate stays authoritative (passed as `decision`),
@@ -2441,7 +2478,7 @@ async function maybePublishPrPublicSurface(
     //   3. The `ai_consensus_defect` surfaces exactly ONCE — as the Code-review blocker — never also in the
     //      gate signal row (which renders only the conclusion-derived status text, not the defect string).
     if (unifiedCommentAllowed && gateEvaluation) {
-      const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation });
+      const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation, duplicateWinnerEnabled });
       // FIX B: the unified comment's file count + visual-capture path filter need the real diff — reuse the
       // shared resolver (one resolve per review; inline-fetches when stored is still empty pre-detail-sync).
       const unifiedFiles = await getReviewFiles();
@@ -2955,6 +2992,7 @@ async function buildAuthorizedPrActionAdvisory(
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
+    duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
   });
   return { repo, advisory };
 }

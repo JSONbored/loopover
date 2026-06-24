@@ -10,6 +10,7 @@ import type {
   RepositoryRecord,
 } from "../types";
 import type { CollisionCluster, CollisionReport } from "../signals/engine";
+import { isDuplicateClusterWinner } from "../signals/duplicate-winner";
 import { nowIso } from "../utils/json";
 
 export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
@@ -80,7 +81,15 @@ export function buildRepositoryAdvisory(repo: RepositoryRecord | null, fullName:
 export function buildPullRequestAdvisory(
   repo: RepositoryRecord | null,
   pr: PullRequestRecord | null,
-  context: { otherOpenPullRequests?: PullRequestRecord[]; requireLinkedIssue?: boolean } = {},
+  context: {
+    otherOpenPullRequests?: PullRequestRecord[];
+    requireLinkedIssue?: boolean;
+    /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest
+     *  open sibling number), the `duplicate_pr_risk` finding is suppressed so the winner is not gate-blocked /
+     *  closed as a duplicate. Default/false ⇒ every duplicate sibling keeps the finding (byte-identical). The
+     *  caller sets this to `env.GITTENSORY_DUPLICATE_WINNER === "true"`. */
+    duplicateWinnerEnabled?: boolean;
+  } = {},
 ): Advisory {
   const repoFullName = pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";
   const targetKey = pr ? `${repoFullName}#${pr.number}` : `${repoFullName}#unknown`;
@@ -105,7 +114,7 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue));
+    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled));
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -481,6 +490,7 @@ function addPullRequestFindings(
   findings: AdvisoryFinding[],
   otherOpenPullRequests: PullRequestRecord[],
   requireLinkedIssue: boolean,
+  duplicateWinnerEnabled: boolean,
 ): void {
   if (pr.state !== "open") {
     findings.push({
@@ -502,7 +512,12 @@ function addPullRequestFindings(
     const overlappingPrs = otherOpenPullRequests.filter((otherPr) =>
       otherPr.linkedIssues.some((issueNumber) => pr.linkedIssues.includes(issueNumber)),
     );
-    if (overlappingPrs.length > 0) {
+    // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the cluster winner (the
+    // lowest open sibling number), SKIP the duplicate finding — suppressing it suppresses the gate failure, so
+    // the winner survives while the losers (which still see overlap > 0 and a lower sibling) keep the finding.
+    // `overlappingPrs` is derived from the OPEN-only `otherOpenPullRequests`, so the numbers are open siblings.
+    // Flag-OFF (default) short-circuits ⇒ the finding is pushed exactly as before (byte-identical).
+    if (overlappingPrs.length > 0 && !(duplicateWinnerEnabled && isDuplicateClusterWinner(pr.number, overlappingPrs.map((otherPr) => otherPr.number)))) {
       findings.push({
         code: "duplicate_pr_risk",
         severity: "warning",

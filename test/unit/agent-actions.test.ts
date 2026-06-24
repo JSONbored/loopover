@@ -137,6 +137,20 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, pr: { labels: [], slopRisk: 90 } })))).not.toContain("close");
   });
 
+  it("#dup-winner disposition seam: the close reason includes the duplicate cause only when linkedDuplicateCount > 0", () => {
+    // Loser path (count > 0, the caller's real count): the duplicate cause IS cited in the close reason.
+    const loser = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 2 } }));
+    const loserClose = loser.find((a) => a.actionClass === "close")!;
+    expect(loserClose.reason).toContain("duplicate of another open PR");
+
+    // Winner path (count forced to 0 by dupWinnerLinkedDuplicateCount): the PR STILL closes on its own merits
+    // (the gate failure), but the close reason OMITS the duplicate cause.
+    const winner = planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], pr: { labels: [], linkedDuplicateCount: 0 } }));
+    const winnerClose = winner.find((a) => a.actionClass === "close")!;
+    expect(classes(winner)).toContain("close");
+    expect(winnerClose.reason).not.toContain("duplicate of another open PR");
+  });
+
   it("never plans both merge and close", () => {
     const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", close: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED", slopRisk: 95 } }));
     const cls = classes(plan);

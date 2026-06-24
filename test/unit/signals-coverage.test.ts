@@ -747,6 +747,53 @@ describe("signal coverage edge cases", () => {
     expect(duplicateBlocked.rows.find((r) => r.key === "gateResult")!.cells[1]).not.toBe(providedGate.cells[1]);
   });
 
+  it("#dup-winner: panel hard-duplicate block is suppressed for the winner, kept for the loser, byte-identical when flag OFF", () => {
+    const directRepo = repo("owner/dupwin");
+    const dupIssue = issue(directRepo.fullName, 42, "Cache invalidation race");
+    // Two open PRs on the same issue: 70 is the lowest open number (the winner), 88 is the loser.
+    const winnerPr = pr(directRepo.fullName, 70, "Fix the cache race", { authorLogin: "miner", linkedIssues: [42], body: "Fixes #42" });
+    const loserPr = pr(directRepo.fullName, 88, "Also fixes the cache race", { authorLogin: "other", linkedIssues: [42], body: "Fixes #42" });
+    const collisions = buildCollisionReport(directRepo.fullName, [dupIssue], [winnerPr, loserPr]);
+    const queueHealth = buildQueueHealth(directRepo, [dupIssue], [winnerPr, loserPr], collisions);
+    const blockSettings = { ...repoSettings(directRepo.fullName), gateCheckMode: "enabled" as const, duplicatePrGateMode: "block" as const };
+    const profile = buildContributorProfile("miner", { login: "miner", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const detection = { detected: true, source: "official_gittensor_api" as const, reason: "Confirmed.", priorPullRequests: 1, priorMergedPullRequests: 0, priorIssues: 0 };
+    const preflightFor = (target: PullRequestRecord) =>
+      buildPreflightResult({ repoFullName: directRepo.fullName, title: target.title, body: target.body ?? undefined, linkedIssues: target.linkedIssues }, directRepo, [dupIssue], [winnerPr, loserPr]);
+    const baseFor = (target: PullRequestRecord) => ({
+      repo: directRepo,
+      pr: target,
+      profile,
+      detection,
+      queueHealth,
+      collisions,
+      preflight: preflightFor(target),
+      settings: blockSettings,
+    });
+    const gateCell = (args: Parameters<typeof buildPublicPrPanelSignalRows>[0]) =>
+      buildPublicPrPanelSignalRows(args).rows.find((r) => r.key === "gateResult")!.cells[1];
+
+    // Flag OFF: BOTH the winner and the loser hard-block (today's behavior, byte-identical).
+    const offWinner = gateCell(baseFor(winnerPr));
+    const offLoser = gateCell(baseFor(loserPr));
+    expect(offWinner).toBe(offLoser);
+
+    // Flag ON: the winner is NOT blocked (its gate cell differs from the blocked loser's), the loser still blocks.
+    const onWinner = gateCell({ ...baseFor(winnerPr), duplicateWinnerEnabled: true });
+    const onLoser = gateCell({ ...baseFor(loserPr), duplicateWinnerEnabled: true });
+    expect(onWinner).not.toBe(offWinner);
+    expect(onLoser).toBe(offLoser);
+
+    // The comment builder must agree by construction: ON winner is NOT a blocking-merge panel; ON loser is.
+    const winnerComment = buildPublicPrIntelligenceComment({ ...baseFor(winnerPr), duplicateWinnerEnabled: true });
+    const loserComment = buildPublicPrIntelligenceComment({ ...baseFor(loserPr), duplicateWinnerEnabled: true });
+    expect(winnerComment).not.toContain("Gittensory Gate is blocking merge");
+    expect(loserComment).toContain("Gittensory Gate is blocking merge");
+    // Flag OFF on the winner is byte-identical to a blocking panel (today's behavior).
+    const offWinnerComment = buildPublicPrIntelligenceComment(baseFor(winnerPr));
+    expect(offWinnerComment).toContain("Gittensory Gate is blocking merge");
+  });
+
   it("renders opt-in gate panel states for collision and repo evaluation blockers", () => {
     const directRepo = repo("owner/gate");
     const existingIssue = issue(directRepo.fullName, 7, "Cache refresh websocket reconnect failure");

@@ -124,6 +124,12 @@
     // Granting the App `administration:read` makes the live (per-repo) read succeed and reduces this to a
     // transient-failure safety net. Names MUST match the exact check contexts. See src/github/backfill.ts.
     "GITTENSORY_REQUIRED_CI_CONTEXTS": "Superagent Security Scan,validate,Gittensory Gate",
+    // Duplicate-winner adjudication (#dup-winner): when a same-issue cluster of OPEN PRs forms, spare exactly
+    // ONE winner — the lowest-numbered (earliest opened) open PR — instead of blocking/closing every sibling.
+    // Only the LOSERS get the duplicate blocker + close reason + slop penalty + panel block; the winner is
+    // judged on its own merits. DEFAULT OFF — flag-OFF every duplicate sibling dies (today's behavior,
+    // byte-identical). See src/signals/duplicate-winner.ts.
+    "GITTENSORY_DUPLICATE_WINNER": "false",
   },
   "routes": [
     {

@@ -27,6 +27,7 @@ import { nowIso } from "../utils/json";
 import { sanitizePublicComment } from "../queue-intelligence";
 import { projectLinkedIssueMultiplierForPlannedSolve, type LinkedIssueMultiplierStatus } from "../scoring/preview";
 import { hasLocalTestEvidence } from "./test-evidence";
+import { isDuplicateClusterWinner } from "./duplicate-winner";
 import { PREFLIGHT_LIMITS } from "./preflight-limits";
 import type { UnifiedCollapsible } from "../review/unified-comment";
 
@@ -4151,6 +4152,10 @@ export function buildPublicPrIntelligenceComment(args: {
   review?: FocusManifestReviewConfig | undefined;
   /** Optional AI maintainer-review notes (already public-safe). Rendered as an advisory section. */
   aiReview?: { notes: string } | undefined;
+  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest open
+   *  sibling number among `linkedDuplicatePrs`), the hard-duplicate panel block is suppressed so the winner's
+   *  panel does not show a blocking duplicate. Default/false ⇒ byte-identical to today. */
+  duplicateWinnerEnabled?: boolean | undefined;
 }): string {
   const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
@@ -4178,7 +4183,13 @@ export function buildPublicPrIntelligenceComment(args: {
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock =
     args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
-  const hardDuplicateBlock = args.settings.duplicatePrGateMode === "block" && linkedDuplicatePrs.length > 0;
+  // Duplicate-winner adjudication (#dup-winner): when the flag is ON and this PR is the cluster winner (the
+  // lowest open sibling number), do NOT hard-block it as a duplicate — only the losers block. `linkedDuplicatePrs`
+  // is open-only (collision clusters exclude closed PRs). Flag-OFF (default) short-circuits ⇒ byte-identical.
+  const hardDuplicateBlock =
+    args.settings.duplicatePrGateMode === "block" &&
+    linkedDuplicatePrs.length > 0 &&
+    !(args.duplicateWinnerEnabled && isDuplicateClusterWinner(args.pr.number, linkedDuplicatePrs));
   const fallbackGateConclusion = !gateEnabled
     ? "success"
     : !args.repo
@@ -4376,6 +4387,10 @@ export function buildPublicPrPanelSignalRows(args: {
   preflight: PreflightResult;
   settings: RepositorySettings;
   gate?: PublicPrPanelGateEvaluation | undefined;
+  /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest open
+   *  sibling number among `linkedDuplicatePrs`), the hard-duplicate block is suppressed. Default/false ⇒
+   *  byte-identical to today. Matches `buildPublicPrIntelligenceComment` so both panels agree. */
+  duplicateWinnerEnabled?: boolean | undefined;
 }): { rows: PublicPrPanelSignalRow[]; readinessTotal: number } {
   const prCollisionClusters = pullRequestSpecificCollisionClusters(args.collisions, args.pr);
   const linkedDuplicatePrs = linkedIssueDuplicatePullRequests(args.pr, prCollisionClusters);
@@ -4386,7 +4401,12 @@ export function buildPublicPrPanelSignalRows(args: {
   const relatedWorkResult = relatedWorkPanelResult(linkedDuplicatePrs, scopedOverlapCount);
   const gateEnabled = args.settings.gateCheckMode === "enabled";
   const hardLinkedIssueBlock = args.settings.linkedIssueGateMode === "block" && args.pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(args.pr);
-  const hardDuplicateBlock = args.settings.duplicatePrGateMode === "block" && linkedDuplicatePrs.length > 0;
+  // Duplicate-winner adjudication (#dup-winner): suppress the winner's hard-duplicate block (see the comment
+  // builder). `linkedDuplicatePrs` is open-only; flag-OFF (default) short-circuits ⇒ byte-identical to today.
+  const hardDuplicateBlock =
+    args.settings.duplicatePrGateMode === "block" &&
+    linkedDuplicatePrs.length > 0 &&
+    !(args.duplicateWinnerEnabled && isDuplicateClusterWinner(args.pr.number, linkedDuplicatePrs));
   const fallbackGateConclusion = !gateEnabled ? "success" : !args.repo ? "neutral" : hardLinkedIssueBlock || hardDuplicateBlock ? "failure" : "success";
   const gateConclusion = args.gate?.conclusion ?? fallbackGateConclusion;
   const confirmedMiner = isOfficialContributorDetection(args.detection);

@@ -171,6 +171,16 @@ declare global {
      *  deploy). The cron/endpoint flags (ops / selftune / parity / content-lane / draft) are NOT scoped by
      *  this allowlist — they stay global. See src/review/cutover-gate.ts. */
     GITTENSORY_REVIEW_REPOS?: string;
+    /** Duplicate-winner adjudication (#dup-winner): when truthy, a same-issue duplicate cluster of OPEN PRs
+     *  spares exactly ONE winner — the EARLIEST opened = the LOWEST PR number among the OPEN siblings — instead
+     *  of gate-blocking + auto-closing every sibling. Only the LOSERS get the `duplicate_pr_risk` blocker, the
+     *  "duplicate of another open PR" close reason, the slop duplicate-cluster penalty, and the panel hard
+     *  duplicate block; the winner is judged on its OWN merits (CI / conflict / gate / linked-issue / slop).
+     *  Default OFF — unset/false ⇒ every duplicate sibling dies (today's behavior, byte-identical: the new
+     *  guards short-circuit so the advisory finding, gate conclusion, close reason, slop, and panels are
+     *  unchanged). Once a winner closes, the next-lowest OPEN sibling becomes the winner on re-eval. See
+     *  src/signals/duplicate-winner.ts. */
+    GITTENSORY_DUPLICATE_WINNER?: string;
   }
 }
 

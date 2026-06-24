@@ -119,11 +119,16 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
     const { owner, repo } = splitRepo(repoFullName);
     const token = await createInstallationToken(env, installationId);
     const octokit = new Octokit({ auth: token });
-    // issue-events are returned oldest-first, so the LAST `closed` entry is the most recent close.
-    const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: 100 });
-    const events = response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>;
-    const closes = events.filter((entry) => entry.event === "closed");
-    return closes.length > 0 ? (closes[closes.length - 1]?.actor?.login ?? null) : null;
+    let lastCloser: string | null = null;
+    for (let page = 1; ; page += 1) {
+      // issue-events are returned oldest-first; walk every page so the final `closed` entry is truly the latest.
+      const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: 100, page });
+      const events = response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>;
+      for (const entry of events) {
+        if (entry.event === "closed") lastCloser = entry.actor?.login ?? null;
+      }
+      if (events.length < 100) return lastCloser;
+    }
   } catch {
     return null;
   }

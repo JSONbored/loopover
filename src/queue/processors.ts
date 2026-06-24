@@ -3018,12 +3018,16 @@ async function maybeRecloseDisallowedReopen(
   if (reopener === botLogin) return false; // the bot's own nightly re-review reopen is allowed
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
   const admins = (env.ADMIN_GITHUB_LOGINS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const isMaintainer = (login: string): boolean => login === repoOwner || admins.includes(login);
-  if (isMaintainer(reopener)) return false; // owner / admin may reopen
+  const hasMaintainerPermission = async (login: string): Promise<boolean> => {
+    if (login === repoOwner || admins.includes(login)) return true;
+    const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, login).catch(() => null);
+    return permission === "admin" || permission === "maintain" || permission === "write";
+  };
+  if (await hasMaintainerPermission(reopener)) return false; // owner / admin / write collaborators may reopen
   // A non-maintainer reopened: re-close ONLY if gittensory or a maintainer closed it (one-shot). A contributor
   // reopening a PR they closed themselves is allowed (fail-open on an unknown closer).
   const closer = (await getLastCloserLogin(env, installationId, repoFullName, pr.number))?.toLowerCase() ?? null;
-  if (!closer || !(closer === botLogin || isMaintainer(closer))) return false;
+  if (!closer || !(closer === botLogin || (await hasMaintainerPermission(closer)))) return false;
   await createIssueComment(
     env,
     installationId,

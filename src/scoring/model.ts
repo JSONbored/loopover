@@ -46,6 +46,14 @@ export const DEFAULT_SCORING_CONSTANTS: Record<string, number> = {
   OPEN_PR_THRESHOLD_TOKEN_SCORE: 300,
   MAX_OPEN_PR_THRESHOLD: 30,
   SRC_TOK_SATURATION_SCALE: 58,
+  // Density-era constants (#812): upstream is on the saturation model, but `current_density_model` is still
+  // a supported `activeModel` (types.ts union, the public OpenAPI schema, the DB parser, ~20 test fixtures,
+  // and src/services/score-breakdown.ts). The density branch in preview.ts is therefore NOT dead — it is the
+  // supported alternate/fallback model. Single-sourcing these fallbacks HERE (instead of as silent hardcoded
+  // literals at every constant() call site) closes the duplicate-source-of-truth gap without a breaking
+  // removal of a still-supported model.
+  MIN_TOKEN_SCORE_FOR_BASE_SCORE: 5,
+  MAX_CODE_DENSITY_MULTIPLIER: 1.15,
   // Upstream time-decay (#703): a merged PR's score decays on a sigmoid after a grace period. Modeled here
   // so they no longer surface as unmodeled drift (#690); APPLICATION is opt-in + default-off (see preview).
   TIME_DECAY_GRACE_PERIOD_HOURS: 12,
@@ -81,7 +89,11 @@ async function fetchUpstreamRefSha(upstream: { repo: string; ref: string }, toke
   }
 }
 
-const SCORING_CONSTANT_NAMES = new Set([...Object.keys(DEFAULT_SCORING_CONSTANTS), "MIN_TOKEN_SCORE_FOR_BASE_SCORE", "MAX_CODE_DENSITY_MULTIPLIER"]);
+// Single source of truth (#812): every recognized upstream constant name is a key of
+// DEFAULT_SCORING_CONSTANTS, so the known-only parser, the unmodeled-drift detector, and the preview-side
+// fallbacks all derive from one place. The density-era constants are included because the density model is
+// still a supported activeModel (see comment above).
+const SCORING_CONSTANT_NAMES = new Set(Object.keys(DEFAULT_SCORING_CONSTANTS));
 
 // Sanity floor for a 200 constants.py body. A real upstream file defines ~30 recognized constants; an HTML
 // interstitial, a Git-LFS pointer, or a truncated body parses to ~0. Below this, treat the body as non-source

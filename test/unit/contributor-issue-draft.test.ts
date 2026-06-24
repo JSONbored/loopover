@@ -315,6 +315,39 @@ describe("contributor issue drafts", () => {
     expect(result.drafts[0]?.status).toBe("created");
   });
 
+  it("REGRESSION (#audit-rawfetch-pause): the global agent brake / freeze overrides {dryRun:false}, so no contributor issue is filed (raw POST outside the chokepoint)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${(init?.method ?? "GET").toUpperCase()} ${String(input)}`);
+      return Response.json({ number: 503, html_url: "https://github.com/other-owner/other-repo/issues/503" });
+    });
+    const repoFullName = "other-owner/other-repo";
+    const fingerprint = await contributorIssueDraftFingerprint(repoFullName, "policy:focus_policy_missing", "policy:focus_policy_missing");
+    const marker = contributorIssueDraftMarker(fingerprint);
+    const seedCandidate = () => {
+      vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+      vi.spyOn(repositories, "listClosedContributorDraftIssues").mockResolvedValue([
+        { ...openIssue(91, "attacker-controlled spoof", marker), state: "closed", authorAssociation: "NONE", closedAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      ]);
+    };
+
+    // DB-freeze arm: a frozen agent forces dryRun even though the caller asked to create.
+    const frozenEnv = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    await repositories.setGlobalAgentFrozen(frozenEnv, true);
+    seedCandidate();
+    const frozen = await generateContributorIssueDrafts(frozenEnv, repoFullName, { dryRun: false, create: true, limit: 1 });
+    expect(frozen.dryRun).toBe(true); // global freeze overrode the caller's dryRun:false
+    expect(frozen.created).toBe(0);
+    expect(calls.some((c) => c.startsWith("POST"))).toBe(false); // no issue POST reached the network
+
+    // env-brake arm: AGENT_ACTIONS_PAUSED short-circuits before the DB freeze read.
+    const pausedEnv = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
+    seedCandidate();
+    const paused = await generateContributorIssueDrafts(pausedEnv, repoFullName, { dryRun: false, create: true, limit: 1 });
+    expect(paused.dryRun).toBe(true);
+    expect(paused.created).toBe(0);
+  });
+
   it("records skipped_create_failed when GitHub create is unavailable", async () => {
     const env = createTestEnv();
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);

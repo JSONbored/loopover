@@ -120,6 +120,7 @@ describe("OpenAPI contract", () => {
     expect(spec.components?.securitySchemes?.GittensorySessionCookie).toBeDefined();
     expect(spec.paths["/health"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/mcp/compatibility"]?.get?.security).toBeUndefined();
+    expect(spec.paths["/v1/public/stats"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/public/github/repos/{owner}/{repo}/stats"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/github/start"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/repos"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);

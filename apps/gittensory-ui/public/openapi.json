@@ -15206,15 +15206,7 @@
           "503": {
             "description": "Public stats are temporarily unavailable"
           }
-        },
-        "security": [
-          {
-            "GittensoryBearer": []
-          },
-          {
-            "GittensorySessionCookie": []
-          }
-        ]
+        }
       }
     },
     "/v1/orb/ingest": {

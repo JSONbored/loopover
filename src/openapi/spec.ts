@@ -953,7 +953,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
 }
 
 function isProtectedPath(path: string): boolean {
-  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/github/repos/{owner}/{repo}/stats") return false;
+  if (path === "/health" || path === "/openapi.json" || path === "/mcp" || path === "/v1/mcp/compatibility" || path === "/v1/public/stats" || path === "/v1/public/github/repos/{owner}/{repo}/stats") return false;
   if (path.startsWith("/v1/auth/")) return path === "/v1/auth/extension/session";
   if (path === "/v1/github/webhook") return false;
   return path.startsWith("/v1/");

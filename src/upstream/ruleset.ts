@@ -1,5 +1,6 @@
 import {
   getLatestUpstreamRulesetSnapshot,
+  isGlobalAgentFrozen,
   listLatestUpstreamRulesetSnapshots,
   listLatestUpstreamSourceSnapshotsByKey,
   listUpstreamDriftReports,
@@ -9,6 +10,7 @@ import {
   updateUpstreamDriftReportIssue,
   upsertUpstreamDriftReport,
 } from "../db/repositories";
+import { isGlobalAgentPause } from "../settings/agent-execution";
 import { normalizeRegistryPayload } from "../registry/normalize";
 import { detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
 import { syncUnmodeledScoringConstantDrift } from "./unmodeled-scoring-drift";
@@ -262,6 +264,13 @@ export function registryHyperparameterDriftWarningsForRepo(reports: UpstreamDrif
 export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, JsonValue>> {
   if (!truthy(env.GITTENSORY_AUTO_FILE_DRIFT_ISSUES)) {
     return { status: "disabled", created: 0, updated: 0, skipped: 0 };
+  }
+  // Respect the global agent kill-switch: filing drift issues is an autonomous GitHub WRITE, so the env brake or
+  // the DB freeze halts it. These writes use a raw PAT OUTSIDE the installation-Octokit dry-run chokepoint
+  // (#dry-run-chokepoint), so the suppression must live here — without it the cron filed issues every tick
+  // regardless of the operator brake. (#audit-rawfetch-pause)
+  if (isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env))) {
+    return { status: "paused", created: 0, updated: 0, skipped: 0 };
   }
   const token = env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return { status: "skipped", reason: "missing_issue_token", created: 0, updated: 0, skipped: 0 };

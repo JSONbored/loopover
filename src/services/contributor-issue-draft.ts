@@ -10,10 +10,12 @@ import {
   countOpenIssues,
   countOpenPullRequests,
   getLatestRepoGithubTotalsSnapshot,
+  isGlobalAgentFrozen,
   listUpstreamDriftReports,
   recordAuditEvent,
 } from "../db/repositories";
 import type { IssueRecord, RepositoryRecord, RepositorySettings } from "../types";
+import { isGlobalAgentPause } from "../settings/agent-execution";
 import { isMaintainerAssociation } from "../github/commands";
 import { sha256Hex } from "../utils/crypto";
 import { jsonString, nowIso, repoParts } from "../utils/json";
@@ -254,7 +256,10 @@ export async function generateContributorIssueDrafts(
   repoFullName: string,
   options: ContributorIssueDraftOptions = {},
 ): Promise<ContributorIssueDraftGenerationResult> {
-  const dryRun = options.dryRun !== false;
+  // The caller's dryRun flag, OVERLAID with the global agent kill-switch: a paused/frozen agent must not file
+  // contributor issues even when a caller passes {dryRun:false}. These POSTs use a raw token outside the
+  // installation-Octokit dry-run chokepoint (#dry-run-chokepoint), so the brake is applied here. (#audit-rawfetch-pause)
+  const dryRun = options.dryRun !== false || isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env));
   const createRequested = options.create === true;
   const limit = Math.min(MAX_LIMIT, Math.max(1, options.limit ?? DEFAULT_LIMIT));
   const context = await loadContributorIssueDraftContext(env, repoFullName);

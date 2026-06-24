@@ -1907,7 +1907,12 @@ async function fetchPullRequestChecks(
   return { check_runs: checkRuns };
 }
 
-const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
+// NOTE: "action_required" is deliberately NOT here. A fork PR awaiting maintainer "Approve and run" surfaces its
+// required checks with conclusion="action_required" — that is NOT a failure, it is awaiting-approval. Treating it
+// as failing made ciState="failed" → the agent one-shot CLOSED the fork ("CI is failing") even though no check
+// ever ran. Excluded here, an action_required check falls through to anyPending → ciState="pending" → the PR is
+// DEFERRED/held (never closed) until its runs are approved (manually, or auto-approved by fork CI auto-approval). (#fork-action-required)
+const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);
 const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 // The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
 // "CI to wait on": counting them self-deadlocks (the review waits for all CI to finish; these only finish when

@@ -609,6 +609,16 @@ export function applyPrecisionBreakers(planned: PlannedAgentAction[], holdOnly: 
 }
 
 /**
+ * #1177: a red CI may bypass the hard-guardrail manual hold (#ci-fail-closes-guarded) ONLY when we proved the
+ * failing checks are required branch-protection contexts. A null fetch (unreadable branch protection) or an
+ * EMPTY required set means `fetchLiveCiAggregate` may have folded an optional / third-party red into `failed`,
+ * which must keep a guarded PR held for a human rather than auto-close it.
+ */
+export function hasVerifiedRequiredContexts(requiredContexts: Set<string> | null): boolean {
+  return requiredContexts != null && requiredContexts.size > 0;
+}
+
+/**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
  * GitHub state actions, and run them through the
@@ -714,7 +724,7 @@ async function maybeRunAgentMaintenance(
     submissionFloodHit,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
-    ciRequiredContextsVerified: requiredContexts != null && requiredContexts.size > 0,
+    ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
     // Flag-then-close double-check: thread the loaded verify config so the planner FLAGS first then closes on
     // re-verification (default ON). Only passed when a rule is on (the planner reads it only for a violation).

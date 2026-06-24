@@ -33,7 +33,8 @@ const MAX_DELETED_PER_TABLE = 50_000;
 const MS_PER_DAY = 86_400_000;
 
 function retentionWhere(rule: RetentionRule): string {
-  const base = `${rule.column} < ?1`;
+  // D1/SQLite bindings for `prepare().bind(...)` are positional; use a single `?` placeholder.
+  const base = `${rule.column} < ?`;
   if (rule.table === "audit_events") {
     const durableTypes = DURABLE_AUDIT_EVENT_TYPES.map((type) => `'${type}'`).join(", ");
     return `${base} AND event_type NOT IN (${durableTypes})`;

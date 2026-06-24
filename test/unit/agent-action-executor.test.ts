@@ -69,6 +69,15 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect((await auditFor(env, "merge"))?.outcome).toBe("completed");
   });
 
+  it("LIVE merge pins the GitHub merge to the action's reviewed head (expectedHeadSha) over the context head", async () => {
+    const env = createTestEnv({});
+    // A staged merge replayed on accept carries the REVIEWED head. Even when ctx.headSha is a newer live head,
+    // the merge must pin to the reviewed commit so a force-pushed (un-reviewed) head can never be merged.
+    const pinnedMerge: PlannedAgentAction = { actionClass: "merge", requiresApproval: false, reason: "clean", mergeMethod: "squash", expectedHeadSha: "reviewed-sha" };
+    await executeAgentMaintenanceActions(env, ctx({ headSha: "live-sha" }), [pinnedMerge]);
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 123, "owner/repo", 7, { mergeMethod: "squash", sha: "reviewed-sha" });
+  });
+
   it("LIVE label with labelOp=add + comment: adds the label AND posts the comment", async () => {
     const env = createTestEnv({});
     const flag: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "flag", label: "gittensory:pending-closure", labelOp: "add", comment: "⚠️ flagged" };

@@ -180,9 +180,15 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
     case "approve":
       await createPullRequestReview(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "APPROVE", action.reviewBody ?? "");
       return;
-    case "merge":
-      await mergePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, { mergeMethod: action.mergeMethod ?? "squash", ...(ctx.headSha ? { sha: ctx.headSha } : {}) });
+    case "merge": {
+      // Pin the merge to the REVIEWED head (action.expectedHeadSha) when present — for an approval-queue replay
+      // this is the commit the maintainer reviewed, not necessarily the current head, so a force-push after
+      // staging fails safe with a 409 (→ terminal hold) instead of merging un-reviewed code. A live sweep plans
+      // expectedHeadSha == ctx.headSha, so its behavior is unchanged; the fallback covers any unpinned plan.
+      const mergeSha = action.expectedHeadSha ?? ctx.headSha;
+      await mergePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, { mergeMethod: action.mergeMethod ?? "squash", ...(mergeSha ? { sha: mergeSha } : {}) });
       return;
+    }
     case "close":
       if (action.closeComment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.closeComment);
       await closePullRequest(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber);

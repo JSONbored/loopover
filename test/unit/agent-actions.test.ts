@@ -116,6 +116,11 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(plan.find((a) => a.actionClass === "merge")).toMatchObject({ mergeMethod: "rebase" });
   });
 
+  it("pins the planned merge to the PR's reviewed head SHA so a staged merge cannot replay against a moved head", () => {
+    const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, pr: { labels: [], mergeableState: "clean", headSha: "reviewed-abc" } }));
+    expect(plan.find((a) => a.actionClass === "merge")).toMatchObject({ mergeMethod: "squash", expectedHeadSha: "reviewed-abc" });
+  });
+
   it("applies conservative defaults when autoMaintain / slopGateMinScore are omitted", () => {
     // no autoMaintain → requireApprovals defaults to 1 → a clean passing PR without APPROVED does NOT merge
     expect(classes(planAgentMaintenanceActions({ conclusion: "success", blockerTitles: [], autonomy: { merge: "auto" }, changedPaths: [], hardGuardrailGlobs: [], authorIsOwner: false, authorIsAutomationBot: false, ciState: "passed", pr: { labels: [], mergeableState: "clean" } }))).not.toContain("merge");

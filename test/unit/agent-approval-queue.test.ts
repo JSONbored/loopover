@@ -113,6 +113,51 @@ describe("agent approval queue (#779)", () => {
     expect(audit).toMatchObject({ outcome: "completed", actor: "owner" });
   });
 
+  it("accept supersedes a staged merge when the live head moved after staging (force-push fail-safe)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    // The PR head is now h-NEW: the contributor force-pushed after the merge was staged against h-OLD.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h-NEW" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h-OLD" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("rejected");
+    expect(result.executionOutcome).toBe("head_moved");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    expect((await getPendingAgentAction(env, action.id))?.status).toBe("rejected");
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("force-push after staging");
+  });
+
+  it("accept executes a staged merge when the staged head still matches the live head (pinned to the reviewed SHA)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await seedInstallation(env);
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });
+
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("completed");
+    // Pinned to the REVIEWED head from the staged params — not merely whatever the current head happens to be.
+    expect(mergePullRequest).toHaveBeenCalledWith(env, 5, "owner/repo", 7, { mergeMethod: "squash", sha: "h7" });
+  });
+
+  it("accept does not supersede when the PR record is absent (no live head to compare) — proceeds to the executor", async () => {
+    const env = createTestEnv({});
+    // No PR seeded → getPullRequest returns null → pr?.headSha is undefined, so the staleness guard is skipped
+    // even though the staged action carries an expectedHeadSha. No settings/install → the merge denies downstream.
+    const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h-OLD" }, reason: "clean" });
+    const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
+    expect(result.status).toBe("accepted");
+    expect(result.executionOutcome).toBe("denied");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    const superseded = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.pending_action.superseded").first<{ n: number }>();
+    expect(superseded?.n).toBe(0);
+  });
+
   it("accept honors current dry-run setting instead of forcing a live mutation", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, agentDryRun: true });

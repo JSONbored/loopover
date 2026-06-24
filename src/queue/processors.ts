@@ -109,7 +109,7 @@ import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetecti
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
 import { selectRegateCandidates } from "../settings/agent-sweep";
-import { downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions } from "../settings/agent-actions";
+import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type PlannedAgentAction } from "../settings/agent-actions";
 import { executeAgentMaintenanceActions, pendingClosureLabelApplied } from "../services/agent-action-executor";
 import { processSubmitDraft } from "../services/draft";
 import { loadIssueQualityReportMap } from "../services/issue-quality";
@@ -181,7 +181,7 @@ import { closePullRequest, createIssueComment, getLastCloserLogin } from "../git
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
-import { isHoldOnly, recordPrOutcome, recordReversalSignals, runSelfTuneBreaker } from "../review/outcomes-wire";
+import { isCloseHoldOnly, isHoldOnly, recordPrOutcome, recordReversalSignals, runSelfTuneBreaker } from "../review/outcomes-wire";
 import { recordNativeGateDecision } from "../review/parity-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
@@ -592,6 +592,20 @@ export function changedPathsForGuardrail(files: Awaited<ReturnType<typeof listPu
 }
 
 /**
+ * Chain the two INDEPENDENT precision circuit-breakers over a planned action set (the merge-side and close-side
+ * downgrades), in order. PURE — the live flag reads happen at the call site (each fail-open), so this composes
+ * only the transforms:
+ *   • holdOnly      → downgradeMergeToHold (would-MERGE → human HOLD), else passthrough.
+ *   • closeHoldOnly → downgradeCloseToHold (HEURISTIC would-CLOSE → human HOLD; deterministic close exempt), else passthrough.
+ * Both off (the common path) returns the plan byte-identically. The breakers don't interfere: the merge
+ * downgrade only touches `merge`/ready-label, the close downgrade only touches a heuristic `close`.
+ */
+export function applyPrecisionBreakers(planned: PlannedAgentAction[], holdOnly: boolean, closeHoldOnly: boolean): PlannedAgentAction[] {
+  const afterMerge = holdOnly ? downgradeMergeToHold(planned, true) : planned;
+  return closeHoldOnly ? downgradeCloseToHold(afterMerge, true) : afterMerge;
+}
+
+/**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
  * GitHub state actions, and run them through the
@@ -712,11 +726,14 @@ async function maybeRunAgentMaintenance(
       approvedHeadSha: pr.approvedHeadSha,
     },
   });
-  // Accuracy circuit-breaker (#self-improve / GAP-4): when the holdonly flag is set for this repo (the
-  // auto-tuner engaged it after merge precision dropped, or a human set it), convert a would-MERGE into a human
-  // HOLD before executing. Fail-safe: isHoldOnly reads false until a breaker actually engages, so the common
-  // path is byte-identical (downgradeMergeToHold returns the plan unchanged).
-  const breakerOnPlan = (await isHoldOnly(env, repoFullName)) ? downgradeMergeToHold(planned, true) : planned;
+  // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.
+  //   • MERGE breaker (holdonly:<scope>): when set, convert a would-MERGE into a human HOLD before executing.
+  //   • CLOSE breaker (closehold:<scope>): when set, convert a HEURISTIC would-CLOSE into a human HOLD (the
+  //     deterministic linked-issue-hard-rule close is exempt — downgradeCloseToHold scopes itself).
+  // Each read is independent and fail-open (isHoldOnly / isCloseHoldOnly read false until a breaker actually
+  // engages), so the common path is byte-identical (both downgrades return the plan unchanged). The chaining is
+  // extracted into the pure applyPrecisionBreakers below so it is unit-tested directly.
+  const breakerOnPlan = applyPrecisionBreakers(planned, await isHoldOnly(env, repoFullName), await isCloseHoldOnly(env, repoFullName));
   if (breakerOnPlan.length === 0) return;
 
   const installation = await getInstallation(env, installationId);

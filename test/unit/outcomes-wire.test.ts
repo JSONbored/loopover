@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { processJob } from "../../src/queue/processors";
 import {
   createFlagStore,
+  isCloseHoldOnly,
   isHoldOnly,
   parseRevertedPrNumber,
   recordPrOutcome,
@@ -227,6 +228,81 @@ describe("isHoldOnly + createFlagStore (system_flags, migration 0054)", () => {
   });
 });
 
+describe("isCloseHoldOnly + createFlagStore.isCloseHoldOnly (closehold:<scope>, same system_flags table)", () => {
+  it("isCloseHoldOnly is false with no flags, true once closehold:<project> is set, with per-project isolation, and respects closehold:global", async () => {
+    const env = createTestEnv();
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+    const flags = createFlagStore(env);
+    await flags.setFlag("closehold:owner/repo", true);
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
+    expect(await isCloseHoldOnly(env, "owner/other")).toBe(false); // per-project isolation
+    // the merge breaker is independent: a closehold does NOT set holdonly.
+    expect(await isHoldOnly(env, "owner/repo")).toBe(false);
+    await flags.setFlag("closehold:owner/repo", false);
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+    // global close breaker applies to every project.
+    await flags.setFlag("closehold:global", true);
+    expect(await isCloseHoldOnly(env, "any/repo")).toBe(true);
+  });
+
+  it("createFlagStore.isCloseHoldOnly reads the per-project closehold key (not the global one)", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    expect(await flags.isCloseHoldOnly("owner/repo")).toBe(false);
+    await flags.setFlag("closehold:owner/repo", true);
+    expect(await flags.isCloseHoldOnly("owner/repo")).toBe(true);
+    expect(await flags.isCloseHoldOnly("owner/other")).toBe(false);
+    // The per-key store read does NOT fold in the global flag (mirrors isHoldOnly's per-key dedup read).
+    await flags.setFlag("closehold:owner/repo", false);
+    await flags.setFlag("closehold:global", true);
+    expect(await flags.isCloseHoldOnly("owner/repo")).toBe(false);
+  });
+
+  it("isCloseHoldOnly ignores a closehold row whose value is falsy (flagTruthy false arm)", async () => {
+    const env = createTestEnv();
+    // A row exists for this project but its value is '0' (not truthy) → must NOT count as engaged.
+    await env.DB.prepare("INSERT OR REPLACE INTO system_flags (key, value, updated_at) VALUES ('closehold:owner/repo', '0', CURRENT_TIMESTAMP)").run();
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("isCloseHoldOnly tolerates an all() result with no `results` array (the ?? [] fallback arm)", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      // Force the system_flags scan to return an object WITHOUT a `results` array so `res.results ?? []` falls back.
+      if (/SELECT key, value FROM system_flags/i.test(sql)) {
+        return { all: async () => ({}) } as unknown as ReturnType<typeof realPrepare>;
+      }
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false); // no rows → not engaged, no throw
+  });
+
+  it("createFlagStore.isCloseHoldOnly fails safe (returns false) when the store read throws", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/system_flags/i.test(sql)) throw new Error("d1 down");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    const flags = createFlagStore(env);
+    expect(await flags.isCloseHoldOnly("owner/repo")).toBe(false); // catch arm → false, never throws
+  });
+
+  it("isCloseHoldOnly (env-level) fails OPEN (false) and logs flags_read_error when the scan throws", async () => {
+    const env = createTestEnv();
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/system_flags/i.test(sql)) throw new Error("d1 down");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("flags_read_error"));
+    warn.mockRestore();
+  });
+});
+
 describe("applyAutoTune over the live FlagStore — engages holdonly on low merge precision", () => {
   it("engages holdonly:<project> when merge precision is below the floor over a real sample", async () => {
     const env = createTestEnv();
@@ -268,10 +344,55 @@ describe("runSelfTuneBreaker — reads recorded pr_outcome ground truth + engage
     expect(await isHoldOnly(env, "owner/repo")).toBe(true);
   });
 
-  it("does NOT engage with no recorded outcome history (fail-safe / byte-identical)", async () => {
+  it("ENGAGES the CLOSE breaker when recorded outcomes show close precision below the floor", async () => {
+    const env = createTestEnv();
+    // 12 would-CLOSE predictions: 4 confirmed (human closed), 8 the human actually MERGED → 33% close precision.
+    for (let i = 0; i < 4; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
+    for (let i = 4; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "merged");
+
+    await runSelfTuneBreaker(env);
+
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
+    // The merge breaker is INDEPENDENT — close-precision failure must not engage holdonly.
+    expect(await isHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("does NOT engage the CLOSE breaker when recorded close precision is healthy", async () => {
+    const env = createTestEnv();
+    // 12 would-CLOSE predictions: 12 confirmed (human closed) → 100% close precision, well above the floor.
+    for (let i = 0; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
+
+    await runSelfTuneBreaker(env);
+
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("does NOT engage with no recorded outcome history (fail-safe / byte-identical — both breakers)", async () => {
     const env = createTestEnv();
     await runSelfTuneBreaker(env);
     expect(await isHoldOnly(env, "owner/repo")).toBe(false);
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false);
+  });
+
+  it("AUTO-CLEARS both breakers once the cooldown has elapsed AND precision recovered", async () => {
+    const env = createTestEnv();
+    const flags = createFlagStore(env);
+    // Engage both breakers directly, then backdate their updated_at past the 24h cooldown.
+    await flags.setFlag("holdonly:owner/repo", true);
+    await flags.setFlag("closehold:owner/repo", true);
+    await env.DB.prepare("UPDATE system_flags SET updated_at = datetime('now', '-2 days') WHERE key IN ('holdonly:owner/repo', 'closehold:owner/repo')").run();
+    expect(await isHoldOnly(env, "owner/repo")).toBe(true);
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(true);
+    // Seed RECOVERED outcomes for both directions: every merge prediction merged, every close prediction closed.
+    for (let i = 0; i < 12; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "merge", "merged");
+    for (let i = 12; i < 24; i += 1) await seedDecisionAndOutcome(env, "owner/repo", i, "close", "closed");
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runSelfTuneBreaker(env);
+    log.mockRestore();
+
+    expect(await isHoldOnly(env, "owner/repo")).toBe(false); // merge breaker auto-cleared
+    expect(await isCloseHoldOnly(env, "owner/repo")).toBe(false); // close breaker auto-cleared
   });
 
   it("never throws (fails safe) even when review_audit reads blow up", async () => {

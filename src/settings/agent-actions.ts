@@ -240,11 +240,16 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const verifyBeforeClose = input.linkedIssueVerify?.verifyBeforeClose === true;
   const closeDelaySeconds = input.linkedIssueVerify?.closeDelaySeconds ?? 0;
   const pendingClosureLabelPresent = hasLabel(input.pr.labels, AGENT_LABEL_PENDING_CLOSURE);
-  // Pass 1 — violation present, verify-mode on, label NOT yet on the PR → FLAG (label + comment), do NOT close.
-  const flagForLinkedIssue = linkedIssueViolated && verifyBeforeClose && !pendingClosureLabelPresent;
+  // Pass 1 is only safe when the pending-closure state can be written immediately. If labels are disabled or
+  // approval-gated, holding would fail open because Pass 2 is keyed on a label that cannot appear yet; fall back
+  // to the original immediate close in that case.
+  const canApplyPendingClosureFlagNow = acting("label") && !approval("label");
+  // Pass 1 — violation present, verify-mode on, label NOT yet on the PR, and the state label can be applied now
+  // → FLAG (label + comment), do NOT close.
+  const flagForLinkedIssue = linkedIssueViolated && verifyBeforeClose && !pendingClosureLabelPresent && canApplyPendingClosureFlagNow;
   // Close NOW when: verify-mode OFF (immediate, original GAP-5), OR Pass 2 (violation persists AND the
-  // pending-closure label is already present from a prior pass).
-  const willCloseForLinkedIssue = linkedIssueViolated && (!verifyBeforeClose || pendingClosureLabelPresent);
+  // pending-closure label is already present from a prior pass), OR verification cannot safely persist its flag.
+  const willCloseForLinkedIssue = linkedIssueViolated && (!verifyBeforeClose || pendingClosureLabelPresent || !canApplyPendingClosureFlagNow);
   // The violation has CLEARED (no longer violated) but the PR still carries a pending-closure flag from a prior
   // pass → remove the stale flag (never close). Independent of `isContributor`/`close` autonomy: clearing a stale
   // label is always safe and must happen even if the rule/author no longer qualifies for a close.

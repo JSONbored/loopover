@@ -378,6 +378,18 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(flag?.comment).toContain("~30s");
     });
 
+    it("label disabled: falls back to immediate close instead of holding forever without a state label", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "observe" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
+      expect(classes(plan)).toContain("close");
+      expect(pendingLabel(plan)).toBeFalsy();
+    });
+
+    it("label approval-gated: falls back to immediate close instead of queueing an unapplied state label", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto_with_approval" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [] } }));
+      expect(classes(plan)).toContain("close");
+      expect(pendingLabel(plan)).toBeFalsy();
+    });
+
     it("Pass 2 (verify on, label PRESENT, violation persists): CLOSES with the cited reason", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto", label: "auto" }, ciState: "passed", linkedIssueHardRule: violation, linkedIssueVerify: verifyOn, pr: { labels: [AGENT_LABEL_PENDING_CLOSURE] } }));
       const close = plan.find((a) => a.actionClass === "close");

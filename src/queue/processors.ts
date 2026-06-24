@@ -710,7 +710,7 @@ async function maybeRunAgentMaintenance(
   const installation = await getInstallation(env, installationId);
   /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive. */
   const installationPermissions = installation?.permissions ?? null;
-  await executeAgentMaintenanceActions(
+  const actionOutcomes = await executeAgentMaintenanceActions(
     env,
     {
       installationId,
@@ -726,12 +726,12 @@ async function maybeRunAgentMaintenance(
     breakerOnPlan,
   );
 
-  // Flag-then-close double-check, Pass 2 trigger: when this pass FLAGGED the PR (added the pending-closure
-  // label), re-enqueue a delayed re-review after closeDelaySeconds so the verification pass runs promptly
-  // instead of waiting for the next CI-completion event or the hourly sweep. Best-effort — if the enqueue fails,
-  // the next sweep / CI event is the backstop Pass 2. Reuses the existing `recapture-preview` delayed-re-review
-  // job (it just re-runs reReviewStoredPullRequest), so no new job type is needed.
-  const flaggedForLinkedIssue = breakerOnPlan.some((action) => action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add");
+  // Flag-then-close double-check, Pass 2 trigger: only re-enqueue when the pending-closure label mutation
+  // completed. Queued/failed/dry-run label actions do not establish the label-backed state that Pass 2 requires,
+  // so scheduling off the plan alone can create a verification loop. Best-effort — if the enqueue fails, the next
+  // sweep / CI event is the backstop Pass 2. Reuses the existing `recapture-preview` delayed-re-review job.
+  const pendingFlagPlanIndexes = breakerOnPlan.flatMap((action, index) => (action.actionClass === "label" && action.label === AGENT_LABEL_PENDING_CLOSURE && action.labelOp === "add" ? [index] : []));
+  const flaggedForLinkedIssue = pendingFlagPlanIndexes.some((index) => actionOutcomes[index]?.outcome === "completed");
   if (flaggedForLinkedIssue) {
     const delaySeconds = Math.max(0, linkedIssueRulesConfig.closeDelaySeconds);
     const verifyJob = { type: "recapture-preview" as const, deliveryId: `linked-issue-verify:${repoFullName}#${pr.number}`, repoFullName, prNumber: pr.number, installationId, attempt: 0 };

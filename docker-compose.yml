@@ -309,8 +309,11 @@ services:
     image: grafana/promtail:latest
     restart: unless-stopped
     profiles: ["observability"]
-    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    command: ["-config.file=/etc/promtail/promtail-config.yml", "-config.expand-env=true"]
     depends_on: [loki, docker-proxy]
+    environment:
+      # Promtail expands this into its Docker label filter so discovery stays inside this Compose project.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-gittensory}
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
       # Persist read positions so restarts don't re-ship the whole log history.

@@ -32,11 +32,11 @@ scrape_configs:
       # Read-only Docker API exposed by the docker-proxy service (no raw socket in this container).
       - host: tcp://docker-proxy:2375
         refresh_interval: 15s
-        # Only containers in THIS compose project (set automatically by compose).
-        # Avoids scraping unrelated containers on a shared host.
+        # Only containers in THIS compose project. A bare label filter matches every
+        # Docker Compose stack, so pin the exact project value expanded by Promtail.
         filters:
           - name: label
-            values: ["com.docker.compose.project"]
+            values: ["com.docker.compose.project=${COMPOSE_PROJECT_NAME}"]
 
     relabel_configs:
       # Compose service name -> `service` label (e.g. gittensory, prometheus, loki).

@@ -1222,8 +1222,11 @@ describe("queue processors", () => {
       },
     });
 
-    const count = await env.DB.prepare("select count(*) as n from audit_events where event_type like 'agent.action.%'").first<{ n: number }>();
-    expect(count?.n).toBe(0);
+    // A non-confirmed contributor (neutral/advisory gate) is no longer left SILENT — the bot may surface it with a
+    // label so it's visible, but it takes NO TERMINAL action (never auto-merge/close/approve a non-confirmed or
+    // not-review-good PR). (#harm-stop: neutral flows to held+labeled instead of an empty plan.)
+    const terminal = await env.DB.prepare("select count(*) as n from audit_events where event_type in ('agent.action.merge','agent.action.close','agent.action.approve')").first<{ n: number }>();
+    expect(terminal?.n).toBe(0);
   });
 
   it("auto-maintain (#778): skips a closed PR even on an agent-configured repo", async () => {

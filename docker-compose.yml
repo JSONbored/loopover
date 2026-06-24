@@ -36,6 +36,22 @@ services:
   #   volumes:
   #     - ollama-models:/root/.ollama
 
+  # Optional: continuous SQLite backup to S3/B2/MinIO/R2 via Litestream (https://litestream.io).
+  # Copy litestream.yml.example -> litestream.yml, fill in your bucket, then uncomment:
+  # litestream:
+  #   image: litestream/litestream:latest
+  #   command: replicate
+  #   restart: unless-stopped
+  #   depends_on: [gittensory]
+  #   volumes:
+  #     - gittensory-data:/data
+  #     - ./litestream.yml:/etc/litestream.yml:ro
+  #   environment:
+  #     LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID}
+  #     LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY}
+  #     LITESTREAM_ENDPOINT: ${LITESTREAM_ENDPOINT}
+  #     LITESTREAM_REGION: ${LITESTREAM_REGION}
+
 volumes:
   gittensory-data:
   # ollama-models:

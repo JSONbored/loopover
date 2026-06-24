@@ -171,6 +171,33 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     await expect(indexRepo(env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
     expect(vec.upserted.length).toBe(0);
   });
+
+  it("a tree fetch that THROWS degrades to nothing indexed (fetchRepoTree catch arm)", async () => {
+    const { env, vec } = indexEnv();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/git/trees/")) throw new Error("network down");
+      return new Response("missing", { status: 404 });
+    });
+    await expect(indexRepo(env, PROJECT, REPO)).resolves.toEqual({ indexed: 0, files: 0, capped: false });
+    expect(vec.upserted.length).toBe(0);
+  });
+
+  it("a storage error while listing stored paths is fail-safe (prunes nothing, still indexes)", async () => {
+    const { env } = indexEnv();
+    // Make ONLY the listStoredChunkPaths SELECT throw; everything else uses the real test D1.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((query: string) =>
+      query.includes("SELECT DISTINCT path FROM repo_chunks")
+        ? ({ bind: () => ({ all: async () => { throw new Error("storage boom"); } }) } as unknown as ReturnType<typeof realPrepare>)
+        : realPrepare(query)) as typeof env.DB.prepare;
+    stubGithub({ tree: [{ path: "src/current.ts", size: 30 }], files: { "src/current.ts": "export const current = 1;\n" } });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    // The list failed → [] → nothing pruned, but the current file still indexes (fail-safe).
+    expect(result.files).toBe(1);
+    expect(await pathsFor(env, PROJECT, "gittensory")).toContain("src/current.ts");
+  });
 });
 
 describe("indexRepo: MAX_CHUNKS_PER_REPO cap holds", () => {

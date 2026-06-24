@@ -1042,7 +1042,7 @@ async function backfillLabelsSegment(
   cursor: string | undefined,
   totals: RepoGithubTotalsSnapshotRecord | null | undefined,
 ): Promise<{ status: RepoSyncSegmentRecord["status"]; segment: RepoSyncSegmentRecord }> {
-  const configuredLabels = new Set(Object.keys(repo.registryConfig?.labelMultipliers ?? {}));
+  const configuredLabels = new Set(Object.keys(repo.registryConfig?.labelMultipliers ?? {}).map((key) => key.toLowerCase()));
   return fetchPagedSegment<GitHubLabelPayload>(
     env,
     repo,
@@ -1060,7 +1060,7 @@ async function backfillLabelsSegment(
           name: label.name,
           color: label.color,
           description: label.description,
-          isConfigured: configuredLabels.has(label.name),
+          isConfigured: configuredLabels.has(label.name.toLowerCase()),
           observedCount: 0,
           payload: label as unknown as Record<string, JsonValue>,
           lastSeenAt: nowIso(),
@@ -1607,7 +1607,7 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
     );
 
     /* v8 ignore next -- Registry config is present for registered backfills; empty fallback protects manually inserted repositories. */
-    const configuredLabels = new Set(Object.keys(repo.registryConfig?.labelMultipliers ?? {}));
+    const configuredLabels = new Set(Object.keys(repo.registryConfig?.labelMultipliers ?? {}).map((key) => key.toLowerCase()));
     const observedCounts = countObservedLabels([...issues, ...pullRequests, ...recentMerged]);
     for (const label of labelItems) {
       await upsertRepoLabel(env, {
@@ -1615,15 +1615,15 @@ async function backfillRepository(env: Env, repo: RepositoryRecord, limits: Back
         name: label.name,
         color: label.color,
         description: label.description,
-        isConfigured: configuredLabels.has(label.name),
+        isConfigured: configuredLabels.has(label.name.toLowerCase()),
         /* v8 ignore next -- Missing observed label counts normalize to zero; observed-count persistence is covered by backfill tests. */
-        observedCount: observedCounts.get(label.name) ?? 0,
+        observedCount: observedCounts.get(label.name.toLowerCase()) ?? 0,
         payload: label as unknown as Record<string, JsonValue>,
         lastSeenAt: nowIso(),
       });
     }
     for (const configured of configuredLabels) {
-      if (labelItems.some((label) => label.name === configured)) continue;
+      if (labelItems.some((label) => label.name.toLowerCase() === configured)) continue;
       await upsertRepoLabel(env, {
         repoFullName: repo.fullName,
         name: configured,
@@ -2697,7 +2697,8 @@ function countObservedLabels(records: Array<{ labels?: Array<{ name?: string }> 
   for (const record of records) {
     for (const label of record.labels ?? []) {
       if (!label.name) continue;
-      counts.set(label.name, (counts.get(label.name) ?? 0) + 1);
+      const key = label.name.toLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   }
   return counts;

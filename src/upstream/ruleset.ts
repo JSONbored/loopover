@@ -1048,7 +1048,7 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
     const issue = (await response.json()) as { number?: number; html_url?: string; state?: string; body?: string | null; labels?: Array<string | { name?: string }> };
     if (issue.number !== report.issueNumber || !issue.html_url || issue.state !== "open") return null;
     if (!issue.body?.includes(`gittensory-upstream-drift:${report.fingerprint}`)) return null;
-    if (!issue.labels?.some((label) => (typeof label === "string" ? label : label.name) === "signals")) return null;
+    if (!issue.labels?.some((label) => (typeof label === "string" ? label : label.name ?? "").toLowerCase() === "signals")) return null;
     const issueUrl = parseGitHubIssueUrl(issue.html_url);
     if (!issueUrl || issueUrl.number !== report.issueNumber) return null;
     if (issueUrl.owner.toLowerCase() !== owner.toLowerCase() || issueUrl.name.toLowerCase() !== name.toLowerCase()) return null;

@@ -616,7 +616,7 @@ function buildContributorDecisionPack(args: {
     ? new Map([...args.issueQualityByRepo.entries()].map(([repoFullName, report]) => [repoFullName.toLowerCase(), report]))
     : new Map<string, IssueQualityReport>();
   const languageSet = new Set((args.profile.github?.topLanguages ?? []).map((language) => language.toLowerCase()));
-  const labelHistory = new Set(args.profile.registeredRepoActivity?.dominantLabels ?? []);
+  const labelHistory = new Set((args.profile.registeredRepoActivity?.dominantLabels ?? []).map((label) => label.toLowerCase()));
   const roleContexts = registeredRepositories.map((repo) =>
     buildRoleContext({
       login: args.login,
@@ -773,7 +773,7 @@ function buildRepoDecision(args: {
   };
   const labelHistory = args.labelHistory;
   const labelFit = labelHistory
-    ? Object.keys(args.repo.registryConfig?.labelMultipliers ?? {}).filter((label) => labelHistory.has(label))
+    ? Object.keys(args.repo.registryConfig?.labelMultipliers ?? {}).filter((label) => labelHistory.has(label.toLowerCase()))
     : [];
   const copyContext: RepoCopyContext = {
     repoFullName: args.repo.fullName,

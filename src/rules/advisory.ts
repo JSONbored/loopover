@@ -550,7 +550,8 @@ function addPullRequestFindings(
     });
   }
   const repoMultipliers = repo?.registryConfig?.labelMultipliers ?? {};
-  const matchedLabels = pr.labels.filter((label) => repoMultipliers[label] !== undefined);
+  const multiplierKeys = new Map(Object.keys(repoMultipliers).map((key) => [key.toLowerCase(), key]));
+  const matchedLabels = pr.labels.filter((label) => multiplierKeys.has(label.toLowerCase()));
   if (matchedLabels.length > 0) {
     findings.push({
       code: "label_context_found",

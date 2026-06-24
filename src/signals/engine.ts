@@ -1330,7 +1330,7 @@ export function buildContributorOpportunities(
 ): ContributorOpportunity[] {
   const opportunities: ContributorOpportunity[] = [];
   const touchedRepos = new Set(profile.registeredRepoActivity.reposTouched);
-  const labelHistory = new Set(profile.registeredRepoActivity.dominantLabels);
+  const labelHistory = new Set(profile.registeredRepoActivity.dominantLabels.map((label) => label.toLowerCase()));
   const bountyByIssue = indexBountiesByIssue(bounties);
   const qualityByKey = issueQualityByRepo
     ? new Map(Array.from(issueQualityByRepo.entries()).map(([key, value]) => [key.toLowerCase(), value]))
@@ -1361,7 +1361,7 @@ export function buildContributorOpportunities(
       // Never steer contributors toward completed, cancelled, or otherwise historical bounty work.
       if (bountyLifecycle && isHistoricalBountyLifecycle(bountyLifecycle)) continue;
       const bountyPenalty = bountyLifecycle === "stale" || bountyLifecycle === "ambiguous" ? 30 : 0;
-      const labelFit = issue.labels.filter((label) => labelHistory.has(label)).length;
+      const labelFit = issue.labels.filter((label) => labelHistory.has(label.toLowerCase())).length;
       const qualityAdjustment =
         quality?.status === "ready"
           ? 10
@@ -1408,7 +1408,7 @@ export function buildContributorOpportunities(
           lane.summary,
           ...(maintainerAuthored && !maintainerWip ? ["Maintainer-created issue — typically the highest contribution multiplier on Gittensor."] : []),
           ...(touchedRepos.has(repo.fullName) ? ["Contributor has prior activity in this registered repo."] : []),
-          ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label)).join(", ")}.`] : []),
+          ...(labelFit > 0 ? [`Issue labels overlap contributor history: ${issue.labels.filter((label) => labelHistory.has(label.toLowerCase())).join(", ")}.`] : []),
           ...(bountyLifecycle === "active" ? ["An active bounty is attached as contribution context (not guaranteed payout)."] : []),
           ...(quality?.status === "ready" ? ["Issue quality report rates this issue as ready."] : []),
         ],

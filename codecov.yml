@@ -7,6 +7,10 @@
 #
 # `project` (whole-repo total) is informational only: it is reported as a trend
 # but never blocks a merge. vitest keeps a loose 90% local backstop separately.
+codecov:
+  # Don't post a verdict until the CI run that produced the report has finished.
+  require_ci_to_pass: true
+
 coverage:
   status:
     patch:
@@ -18,9 +22,6 @@ coverage:
     project:
       default:
         informational: true
-
-# Don't post a verdict until the CI run that produced the report has finished.
-require_ci_to_pass: true
 
 comment:
   layout: "condensed_header, diff, flags, files"

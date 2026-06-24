@@ -130,6 +130,7 @@ export function extractCliText(stdout: string): string {
   const lines = trimmed.split(/\r?\n/).filter((l) => l.trim());
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
+    /* v8 ignore next */ // the filter above guarantees a non-empty line; this is a TS undefined-guard only
     if (!line) continue;
     const t = tryParse(line);
     if (t) return t;

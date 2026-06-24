@@ -67,6 +67,7 @@ export function createSqliteQueue(driver: SqliteDriver, consume: (message: JobMe
     const row = rows[0] as JobRow | undefined;
     if (!row) return null;
     const { changes } = driver.query(`UPDATE ${TABLE} SET status='processing' WHERE id=? AND status='pending'`, [row.id]);
+    /* v8 ignore next */ // the no-rows branch is a multi-writer guard; unreachable in the single-process model
     return changes ? row : null;
   }
 
@@ -129,6 +130,7 @@ export function createSqliteQueue(driver: SqliteDriver, consume: (message: JobMe
       if (running) return;
       running = true;
       const tick = (): void => {
+        /* v8 ignore next */ // stop() clears the timer, so a tick never fires with running=false
         if (!running) return;
         void pump().finally(() => {
           if (running) timer = setTimeout(tick, pollIntervalMs);

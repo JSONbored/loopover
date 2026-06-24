@@ -119,6 +119,47 @@ describe("createChainAi (fallback)", () => {
   });
 });
 
+describe("branch coverage — defaults + edge inputs", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("chat with no apiKey + empty choices → empty response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [] }), { status: 200 })));
+    expect((await createOpenAiCompatibleAi({ baseUrl: "http://o/v1" }).run("m", { prompt: "x" })).response).toBe("");
+  });
+  it("embed with no data field → empty data", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })));
+    expect((await createOpenAiCompatibleAi({ baseUrl: "http://o/v1" }).run("m", { text: ["a"] })).data).toEqual([]);
+  });
+  it("anthropic with no system + missing/empty content → empty response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text" }] }), { status: 200 })));
+    expect((await createAnthropicAi({ apiKey: "k" }).run("m", { messages: [{ role: "user", content: "x" }] })).response).toBe("");
+  });
+  it("extractCliText: non-string result falls through to text", () => {
+    expect(extractCliText(JSON.stringify({ result: 5 }))).toBe("");
+    expect(extractCliText(JSON.stringify({ text: "t" }))).toBe("t");
+  });
+  it("claudeErrorStatus: subtype + unknown fallbacks", () => {
+    expect(claudeErrorStatus(JSON.stringify({ is_error: true, subtype: "sub" }))).toBe("sub");
+    expect(claudeErrorStatus(JSON.stringify({ is_error: true }))).toBe("unknown");
+  });
+  it("claude/codex with a null exit code", async () => {
+    const nullExit: StubSpawn = async () => ({ stdout: "", code: null });
+    await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_exit_null/);
+    await expect(createCodexAi({}, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
+  });
+  it("chain wraps a non-Error throw", async () => {
+    const p = {
+      name: "p",
+      ai: {
+        run: async () => {
+          throw "stringerr";
+        },
+      },
+    };
+    await expect(createChainAi([p]).run("m", { prompt: "x" })).rejects.toThrow(/all_ai_providers_failed/);
+  });
+});
+
 describe("subscription CLI helpers + fail-safe", () => {
   it("extractCliText pulls the result/text field", () => {
     expect(extractCliText(JSON.stringify({ type: "result", result: "ok" }))).toBe("ok");

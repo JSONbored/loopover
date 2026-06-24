@@ -71,6 +71,19 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(seen).toEqual(["stuck"]);
   });
 
+  it("records 'unknown error' when a consumer throws a non-Error", async () => {
+    const q = createSqliteQueue(
+      makeDriver(),
+      async () => {
+        throw "boom-string"; // not an Error instance
+      },
+      { maxRetries: 1, backoffMs: () => 0 },
+    );
+    await q.binding.send(msg("x"));
+    await q.drain();
+    expect(q.deadCount()).toBe(1);
+  });
+
   it("dead-letters an unparseable payload", async () => {
     const driver = makeDriver();
     const q = createSqliteQueue(driver, async () => undefined);

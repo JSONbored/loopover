@@ -127,6 +127,17 @@ describe("v2 signal builders", () => {
     expect(audit.trustedPipelineReady).toBe(false);
   });
 
+  it("does not flag mid-word label matches like 'bottleneck' as suspicious", () => {
+    const repoWithLabels: RepositoryRecord = {
+      ...repo,
+      registryConfig: { ...repo.registryConfig!, labelMultipliers: { bottleneck: 1, scoreboard: 1, riskier: 1, "status:ready": 1, bot: 1 } },
+    };
+    const audit = buildLabelAudit(repoWithLabels, [], issues, pullRequests, repoWithLabels.fullName);
+    // bot→bottleneck, score→scoreboard, risk→riskier must NOT match; only real prefix-style labels
+    // (`status:ready`) and bare keywords (`bot`) are flagged. Pre-fix all five matched.
+    expect(audit.suspiciousConfiguredLabels.sort()).toEqual(["bot", "status:ready"]);
+  });
+
   it("uses recent merged PRs and linked issues in collision radar", () => {
     const report = buildCollisionReport(repo.fullName, issues, pullRequests, recentMergedPullRequests);
     expect(report.summary.itemsReviewed).toBe(4);

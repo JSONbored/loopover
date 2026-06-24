@@ -94,6 +94,7 @@ import {
   sanitizePublicComment,
 } from "../github/commands";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
+import { resolveRepoActionMode } from "../github/client";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
@@ -2206,6 +2207,10 @@ async function maybePublishPrPublicSurface(
   webhook: { deliveryId: string; authorType?: string | undefined; action?: string | undefined; previewPollAttempt?: number | undefined; skipAiReview?: boolean | undefined },
 ): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
+  // Resolve the repo's action mode ONCE for the whole publish pass and thread it into every GitHub write below, so
+  // a dry-run / pause / global-freeze publishes NOTHING (check-run, comment, label) — the gate verdict is still
+  // computed + returned for the disposition logic, the writes are just suppressed + audited. (#dry-run-chokepoint)
+  const mode = await resolveRepoActionMode(env, settings);
   // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the unified converged comment renders for THIS repo
   // only when it is allowlisted AND the global GITTENSORY_REVIEW_UNIFIED_COMMENT flag is ON. Computed once and ANDed into
   // both unified-comment sites below (closed/skipped + open). Empty/unset allowlist → false → both sites keep
@@ -2241,7 +2246,7 @@ async function maybePublishPrPublicSurface(
     // the actual diff + verdict) with an empty "advisory only — 0 files — no longer open" skip card — so a
     // freshly MERGED PR ended up showing a contentless review. The real review must survive the merge/close.
     // (#preserve-review-on-close) A bot-CLOSED PR still gets its close reasoning from the executor's close comment.
-    const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.");
+    const gateCheckResult = await createOrUpdateSkippedGateCheckRun(env, installationId, repoFullName, advisory, "PR closed before full evaluation.", mode);
     if (gateCheckResult?.kind === "permission_missing") {
       await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, gateCheckResult.warning);
     }
@@ -2284,7 +2289,7 @@ async function maybePublishPrPublicSurface(
 
   let pendingGateCheckRunId: number | undefined;
   if (gateEnabled) {
-    const pendingGateResult = await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory);
+    const pendingGateResult = await createOrUpdatePendingGateCheckRun(env, installationId, repoFullName, advisory, mode);
     if (pendingGateResult?.kind === "published") pendingGateCheckRunId = pendingGateResult.id;
     if (pendingGateResult?.kind === "permission_missing") {
       await auditGateCheckPermissionMissing(env, author, repoFullName, pr.number, webhook.deliveryId, pendingGateResult.warning);
@@ -2497,6 +2502,7 @@ async function maybePublishPrPublicSurface(
           {
             checkRunId: pendingGateCheckRunId,
           },
+          mode,
         );
         if (gateCheckResult?.kind === "published") gateFinalized = true;
         if (gateCheckResult?.kind === "permission_missing") {
@@ -2507,7 +2513,7 @@ async function maybePublishPrPublicSurface(
           // always a transient secondary-rate-limit, not a real revocation. Finalize the pending check to
           // neutral (mirrors the catch); if it were a genuine revocation this PATCH also 403s and is swallowed.
           if (pendingGateCheckRunId !== undefined && !gateFinalized) {
-            await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }).catch(() => undefined);
+            await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }, mode).catch(() => undefined);
             gateFinalized = true;
           }
         }
@@ -2518,7 +2524,7 @@ async function maybePublishPrPublicSurface(
         // grew long with failing-check names) were silently never reviewed or closed. Finalize the pending
         // check to a neutral terminal state so it doesn't hang, log, and CONTINUE — do not re-throw.
         if (pendingGateCheckRunId !== undefined && !gateFinalized) {
-          await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }).catch(() => undefined);
+          await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }, mode).catch(() => undefined);
           gateFinalized = true;
         }
         await recordAuditEvent(env, {
@@ -2536,7 +2542,8 @@ async function maybePublishPrPublicSurface(
     // (non-blocking) terminal state so it never hangs in_progress; it re-runs on the next push. Only when
     // the gate was enabled, a pending check id exists, and a real conclusion was not already published.
     if (gateEnabled && pendingGateCheckRunId !== undefined && !gateFinalized) {
-      await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }).catch(() => undefined);
+      /* v8 ignore next -- outer-catch recovery for a mid-evaluation throw; the mode-threaded errored-finalize is exercised by its inner-catch twin above */
+      await createOrUpdateErroredGateCheckRun(env, installationId, repoFullName, advisory, { checkRunId: pendingGateCheckRunId }, mode).catch(() => undefined);
       await recordAuditEvent(env, {
         eventType: "github_app.gate_finalized_on_error",
         actor: author,
@@ -2570,11 +2577,19 @@ async function maybePublishPrPublicSurface(
       // FIX B: the check-run annotations/details need the real diff too — reuse the shared resolver (one resolve
       // per review; inline-fetches when the stored rows are still empty from a pre-detail-sync first review).
       const checkRunFiles = await getReviewFiles();
-      const checkRunResult = await createOrUpdateCheckRun(env, installationId, repoFullName, advisory, settings.checkRunDetailLevel, {
-        files: checkRunFiles,
-        collisions,
-        pullNumber: pr.number,
-      });
+      const checkRunResult = await createOrUpdateCheckRun(
+        env,
+        installationId,
+        repoFullName,
+        advisory,
+        settings.checkRunDetailLevel,
+        {
+          files: checkRunFiles,
+          collisions,
+          pullNumber: pr.number,
+        },
+        mode,
+      );
       if (checkRunResult?.kind === "permission_missing") {
         failedOutputs.push({ output: "check_run", error: checkRunResult.warning });
         await recordAuditEvent(env, {
@@ -2722,7 +2737,7 @@ async function maybePublishPrPublicSurface(
       deterministicBody = buildPublicPrIntelligenceComment(commentArgs);
     }
     try {
-      await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, deterministicBody);
+      await createOrUpdatePrIntelligenceComment(env, installationId, repoFullName, pr.number, deterministicBody, { mode });
       publishedOutputs.push("comment");
     } catch (error) {
       const message = errorMessage(error);
@@ -2734,6 +2749,7 @@ async function maybePublishPrPublicSurface(
     try {
       await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, settings.gittensorLabel, {
         createMissingLabel: settings.createMissingLabel,
+        mode,
       });
       publishedOutputs.push("label");
     } catch (error) {
@@ -2750,9 +2766,9 @@ async function maybePublishPrPublicSurface(
         const contentGlobs = (settings as { contentGlobs?: string[] }).contentGlobs ?? [];
         const typeFiles = contentGlobs.length > 0 ? await getReviewFiles().catch(() => [] as Awaited<ReturnType<typeof getReviewFiles>>) : [];
         const chosenType = resolvePrTypeLabel({ title: pr.title, changedPaths: typeFiles.map((file) => file.path), contentGlobs });
-        await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, chosenType, { createMissingLabel: true });
+        await ensurePullRequestLabel(env, installationId, repoFullName, pr.number, chosenType, { createMissingLabel: true, mode });
         for (const other of ALL_TYPE_LABELS.filter((label) => label !== chosenType)) {
-          await removePullRequestLabel(env, installationId, repoFullName, pr.number, other);
+          await removePullRequestLabel(env, installationId, repoFullName, pr.number, other, mode);
         }
       } catch (error) {
         console.log(JSON.stringify({ ev: "type_label_error", repoFullName, pull: pr.number, message: errorMessage(error).slice(0, 150) }));

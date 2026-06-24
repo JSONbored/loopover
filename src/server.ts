@@ -14,8 +14,6 @@ import worker from "./index";
 import { processJob } from "./queue/processors";
 import { createSelfHostAi } from "./selfhost/ai";
 import { credentialsToEnv, exchangeManifestCode, renderSetupPage } from "./selfhost/setup-wizard";
-import { exchangeOrbManifestCode, orbCredentialsToEnv, renderOrbSetupPage } from "./selfhost/orb-setup";
-import { handleOrbWebhook, verifyOrbSignature } from "./selfhost/orb-webhook";
 import { orbEnabled, exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
@@ -189,9 +187,7 @@ async function main(): Promise<void> {
     "gittensory_jobs_failed_total", "gittensory_jobs_dead_total",
     "gittensory_http_requests_total", "gittensory_webhook_dedup_total",
     "gittensory_qdrant_queries_total", "gittensory_qdrant_upserts_total",
-    "gittensory_orb_webhook_total", "gittensory_orb_installs_total",
-    "gittensory_orb_events_recorded_total", "gittensory_orb_events_exported_total",
-    "gittensory_orb_export_errors_total",
+    "gittensory_orb_events_exported_total", "gittensory_orb_export_errors_total",
   ])
     incr(c, undefined, 0);
 
@@ -253,55 +249,6 @@ async function main(): Promise<void> {
           } catch (error) {
             return new Response(`setup failed: ${error instanceof Error ? error.message : "error"}`, { status: 500 });
           }
-        }
-        // Gittensory Orb setup wizard — only while no Orb App is configured.
-        if ((path === "/orb/setup" || path === "/orb/setup/callback") && !process.env.ORB_APP_ID) {
-          // Same guard as the main setup wizard: PUBLIC_API_ORIGIN required to prevent Host-header spoofing.
-          const origin = process.env.PUBLIC_API_ORIGIN;
-          if (!origin) {
-            return new Response(
-              "PUBLIC_API_ORIGIN must be set before using the Orb setup wizard — add it to your .env file",
-              { status: 400 },
-            );
-          }
-          if (path === "/orb/setup") {
-            const state = randomUUID();
-            return new Response(renderOrbSetupPage(origin, state), {
-              headers: {
-                "content-type": "text/html; charset=utf-8",
-                "Set-Cookie": `orb_setup_state=${state}; Path=/orb/setup; HttpOnly; SameSite=Lax; Max-Age=3600`,
-              },
-            });
-          }
-          const params = new URL(request.url).searchParams;
-          const code = params.get("code");
-          if (!code) return new Response("missing ?code", { status: 400 });
-          const stateParam = params.get("state");
-          const cookieHeader = request.headers.get("cookie") ?? "";
-          const cookieState = cookieHeader.split(";").map((c) => c.trim()).find((c) => c.startsWith("orb_setup_state="))?.slice("orb_setup_state=".length);
-          if (!stateParam || !cookieState || stateParam !== cookieState) {
-            return new Response("invalid state parameter", { status: 403 });
-          }
-          try {
-            const creds = await exchangeOrbManifestCode(code);
-            const outPath = process.env.ORB_SETUP_OUTPUT_PATH ?? "/data/gittensory-orb.env";
-            writeFileSync(outPath, orbCredentialsToEnv(creds), { mode: 0o600 });
-            console.log(JSON.stringify({ event: "selfhost_orb_created", slug: creds.slug, app_id: creds.id }));
-            return new Response(`<!doctype html><body style="font-family:system-ui;max-width:40rem;margin:4rem auto"><h1>Gittensory Orb App created ✓</h1><p>Credentials written to <code>${outPath}</code>. Add them to your <code>.env</code> (or load the file), install the Orb App on your repos, and restart the container.</p></body>`, { headers: { "content-type": "text/html; charset=utf-8" } });
-          } catch (error) {
-            return new Response(`orb setup failed: ${error instanceof Error ? error.message : "error"}`, { status: 500 });
-          }
-        }
-        // Orb webhook endpoint — receives pull_request + installation events from the Orb App.
-        if (path === "/orb/webhook" && request.method === "POST" && process.env.ORB_WEBHOOK_SECRET) {
-          const payload = await request.text();
-          const sig = request.headers.get("x-hub-signature-256") ?? "";
-          if (!verifyOrbSignature(payload, sig, process.env.ORB_WEBHOOK_SECRET)) {
-            return new Response("signature mismatch", { status: 401 });
-          }
-          const event = request.headers.get("x-github-event") ?? "";
-          const result = await handleOrbWebhook(event, payload, backend.db);
-          return new Response(result.body || null, { status: result.status });
         }
         incr("gittensory_http_requests_total");
         // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.

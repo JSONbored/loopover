@@ -1080,7 +1080,10 @@ export function buildLabelAudit(repo: RepositoryRecord | null, repoLabels: RepoL
       existsOnGitHub: liveLabels.includes(name),
     }));
   const missingConfiguredLabels = configuredLabels.filter((label) => !liveLabels.includes(label));
-  const suspiciousConfiguredLabels = configuredLabels.filter((label) => /^(status|state|source|bot|codex|gittensory|reward|score|miner|verified|risk)[:/-]?/i.test(label));
+  // Require a real separator (`:`/`/`/`-`) OR end-of-string after the keyword so this flags prefix-style labels
+  // (`status:ready`, `reward/x`) and bare keywords (`bot`) — but NOT mid-word matches like `bottleneck` (`bot`),
+  // `scoreboard` (`score`), or `riskier` (`risk`). The old optional+unanchored `[:/-]?` over-matched those.
+  const suspiciousConfiguredLabels = configuredLabels.filter((label) => /^(status|state|source|bot|codex|gittensory|reward|score|miner|verified|risk)([:/-]|$)/i.test(label));
   const findings: SignalFinding[] = [];
   if (repo?.registryConfig?.trustedLabelPipeline && missingConfiguredLabels.length > 0) {
     findings.push({
@@ -4630,7 +4633,7 @@ export type PrTextLintInput = {
 };
 
 export type PrTextLintComponent = {
-  key: "traceability" | "commit_message" | "pr_body";
+  key: "traceability" | "commit_message" | "pr_body" | "validation_evidence";
   label: string;
   status: "ok" | "weak";
   evidence: string;
@@ -4644,7 +4647,7 @@ export type PrTextLintReport = {
    * 0-100 PR-text quality score from the deterministic rubric (sum of per-component weights; weak
    * components score 25% of their weight). Advisory sub-signal only — `verdict` is authoritative.
    * Because traceability is a hard gate for the verdict but only one weighted component of the score,
-   * the two can rank-disagree (e.g. a strong commit + body with no linked issue scores ~78 yet the
+   * the two can rank-disagree (e.g. a strong commit + body with no linked issue scores ~81 yet the
    * verdict is "weak"). Rank by `verdict`, not `score`. Not a Gittensor reward/trust score.
    */
   score: number;
@@ -4660,7 +4663,7 @@ export const GENERIC_COMMIT_PATTERN = /^(?:(?:wip|fix(?:es|ed|ing)?|updat(?:e|es
 // then `: ` and a non-empty summary (e.g. `feat(api): add cursor pagination`). Single source of truth
 // with CONTRIBUTING.md "Commit And PR Titles".
 const CONVENTIONAL_COMMIT_PATTERN = /^(?:feat|fix|test|docs|refactor|build|ci|chore|revert)(?:\([^()\r\n]+\))?!?:\s+\S/i;
-const PR_TEXT_LINT_WEIGHTS = { traceability: 30, commit_message: 35, pr_body: 35 } as const;
+const PR_TEXT_LINT_WEIGHTS = { traceability: 25, commit_message: 30, pr_body: 30, validation_evidence: 15 } as const;
 
 function stripPrBodyScaffolding(body: string): string {
   return body
@@ -4674,10 +4677,11 @@ function stripPrBodyScaffolding(body: string): string {
 
 /**
  * Deterministic commit-message + PR-body rubric linter. Catches generic/empty AI-slop text before
- * submit and returns a quality verdict plus specific, public-safe fixes. Reuses the gittensor
- * traceability/no-issue-rationale rubric ({@link hasClearNoIssueRationale}, {@link tokenize},
- * {@link STOPWORDS}) shared with the public readiness score. All output is routed through
- * {@link sanitizePublicComment}; no private scoring is exposed.
+ * submit and returns a quality verdict plus specific, public-safe fixes. Grades four dimensions:
+ * traceability (25 pts), commit message (30 pts), PR body (30 pts), validation evidence (15 pts).
+ * Reuses the gittensor traceability/no-issue-rationale rubric ({@link hasClearNoIssueRationale},
+ * {@link tokenize}, {@link STOPWORDS}) shared with the public readiness score. All output is routed
+ * through {@link sanitizePublicComment}; no private scoring is exposed.
  */
 export function buildPrTextLint(input: PrTextLintInput): PrTextLintReport {
   const commitMessages = (input.commitMessages ?? []).map((message) => message.trim()).filter((message) => message.length > 0);
@@ -4749,7 +4753,18 @@ export function buildPrTextLint(input: PrTextLintInput): PrTextLintReport {
         fix: "Describe what changed, why, and how it was validated; fill in or remove unused template sections.",
       };
 
-  const components = [traceability, commitMessage, prBodyComponent];
+  const validationOk = hasValidationNote(prBody);
+  const validationEvidence: PrTextLintComponent = validationOk
+    ? { key: "validation_evidence", label: "Validation evidence", status: "ok", evidence: "PR body describes how the change was tested or validated." }
+    : {
+        key: "validation_evidence",
+        label: "Validation evidence",
+        status: "weak",
+        evidence: "PR body does not describe how the change was tested or validated.",
+        fix: "Add a short note describing how you validated this change — for example, 'Tested with npm run test:ci' or 'Manually verified the login flow in staging'.",
+      };
+
+  const components = [traceability, commitMessage, prBodyComponent, validationEvidence];
   const score = components.reduce((sum, component) => sum + (component.status === "ok" ? PR_TEXT_LINT_WEIGHTS[component.key] : Math.round(PR_TEXT_LINT_WEIGHTS[component.key] * 0.25)), 0);
   const weakCount = components.filter((component) => component.status === "weak").length;
   const verdict: PrTextLintReport["verdict"] = weakCount === 0 ? "strong" : traceabilityOk && weakCount === 1 ? "adequate" : "weak";

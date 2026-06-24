@@ -150,14 +150,15 @@ export async function maybeAutoClearHoldOnly(flags: FlagStore, report: GateEvalR
 // sample, the system DISABLES its own auto-CLOSE for that project (`closehold:<scope>`) so would-closes HOLD
 // for a person instead of executing a bad close. TIGHTENING-ONLY in the close direction (it only ever removes a
 // close + holds for review; it NEVER adds/enables a close, merge, or approve). Reads r.closePrecision /
-// r.wouldClose where the merge breaker reads r.mergePrecision / r.wouldMerge. Reuses AUTOTUNE_MIN_DECIDED and
-// AUTOCLEAR_AFTER_MS. Same forward-measured retry contract: a human clears it early; the cooldown auto-clears it
+// r.wouldClose where the merge breaker reads r.mergePrecision / r.wouldMerge. Reuses AUTOTUNE_MIN_DECIDED
+// as the minimum would-close sample and AUTOCLEAR_AFTER_MS. Same forward-measured retry contract: a human clears it early; the cooldown auto-clears it
 // once precision recovers so auto-close can resume.
 
 export interface CloseAutoTuneAction {
   project: string;
   closePrecision: number;
   decided: number;
+  wouldClose: number;
   message: string;
 }
 
@@ -166,13 +167,14 @@ export interface CloseAutoTuneAction {
 export function planCloseAutoTune(report: GateEvalReport): CloseAutoTuneAction[] {
   const actions: CloseAutoTuneAction[] = [];
   for (const r of report.rows) {
-    if (r.decided < AUTOTUNE_MIN_DECIDED || r.closePrecision == null) continue;
+    if (r.wouldClose < AUTOTUNE_MIN_DECIDED || r.closePrecision == null) continue;
     if (r.closePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR) {
       actions.push({
         project: r.project,
         closePrecision: r.closePrecision,
         decided: r.decided,
-        message: `Auto-CLOSE DISABLED for ${r.project}: close precision ${Math.round(r.closePrecision * 100)}% over ${r.decided} decided PR(s) (< ${Math.round(AUTOTUNE_CLOSE_PRECISION_FLOOR * 100)}%). Would-closes now HOLD for review. Investigate, then clear closehold:${r.project}.`,
+        wouldClose: r.wouldClose,
+        message: `Auto-CLOSE DISABLED for ${r.project}: close precision ${Math.round(r.closePrecision * 100)}% over ${r.wouldClose} would-close PR(s) (< ${Math.round(AUTOTUNE_CLOSE_PRECISION_FLOOR * 100)}%). Would-closes now HOLD for review. Investigate, then clear closehold:${r.project}.`,
       });
     }
   }
@@ -207,7 +209,7 @@ export function shouldAutoClearClose(report: GateEvalReport, project: string, se
   const setMs = Date.parse(hasZone ? t : `${t}Z`);
   if (!Number.isFinite(setMs) || nowMs - setMs < AUTOCLEAR_AFTER_MS) return false; // still in cooldown
   const row = report.rows.find((r) => r.project === project);
-  const stillFailing = !!row && row.closePrecision != null && row.decided >= AUTOTUNE_MIN_DECIDED && row.closePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR;
+  const stillFailing = !!row && row.closePrecision != null && row.wouldClose >= AUTOTUNE_MIN_DECIDED && row.closePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR;
   return !stillFailing; // cooldown elapsed + precision recovered (or no signal) → clear and let it retry
 }
 

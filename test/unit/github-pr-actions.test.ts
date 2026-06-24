@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { closePullRequest, createIssueComment, createPullRequestReview, mergePullRequest } from "../../src/github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, getLastCloserLogin, mergePullRequest } from "../../src/github/pr-actions";
 import { createTestEnv } from "../helpers/d1";
 
 function envWithKey() {
@@ -85,6 +85,47 @@ describe("GitHub PR action primitives (#778)", () => {
     expect(result).toEqual({ id: 5 });
     expect(calls[0]).toMatchObject({ method: "POST", body: { body: "hello" } });
     expect(calls[0]?.url).toMatch(/\/repos\/owner\/repo\/issues\/7\/comments$/);
+  });
+
+  it("walks paginated issue events to find the true most recent closer", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      calls.push(url);
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/17/events")) {
+        const page = new URL(url).searchParams.get("page");
+        if (page === "1") {
+          return Response.json([
+            ...Array.from({ length: 99 }, (_, index) => ({ event: "labeled", actor: { login: `labeler-${index}` } })),
+            { event: "closed", actor: { login: "contributor" } },
+          ]);
+        }
+        if (page === "2") return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 17)).resolves.toBe("maintainer");
+    expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=1"))).toBe(true);
+    expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=2"))).toBe(true);
+  });
+
+  it("returns null when the events API throws (catch path)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      throw new Error("network failure");
+    });
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 18)).resolves.toBeNull();
+  });
+
+  it("records null lastCloser when the closed event has a null actor", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
+      if (input.toString().includes("/issues/19/events")) return Response.json([{ event: "closed", actor: null }]);
+      return new Response("not found", { status: 404 });
+    });
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 19)).resolves.toBeNull();
   });
 });
 

@@ -18,6 +18,7 @@ function queueHealth(level: QueueHealth["level"], overrides: Partial<QueueHealth
       openPullRequests: level === "low" ? 1 : 12,
       unlinkedPullRequests: 0,
       stalePullRequests: level === "high" || level === "critical" ? 4 : 0,
+      draftPullRequests: 0,
       maintainerAuthoredPullRequests: 0,
       collisionClusters: 0,
       ageBuckets: { under7Days: 1, days7To30: 0, over30Days: 0 },

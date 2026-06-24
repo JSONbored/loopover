@@ -1565,6 +1565,30 @@ describe("signal coverage edge cases", () => {
     expect(fitOf(matched)).toBe((fitOf(offLanguage) ?? 0) + 10);
     expect(fitOf(unknownLanguage)).toBe(fitOf(offLanguage));
   });
+  it("buildQueueHealth counts draft PRs and fires inactive_draft_prs finding when stale", () => {
+    const directRepo = repo("owner/draft-test");
+    const collisions = buildCollisionReport(directRepo.fullName, [], []);
+    const staleDate = new Date(Date.now() - 20 * 86_400_000).toISOString();
+    const recentDate = new Date().toISOString();
+
+    // A stale draft PR triggers the finding; a recent draft does not.
+    const staleDraftPr = pr(directRepo.fullName, 10, "Draft: refactor auth", { isDraft: true, updatedAt: staleDate });
+    const recentDraftPr = pr(directRepo.fullName, 11, "Draft: add pagination", { isDraft: true, updatedAt: recentDate });
+    const nonDraftPr = pr(directRepo.fullName, 12, "Fix login redirect", { isDraft: false });
+
+    const withStaleDraft = buildQueueHealth(directRepo, [], [staleDraftPr, nonDraftPr], collisions);
+    expect(withStaleDraft.signals.draftPullRequests).toBe(1);
+    expect(withStaleDraft.findings.some((f) => f.code === "inactive_draft_prs")).toBe(true);
+
+    const withRecentDraft = buildQueueHealth(directRepo, [], [recentDraftPr, nonDraftPr], collisions);
+    expect(withRecentDraft.signals.draftPullRequests).toBe(1);
+    expect(withRecentDraft.findings.some((f) => f.code === "inactive_draft_prs")).toBe(false);
+
+    // No drafts: signal is zero and finding is absent.
+    const noDrafts = buildQueueHealth(directRepo, [], [nonDraftPr], collisions);
+    expect(noDrafts.signals.draftPullRequests).toBe(0);
+    expect(noDrafts.findings.some((f) => f.code === "inactive_draft_prs")).toBe(false);
+  });
 });
 
 function repo(fullName: string, overrides: Partial<RegistryRepoConfig> = {}): RepositoryRecord {
@@ -1680,6 +1704,7 @@ function queueHealthFixture(repoFullName: string, level: QueueHealth["level"]): 
       openPullRequests: level === "low" ? 1 : level === "medium" ? 4 : level === "high" ? 9 : 16,
       unlinkedPullRequests: 0,
       stalePullRequests: 0,
+      draftPullRequests: 0,
       maintainerAuthoredPullRequests: 0,
       collisionClusters: 0,
       ageBuckets: { under7Days: 0, days7To30: 0, over30Days: 0 },

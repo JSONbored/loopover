@@ -69,9 +69,23 @@ export function translateInsertOr(sql: string): string {
   return sql;
 }
 
+/** Strip table qualifiers from an ON CONFLICT target list. drizzle-orm/d1 emits the conflict target as
+ *  `ON CONFLICT ("table"."col")` — valid in SQLite, but Postgres requires an unqualified column list
+ *  (`ON CONFLICT ("col")`) and otherwise fails with a syntax error, breaking every Drizzle upsert
+ *  (e.g. recordWebhookEvent → webhook ingest) on the Postgres backend. Scoped to the conflict-target
+ *  parens so qualified column refs elsewhere (WHERE / SELECT / joins) are left intact. */
+export function stripConflictTargetQualifiers(sql: string): string {
+  // Capture the keyword + opening paren and the closing paren so the original casing/spacing is preserved
+  // (drizzle emits lowercase `on conflict`); only the inner target list is rewritten.
+  return sql.replace(
+    /(\bON\s+CONFLICT\s*\()([^)]*)(\))/gi,
+    (_full, open: string, target: string, close: string) => `${open}${target.replace(/"[^"]+"\s*\.\s*("[^"]+")/g, "$1")}${close}`,
+  );
+}
+
 /** Translate a runtime query (SQLite → Postgres). */
 export function translateSql(sql: string): string {
-  return toNumberedPlaceholders(translateFunctions(translateInsertOr(sql)));
+  return toNumberedPlaceholders(stripConflictTargetQualifiers(translateFunctions(translateInsertOr(sql))));
 }
 
 /** Translate a DDL statement (migrations). Column types (TEXT/INTEGER/REAL) are PG-native; only the SQLite

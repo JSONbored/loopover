@@ -26,6 +26,7 @@ import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
 import { simulateOpenPrPressure } from "../services/open-pr-pressure-scenarios";
+import { isTestPath } from "./test-evidence";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -1232,13 +1233,8 @@ function safeRepoPath(path: string): string {
 }
 
 export function isTestFile(file: string): boolean {
-  return (
-    /(^|\/)(test|tests|spec|__tests__)\//i.test(file) ||
-    /(^|\/)src\/test\//i.test(file) ||
-    /(^|\/)[^/]+_test\.(go|py|rb)$/i.test(file) ||
-    /(^|\/)[^/]+_spec\.rb$/i.test(file) ||
-    /\.(test|spec)\.(ts|tsx|js|jsx|py|rb|rs)$/i.test(file)
-  );
+  // Keep local scoring aligned with slop/test-evidence matchers (#561 / #1046).
+  return isTestPath(file);
 }
 
 export function isCodeFile(file: string): boolean {

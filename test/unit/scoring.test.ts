@@ -431,9 +431,49 @@ NOVELTY_BONUS_SCALAR = 3
       affectedAreas: ["scoring_model"],
       payload: expect.objectContaining({
         unmodeledUpstreamConstants: ["NOVELTY_BONUS_SCALAR"],
+        // commitSha is null here because the test stub returns 404 for the API commits URL
         source: { repo: "custom/upstream", ref: "staging", commitSha: null },
       }),
     });
+  });
+
+  it("records the upstream ref HEAD commit SHA in the snapshot payload and drift-sync source (mutable-branch audit trail)", async () => {
+    const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "custom/upstream", GITTENSOR_UPSTREAM_REF: "main" });
+    const EXPECTED_SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      // Upstream HEAD SHA endpoint: api.github.com/repos/{owner}/{repo}/commits/{ref}
+      if (url.includes("api.github.com") && url.includes("/commits/main")) return Response.json({ sha: EXPECTED_SHA });
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    // The SHA is recorded in the snapshot payload for audit trail visibility.
+    expect(refreshed.payload.upstreamSourceSha).toBe(EXPECTED_SHA);
+    // Fail-open: the SHA is best-effort and never blocks the scoring refresh.
+    expect(refreshed.sourceKind).toBe("raw-github");
+  });
+
+  it("is fail-open when the upstream SHA fetch fails — constants still refresh without the SHA", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      // SHA endpoint fails — network error
+      if (url.includes("api.github.com") && url.includes("/commits/")) throw new Error("network error");
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    // SHA is absent from the payload but constants still apply (fail-open).
+    expect(refreshed.payload.upstreamSourceSha).toBeUndefined();
+    expect(refreshed.constants.MERGED_PR_BASE_SCORE).toBe(25);
+    expect(refreshed.sourceKind).toBe("raw-github");
   });
 
   it("uses saturation math as the active private preview model", () => {

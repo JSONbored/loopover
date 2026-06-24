@@ -115,7 +115,7 @@ describe("buildPrTextLint", () => {
   it("returns weak with all fixes when every dimension is low-effort", () => {
     const report = buildPrTextLint({ commitMessages: ["update"], prBody: "" });
     expect(report.verdict).toBe("weak");
-    expect(report.fixes).toHaveLength(3);
+    expect(report.fixes).toHaveLength(4);
     expect(report.score).toBeLessThan(50);
     expect(report.summary).toMatch(/low-effort/i);
     assertPublicSafe(report);
@@ -124,7 +124,24 @@ describe("buildPrTextLint", () => {
   it("handles entirely empty input deterministically", () => {
     const report = buildPrTextLint({});
     expect(report.verdict).toBe("weak");
-    expect(report.components).toHaveLength(3);
+    expect(report.components).toHaveLength(4);
+    assertPublicSafe(report);
+  });
+
+  it("grades validation_evidence ok when the body mentions testing", () => {
+    const body = "Adds retry logic to the fetch helper. Tested with npm run test:ci — all 142 tests pass.";
+    const report = buildPrTextLint({ commitMessages: [GOOD_COMMIT], prBody: body, linkedIssue: 42 });
+    expect(component(report, "validation_evidence").status).toBe("ok");
+    expect(report.verdict).toBe("strong");
+    assertPublicSafe(report);
+  });
+
+  it("grades validation_evidence weak when the body has no test mention and surfaces a fix", () => {
+    const body = "Adds retry logic to the fetch helper to handle transient network errors on the labels endpoint.";
+    const report = buildPrTextLint({ commitMessages: [GOOD_COMMIT], prBody: body, linkedIssue: 42 });
+    expect(component(report, "validation_evidence").status).toBe("weak");
+    expect(component(report, "validation_evidence").fix).toMatch(/validated|test/i);
+    expect(report.verdict).toBe("adequate");
     assertPublicSafe(report);
   });
 });

@@ -37,7 +37,7 @@ import {
   upsertRepoSyncState,
   upsertRepositoryFromGitHub,
   persistRepoSnapshot,
-  MAX_LINKED_ISSUE_NUMBERS,
+  extractLinkedIssueNumbers,
 } from "../db/repositories";
 import type {
   ContributorRepoStatRecord,
@@ -2654,18 +2654,6 @@ function countObservedLabels(records: Array<{ labels?: Array<{ name?: string }> 
   /* v8 ignore stop */
 }
 
-function extractLinkedIssueNumbers(text: string): number[] {
-  const linkedIssues: number[] = [];
-  const seen = new Set<number>();
-  for (const match of text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi)) {
-    const value = Number(match[1]);
-    if (!Number.isInteger(value) || value <= 0 || seen.has(value)) continue;
-    seen.add(value);
-    linkedIssues.push(value);
-    if (linkedIssues.length >= MAX_LINKED_ISSUE_NUMBERS) break;
-  }
-  return linkedIssues;
-}
 
 function topItems(values: string[], limit: number): string[] {
   const counts = new Map<string, number>();

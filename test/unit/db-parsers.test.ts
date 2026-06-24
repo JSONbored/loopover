@@ -28,6 +28,12 @@ describe("database row parser hardening", () => {
 
     expect(extractLinkedIssueNumbers(body)).toEqual(Array.from({ length: MAX_LINKED_ISSUE_NUMBERS }, (_, index) => index + 1));
   });
+
+  it("returns no linked issues when the cap is zero or negative", () => {
+    expect(extractLinkedIssueNumbers("Fixes #1\nCloses #2", 0)).toEqual([]);
+    expect(extractLinkedIssueNumbers("Fixes #1", -5)).toEqual([]);
+  });
+
   it("returns empty arrays from D1 raw() when a select has no rows", async () => {
     const env = createTestEnv();
     const rows = await env.DB.prepare("select id from installations where 1 = 0").raw();

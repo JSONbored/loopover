@@ -56,7 +56,6 @@ import {
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
   upsertRepositoryFromGitHub,
-  MAX_LINKED_ISSUE_NUMBERS,
 } from "../db/repositories";
 import { pruneExpiredRecords } from "../db/retention";
 import {
@@ -654,9 +653,10 @@ async function maybeRunAgentMaintenance(
     linkedIssueRulesConfig.missingPointLabelClose === "block" ||
     linkedIssueRulesConfig.maintainerOnlyLabelClose === "block";
   if (anyLinkedIssueRuleOn && pr.linkedIssues.length > 0) {
-    const issueNumbers = pr.linkedIssues.slice(0, MAX_LINKED_ISSUE_NUMBERS);
+    // pr.linkedIssues is already capped at MAX_LINKED_ISSUE_NUMBERS at extraction (extractLinkedIssueNumbers),
+    // so the per-issue fetch fanout is bounded at the source — no extra cap needed here.
     const issueFacts = (
-      await mapWithConcurrency(issueNumbers, 4, (issueNumber) => fetchLinkedIssueFacts(env, repoFullName, issueNumber, ciToken ?? env.GITHUB_PUBLIC_TOKEN))
+      await Promise.all(pr.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(env, repoFullName, issueNumber, ciToken ?? env.GITHUB_PUBLIC_TOKEN)))
     ).flatMap((facts) => (facts ? [facts] : []));
     if (issueFacts.length > 0) {
       linkedIssueHardRule = evaluateLinkedIssueHardRules({ issues: issueFacts, config: linkedIssueRulesConfig, repoOwner });
@@ -3404,20 +3404,4 @@ function authoritativeContributorRepoStats(
 export function splitRepoForRag(repoFullName: string): [string, string] {
   const slash = repoFullName.indexOf("/");
   return slash === -1 ? ["", repoFullName] : [repoFullName.slice(0, slash), repoFullName.slice(slash + 1)];
-}
-
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await mapper(items[index] as T, index);
-      }
-    }),
-  );
-  return results;
 }

@@ -357,7 +357,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"gittensory\"}",
+          "expr": "{service=\"gittensory\"} | json eventf=\"event\", errf=\"error\" | line_format \"{{.eventf}}{{if .errf}} — {{.errf}}{{end}}\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -390,7 +390,7 @@
         "sortOrder": "Descending",
         "wrapLogMessage": true
       },
-      "title": "Errors & Warnings only",
+      "title": "Errors & failures",
       "type": "logs",
       "targets": [
         {
@@ -398,7 +398,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service=\"gittensory\"} | json | level =~ \"error|warn\"",
+          "expr": "{service=\"gittensory\"} | json eventf=\"event\", errf=\"error\" | errf != \"\" | line_format \"{{.eventf}} — {{.errf}}\"",
           "queryType": "range",
           "refId": "A"
         }

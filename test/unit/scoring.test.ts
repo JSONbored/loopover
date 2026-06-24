@@ -4,7 +4,7 @@ import { DEFAULT_ISSUE_DISCOVERY_SHARE, DEFAULT_SCORING_CONSTANTS, detectActiveM
 import { buildScorePreview, calculateTimeDecay, makeScorePreviewRecord, resolveTimeDecay } from "../../src/scoring/preview";
 import { unmodeledScoringConstantsFingerprint } from "../../src/upstream/unmodeled-scoring-drift";
 import type { ScorePreviewInput } from "../../src/scoring/preview";
-import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
+import type { JsonValue, RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 const snapshot: ScoringModelSnapshotRecord = {
@@ -1014,6 +1014,31 @@ NOVELTY_BONUS_SCALAR = 3
     });
     expect(fallbackCredibility.gates.credibilityObserved).toBe(0.8);
     expect(fallbackCredibility.gates.baseTokenGatePassed).toBe(false);
+  });
+
+  it("falls back to neutral credibility when any evidence count is non-finite (not just mergedPullRequests)", () => {
+    const score = (payload: Record<string, JsonValue>) =>
+      buildScorePreview({
+        repo,
+        snapshot,
+        contributorEvidence: { login: "riskdev", generatedAt: "2026-05-23T00:00:00.000Z", payload },
+        input: { repoFullName: repo.fullName, sourceTokenScore: 100, totalTokenScore: 200, sourceLines: 10, openPrCount: 0 },
+      });
+
+    // A malformed `stale` or `unlinked` would NaN-poison the credibility multiplier and the whole
+    // estimated score; each must degrade to the same neutral 0.8 the `merged` guard already produced.
+    for (const malformed of [
+      { mergedPullRequests: 5, stalePullRequests: "n/a", unlinkedPullRequests: 0 },
+      { mergedPullRequests: 5, stalePullRequests: 0, unlinkedPullRequests: "bad" },
+    ] satisfies Record<string, JsonValue>[]) {
+      const preview = score(malformed);
+      expect(preview.gates.credibilityObserved).toBe(0.8);
+      expect(Number.isFinite(preview.scoreEstimate.estimatedMergedScore)).toBe(true);
+    }
+
+    // Well-formed counts still flow through the arithmetic rather than the guard.
+    const wellFormed = score({ mergedPullRequests: 5, stalePullRequests: 2, unlinkedPullRequests: 1 });
+    expect(wellFormed.gates.credibilityObserved).toBeCloseTo(0.87, 5);
   });
 
   it("refreshes scoring snapshots from upstream fixtures and falls back cleanly", async () => {

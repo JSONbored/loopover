@@ -331,6 +331,38 @@ describe("buildMissingTestEvidenceFinding", () => {
     });
     expect(JSON.stringify(finding)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
+
+  it("counts a substantive changed test file as evidence (no finding)", () => {
+    expect(
+      buildMissingTestEvidenceFinding({
+        changedFiles: [
+          { path: "src/api/routes.ts", additions: 20, deletions: 0 },
+          { path: "test/api/routes.test.ts", additions: 18, deletions: 0 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("does NOT count an empty/no-op test file as evidence — the finding still fires (#audit-3.1)", () => {
+    const finding = buildMissingTestEvidenceFinding({
+      changedFiles: [
+        { path: "src/api/routes.ts", additions: 20, deletions: 0 },
+        { path: "test/noop.test.ts", additions: 1, deletions: 0 }, // empty stub: 1 added line
+      ],
+    });
+    expect(finding).toMatchObject({ code: "missing_test_evidence" });
+  });
+
+  it("trusts a test path when per-file line counts are unavailable (no regression on metadata-only inputs)", () => {
+    expect(
+      buildMissingTestEvidenceFinding({
+        changedFiles: [
+          { path: "src/api/routes.ts", additions: 20, deletions: 0 },
+          { path: "test/api/routes.test.ts" }, // additions undefined → trust the path
+        ],
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("buildTrivialWhitespaceChurnFinding", () => {

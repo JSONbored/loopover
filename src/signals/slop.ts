@@ -74,6 +74,10 @@ export const SLOP_RUBRIC_MARKDOWN = [
 
 const MIN_CHURN_LINES = 40;
 const MAX_SOURCE_LINE_SHARE = 0.15;
+// Minimum added lines for a changed test file to count as real test evidence. A genuine test needs at least a
+// describe/it/assert; an empty or stub file (0–2 added lines) does not — this stops an empty `*.test.ts` from
+// faking coverage to clear the missing-test finding. (#audit-3.1)
+const MIN_SUBSTANTIVE_TEST_ADDITIONS = 3;
 // A padded diff is one whose churn is dominated by non-substantive output. Set at half the diff so a PR
 // with any meaningful share of real, hand-authored files cannot trip it.
 const PADDING_DOMINANCE_SHARE = 0.5;
@@ -253,9 +257,15 @@ export function buildMissingTestEvidenceFinding(input: SlopAssessmentInput): Sig
   const codePaths = changedPaths.filter(isCodeFile);
   if (codePaths.length === 0) return null;
 
-  const hasChangedTestPaths =
-    changedPaths.some((path) => isTestFile(path) || isTestPath(path)) ||
-    hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles });
+  // A changed test FILE only counts as real test evidence when it carries substantive content. An empty or
+  // no-op test (e.g. a committed `tests/noop.test.ts`) would otherwise clear this finding by path alone. When
+  // per-file line counts are unavailable we trust the path (can't prove emptiness); when known, require a few
+  // added lines so a stub can't fake coverage. (#audit-3.1)
+  const hasSubstantiveTestFile = changedFiles.some((file) => {
+    if (!(isTestFile(file.path) || isTestPath(file.path))) return false;
+    return file.additions === undefined || nonNegative(file.additions) >= MIN_SUBSTANTIVE_TEST_ADDITIONS;
+  });
+  const hasChangedTestPaths = hasSubstantiveTestFile || hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles });
   if (hasChangedTestPaths) return null;
 
   const detail = ensurePublicSafeText(

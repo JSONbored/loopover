@@ -655,6 +655,11 @@ async function maybeRunAgentMaintenance(
   /* v8 ignore next -- defensive: the PR was upserted earlier in this same webhook, so it is always present. */
   if (!pr) return;
   if (pr.state !== "open") return;
+  // Drafts are work-in-progress: never auto-approve / merge / close / label a draft. Symmetric with the re-gate
+  // sweep, which drops drafts (agent-sweep.ts). A draft signals "not ready"; the agent acts once it is marked
+  // ready_for_review (which re-triggers this path on the now-undrafted PR). The converted_to_draft draft-dodge
+  // guard is a separate handler and is unaffected. (#audit-draft-maintenance)
+  if (pr.isDraft) return;
   if (!gate) return;
 
   // Convergence safety: feed the planner the PR's changed paths + the repo's hard-guardrail globs so guarded

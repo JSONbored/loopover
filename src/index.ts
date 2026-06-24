@@ -1,5 +1,6 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
+import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
 import { isOpsEnabled } from "./review/ops-wire";
 import { isRagEnabled } from "./review/rag-wire";
@@ -13,6 +14,10 @@ export { RateLimiter };
 export default {
   fetch: app.fetch,
   async queue(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {
+    if (batch.queue === "gittensory-jobs-dlq") {
+      await processDlqBatch(batch, env);
+      return;
+    }
     for (const message of batch.messages) {
       try {
         await processJob(env, message.body);

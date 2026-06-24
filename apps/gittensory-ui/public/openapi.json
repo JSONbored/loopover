@@ -8144,6 +8144,14 @@
           },
           "agentDryRun": {
             "type": "boolean"
+          },
+          "selfAuthoredLinkedIssueGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
           }
         },
         "required": [
@@ -8161,6 +8169,7 @@
           "slopGateMode",
           "mergeReadinessGateMode",
           "manifestPolicyGateMode",
+          "selfAuthoredLinkedIssueGateMode",
           "firstTimeContributorGrace",
           "slopAiAdvisory",
           "autoLabelEnabled",
@@ -8760,6 +8769,14 @@
                   "advisory",
                   "block"
                 ]
+              },
+              "selfAuthoredLinkedIssueGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
               }
             },
             "required": [
@@ -8777,6 +8794,7 @@
               "slopGateMode",
               "mergeReadinessGateMode",
               "manifestPolicyGateMode",
+              "selfAuthoredLinkedIssueGateMode",
               "firstTimeContributorGrace",
               "autoLabelEnabled",
               "gittensorLabel",

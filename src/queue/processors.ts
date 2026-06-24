@@ -17,6 +17,7 @@ import {
   listBounties,
   listBountiesByRepo,
   listContributorIssues,
+  getIssue,
   listContributorPullRequests,
   listContributorRepoStats,
   listIssues,
@@ -41,6 +42,7 @@ import {
   recordAgentCommandFeedback,
   recordAuditEvent,
   recordGateBlockOutcome,
+  getGateBlockOutcome,
   markGateOutcomeOverridden,
   recordProductUsageEvent,
   persistSignalSnapshot,
@@ -808,11 +810,15 @@ async function reReviewStoredPullRequest(
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
   // once the head is current and CI has settled (the sweep backstops a missed event).
   if (!(await prReadyForReview(env, installationId, repoFullName, pr, settings, deliveryId))) return;
-  const otherOpenPullRequests = await listOtherOpenPullRequests(env, repoFullName, prNumber);
+  const [otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
+    listOtherOpenPullRequests(env, repoFullName, prNumber),
+    resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
+  ]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+    linkedIssueAuthorLogins,
   });
   await persistAdvisory(env, advisory);
   if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
@@ -1563,17 +1569,56 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       if (payload.action === "reopened" && installationId && (await maybeRecloseDisallowedReopen(env, deliveryId, installationId, repoFullName, pr, payload).catch(() => false))) {
         return;
       }
-      const [repo, settings, otherOpenPullRequests] = await Promise.all([
+      const [repo, settings, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
         getRepository(env, repoFullName),
         resolveRepositorySettings(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
+        resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
       ]);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
         requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
         duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+        linkedIssueAuthorLogins,
       });
       await persistAdvisory(env, advisory);
+      // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
+      // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current
+      // headSha (and the block has not been maintainer-overridden), close the PR immediately — the gate
+      // verdict stands and does not reset on draft conversion. Skipped when the agent is unconfigured or
+      // paused (the gate doesn't act on paused repos) and for owner / automation PRs.
+      if (
+        payload.action === "converted_to_draft" &&
+        installationId &&
+        pr.headSha &&
+        pr.state === "open" &&
+        isAgentConfigured(settings.autonomy) &&
+        !settings.agentPaused &&
+        !isProtectedAutomationAuthor(pr.authorLogin)
+      ) {
+        const block = await getGateBlockOutcome(env, repoFullName, pr.number).catch(() => undefined);
+        const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
+        const authorIsOwner = (pr.authorLogin ?? "").toLowerCase() === repoOwner && repoOwner.length > 0;
+        if (block && block.headSha === pr.headSha && !block.overridden && !authorIsOwner) {
+          const codes = block.blockerCodes.join(", ");
+          await createIssueComment(
+            env,
+            installationId,
+            repoFullName,
+            pr.number,
+            `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
+          ).catch(() => undefined);
+          await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
+          await recordAuditEvent(env, {
+            eventType: "github_app.draft_dodge_closed",
+            actor: "gittensory",
+            targetKey: `${repoFullName}#${pr.number}`,
+            outcome: "completed",
+            detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
+            metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
+          }).catch(() => undefined);
+        }
+      }
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
         if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off" || isAgentConfigured(settings.autonomy)) {
           await refreshPullRequestDetails(env, repoFullName, pr.number);
@@ -1707,6 +1752,16 @@ export function shouldCollectLinkedIssueEvidence(settings: Pick<RepositorySettin
   return settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
 
+// Fetch the author login for each linked issue number from the local DB. Returns a parallel array of
+// logins (null when the issue is not in the DB or has no recorded author). Errors are swallowed per-issue
+// so a DB hiccup on one issue never prevents the advisory from running — the detection is fail-open
+// (an unknown author login never triggers the self_authored_linked_issue finding).
+export async function resolveLinkedIssueAuthorLogins(env: Env, repoFullName: string, linkedIssues: number[]): Promise<(string | null)[]> {
+  if (linkedIssues.length === 0) return [];
+  const results = await Promise.all(linkedIssues.map((n) => getIssue(env, repoFullName, n).then((i) => i?.authorLogin ?? null).catch(() => null)));
+  return results;
+}
+
 export function shouldCollectSlopEvidence(settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">): boolean {
   return settings.slopGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
@@ -1742,6 +1797,7 @@ export function gateCheckPolicy(
     slopGateMode: settings.slopGateMode,
     mergeReadinessGateMode: settings.mergeReadinessGateMode,
     manifestPolicyGateMode: settings.manifestPolicyGateMode,
+    selfAuthoredLinkedIssueGateMode: settings.selfAuthoredLinkedIssueGateMode,
     firstTimeContributorGrace: settings.firstTimeContributorGrace,
     authorMergedPrCount: authorHistory?.mergedPrCount,
     authorClosedUnmergedPrCount: authorHistory?.closedUnmergedPrCount,

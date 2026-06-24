@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { gateCheckPolicy, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
+import { gateCheckPolicy, resolveLinkedIssueAuthorLogins, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
+import { createTestEnv } from "../helpers/d1";
+import { upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
 import type { Advisory, RepositorySettings } from "../../src/types";
@@ -365,5 +367,37 @@ describe("focus-manifest policy gate (#555)", () => {
     const result = evaluateGateCheck(manifestAdvisory("manifest_blocked_path"), gateCheckPolicy(eff, null, true));
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.map((finding) => finding.code)).toContain("manifest_blocked_path");
+  });
+});
+
+describe("resolveLinkedIssueAuthorLogins", () => {
+  it("returns [] immediately for an empty linkedIssues array (no DB work)", async () => {
+    const env = createTestEnv();
+    const result = await resolveLinkedIssueAuthorLogins(env, "owner/repo", []);
+    expect(result).toEqual([]);
+  });
+
+  it("returns the authorLogin for each linked issue found in the DB", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 1);
+    await upsertIssueFromGitHub(env, "owner/repo", { number: 10, title: "Bug report", body: "", state: "open", user: { login: "alice" }, labels: [], html_url: "https://github.com/owner/repo/issues/10", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
+    await upsertIssueFromGitHub(env, "owner/repo", { number: 11, title: "Feature", body: "", state: "open", user: { login: "bob" }, labels: [], html_url: "https://github.com/owner/repo/issues/11", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
+
+    const result = await resolveLinkedIssueAuthorLogins(env, "owner/repo", [10, 11]);
+    expect(result).toEqual(["alice", "bob"]);
+  });
+
+  it("returns null for an issue not in the DB (fail-open: unknown author does not trigger the finding)", async () => {
+    const env = createTestEnv();
+    const result = await resolveLinkedIssueAuthorLogins(env, "owner/repo", [99]);
+    expect(result).toEqual([null]);
+  });
+
+  it("swallows per-issue DB errors and returns null for the erroring issue", async () => {
+    const env = createTestEnv();
+    // Pass a broken DB binding to force a DB error.
+    const brokenEnv = { ...env, DB: null } as unknown as typeof env;
+    const result = await resolveLinkedIssueAuthorLogins(brokenEnv, "owner/repo", [1]);
+    expect(result).toEqual([null]);
   });
 });

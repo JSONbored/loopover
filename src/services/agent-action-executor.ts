@@ -15,8 +15,10 @@ import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 const AGENT_ACTOR = "gittensory";
 
 // The PR-state action classes that require GitHub `pull_requests: write`. `label` mutates via the Issues API
-// (`issues: write`, always held), so it is exempt from the write-permission readiness gate.
-const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close", "update_branch"]);
+// (`issues: write`, always held), so it is exempt from the write-permission readiness gate. Exported so the
+// agent-execution test can enforce the invariant that every member is also counted by agentRequiresPrWrite
+// (PR_WRITE_ACTION_CLASSES is a superset), so this runtime guard never disagrees with the readiness gate.
+export const PR_WRITE_CLASSES = new Set<AgentActionClass>(["request_changes", "approve", "merge", "close", "update_branch"]);
 
 export type AgentActionExecutionContext = {
   installationId: number;

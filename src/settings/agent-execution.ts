@@ -1,9 +1,16 @@
 import type { AgentActionClass, AuditEventRecord, AutonomyLevel, AutonomyPolicy } from "../types";
 import { isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 
-// The action classes that mutate a PR's review / merge / close state — these need GitHub `pull_requests: write`.
-// (`label` mutates via the Issues API, which the App already holds `issues: write` for.)
-const PR_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["review", "request_changes", "approve", "merge", "close"];
+// The action classes that mutate a PR's review / merge / close / head state — these need GitHub
+// `pull_requests: write`. (`label` mutates via the Issues API, which the App already holds `issues: write` for.)
+// INVARIANT: the executor's PR_WRITE_CLASSES (src/services/agent-action-executor.ts) must be a SUBSET of this list
+// — every class the runtime readiness guard treats as a PR-write must be counted by agentRequiresPrWrite, or the
+// readiness gate under-reports and disagrees with the executor. (This list may be a superset: it also carries the
+// advisory `review` class for conservatism.) `update_branch` (PUT /pulls/{n}/update-branch) is a PR-write the
+// executor gates; omitting it here graded an update_branch-only autonomy "not_required", so the executor's
+// readiness guard denied it even WITH pull_requests:write granted (and it would 403 if it slipped). The
+// agent-execution test enforces this subset invariant against the exported PR_WRITE_CLASSES. (#audit-update-branch)
+const PR_WRITE_ACTION_CLASSES: readonly AgentActionClass[] = ["review", "request_changes", "approve", "merge", "close", "update_branch"];
 
 // Whether the agent actually executes an action, only logs what it WOULD do, or is halted entirely (#776).
 export type AgentActionMode = "paused" | "dry_run" | "live";

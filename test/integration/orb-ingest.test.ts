@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { handleOrbIngest } from "../../src/orb/ingest";
+import { handleOrbIngest, readOrbIngestBody, verifyOrbIngestSignature } from "../../src/orb/ingest";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
+
+const ORB_INGEST_SECRET = "orb-ingest-test-secret";
+
+async function signOrbBody(body: string, secret = ORB_INGEST_SECRET): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  const hex = [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256=${hex}`;
+}
 
 // ── handleOrbIngest unit-style tests ──────────────────────────────────────────
 
@@ -197,6 +212,32 @@ describe("handleOrbIngest()", () => {
     expect(result).toEqual({ accepted: 500 });
   });
 
+
+  it("rejects an overlong instance_id before inserting rows", async () => {
+    const db = makeDb();
+    const result = await handleOrbIngest(
+      JSON.stringify({ instance_id: "i".repeat(65), events: [{ repo_hash: "rh", pr_hash: "ph", outcome: "merged" }] }),
+      db,
+    );
+    expect(result).toEqual({ error: "invalid_payload" });
+  });
+
+  it("skips events with empty or overlong optional strings", async () => {
+    const db = makeDb();
+    const result = await handleOrbIngest(
+      JSON.stringify({
+        instance_id: "inst1",
+        events: [
+          { repo_hash: "rh-overlong-gate", pr_hash: "ph-overlong-gate", outcome: "merged", gate_verdict: "v".repeat(65) },
+          { repo_hash: "rh-overlong-date", pr_hash: "ph-overlong-date", outcome: "closed", created_at: "2".repeat(65) },
+          { repo_hash: "rh-empty-gate", pr_hash: "ph-empty-gate", outcome: "merged", gate_verdict: "" },
+        ],
+      }),
+      db,
+    );
+    expect(result).toEqual({ accepted: 0 });
+  });
+
   it("does not throw when the DB throws on insert (covers inner catch branch)", async () => {
     const brokenDb = {
       prepare: () => ({ bind: () => ({ run: () => Promise.reject(new Error("disk full")) }) }),
@@ -209,33 +250,113 @@ describe("handleOrbIngest()", () => {
   });
 });
 
+
+// ── Orb ingest transport guards ───────────────────────────────────────────────
+
+describe("Orb ingest transport guards", () => {
+  it("verifies valid signatures and rejects missing secrets", async () => {
+    const body = JSON.stringify({ ok: true });
+    expect(await verifyOrbIngestSignature(body, await signOrbBody(body), ORB_INGEST_SECRET)).toBe(true);
+    expect(await verifyOrbIngestSignature(body, await signOrbBody(body), undefined)).toBe(false);
+  });
+
+  it("reads a body under the byte limit", async () => {
+    const request = new Request("https://example.test/v1/orb/ingest", { method: "POST", body: "hello" });
+    await expect(readOrbIngestBody(request, "5")).resolves.toBe("hello");
+  });
+
+  it("returns an empty string when the request has no body stream", async () => {
+    const request = new Request("https://example.test/v1/orb/ingest");
+    await expect(readOrbIngestBody(request, null)).resolves.toBe("");
+  });
+
+  it("ignores invalid content-length values", async () => {
+    const request = new Request("https://example.test/v1/orb/ingest", { method: "POST", body: "hello" });
+    await expect(readOrbIngestBody(request, "not-a-number")).resolves.toBe("hello");
+  });
+
+  it("rejects content-length values over the byte limit", async () => {
+    const request = new Request("https://example.test/v1/orb/ingest", { method: "POST", body: "hello" });
+    await expect(readOrbIngestBody(request, "131073")).resolves.toBeNull();
+  });
+
+  it("rejects streamed bodies that cross the byte limit without content-length", async () => {
+    const request = new Request("https://example.test/v1/orb/ingest", { method: "POST", body: "x".repeat(131073) });
+    await expect(readOrbIngestBody(request, null)).resolves.toBeNull();
+  });
+});
+
 // ── Route integration tests (covers routes.ts new lines) ──────────────────────
 
 describe("POST /v1/orb/ingest route", () => {
   const app = createApp();
 
   it("returns 200 with accepted count for a valid batch", async () => {
-    const env = createTestEnv();
     const body = JSON.stringify({
       instance_id: "abc123def456abc0",
       events: [{ repo_hash: "rhash1234567890123456", pr_hash: "phash1234567890123456", outcome: "merged" }],
     });
-    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body }, env);
+    const res = await app.request(
+      "/v1/orb/ingest",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-orb-signature": await signOrbBody(body) },
+        body,
+      },
+      createTestEnv({ ORB_INGEST_SECRET }),
+    );
     expect(res.status).toBe(200);
     const json = await res.json() as { accepted: number };
     expect(json.accepted).toBe(1);
   });
 
   it("returns 400 for invalid JSON (covers error-in-result branch)", async () => {
-    const env = createTestEnv();
-    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: "{bad" }, env);
+    const env = createTestEnv({ ORB_INGEST_SECRET });
+    const body = "{bad";
+    const res = await app.request(
+      "/v1/orb/ingest",
+      { method: "POST", headers: { "content-type": "application/json", "x-orb-signature": await signOrbBody(body) }, body },
+      env,
+    );
     expect(res.status).toBe(400);
     const json = await res.json() as { error: string };
     expect(json.error).toBe("invalid_json");
   });
 
+
+  it("rejects unsigned batches before parsing (regression for unauthenticated signal poisoning)", async () => {
+    const env = createTestEnv({ ORB_INGEST_SECRET });
+    const body = JSON.stringify({
+      instance_id: "abc123def456abc0",
+      events: [{ repo_hash: "rhash1234567890123456", pr_hash: "phash1234567890123456", outcome: "merged" }],
+    });
+    const res = await app.request("/v1/orb/ingest", { method: "POST", headers: { "content-type": "application/json" }, body }, env);
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toMatchObject({ error: "invalid_signature" });
+  });
+
+  it("rejects oversized batches before reading the full body", async () => {
+    const env = createTestEnv({ ORB_INGEST_SECRET });
+    const body = JSON.stringify({ instance_id: "abc123def456abc0", events: [] });
+    const res = await app.request(
+      "/v1/orb/ingest",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": "131073",
+          "x-orb-signature": await signOrbBody(body),
+        },
+        body,
+      },
+      env,
+    );
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toMatchObject({ error: "payload_too_large" });
+  });
+
   it("returns 400 for an empty body (covers !body branch in route)", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ ORB_INGEST_SECRET });
     const res = await app.request("/v1/orb/ingest", { method: "POST", body: "" }, env);
     expect(res.status).toBe(400);
   });

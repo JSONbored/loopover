@@ -122,7 +122,7 @@ import {
   type GittensoryMentionCommandName,
 } from "../github/commands";
 import { handleGitHubWebhook } from "../github/webhook";
-import { handleOrbIngest } from "../orb/ingest";
+import { handleOrbIngest, readOrbIngestBody, verifyOrbIngestSignature } from "../orb/ingest";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { generateSignalSnapshots } from "../queue/processors";
@@ -2864,11 +2864,18 @@ export function createApp() {
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
   // Gittensory Orb (#1219) — central collector. Receives anonymized outcome signal batches
-  // from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
+  // from self-hosted instances. Verifies the exporter HMAC before parsing, then
   // dedup is enforced via UNIQUE(instance_id, pr_hash) in orb_signals.
   app.post("/v1/orb/ingest", async (c) => {
-    const body = await c.req.text().catch(() => null);
+    const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
+    if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
+    const verified = await verifyOrbIngestSignature(
+      body,
+      c.req.header("x-orb-signature") ?? null,
+      c.env.ORB_INGEST_SECRET,
+    );
+    if (!verified) return c.json({ error: "invalid_signature" }, 401);
     const result = await handleOrbIngest(body, c.env.DB);
     if ("error" in result) return c.json(result, 400);
     return c.json(result, 200);

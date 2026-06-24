@@ -667,9 +667,14 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/orb/ingest",
+    request: {
+      headers: z.object({ "x-orb-signature": z.string().describe("sha256=<hex HMAC of the raw request body>") }),
+    },
     responses: {
       200: { description: "Batch accepted; returns { accepted: number }" },
       400: { description: "Malformed JSON or invalid payload shape" },
+      401: { description: "Invalid Orb HMAC signature" },
+      413: { description: "Payload exceeds the Orb ingest byte limit" },
     },
   });
   registry.registerPath({

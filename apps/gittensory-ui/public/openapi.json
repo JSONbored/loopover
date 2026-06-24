@@ -15225,6 +15225,12 @@
           },
           "400": {
             "description": "Malformed JSON or invalid payload shape"
+          },
+          "401": {
+            "description": "Invalid Orb HMAC signature"
+          },
+          "413": {
+            "description": "Payload exceeds the Orb ingest byte limit"
           }
         },
         "security": [
@@ -15233,6 +15239,18 @@
           },
           {
             "GittensorySessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "sha256=<hex HMAC of the raw request body>"
+            },
+            "required": true,
+            "description": "sha256=<hex HMAC of the raw request body>",
+            "name": "x-orb-signature",
+            "in": "header"
           }
         ]
       }

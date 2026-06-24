@@ -38,6 +38,8 @@ declare global {
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
+    /** Shared HMAC secret for self-hosted Orb exporters posting to /v1/orb/ingest. */
+    ORB_INGEST_SECRET?: string;
     GITHUB_APP_PRIVATE_KEY: string;
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;

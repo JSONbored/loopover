@@ -135,6 +135,25 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     expect(vec.upserted).toContain(`${ns}|src/a.ts::0`);
   });
 
+  it("prunes chunks for paths missing from the current full tree before returning retrieved context", async () => {
+    const { env, vec } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)")
+      .bind(`${ns}|src/deleted-secret.ts::0`, PROJECT, "gittensory", "src/deleted-secret.ts", 0, "code", "deleted secret")
+      .run();
+
+    stubGithub({
+      tree: [{ path: "src/current.ts", size: 30 }],
+      files: { "src/current.ts": "export const current = 1;\n" },
+    });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result.files).toBe(1);
+    expect(await pathsFor(env, PROJECT, "gittensory")).toEqual(["src/current.ts"]);
+    expect(vec.deleted).toContain(`${ns}|src/deleted-secret.ts::0`);
+  });
+
   it("skips a file that fails to fetch (404) and indexes the rest (fail-safe)", async () => {
     const { env } = indexEnv();
     stubGithub({

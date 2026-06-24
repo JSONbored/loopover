@@ -4,15 +4,16 @@
 // collector so the gate can be calibrated across the whole self-host fleet.
 //
 // Export is ALWAYS ON once the GitHub App is configured (the fleet-telemetry contract of self-hosting) —
-// there is no opt-out flag. It self-gates on a configured App webhook secret (no App → no review data to
-// export anyway), and uses that secret as the per-instance anonymization key.
+// there is no opt-out flag. It self-gates on a configured App private key (no App → no review data to
+// export anyway), from which it derives a DEDICATED, domain-separated anonymization key (so it never
+// reuses the webhook-verification secret and survives webhook-secret rotation).
 //   ORB_COLLECTOR_URL=<url>   — endpoint (default: gittensory's hosted collector)
 //   ORB_AIR_GAP=true          — air-gapped/offline deployments only: compute locally, never send
 //   ORB_ANONYMIZE=true        — HMAC-hash repo/PR before export (default: true)
 //
 // No diffs, no code, no comments, no logins, no commit SHAs — only verdict + outcome + reversal + a bucketed
-// reason category + cycle time, with repo/PR identifiers HMAC'd by THIS instance's own secret (the collector
-// holds no instance secret, so it can never de-anonymize).
+// reason category + cycle time, with repo/PR identifiers HMAC'd by a key the collector never holds (so it
+// can never de-anonymize).
 import { createHash, createHmac } from "node:crypto";
 import { incr } from "./metrics";
 
@@ -125,11 +126,16 @@ export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: t
   // Always on (no opt-out). Air-gapped/offline deployments may suppress the outbound call.
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
-  // gittensory's hosted collector. No shared secret is sent: repo/PR identifiers are HMAC'd with THIS
-  // instance's OWN GitHub App webhook secret, so the collector can never de-anonymize them.
+  // No App configured → no review data to export anyway. The App's PRIVATE KEY (high-entropy RSA material)
+  // gates export and seeds anonymization; the webhook-verification secret is never reused here.
+  const appKey = process.env.GITHUB_APP_PRIVATE_KEY ?? "";
+  if (!appKey) return 0;
+
+  // gittensory's hosted collector. No shared secret is sent: repo/PR identifiers are HMAC'd with a DEDICATED,
+  // domain-separated key derived from THIS instance's App private key — so it's high-entropy (not brute-forceable),
+  // single-purpose (independent of webhook-secret rotation), and the collector can never de-anonymize them.
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://gittensory-api.aethereal.dev/v1/orb/ingest";
-  const secret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
-  if (!secret) return 0; // App not configured yet — no anonymization key, and no review data to export
+  const secret = createHmac("sha256", appKey).update("gittensory-orb-anon-v1").digest("hex");
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
   const instance = instanceId();
 

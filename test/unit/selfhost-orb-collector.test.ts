@@ -47,18 +47,18 @@ describe("bucketReasonCode()", () => {
 describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized reversal-aware signal", () => {
   beforeEach(() => {
     resetMetrics();
-    process.env.GITHUB_WEBHOOK_SECRET = "test-secret"; // the App secret doubles as the anonymization key
+    (process.env as NodeJS.Dict<string>).GITHUB_APP_PRIVATE_KEY = "test-private-key"; // seeds the derived anonymization key
     process.env.ORB_APP_ID = "555";
     process.env.ORB_ANONYMIZE = "true";
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
   });
   afterEach(() => {
-    for (const k of ["GITHUB_WEBHOOK_SECRET", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
+    for (const k of ["GITHUB_APP_PRIVATE_KEY", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
   });
 
-  it("returns 0 when the App secret is not configured (App not set up → nothing to export)", async () => {
-    delete (process.env as NodeJS.Dict<string>).GITHUB_WEBHOOK_SECRET;
+  it("returns 0 when the App private key is not configured (App not set up → nothing to export)", async () => {
+    delete (process.env as NodeJS.Dict<string>).GITHUB_APP_PRIVATE_KEY;
     const db = makeDb();
     await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
     await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");

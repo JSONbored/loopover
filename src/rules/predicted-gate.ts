@@ -157,6 +157,7 @@ export function buildPredictedGateVerdict(args: {
     qualityGateMinScore: gate.readinessMinScore ?? null,
     aiReviewGateMode: gate.aiReviewMode ?? undefined,
     mergeReadinessGateMode: gate.mergeReadiness ?? undefined,
+    selfAuthoredLinkedIssueGateMode: gate.selfAuthoredLinkedIssue ?? undefined,
     readinessScore: readiness.total,
     confirmedContributor: effectiveConfirmedContributor,
     firstTimeContributorGrace: gate.firstTimeContributorGrace ?? undefined,

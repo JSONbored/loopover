@@ -13,6 +13,28 @@ describe("worker entrypoint", () => {
     expect(response.status).toBe(200);
   });
 
+  it("routes gittensory-jobs-dlq batches to the DLQ consumer (acks without retrying)", async () => {
+    const env = createTestEnv();
+    const acked: string[] = [];
+    const retried: string[] = [];
+    const batch = {
+      queue: "gittensory-jobs-dlq",
+      messages: [
+        {
+          id: "dlq-msg-1",
+          body: { type: "github-webhook", deliveryId: "d-dlq", eventName: "pull_request", payload: {} },
+          ack: () => acked.push("dlq-msg-1"),
+          retry: () => retried.push("dlq-msg-1"),
+        },
+      ],
+    } as unknown as MessageBatch<import("../../src/types").JobMessage>;
+
+    await worker.queue(batch, env);
+
+    expect(acked).toEqual(["dlq-msg-1"]);
+    expect(retried).toEqual([]);
+  });
+
   it("acks successful queue messages and retries failed messages", async () => {
     const env = createTestEnv();
     vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));

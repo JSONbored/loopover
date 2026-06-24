@@ -205,11 +205,20 @@
         "queue": "gittensory-jobs",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
-        // After max_retries failed attempts a job is dead-lettered instead of silently dropped, so a
-        // persistently-failing webhook is observable (inspect via `wrangler queues` / the dashboard)
-        // rather than vanishing. The DLQ is a landing pad with no consumer (house pattern).
+        // After max_retries failed attempts a job is dead-lettered so a persistently-failing webhook
+        // is observable rather than vanishing silently. The DLQ consumer below picks them up.
         "max_retries": 3,
         "dead_letter_queue": "gittensory-jobs-dlq",
+      },
+      {
+        // DLQ consumer: receives jobs that exhausted all main-queue retries. Logs each dead-lettered
+        // job for observability (Cloudflare Workers logs + audit_events) and acks immediately — no
+        // further retries (the job already failed max_retries times). max_retries: 0 prevents the
+        // DLQ consumer itself from sending messages to a secondary DLQ on handler error.
+        "queue": "gittensory-jobs-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 0,
       },
     ],
   },

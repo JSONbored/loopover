@@ -33,8 +33,14 @@ async function auditEventRows(env: Env, eventType: string): Promise<Array<{ targ
 
 /** Seed the bot's own last action on a PR into the agent-action audit ledger (audit_events). */
 // Default outcome "completed" mirrors what the executor actually writes for a performed action (buildAgentActionAudit).
-async function seedBotAction(env: Env, targetKey: string, actionClass: "close" | "merge" | "approve", outcome: "success" | "completed" | "denied" = "completed"): Promise<void> {
-  await recordAuditEvent(env, { eventType: `agent.action.${actionClass}`, targetKey, outcome });
+async function seedBotAction(
+  env: Env,
+  targetKey: string,
+  actionClass: "close" | "merge" | "approve",
+  outcome: "success" | "completed" | "denied" = "completed",
+  mode?: "live" | "dry_run",
+): Promise<void> {
+  await recordAuditEvent(env, { eventType: `agent.action.${actionClass}`, targetKey, outcome, metadata: mode ? { mode } : undefined });
 }
 
 function pullRequestPayload(over: Partial<GitHubPullRequestPayload> = {}): GitHubPullRequestPayload {
@@ -146,6 +152,31 @@ describe("recordReversalSignals — reversal_reopened", () => {
   it("still records reversal_reopened when the bot close was logged with the legacy 'success' outcome", async () => {
     const env = createTestEnv();
     await seedBotAction(env, "owner/repo#7", "close", "success");
+    await recordReversalSignals(env, "pull_request", {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "open" }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
+  });
+
+  it("does NOT record reversal_reopened when the latest bot close was only a dry-run shadow", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close", "completed", "dry_run");
+    await recordReversalSignals(env, "pull_request", {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "open" }),
+      sender: { login: "contributor", type: "User" },
+    });
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
+    expect(await auditEventRows(env, "reversal_reopened")).toHaveLength(0);
+  });
+
+  it("still records reversal_reopened when the latest bot close was completed in live mode", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close", "completed", "live");
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
       repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },

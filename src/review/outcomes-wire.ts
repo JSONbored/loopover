@@ -202,11 +202,12 @@ async function lastBotActionWasClose(env: Env, targetKey: string): Promise<boole
   try {
     const row = await env.DB
       .prepare(
-        // The executor records a performed action as outcome 'completed' (buildAgentActionAudit; a dry-run also
-        // maps to 'completed'); 'success' is only a legacy value. Matching just 'success' meant this recorder
-        // NEVER fired for real bot closes, so reversal_reopened was dead. Match both. (#audit-reversal-reopened)
+        // The executor records performed and dry-run actions as outcome 'completed', with the real mode only in
+        // metadata. Exclude dry-run shadows so a "would close" cannot masquerade as an actual bot close.
+        // 'success' is only a legacy value. (#audit-reversal-reopened)
         `SELECT event_type FROM audit_events
          WHERE target_key = ? AND event_type LIKE 'agent.action.%' AND outcome IN ('success', 'completed')
+           AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
          ORDER BY created_at DESC LIMIT 1`,
       )
       .bind(targetKey)

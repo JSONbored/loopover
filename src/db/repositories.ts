@@ -1936,6 +1936,27 @@ export async function getProductUsageRollupStatus(
   };
 }
 
+// Global agent kill-switch (#audit-§5.2). A DB-backed emergency brake an operator flips with one row (no
+// redeploy), complementing the env-var AGENT_ACTIONS_PAUSED hard backstop. Fail-OPEN on a read error (return
+// false): a transient D1 hiccup must not by itself halt the whole fleet, and the env var is the hard backstop.
+export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
+    return row?.frozen === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Flip the DB-backed global kill-switch (operator emergency brake; no redeploy required). */
+export async function setGlobalAgentFrozen(env: Env, frozen: boolean, updatedBy?: string | null): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO global_agent_controls (id, frozen, updated_at, updated_by) VALUES ('singleton', ?, CURRENT_TIMESTAMP, ?) ON CONFLICT(id) DO UPDATE SET frozen = excluded.frozen, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+  )
+    .bind(frozen ? 1 : 0, updatedBy ?? null)
+    .run();
+}
+
 export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promise<void> {
   const db = getDb(env.DB);
   await db.insert(auditEvents).values({

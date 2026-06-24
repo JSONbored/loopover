@@ -17,6 +17,7 @@ import { ensurePullRequestLabel, removePullRequestLabel } from "../../src/github
 import { actionParams, executeAgentMaintenanceActions, pendingClosureLabelApplied, type AgentActionExecutionContext, type AgentActionOutcome } from "../../src/services/agent-action-executor";
 import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
+import { isGlobalAgentFrozen, setGlobalAgentFrozen } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
@@ -126,6 +127,24 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx({ agentPaused: false }), [merge]);
     expect(outcomes[0]?.outcome).toBe("denied");
     expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("DB-backed global freeze halts everything without a redeploy (#audit-§5.2)", async () => {
+    const env = createTestEnv({}); // env-var brake OFF
+    await setGlobalAgentFrozen(env, true, "operator");
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ agentPaused: false }), [merge]);
+    expect(outcomes[0]?.outcome).toBe("denied");
+    expect(mergePullRequest).not.toHaveBeenCalled();
+    // ...and clearing the freeze restores normal execution.
+    await setGlobalAgentFrozen(env, false);
+    const after = await executeAgentMaintenanceActions(env, ctx({ agentPaused: false }), [merge]);
+    expect(after[0]?.outcome).toBe("completed");
+    expect(mergePullRequest).toHaveBeenCalled();
+  });
+
+  it("isGlobalAgentFrozen fails open (false) on a read error — a D1 hiccup never freezes the fleet by itself", async () => {
+    const broken = { ...createTestEnv({}), DB: null } as unknown as Env;
+    expect(await isGlobalAgentFrozen(broken)).toBe(false);
   });
 
   it("auto_with_approval: stages the action (queued) instead of executing", async () => {

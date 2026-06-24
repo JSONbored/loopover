@@ -43,6 +43,7 @@ import {
   recordAuditEvent,
   recordGateBlockOutcome,
   getGateBlockOutcome,
+  isGlobalAgentFrozen,
   markGateOutcomeOverridden,
   recordProductUsageEvent,
   persistSignalSnapshot,
@@ -534,7 +535,7 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
   // Defensive: a repo can lose its acting autonomy between fan-out and processing.
   if (!isAgentConfigured(settings.autonomy)) return;
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), // env brake OR DB kill-switch (#audit-§5.2)
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });

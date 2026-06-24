@@ -1,4 +1,4 @@
-import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
+import { bumpPullRequestMergeAttempt, createPendingAgentActionIfAbsent, insertNotificationDeliveryIfAbsent, isGlobalAgentFrozen, markPullRequestApproved, markPullRequestMergeBlocked, recordAuditEvent } from "../db/repositories";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, type NotifyOutcome } from "./notify-discord";
 import { ensurePullRequestLabel, removePullRequestLabel } from "../github/labels";
@@ -55,7 +55,9 @@ export function pendingClosureLabelApplied(plan: PlannedAgentAction[], outcomes:
 export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionExecutionContext, planned: PlannedAgentAction[]): Promise<AgentActionOutcome[]> {
   const outcomes: AgentActionOutcome[] = [];
   const targetKey = `${ctx.repoFullName}#${ctx.pullNumber}`;
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
+  // globalPaused folds the env-var brake AND the DB-backed kill-switch (#audit-§5.2) so an operator can halt the
+  // fleet instantly via one DB row, without a redeploy.
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: ctx.agentPaused, agentDryRun: ctx.agentDryRun });
 
   for (const action of planned) {
     const autonomyLevel = resolveAutonomy(ctx.autonomy, action.actionClass);

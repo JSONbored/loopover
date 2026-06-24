@@ -123,7 +123,7 @@ describe("exportOrbBatch()", () => {
   });
   afterEach(() => {
     delete process.env.ORB_ENABLED;
-    process.env.ORB_WEBHOOK_SECRET = undefined as unknown as string;
+    delete process.env.ORB_WEBHOOK_SECRET;
     delete process.env.ORB_ANONYMIZE;
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
@@ -228,18 +228,19 @@ describe("exportOrbBatch()", () => {
     expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
   });
 
-  it("uses empty-string HMAC key when ORB_WEBHOOK_SECRET is unset (covers ?? '' branch)", async () => {
-    delete (process.env as NodeJS.Dict<string>)["ORB_WEBHOOK_SECRET"];
+  it("fails closed when ORB_WEBHOOK_SECRET is unset", async () => {
+    delete process.env.ORB_WEBHOOK_SECRET;
     const db = makeDb();
     await recordOrbEvent(db, { repo: "o/r", pr_number: 1, head_sha: "sha", outcome: "merged" });
-    let sigHeader: string | undefined;
-    const exported = await exportOrbBatch(db, 200, async (_u, init) => {
-      sigHeader = (init?.headers as Record<string, string>)?.["x-orb-signature"];
-      return new Response(null, { status: 200 });
-    });
-    expect(exported).toBe(1);
-    // Signature should still be formed (with empty-string key)
-    expect(sigHeader).toMatch(/^sha256=[a-f0-9]{64}$/);
+    const fakeFetch = vi.fn(async () => new Response(null, { status: 200 }));
+
+    const exported = await exportOrbBatch(db, 200, fakeFetch);
+
+    expect(exported).toBe(0);
+    expect(fakeFetch).not.toHaveBeenCalled();
+    expect(await renderMetrics()).toContain("gittensory_orb_export_errors_total");
+    const rows = (await allRows(db)) as Array<Record<string, unknown>>;
+    expect(rows[0]?.exported_at).toBeNull();
   });
 
   it("defaults ORB_ANONYMIZE to true when unset (covers ?? 'true' branch)", async () => {

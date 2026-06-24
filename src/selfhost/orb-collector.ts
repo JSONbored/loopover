@@ -93,7 +93,11 @@ export async function exportOrbBatch(
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://orb.gittensory.app/v1/ingest";
-  const secret = process.env.ORB_WEBHOOK_SECRET ?? "";
+  const secret = process.env.ORB_WEBHOOK_SECRET;
+  if (!secret) {
+    incr("gittensory_orb_export_errors_total");
+    return 0;
+  }
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
 
   const { results } = await db

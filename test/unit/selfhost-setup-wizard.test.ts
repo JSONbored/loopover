@@ -7,7 +7,9 @@ import {
   isValidSetupAuthCookie,
   renderSetupPage,
   renderTokenEntryPage,
+  SETUP_TOKEN_FORM_MAX_BYTES,
   setupAuthCookieValue,
+  setupTokenFormRejection,
   timingSafeStrEqual,
 } from "../../src/selfhost/setup-wizard";
 
@@ -81,6 +83,30 @@ describe("setup-wizard (#981 GitHub App Manifest)", () => {
     expect(timingSafeStrEqual("s3cret-token", "s3cret-toker")).toBe(false); // same length, different bytes
     expect(timingSafeStrEqual("short", "longer-token")).toBe(false); // length mismatch must not throw
     expect(timingSafeStrEqual("", "")).toBe(true);
+  });
+
+  it("rejects unsafe setup token form uploads before parsing the body", async () => {
+    const oversized = setupTokenFormRejection(
+      new Headers({ "content-length": String(SETUP_TOKEN_FORM_MAX_BYTES + 1), "content-type": "application/x-www-form-urlencoded" }),
+    );
+    expect(oversized?.status).toBe(413);
+    await expect(oversized?.text()).resolves.toContain("too large");
+
+    expect(setupTokenFormRejection(new Headers({ "content-type": "application/x-www-form-urlencoded" }))?.status).toBe(411);
+    expect(
+      setupTokenFormRejection(new Headers({ "content-length": "nope", "content-type": "application/x-www-form-urlencoded" }))?.status,
+    ).toBe(400);
+    expect(
+      setupTokenFormRejection(new Headers({ "content-length": "-1", "content-type": "application/x-www-form-urlencoded" }))?.status,
+    ).toBe(400);
+    expect(setupTokenFormRejection(new Headers({ "content-length": "5", "content-type": "text/plain" }))?.status).toBe(415);
+
+    expect(
+      setupTokenFormRejection(new Headers({ "content-length": "12", "content-type": "application/x-www-form-urlencoded; charset=UTF-8" })),
+    ).toBeUndefined();
+    expect(
+      setupTokenFormRejection(new Headers({ "content-length": "12", "content-type": "multipart/form-data; boundary=x" })),
+    ).toBeUndefined();
   });
 
   it("renderTokenEntryPage renders a POST form (token in the body, not the URL) + an error variant", () => {

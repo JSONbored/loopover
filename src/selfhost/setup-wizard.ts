@@ -5,6 +5,26 @@
 // disabled once an App is configured (server.ts gates on GITHUB_APP_ID), so this can't rebind a live install.
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+export const SETUP_TOKEN_FORM_MAX_BYTES = 4096;
+
+export function setupTokenFormRejection(headers: Headers): Response | undefined {
+  const contentLength = headers.get("content-length");
+  if (!contentLength) return new Response("setup token form requires Content-Length", { status: 411 });
+  const byteLength = Number(contentLength);
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+    return new Response("invalid setup token form length", { status: 400 });
+  }
+  if (byteLength > SETUP_TOKEN_FORM_MAX_BYTES) {
+    return new Response("setup token form is too large", { status: 413 });
+  }
+
+  const mediaType = headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/x-www-form-urlencoded" && mediaType !== "multipart/form-data") {
+    return new Response("unsupported setup token form content type", { status: 415 });
+  }
+  return undefined;
+}
+
 export interface AppCredentials {
   id: number;
   slug: string;

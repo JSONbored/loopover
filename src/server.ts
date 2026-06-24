@@ -21,6 +21,7 @@ import {
   renderSetupPage,
   renderTokenEntryPage,
   setupAuthCookieValue,
+  setupTokenFormRejection,
   timingSafeStrEqual,
 } from "./selfhost/setup-wizard";
 import { exportOrbBatch } from "./selfhost/orb-collector";
@@ -268,6 +269,8 @@ async function main(): Promise<void> {
               request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
               "";
             if (!suppliedToken && request.method === "POST") {
+              const rejection = setupTokenFormRejection(request.headers);
+              if (rejection) return rejection;
               const form = await request.formData().catch(() => null);
               const field = form?.get("token");
               suppliedToken = typeof field === "string" ? field : "";

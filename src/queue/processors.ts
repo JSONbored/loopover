@@ -821,10 +821,46 @@ async function prReadyForReview(env: Env, installationId: number, repoFullName: 
   const requiredContexts = await fetchRequiredStatusContexts(env, repoFullName, pr.baseRef, token).catch(() => null);
   const ci = await fetchLiveCiAggregate(env, repoFullName, pr.headSha, token, requiredContexts).catch(() => undefined);
   if (ci?.ciState === "pending") {
-    await recordAuditEvent(env, { eventType: "github_app.review_deferred_ci_pending", actor: "gittensory", targetKey: `${repoFullName}#${pr.number}`, outcome: "queued", detail: "CI still running — review deferred until all checks finish", metadata: { deliveryId, repoFullName } }).catch(() => undefined);
-    return false;
+    // Staleness cap: genuinely-running CI settles in minutes. A required check that stays pending far longer
+    // (an orphaned / never-completing check — e.g. a fork check that never reports back) would otherwise make us
+    // defer FOREVER → the PR is silently stuck and never surfaces (the dominant metagraphed stall). Past
+    // STUCK_CI_DEFER_MS we stop deferring and let the gate FINALIZE, so the PR is surfaced (held / needs-human),
+    // or disposed if a verdict is reachable — never silently deferred. first-seen is KV-tracked per PR+headSha (a
+    // new push = new SHA = fresh window); a KV miss degrades to the old defer (safe — never acts early). (#ci-stuck-finalize)
+    if (!(await ciPendingDeferStuck(env, repoFullName, pr.number, pr.headSha))) {
+      await recordAuditEvent(env, { eventType: "github_app.review_deferred_ci_pending", actor: "gittensory", targetKey: `${repoFullName}#${pr.number}`, outcome: "queued", detail: "CI still running — review deferred until all checks finish", metadata: { deliveryId, repoFullName } }).catch(() => undefined);
+      return false;
+    }
+    await recordAuditEvent(env, { eventType: "github_app.review_finalized_ci_stuck", actor: "gittensory", targetKey: `${repoFullName}#${pr.number}`, outcome: "completed", detail: "required CI stuck pending past the staleness cap — finalizing so the PR is surfaced, not silently deferred forever", metadata: { deliveryId, repoFullName } }).catch(() => undefined);
+    // fall through → return true → the gate finalizes + the PR is disposed/held, never silently stuck.
   }
   return true;
+}
+
+// A required check pending longer than this is treated as STUCK (orphaned / never-completing — e.g. a fork check
+// that will never report). Past it, prReadyForReview stops deferring and finalizes the gate so the PR surfaces
+// (held / needs-human) instead of deferring forever. Generous so a genuinely-slow CI is never cut off early.
+const STUCK_CI_DEFER_MS = 30 * 60 * 1000;
+
+/**
+ * True when CI for this PR+headSha has been pending past STUCK_CI_DEFER_MS. Stamps the first-seen time in KV
+ * (REVIEW_CONFIG) keyed by repo#pr:headSha — a new push is a new SHA, so the window resets per commit. A missing
+ * KV / KV hiccup degrades to `false` (never force-finalize → keeps the safe old defer rather than acting early).
+ */
+async function ciPendingDeferStuck(env: Env, repoFullName: string, prNumber: number, headSha: string | null | undefined): Promise<boolean> {
+  if (!env.REVIEW_CONFIG || !headSha) return false;
+  const key = `ci-pending-first-seen:${repoFullName.toLowerCase()}#${prNumber}:${headSha}`;
+  try {
+    const first = await env.REVIEW_CONFIG.get(key);
+    if (!first) {
+      await env.REVIEW_CONFIG.put(key, String(Date.now()), { expirationTtl: 7 * 24 * 3600 });
+      return false;
+    }
+    const firstMs = Number(first);
+    return Number.isFinite(firstMs) && Date.now() - firstMs > STUCK_CI_DEFER_MS;
+  } catch {
+    return false;
+  }
 }
 
 // One CI run fires MANY check_run (one per job) + check_suite completions. Re-reviewing on every one storms the

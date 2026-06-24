@@ -32,6 +32,7 @@ export type FocusManifestGateConfig = {
   aiReviewModel: string | null;
   mergeReadiness: GateRuleMode | null;
   manifestPolicy: GateRuleMode | null;
+  selfAuthoredLinkedIssue: GateRuleMode | null;
   firstTimeContributorGrace: boolean | null;
 };
 
@@ -53,6 +54,7 @@ export type FocusManifestSettings = Partial<
     | "gateCheckMode"
     | "linkedIssueGateMode"
     | "duplicatePrGateMode"
+    | "selfAuthoredLinkedIssueGateMode"
     | "qualityGateMode"
     | "qualityGateMinScore"
     | "aiReviewMode"
@@ -167,6 +169,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewModel: null,
   mergeReadiness: null,
   manifestPolicy: null,
+  selfAuthoredLinkedIssue: null,
   firstTimeContributorGrace: null,
 };
 
@@ -310,6 +313,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
     mergeReadiness: normalizeOptionalGateMode(record.mergeReadiness, "gate.mergeReadiness", warnings),
     manifestPolicy: normalizeOptionalGateMode(record.manifestPolicy, "gate.manifestPolicy", warnings),
+    selfAuthoredLinkedIssue: normalizeOptionalGateMode(record.selfAuthoredLinkedIssue, "gate.selfAuthoredLinkedIssue", warnings),
     firstTimeContributorGrace: normalizeOptionalBoolean(record.firstTimeContributorGrace, "gate.firstTimeContributorGrace", warnings),
   };
   gate.present =
@@ -328,6 +332,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewModel !== null ||
     gate.mergeReadiness !== null ||
     gate.manifestPolicy !== null ||
+    gate.selfAuthoredLinkedIssue !== null ||
     gate.firstTimeContributorGrace !== null;
   return gate;
 }
@@ -366,6 +371,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   }
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) out.manifestPolicy = gate.manifestPolicy;
+  if (gate.selfAuthoredLinkedIssue !== null) out.selfAuthoredLinkedIssue = gate.selfAuthoredLinkedIssue;
   if (gate.firstTimeContributorGrace !== null) out.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   return out;
 }
@@ -412,6 +418,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   if (linkedIssueGateMode !== null) out.linkedIssueGateMode = linkedIssueGateMode;
   const duplicatePrGateMode = normalizeOptionalGateMode(r.duplicatePrGateMode, "settings.duplicatePrGateMode", warnings);
   if (duplicatePrGateMode !== null) out.duplicatePrGateMode = duplicatePrGateMode;
+  const selfAuthoredLinkedIssueGateMode = normalizeOptionalGateMode(r.selfAuthoredLinkedIssueGateMode, "settings.selfAuthoredLinkedIssueGateMode", warnings);
+  if (selfAuthoredLinkedIssueGateMode !== null) out.selfAuthoredLinkedIssueGateMode = selfAuthoredLinkedIssueGateMode;
   const qualityGateMode = normalizeOptionalGateMode(r.qualityGateMode, "settings.qualityGateMode", warnings);
   if (qualityGateMode !== null) out.qualityGateMode = qualityGateMode;
   const qualityGateMinScore = normalizeOptionalScore(r.qualityGateMinScore, "settings.qualityGateMinScore", warnings);
@@ -526,6 +534,7 @@ export function resolveEffectiveSettings(dbSettings: RepositorySettings, manifes
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
   if (gate.mergeReadiness !== null) effective.mergeReadinessGateMode = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) effective.manifestPolicyGateMode = gate.manifestPolicy;
+  if (gate.selfAuthoredLinkedIssue !== null) effective.selfAuthoredLinkedIssueGateMode = gate.selfAuthoredLinkedIssue;
   if (gate.firstTimeContributorGrace !== null) effective.firstTimeContributorGrace = gate.firstTimeContributorGrace;
   // The dashboard "Require linked issue" toggle must not silently diverge from gate blocking: when the
   // boolean is on but linkedIssueGateMode is still off, treat it as a block requirement (#797).

@@ -486,6 +486,10 @@ export type RepositorySettings = {
    *  required-linked-issue, test expectations) becomes an enforceable `Gittensory Gate` blocker. An
    *  INDEPENDENT dimension, deliberately not folded into the merge-readiness composite. Default `off` — opt-in. */
   manifestPolicyGateMode: GateRuleMode;
+  /** Self-authored linked-issue gate. When `block`, the gate closes a PR where the contributor also
+   *  opened the linked issue (`pr.authorLogin === issue.authorLogin`). Defaults to `advisory` — the finding
+   *  is surfaced in the review panel but never blocks unless the maintainer opts in. */
+  selfAuthoredLinkedIssueGateMode: GateRuleMode;
   /** First-time-contributor grace (#552). When true, a would-be BLOCK is softened to a neutral/advisory gate
    *  for a genuine newcomer (0 merged PRs in this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs).
    *  Repeat offenders and authors with merge history are gated normally. Default false — opt-in. */

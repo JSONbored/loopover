@@ -984,6 +984,98 @@ describe("firstAddedLineFromPatch", () => {
   });
 });
 
+  describe("self_authored_linked_issue finding", () => {
+    const prBase: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 55,
+      title: "Fix login bug",
+      state: "open",
+      authorLogin: "contributor1",
+      authorAssociation: "NONE",
+      headSha: "sha55",
+      labels: [],
+      linkedIssues: [10],
+    };
+
+    it("raises self_authored_linked_issue when the PR author also opened the linked issue", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["contributor1"] });
+      expect(advisory.findings.map((f) => f.code)).toContain("self_authored_linked_issue");
+    });
+
+    it("is case-insensitive when comparing author logins", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["Contributor1"] });
+      expect(advisory.findings.map((f) => f.code)).toContain("self_authored_linked_issue");
+    });
+
+    it("does not raise the finding when the PR author differs from the issue author", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["someone_else"] });
+      expect(advisory.findings.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("does not raise the finding when linkedIssueAuthorLogins is absent (fail-open: unknown authorship stays advisory-only)", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase);
+      expect(advisory.findings.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("does not raise the finding when linkedIssueAuthorLogins contains only null values (author unknown)", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: [null, undefined] });
+      expect(advisory.findings.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("does not raise the finding when the PR has no linked issues", () => {
+      const noIssuePr = { ...prBase, linkedIssues: [] };
+      const advisory = buildPullRequestAdvisory(repo, noIssuePr, { linkedIssueAuthorLogins: ["contributor1"] });
+      expect(advisory.findings.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("does not raise the finding when the PR author is unknown (null authorLogin)", () => {
+      const noAuthorPr = { ...prBase, authorLogin: null };
+      const advisory = buildPullRequestAdvisory(repo, noAuthorPr, { linkedIssueAuthorLogins: ["contributor1"] });
+      expect(advisory.findings.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("raises the finding when at least one linked issue author matches the PR author (mixed authors)", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["other_user", "contributor1"] });
+      expect(advisory.findings.map((f) => f.code)).toContain("self_authored_linked_issue");
+    });
+
+    it("is advisory by default: self_authored_linked_issue is NOT a gate blocker without policy override", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["contributor1"] });
+      const gate = evaluateGateCheck(advisory);
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+      expect(gate.warnings.map((f) => f.code)).toContain("self_authored_linked_issue");
+    });
+
+    it("is advisory when selfAuthoredLinkedIssueGateMode is advisory", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["contributor1"] });
+      const gate = evaluateGateCheck(advisory, { selfAuthoredLinkedIssueGateMode: "advisory" });
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("is advisory when selfAuthoredLinkedIssueGateMode is off", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["contributor1"] });
+      const gate = evaluateGateCheck(advisory, { selfAuthoredLinkedIssueGateMode: "off" });
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+
+    it("blocks when selfAuthoredLinkedIssueGateMode is block", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["contributor1"] });
+      const gate = evaluateGateCheck(advisory, { selfAuthoredLinkedIssueGateMode: "block" });
+      expect(gate.conclusion).toBe("failure");
+      expect(gate.blockers.map((f) => f.code)).toContain("self_authored_linked_issue");
+    });
+
+    it("does not block when selfAuthoredLinkedIssueGateMode is block but no self-authored issue finding exists", () => {
+      const advisory = buildPullRequestAdvisory(repo, prBase, { linkedIssueAuthorLogins: ["someone_else"] });
+      const gate = evaluateGateCheck(advisory, { selfAuthoredLinkedIssueGateMode: "block" });
+      expect(gate.conclusion).toBe("success");
+      expect(gate.blockers.map((f) => f.code)).not.toContain("self_authored_linked_issue");
+    });
+  });
+
 function emptyCollisions(): CollisionReport {
   return {
     repoFullName: "JSONbored/gittensory",

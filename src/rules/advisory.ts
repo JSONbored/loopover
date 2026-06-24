@@ -38,6 +38,10 @@ export type GateCheckPolicy = {
    *  blockers. An INDEPENDENT dimension, deliberately NOT folded into the merge-readiness composite so #555
    *  stays focused. `off`/`advisory` = the findings stay advisory (never block). Default off. */
   manifestPolicyGateMode?: GateRuleMode | undefined;
+  /** Self-authored linked-issue gate. When `block`, a `self_authored_linked_issue` finding — raised when
+   *  the PR author also filed the linked issue — becomes a hard blocker. Defaults to `advisory` — the
+   *  finding is surfaced but never blocks unless the maintainer opts in. */
+  selfAuthoredLinkedIssueGateMode?: GateRuleMode | undefined;
   /** First-time-contributor grace (#552). When true AND the author is a genuine newcomer (0 merged PRs in
    *  this repo) who is NOT a repeat offender (< 3 closed-unmerged PRs), a would-be BLOCK is softened to a
    *  neutral/advisory gate. `undefined`/false = the grace rule does not apply and blockers gate normally. */
@@ -89,6 +93,10 @@ export function buildPullRequestAdvisory(
      *  closed as a duplicate. Default/false ⇒ every duplicate sibling keeps the finding (byte-identical). The
      *  caller sets this to `env.GITTENSORY_DUPLICATE_WINNER === "true"`. */
     duplicateWinnerEnabled?: boolean;
+    /** Author logins of the linked issues (one entry per resolved issue, may be null when unknown). Used to
+     *  surface a `self_authored_linked_issue` finding when the PR author also opened the linked issue. Absent
+     *  or empty ⇒ the finding is never raised (fail-open: unknown issue authorship stays advisory-only). */
+    linkedIssueAuthorLogins?: (string | null | undefined)[];
   } = {},
 ): Advisory {
   const repoFullName = pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";
@@ -114,7 +122,7 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled));
+    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? []);
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -504,6 +512,7 @@ function addPullRequestFindings(
   otherOpenPullRequests: PullRequestRecord[],
   requireLinkedIssue: boolean,
   duplicateWinnerEnabled: boolean,
+  linkedIssueAuthorLogins: (string | null | undefined)[],
 ): void {
   if (pr.state !== "open") {
     findings.push({
@@ -537,6 +546,23 @@ function addPullRequestFindings(
         title: "Linked issue overlaps another open PR",
         detail: `Other open pull requests reference the same linked issue set: ${overlappingPrs.map((otherPr) => `#${otherPr.number}`).join(", ")}.`,
         action: "Review the related PRs before spending reviewer time on duplicate work.",
+      });
+    }
+  }
+  // Self-authored linked-issue detection: the PR author also filed the linked issue. Raised when at least
+  // one linked issue's author login is a case-insensitive match for the PR author. Gated by
+  // selfAuthoredLinkedIssueGateMode — advisory by default so this never blocks without maintainer opt-in.
+  // Absent/null issue author logins are treated as unknown and never trigger the finding (fail-open).
+  if (pr.linkedIssues.length > 0 && pr.authorLogin) {
+    const prAuthor = pr.authorLogin.toLowerCase();
+    const selfAuthored = linkedIssueAuthorLogins.some((login) => login != null && login.toLowerCase() === prAuthor);
+    if (selfAuthored) {
+      findings.push({
+        code: "self_authored_linked_issue",
+        severity: "warning",
+        title: "PR author also opened the linked issue",
+        detail: "The contributor who opened this PR also filed the linked issue. This pattern can indicate artificial issue-discovery work rather than solving an independently discovered problem.",
+        action: "Link an issue that was opened by a different contributor, or provide a rationale for why this self-authored issue represents genuine discovery work.",
       });
     }
   }
@@ -667,6 +693,9 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {
     return gateMode(policy.manifestPolicyGateMode ?? "off") === "block";
   }
+  // Self-authored linked-issue gate: blocks only when the maintainer opts in with `block`. Defaults to
+  // advisory — the finding surfaces in the panel without ever closing the PR unless explicitly configured.
+  if (code === "self_authored_linked_issue") return gateMode(policy.selfAuthoredLinkedIssueGateMode ?? "advisory") === "block";
   return false;
 }
 

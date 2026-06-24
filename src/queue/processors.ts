@@ -17,6 +17,7 @@ import {
   listBounties,
   listBountiesByRepo,
   listContributorIssues,
+  getIssue,
   listContributorPullRequests,
   listContributorRepoStats,
   listIssues,
@@ -808,11 +809,15 @@ async function reReviewStoredPullRequest(
   // a rebase fired a synchronize, or CI is still running — the synchronize / CI-completion webhook re-triggers
   // once the head is current and CI has settled (the sweep backstops a missed event).
   if (!(await prReadyForReview(env, installationId, repoFullName, pr, settings, deliveryId))) return;
-  const otherOpenPullRequests = await listOtherOpenPullRequests(env, repoFullName, prNumber);
+  const [otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
+    listOtherOpenPullRequests(env, repoFullName, prNumber),
+    resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
+  ]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+    linkedIssueAuthorLogins,
   });
   await persistAdvisory(env, advisory);
   if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
@@ -1563,15 +1568,17 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       if (payload.action === "reopened" && installationId && (await maybeRecloseDisallowedReopen(env, deliveryId, installationId, repoFullName, pr, payload).catch(() => false))) {
         return;
       }
-      const [repo, settings, otherOpenPullRequests] = await Promise.all([
+      const [repo, settings, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
         getRepository(env, repoFullName),
         resolveRepositorySettings(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
+        resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
       ]);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
         requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
         duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+        linkedIssueAuthorLogins,
       });
       await persistAdvisory(env, advisory);
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
@@ -1707,6 +1714,16 @@ export function shouldCollectLinkedIssueEvidence(settings: Pick<RepositorySettin
   return settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
 
+// Fetch the author login for each linked issue number from the local DB. Returns a parallel array of
+// logins (null when the issue is not in the DB or has no recorded author). Errors are swallowed per-issue
+// so a DB hiccup on one issue never prevents the advisory from running — the detection is fail-open
+// (an unknown author login never triggers the self_authored_linked_issue finding).
+export async function resolveLinkedIssueAuthorLogins(env: Env, repoFullName: string, linkedIssues: number[]): Promise<(string | null)[]> {
+  if (linkedIssues.length === 0) return [];
+  const results = await Promise.all(linkedIssues.map((n) => getIssue(env, repoFullName, n).then((i) => i?.authorLogin ?? null).catch(() => null)));
+  return results;
+}
+
 export function shouldCollectSlopEvidence(settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">): boolean {
   return settings.slopGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
@@ -1742,6 +1759,7 @@ export function gateCheckPolicy(
     slopGateMode: settings.slopGateMode,
     mergeReadinessGateMode: settings.mergeReadinessGateMode,
     manifestPolicyGateMode: settings.manifestPolicyGateMode,
+    selfAuthoredLinkedIssueGateMode: settings.selfAuthoredLinkedIssueGateMode,
     firstTimeContributorGrace: settings.firstTimeContributorGrace,
     authorMergedPrCount: authorHistory?.mergedPrCount,
     authorClosedUnmergedPrCount: authorHistory?.closedUnmergedPrCount,

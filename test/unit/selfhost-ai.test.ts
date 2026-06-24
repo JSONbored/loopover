@@ -41,6 +41,17 @@ describe("createOpenAiCompatibleAi (#979)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("err", { status: 500 })));
     await expect(createOpenAiCompatibleAi({ baseUrl: "http://x/v1" }).run("m", { prompt: "p" })).rejects.toThrow(/ai_http_500/);
   });
+
+  it("routes an embedding request ({ text }) to /embeddings and returns { data }", async () => {
+    let url = "";
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => {
+      url = u;
+      return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }] }), { status: 200 });
+    }));
+    const out = await createOpenAiCompatibleAi({ baseUrl: "http://o/v1", embedModel: "bge-m3" }).run("@cf/baai/bge-m3", { text: ["a", "b"] });
+    expect(url).toBe("http://o/v1/embeddings");
+    expect(out).toEqual({ data: [[0.1, 0.2], [0.3, 0.4]] });
+  });
 });
 
 describe("createSelfHostAi — provider selection", () => {

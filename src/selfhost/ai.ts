@@ -9,11 +9,15 @@
 interface AiRunOptions {
   messages?: Array<{ role: string; content: string }>;
   prompt?: string;
+  text?: string[]; // embedding input — the core's embedTexts passes { text: string[] }
   max_tokens?: number;
   temperature?: number;
 }
+/** A chat completion (`response`) or an embedding result (`data`). Both optional: the core reads whichever it
+ *  asked for (extractAiText → `response`, embedTexts → `data`), each defensive about the other being absent. */
+export type AiResult = { response?: string; data?: number[][] };
 export interface SelfHostAi {
-  run(model: string, options: AiRunOptions): Promise<{ response: string }>;
+  run(model: string, options: AiRunOptions): Promise<AiResult>;
 }
 
 function toMessages(options: AiRunOptions): Array<{ role: string; content: string }> {
@@ -34,14 +38,27 @@ function configuredModel(env: Record<string, string | undefined>): string | unde
   return env.AI_MODEL ?? env.WORKERS_AI_SUMMARY_MODEL;
 }
 
-/** OpenAI-compatible chat endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …). */
-export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: string | undefined; model?: string | undefined }): SelfHostAi {
+/** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
+export function createOpenAiCompatibleAi(opts: { baseUrl: string; apiKey?: string | undefined; model?: string | undefined; embedModel?: string | undefined }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
+  const headers = (): Record<string, string> => ({ "content-type": "application/json", ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}) });
   return {
     async run(model, options) {
+      // Embedding request — the core's embedTexts passes { text: string[] }; route to /embeddings (for RAG).
+      if (Array.isArray(options.text)) {
+        const res = await fetch(`${base}/embeddings`, {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ model: opts.embedModel ?? "bge-m3", input: options.text }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!res.ok) throw new Error(`ai_embed_http_${res.status}`);
+        const json = (await res.json()) as { data?: Array<{ embedding: number[] }> };
+        return { data: (json.data ?? []).map((d) => d.embedding) };
+      }
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json", ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}) },
+        headers: headers(),
         body: JSON.stringify({ model: resolveModel(opts.model, model, "llama3.1"), messages: toMessages(options), max_tokens: options.max_tokens, temperature: options.temperature }),
         signal: AbortSignal.timeout(120_000),
       });
@@ -231,6 +248,7 @@ export function buildProvider(name: string, env: Record<string, string | undefin
         baseUrl: env.AI_BASE_URL ?? (name === "openai" ? "https://api.openai.com/v1" : "http://localhost:11434/v1"),
         apiKey: env.AI_API_KEY ?? env.OPENAI_API_KEY,
         model: configuredModel(env),
+        embedModel: env.AI_EMBED_MODEL,
       });
     case "anthropic": {
       const apiKey = env.ANTHROPIC_API_KEY ?? env.AI_API_KEY;

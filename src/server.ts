@@ -15,6 +15,7 @@ import { readiness } from "./selfhost/health";
 import { gauge, incr, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
+import { createSqliteVectorize } from "./selfhost/vectorize";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -53,7 +54,10 @@ async function main(): Promise<void> {
   // gittensory's AI summary degrades to "unavailable" and the review proceeds deterministically).
   const ai = createSelfHostAi(process.env);
   if (ai) console.log(JSON.stringify({ event: "selfhost_ai_provider", provider: process.env.AI_PROVIDER }));
-  env = { ...process.env, DB: db, JOBS: queue.binding, AI: ai } as unknown as Env;
+  // Vector store for RAG (gated by GITTENSORY_REVIEW_RAG + the repo allowlist + an embedding-capable provider);
+  // a SQLite-backed Vectorize so retrieval works without Cloudflare Vectorize.
+  const vectorize = createSqliteVectorize(driver);
+  env = { ...process.env, DB: db, JOBS: queue.binding, AI: ai, VECTORIZE: vectorize } as unknown as Env;
 
   gauge("gittensory_queue_pending", () => queue.size());
   gauge("gittensory_queue_dead", () => queue.deadCount());

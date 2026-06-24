@@ -89,6 +89,13 @@ errors. If every provider fails, the AI summary degrades to "unavailable" and th
 image with `--build-arg INSTALL_AI_CLIS=true` (or `docker compose build --build-arg INSTALL_AI_CLIS=true`) to
 bake them in, then provide `CLAUDE_CODE_OAUTH_TOKEN` / codex auth at run time. No credentials are baked in.
 
+**Local RAG (retrieval-augmented review).** Self-host ships a SQLite-backed vector store, so RAG works without
+Cloudflare Vectorize. Enable it with `GITTENSORY_REVIEW_RAG=true` + the repo in `GITTENSORY_REVIEW_REPOS`, and
+point at an **embedding-capable** OpenAI-compatible provider (Ollama) with a **1024-dimensional** model via
+`AI_EMBED_MODEL` (e.g. `bge-m3` or `mxbai-embed-large`). Embeddings + chunk vectors are stored in the same
+SQLite DB (`_selfhost_vectors`) and queried by cosine similarity. Without an embedding model, RAG degrades to
+no-context (the review still runs).
+
 > **Set `AI_MODEL`.** The core would otherwise hand the adapter a Cloudflare Workers-AI model id
 > (`@cf/meta/...`) that Ollama / `claude` / `codex` can't use. The adapter ignores that id in favour of
 > `AI_MODEL` (falling back to a provider default), so always set `AI_MODEL` to a real model for your provider.

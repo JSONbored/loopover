@@ -2563,6 +2563,20 @@ export async function markPullRequestApproved(env: Env, fullName: string, number
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
+/** Sweep convergence: stamp the timestamp the scheduled re-gate sweep just recomputed this PR. A plain D1 UPDATE
+ *  — NOT routed through the agent-action-executor chokepoint (#1258) — so it advances even when GitHub writes are
+ *  suppressed (dry-run / paused). selectRegateCandidates orders the sweep by last_regated_at, so a just-regated PR
+ *  sorts freshest and the next sweep picks the next-stalest → the sweep converges over all open PRs. Keyed to the
+ *  PR (not the head SHA): a re-gate stamps the PR regardless of which commit is live. */
+export async function markPullRequestRegated(env: Env, fullName: string, number: number): Promise<void> {
+  const db = getDb(env.DB);
+  const now = nowIso();
+  await db
+    .update(pullRequests)
+    .set({ lastRegatedAt: now, updatedAt: now })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
+}
+
 export async function getIssue(env: Env, fullName: string, number: number): Promise<IssueRecord | null> {
   const db = getDb(env.DB);
   const [row] = await db.select().from(issues).where(and(eq(issues.repoFullName, fullName), eq(issues.number, number))).limit(1);
@@ -4010,6 +4024,8 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     mergeBlockedSha: row.mergeBlockedSha,
     mergeBlockedReason: row.mergeBlockedReason,
     approvedHeadSha: row.approvedHeadSha,
+    // Read straight from the row, NEVER the GitHub payload — this is a gittensory-internal sweep marker.
+    lastRegatedAt: row.lastRegatedAt,
   };
 }
 

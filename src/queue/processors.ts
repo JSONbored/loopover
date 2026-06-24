@@ -39,6 +39,7 @@ import {
   markInstallationDeleted,
   markRepositoriesRemovedFromInstallation,
   persistAdvisory,
+  markPullRequestRegated,
   recordAgentCommandFeedback,
   recordAuditEvent,
   recordGateBlockOutcome,
@@ -582,6 +583,13 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
         console.error(JSON.stringify({ level: "warn", event: "sweep_rereview_failed", deliveryId: `regate-sweep:${repoFullName}#${pr.number}`, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
       });
     }
+    // Stamp the internal re-gate marker so the next sweep advances to the next-stalest PRs. This is a plain D1
+    // write (not a GitHub action), so it converges even when agent actions are suppressed — the dry-run/pause
+    // non-convergence fix. (#audit-sweep-converge) Degrade quietly on a D1 error: the PR is simply re-selected
+    // next sweep (the prior behaviour), never lost.
+    await markPullRequestRegated(env, repoFullName, pr.number).catch((error) => {
+      console.error(JSON.stringify({ level: "warn", event: "sweep_mark_regated_failed", repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+    });
   }
   await recordAuditEvent(env, {
     eventType: "agent.sweep.regate",

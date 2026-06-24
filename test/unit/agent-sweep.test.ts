@@ -18,55 +18,119 @@ function pr(overrides: Partial<PullRequestRecord> & { number: number }): PullReq
 }
 
 describe("selectRegateCandidates (#777 re-gate sweep selection)", () => {
-  it("drops PRs updated within the freshness window (recently gated by their webhook)", () => {
-    const pulls = [pr({ number: 1, updatedAt: minutesAgo(1) }), pr({ number: 2, updatedAt: minutesAgo(120) })];
-    const picked = selectRegateCandidates({ pulls, now: NOW });
-    expect(picked.map((p) => p.number)).toEqual([2]); // #1 updated 1m ago is inside the 2-min freshness window
+  describe("don't-race-webhook freshness guard (GitHub updatedAt)", () => {
+    it("drops PRs whose GitHub updatedAt is within the freshness window (a webhook is gating them)", () => {
+      const pulls = [pr({ number: 1, updatedAt: minutesAgo(1) }), pr({ number: 2, updatedAt: minutesAgo(120) })];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([2]); // #1 updated 1m ago is inside the 2-min window
+    });
+
+    it("treats a missing updatedAt as NOT recently touched (eligible, never starved by the freshness guard)", () => {
+      const pulls = [pr({ number: 1, updatedAt: minutesAgo(1) }), pr({ number: 2 })];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([2]); // #1 fresh → dropped; #2 has no updatedAt → eligible
+    });
+
+    it("keeps a PR whose lastRegatedAt is old but whose updatedAt is fresh OUT (the guard wins over the sort key)", () => {
+      const pulls = [pr({ number: 1, updatedAt: minutesAgo(1), lastRegatedAt: minutesAgo(999) })];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([]); // stalest by re-gate, but a webhook just touched it → skip
+    });
+
+    it("live case: when updatedAt and lastRegatedAt move together, the PR is eligible once outside the window (not double-excluded)", () => {
+      const pulls = [pr({ number: 1, updatedAt: minutesAgo(120), lastRegatedAt: minutesAgo(120) })];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([1]); // both old → freshness allows it, re-gate orders it
+    });
+
+    it("keeps every open non-draft PR when `now` is unparseable (no freshness cutoff possible)", () => {
+      const pulls = [pr({ number: 1, createdAt: minutesAgo(5) }), pr({ number: 2, createdAt: minutesAgo(600) }), pr({ number: 3, isDraft: true })];
+      const picked = selectRegateCandidates({ pulls, now: "not-a-date", freshnessWindowMs: 30 * 60 * 1000 });
+      expect(picked.map((p) => p.number)).toEqual([2, 1]); // drafts still excluded; both non-draft kept, stalest-created first
+    });
   });
 
-  it("orders the stalest first and bounds to max (rate-aware)", () => {
-    const pulls = [
-      pr({ number: 1, updatedAt: minutesAgo(120) }),
-      pr({ number: 2, updatedAt: minutesAgo(600) }),
-      pr({ number: 3, updatedAt: minutesAgo(300) }),
-    ];
-    const picked = selectRegateCandidates({ pulls, now: NOW, max: 2 });
-    expect(picked.map((p) => p.number)).toEqual([2, 3]); // stalest (600m), then 300m; 120m dropped by cap
-  });
+  describe("convergence sort key (lastRegatedAt, NOT GitHub updatedAt)", () => {
+    it("INVARIANT arm (i): orders by lastRegatedAt ascending when present — the staler RE-GATE sorts first", () => {
+      // #1 was re-gated recently but created long ago; #2 was re-gated long ago but created recently. The re-gate
+      // marker — not createdAt — drives the order, so #2 (stalest re-gate) comes first.
+      const pulls = [
+        pr({ number: 1, lastRegatedAt: minutesAgo(10), createdAt: minutesAgo(1000) }),
+        pr({ number: 2, lastRegatedAt: minutesAgo(100), createdAt: minutesAgo(1) }),
+      ];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([2, 1]);
+    });
 
-  it("treats a missing updatedAt as maximally stale and never starves it", () => {
-    const pulls = [pr({ number: 1, updatedAt: minutesAgo(120) }), pr({ number: 2 })];
-    const picked = selectRegateCandidates({ pulls, now: NOW });
-    expect(picked.map((p) => p.number)).toEqual([2, 1]); // no-timestamp PR sorts oldest
+    it("INVARIANT arm (ii): falls back to createdAt when lastRegatedAt is absent — oldest-created sorts first", () => {
+      const pulls = [pr({ number: 1, createdAt: minutesAgo(10) }), pr({ number: 2, createdAt: minutesAgo(600) })];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([2, 1]); // no lastRegatedAt on either → createdAt orders them
+    });
+
+    it("INVARIANT arm (iii): falls back to the epoch when both lastRegatedAt and createdAt are absent — tie broken by PR number", () => {
+      const pulls = [pr({ number: 9 }), pr({ number: 4 }), pr({ number: 7 })];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([4, 7, 9]); // all epoch → deterministic number order
+    });
+
+    it("a never-regated PR (lastRegatedAt absent) outranks a just-regated one — the property that makes the sweep converge", () => {
+      const pulls = [
+        pr({ number: 1, lastRegatedAt: minutesAgo(1), createdAt: minutesAgo(1000) }), // just re-gated → freshest
+        pr({ number: 2, createdAt: minutesAgo(50) }), // never re-gated → its createdAt (50m) is staler than #1's re-gate (1m)
+      ];
+      const picked = selectRegateCandidates({ pulls, now: NOW });
+      expect(picked.map((p) => p.number)).toEqual([2, 1]);
+    });
+
+    it("bounds the batch to max (rate-aware) after ordering by re-gate staleness", () => {
+      const pulls = [
+        pr({ number: 1, lastRegatedAt: minutesAgo(120) }),
+        pr({ number: 2, lastRegatedAt: minutesAgo(600) }),
+        pr({ number: 3, lastRegatedAt: minutesAgo(300) }),
+      ];
+      const picked = selectRegateCandidates({ pulls, now: NOW, max: 2 });
+      expect(picked.map((p) => p.number)).toEqual([2, 3]); // stalest re-gate (600m), then 300m; 120m dropped by cap
+    });
   });
 
   it("excludes drafts and non-open PRs", () => {
     const pulls = [
-      pr({ number: 1, updatedAt: minutesAgo(120), isDraft: true }),
-      pr({ number: 2, updatedAt: minutesAgo(120), state: "closed" }),
-      pr({ number: 3, updatedAt: minutesAgo(120) }),
+      pr({ number: 1, createdAt: minutesAgo(120), isDraft: true }),
+      pr({ number: 2, createdAt: minutesAgo(120), state: "closed" }),
+      pr({ number: 3, createdAt: minutesAgo(120) }),
     ];
     const picked = selectRegateCandidates({ pulls, now: NOW });
     expect(picked.map((p) => p.number)).toEqual([3]);
   });
 
-  it("is deterministic: equal staleness breaks ties by PR number", () => {
-    const ts = minutesAgo(200);
-    const pulls = [pr({ number: 9, updatedAt: ts }), pr({ number: 4, updatedAt: ts }), pr({ number: 7, updatedAt: ts })];
-    const picked = selectRegateCandidates({ pulls, now: NOW });
-    expect(picked.map((p) => p.number)).toEqual([4, 7, 9]);
-  });
-
-  it("keeps every open non-draft PR when `now` is unparseable (no freshness cutoff possible)", () => {
-    const pulls = [pr({ number: 1, updatedAt: minutesAgo(5) }), pr({ number: 2, updatedAt: minutesAgo(600) }), pr({ number: 3, isDraft: true })];
-    const picked = selectRegateCandidates({ pulls, now: "not-a-date", freshnessWindowMs: 30 * 60 * 1000 });
-    expect(picked.map((p) => p.number)).toEqual([2, 1]); // drafts still excluded; both non-draft kept, stalest first
+  it("REGRESSION (convergence): ceil(50/25)=2 sweeps with all GitHub writes suppressed cover ALL 50 open PRs, none re-selected before the rest are stamped", () => {
+    // Simulate the dry-run / paused world: a re-gate stamps lastRegatedAt (a D1 write, never suppressed) but the
+    // GitHub updatedAt is frozen. Without the fix the same 25 stalest would recur every sweep forever; with it,
+    // two sweeps of 25 (the cap) cover all 50 distinct PRs exactly once — full coverage in ceil(open/max) sweeps.
+    const pulls = Array.from({ length: 50 }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(1000 - i), updatedAt: minutesAgo(1000) }));
+    const stampedAt = new Map<number, string>();
+    const covered = new Set<number>();
+    let sweepNow = nowMs;
+    for (let sweep = 0; sweep < 2; sweep++) {
+      sweepNow += 5 * 60 * 1000; // each sweep runs ~5 min later (outside the freshness window)
+      const now = new Date(sweepNow).toISOString();
+      const view = pulls.map((p) => ({ ...p, lastRegatedAt: stampedAt.get(p.number) ?? p.lastRegatedAt }));
+      const picked = selectRegateCandidates({ pulls: view, now });
+      expect(picked.length).toBe(SWEEP_MAX_PRS); // each sweep fills the cap until the queue is drained
+      for (const p of picked) {
+        expect(covered.has(p.number)).toBe(false); // never re-selected before all are stamped
+        covered.add(p.number);
+        stampedAt.set(p.number, now); // the sweep stamps lastRegatedAt = now
+      }
+    }
+    expect(covered.size).toBe(50); // full coverage of every open PR
   });
 
   it("defaults: freshness window is two minutes and the cap is 25", () => {
     expect(SWEEP_FRESHNESS_MS).toBe(2 * 60 * 1000);
     expect(SWEEP_MAX_PRS).toBe(25);
-    const pulls = Array.from({ length: 40 }, (_, i) => pr({ number: i + 1, updatedAt: minutesAgo(120 + i) }));
+    const pulls = Array.from({ length: 40 }, (_, i) => pr({ number: i + 1, createdAt: minutesAgo(120 + i) }));
     expect(selectRegateCandidates({ pulls, now: NOW })).toHaveLength(25);
   });
 });

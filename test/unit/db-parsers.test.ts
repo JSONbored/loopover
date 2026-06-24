@@ -8,6 +8,7 @@ import {
   listPullRequestDetailSyncStates,
   listRepoSyncSegments,
   listRepoSyncStates,
+  markPullRequestRegated,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
   extractLinkedIssueNumbers,
@@ -78,6 +79,33 @@ describe("database row parser hardening", () => {
         expect.objectContaining({ number: 2, isDraft: false, mergeableState: "mergeable", reviewDecision: "APPROVED" }),
       ]),
     );
+  });
+
+  it("markPullRequestRegated stamps the internal last_regated_at marker (sweep convergence #audit-sweep-converge)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 5, title: "Stale PR", state: "open", user: { login: "alice" }, labels: [] });
+
+    const before = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 5);
+    expect(before?.lastRegatedAt ?? null).toBeNull(); // never swept yet → marker absent
+
+    await markPullRequestRegated(env, "owner/repo", 5);
+    const after = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 5);
+    expect(typeof after?.lastRegatedAt).toBe("string"); // marker stamped with an ISO timestamp
+    expect(after?.title).toBe("Stale PR"); // INVARIANT: a plain D1 UPDATE — it touches only the marker, not PR content
+  });
+
+  it("REGRESSION: a later GitHub sync does NOT clobber last_regated_at (omitted from the upsert SET clause)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 6, title: "First", state: "open", user: { login: "bob" }, labels: [] });
+    await markPullRequestRegated(env, "owner/repo", 6);
+    const stamped = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 6)?.lastRegatedAt;
+    expect(typeof stamped).toBe("string");
+
+    // A subsequent GitHub-sync upsert (new title) must NOT reset the sweep marker, or the sweep would loop again.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 6, title: "Synced again", state: "open", user: { login: "bob" }, labels: [] });
+    const resynced = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 6);
+    expect(resynced?.title).toBe("Synced again"); // the sync ran
+    expect(resynced?.lastRegatedAt).toBe(stamped); // but the marker survived
   });
 
   it("computes complete case-insensitive repo author PR history for gate grace", async () => {

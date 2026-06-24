@@ -422,6 +422,11 @@ export type PullRequestRecord = {
    *  disposition while approvedHeadSha === headSha (this commit is already approved by the bot); a new commit
    *  clears the match so the bot may re-approve the new code. Mirrors mergeBlockedSha. */
   approvedHeadSha?: string | null | undefined;
+  /** Sweep convergence: the timestamp the scheduled re-gate sweep last recomputed this PR. selectRegateCandidates
+   *  orders by this marker (not GitHub's updatedAt) so the sweep advances through all open PRs even when the
+   *  review write that would bump updatedAt is suppressed (dry-run / paused). Sweep-written; read straight from
+   *  the row (never the GitHub payload). */
+  lastRegatedAt?: string | null | undefined;
 };
 
 export type IssueRecord = {

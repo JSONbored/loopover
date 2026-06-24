@@ -194,8 +194,20 @@ describe("planAgentMaintenanceActions (#778)", () => {
       // OBJECTIVE failure: the change cannot merge no matter what, so it closes even on a guarded path. The
       // contributor fixes CI and resubmits; a GREEN guarded resubmission is then held for review. conclusion is
       // 'neutral' here to prove it is the CI — not a verdict — driving the close.
-      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, ...guarded, ciState: "failed", pr: { labels: [] } })));
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, ...guarded, ciState: "failed", ciRequiredContextsVerified: true, pr: { labels: [] } })));
       expect(plan).toContain("close");
+    });
+
+    it("does NOT auto-close a guarded contributor PR when red CI comes from the unknown-required fallback", () => {
+      // When branch-protection required contexts cannot be fetched, ciState=failed may be caused by an optional
+      // or third-party status. Preserve the hard-guardrail hold unless required contexts were verified.
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, ...guarded, ciState: "failed", failingCheckNames: ["attacker/non-required-status"], ciRequiredContextsVerified: false, pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
+    });
+
+    it("does NOT auto-close unknown changed paths with guardrails when red CI is not verified-required", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, changedPaths: [], hardGuardrailGlobs: ["src/scoring/**"], ciState: "failed", pr: { labels: [] } })));
+      expect(plan).not.toContain("close");
     });
 
     it("does NOT approve or auto-merge a passing PR on a guarded path", () => {

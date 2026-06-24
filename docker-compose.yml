@@ -9,17 +9,18 @@
 #   --profile postgres      pgvector/pg16 shared database (multi-instance capable)
 #   --profile pgbouncer     PgBouncer connection pooler in front of Postgres
 #   --profile redis         Redis fixed-window rate limiter
+#   --profile qdrant        Qdrant vector database for RAG
 #   --profile ollama        Local Ollama AI backend
 #   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
 #   --profile caddy         Caddy HTTPS terminator with auto-TLS (set DOMAIN= in .env)
-#   --profile observability Prometheus + Grafana dashboards (pre-wired to /metrics)
+#   --profile observability Prometheus + Alertmanager + Loki + Promtail + Grafana (pre-wired)
 #   --profile tailscale     Tailscale sidecar — access the stack via your tailnet
 #   --profile runners       GitHub Actions self-hosted runner
 #
 # Examples:
 #   docker compose up --build                                    # SQLite, no AI
 #   docker compose --profile postgres --profile caddy up -d     # Postgres + HTTPS
-#   docker compose --profile observability up -d                 # add dashboards to anything
+#   docker compose --profile observability up -d                 # metrics + logs + dashboards
 #   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
 
 services:
@@ -45,16 +46,29 @@ services:
       # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@pgbouncer:5432/gittensory
       # Uncomment for Redis rate limiting (--profile redis):
       # REDIS_URL: redis://redis:6379
+      # Uncomment for Qdrant RAG vector store (--profile qdrant):
+      # QDRANT_URL: http://qdrant:6333
       # Uncomment for Ollama AI (--profile ollama):
       # AI_PROVIDER: ollama
       # AI_BASE_URL: http://ollama:11434/v1
     volumes:
       - gittensory-data:/data
+    depends_on:
+      # Gate startup on a healthy Qdrant when --profile qdrant is active; required:false means the
+      # dependency is ignored when qdrant isn't started (default/other profiles). Belt-and-suspenders
+      # with the app-side waitForQdrant retry in src/server.ts (which also covers a mid-life restart).
+      qdrant:
+        condition: service_healthy
+        required: false
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Probe /ready (not /health): /health is a liveness stub that is 200 even when the DB is down,
+      # whereas /ready returns 503 until the DB answers AND migrations are applied — so dependents that
+      # wait on `condition: service_healthy` only start once the app is truly serving. start_period 60s
+      # tolerates the Postgres cold start (waitForPostgres blocks up to 30s before the HTTP server binds).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 60s
       retries: 3
 
   # ── Postgres (--profile postgres | --profile pgbouncer) ───────────────────
@@ -96,12 +110,24 @@ services:
       AUTH_TYPE: md5
 
   # ── Redis (--profile redis) ────────────────────────────────────────────────
+  # Ephemeral rate-limiter + 5-min webhook-dedup cache only — losing it is harmless, so persistence is
+  # fully disabled. --save "" turns off RDB snapshots; --appendonly no turns off AOF. allkeys-lru caps
+  # memory at 256mb and evicts least-recently-used keys under pressure instead of OOM-killing. No volume:
+  # nothing here needs to survive a restart. (The empty-string and "no" are quoted so YAML keeps them.)
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     profiles: ["redis"]
-    volumes:
-      - gittensory-redis:/data
+    command:
+      - redis-server
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -115,13 +141,31 @@ services:
     image: qdrant/qdrant:latest
     restart: unless-stopped
     profiles: ["qdrant"]
+    # Ports are bound to LOOPBACK (127.0.0.1), not 0.0.0.0: the app reaches Qdrant over the internal
+    # docker network (QDRANT_URL=http://qdrant:6333), so the host mapping exists only for the local
+    # dashboard/debugging. The local container runs UNAUTHENTICATED, and it holds the RAG embeddings +
+    # PR context — never expose it beyond localhost without setting QDRANT_API_KEY (honored by
+    # qdrant-vectorize.ts) plus a firewall rule. SSH-forward the port for remote dashboard access. This
+    # matches the in-network-only posture of Prometheus/Loki/Alertmanager above.
     ports:
-      - "6333:6333"   # REST API + Web UI
-      - "6334:6334"   # gRPC
+      - "127.0.0.1:6333:6333"   # REST API + Web UI (localhost only)
+      - "127.0.0.1:6334:6334"   # gRPC (localhost only)
     volumes:
       - qdrant-data:/qdrant/storage
-    # Qdrant's minimal image has no curl/wget/nc — healthcheck omitted.
-    # The service is ready when the gittensory startup log shows {"event":"selfhost_vectorize","backend":"qdrant"}.
+    # The image is Debian (bash present) but ships no curl/wget/nc. bash's /dev/tcp pseudo-device speaks
+    # HTTP without an external binary, so we hit Qdrant's k8s-style /readyz probe (200 once it accepts
+    # traffic). This lets the app's depends_on gate on a serving Qdrant. /readyz is unauthenticated even
+    # when QDRANT_API_KEY is set, so no secret is needed here.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "200 OK" <&3'
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
 
   # ── Ollama (--profile ollama) ──────────────────────────────────────────────
   # After `docker compose --profile ollama up -d`, pull a model:
@@ -176,25 +220,42 @@ services:
         condition: service_healthy
 
   # ── Observability (--profile observability) ────────────────────────────────
-  # Prometheus scrapes /metrics; Grafana visualises it.
-  # Grafana UI: http://localhost:3000 (admin / admin — change on first login).
+  # Prometheus scrapes /metrics; Alertmanager routes alerts; Loki+Promtail collect logs;
+  # Grafana visualises metrics AND logs. Grafana UI: http://localhost:3000 (admin / $GRAFANA_ADMIN_PASSWORD).
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
     profiles: ["observability"]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
 
+  # Routes Prometheus alerts to your notification channel. Ships SILENT: alerts go to a
+  # null receiver until you fill in a receiver in alertmanager/alertmanager.yml.
+  alertmanager:
+    image: prom/alertmanager:latest
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on: [prometheus]
+    expose:
+      - "9093"   # in-network only; reach the UI/API via `docker compose port` or a tunnel
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+
   grafana:
     image: grafana/grafana:latest
     restart: unless-stopped
     profiles: ["observability"]
-    depends_on: [prometheus]
+    depends_on: [prometheus, loki]
     ports:
       - "3000:3000"
     volumes:
@@ -204,6 +265,37 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
       GF_USERS_ALLOW_SIGN_UP: "false"
+
+  # ── Log pipeline (--profile observability) ─────────────────────────────────
+  # Loki stores logs; Promtail discovers every container in this compose project via the
+  # Docker socket (read-only) and ships their logs to Loki. Browse in Grafana → Explore →
+  # Loki, e.g. {service="gittensory"} | json | level="error".
+  loki:
+    image: grafana/loki:latest
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    # No healthcheck: grafana/loki:latest is distroless (no shell/wget/curl), so an in-container probe
+    # can't run — a CMD-SHELL check would leave the container stuck "starting". Readiness is observable
+    # at GET /ready; Promtail retries/backs off until Loki accepts pushes and Grafana retries the
+    # datasource, so nothing depends on a Docker health gate here.
+
+  promtail:
+    image: grafana/promtail:latest
+    restart: unless-stopped
+    profiles: ["observability"]
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    depends_on: [loki]
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      # Read-only Docker socket — required for docker_sd_configs discovery. Promtail only
+      # reads container metadata + log files; the :ro mount blocks any writes to the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Persist read positions so restarts don't re-ship the whole log history.
+      - promtail-data:/tmp/positions
 
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
   # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no
@@ -253,12 +345,14 @@ services:
 volumes:
   gittensory-data:
   gittensory-pg:
-  gittensory-redis:
   qdrant-data:
   ollama-models:
   caddy-data:
   caddy-config:
   prometheus-data:
+  alertmanager-data:
   grafana-data:
+  loki-data:
+  promtail-data:
   tailscale-state:
   runner-work:

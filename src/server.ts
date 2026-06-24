@@ -17,7 +17,7 @@ import { credentialsToEnv, exchangeManifestCode, renderSetupPage } from "./selfh
 import { orbEnabled, exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
-import { gauge, incr, renderMetrics } from "./selfhost/metrics";
+import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
@@ -66,6 +66,30 @@ async function waitForPostgres(url: string, maxWaitMs = 30_000): Promise<void> {
       if (elapsed >= maxWaitMs) throw new Error(`Postgres not ready after ${maxWaitMs}ms (${attempt} attempts)`);
       const delay = Math.min(2000, 200 * attempt);
       console.log(JSON.stringify({ event: "selfhost_pg_wait", attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+/** Retry an async readiness operation with backoff until it succeeds (up to maxWaitMs). Prevents a
+ *  crash-restart loop when gittensory starts before a dependency (e.g. Qdrant) is accepting connections —
+ *  Qdrant's init is a single fetch with no retry, so a slow-starting --profile qdrant container would
+ *  otherwise take the whole process down. */
+async function retryUntilReady(name: string, op: () => Promise<void>, maxWaitMs = 30_000): Promise<void> {
+  const start = Date.now();
+  let attempt = 0;
+  while (true) {
+    try {
+      await op();
+      return;
+    } catch (error) {
+      attempt++;
+      const elapsed = Date.now() - start;
+      if (elapsed >= maxWaitMs) {
+        throw new Error(`${name} not ready after ${maxWaitMs}ms (${attempt} attempts): ${error instanceof Error ? error.message : "unknown error"}`);
+      }
+      const delay = Math.min(2000, 200 * attempt);
+      console.log(JSON.stringify({ event: "selfhost_dependency_wait", dependency: name, attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -159,7 +183,8 @@ async function main(): Promise<void> {
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
     const { createQdrantVectorize, initQdrantCollection } = await import("./selfhost/qdrant-vectorize");
-    await initQdrantCollection(process.env.QDRANT_URL);
+    // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
+    await retryUntilReady("qdrant", () => initQdrantCollection(process.env.QDRANT_URL as string));
     vectorizeOverride = createQdrantVectorize(process.env.QDRANT_URL);
     console.log(JSON.stringify({ event: "selfhost_vectorize", backend: "qdrant" }));
   }
@@ -185,11 +210,14 @@ async function main(): Promise<void> {
   for (const c of [
     "gittensory_jobs_enqueued_total", "gittensory_jobs_processed_total",
     "gittensory_jobs_failed_total", "gittensory_jobs_dead_total",
-    "gittensory_http_requests_total", "gittensory_webhook_dedup_total",
+    "gittensory_webhook_dedup_total",
     "gittensory_qdrant_queries_total", "gittensory_qdrant_upserts_total",
     "gittensory_orb_events_exported_total", "gittensory_orb_export_errors_total",
   ])
     incr(c, undefined, 0);
+  // Seed gittensory_http_requests_total per status class so the breakdown panel has every series from the
+  // first scrape (keeping the metric consistently labeled — never mix labeled and unlabeled samples).
+  for (const status of ["2xx", "3xx", "4xx", "5xx"]) incr("gittensory_http_requests_total", { status }, 0);
 
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void Promise.resolve(p).catch(() => undefined),
@@ -250,7 +278,13 @@ async function main(): Promise<void> {
             return new Response(`setup failed: ${error instanceof Error ? error.message : "error"}`, { status: 500 });
           }
         }
-        incr("gittensory_http_requests_total");
+        // Instrument real app traffic — status-class counter + latency histogram. (Infra endpoints
+        // /health /ready /metrics and the setup wizard already returned above and are not counted.)
+        const startedReq = Date.now();
+        const record = (status: number): void => {
+          incr("gittensory_http_requests_total", { status: `${Math.floor(status / 100)}xx` });
+          observe("gittensory_http_request_duration_seconds", (Date.now() - startedReq) / 1000);
+        };
         // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.
         // We mark only AFTER a successful response — failed/rejected webhooks must be retryable.
         const isWebhook = webhookCache && path === "/v1/github/webhook" && request.method === "POST";
@@ -259,6 +293,7 @@ async function main(): Promise<void> {
           const seen = await webhookCache!.get(`delivery:${deliveryId}`);
           if (seen) {
             incr("gittensory_webhook_dedup_total");
+            record(204);
             return new Response(null, { status: 204 });
           }
         }
@@ -267,6 +302,7 @@ async function main(): Promise<void> {
           // Best-effort — never block the response on a cache write failure
           void webhookCache!.set(`delivery:${deliveryId}`, "1", 300).catch(() => undefined);
         }
+        record(response.status);
         return response;
       },
       port,
@@ -291,7 +327,7 @@ async function main(): Promise<void> {
     const runExport = () =>
       exportOrbBatch(backend.db)
         .then((n) => { if (n > 0) console.log(JSON.stringify({ event: "selfhost_orb_export", exported: n })); })
-        .catch(() => undefined);
+        .catch((error) => console.error(JSON.stringify({ level: "error", event: "selfhost_orb_export_error", error: error instanceof Error ? error.message : "unknown error" })));
     void runExport(); // flush any pending events from a previous run at startup
     setInterval(runExport, 3_600_000); // then hourly
   }

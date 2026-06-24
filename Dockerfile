@@ -40,6 +40,9 @@ RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node
 EXPOSE 8787
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# Probe /ready (not /health): /health is a liveness stub that returns 200 even when the DB is down,
+# whereas /ready returns 503 until the DB answers and migrations are applied. start-period tolerates the
+# Postgres cold start (waitForPostgres blocks up to 30s before the HTTP server even binds).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "dist/server.mjs"]

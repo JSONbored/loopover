@@ -1,0 +1,122 @@
+# Alertmanager configuration for the gittensory self-host stack (#980 observability).
+# Schema: Alertmanager v0.27+ (UTF-8 matchers; `matchers:` as a list of strings).
+# Mounted at /etc/alertmanager/alertmanager.yml in the alertmanager container.
+#
+# OUT OF THE BOX this config is VALID and SILENT: every alert routes to a name-only
+# "null" receiver that discards notifications. Nothing pages you until you opt in by
+# uncommenting one of the example receivers below and pointing the route at it. This
+# means `docker compose --profile observability up -d` always comes up green.
+
+global:
+  # How long to wait before declaring a firing alert "resolved" once it stops arriving.
+  resolve_timeout: 5m
+
+  # ── SMTP defaults (only needed if you enable an email receiver below) ───────
+  # Fill these in and they become the defaults for every email_configs block, so you
+  # don't repeat them per-receiver. Leave commented if you don't use email.
+  # smtp_from: "alertmanager@example.com"
+  # smtp_smarthost: "smtp.example.com:587"
+  # smtp_auth_username: "alertmanager@example.com"
+  # smtp_auth_password: "CHANGEME"          # or smtp_auth_password_file: /etc/alertmanager/smtp_password
+  # smtp_require_tls: true
+
+  # ── Slack default webhook (only needed for the Slack receiver below) ────────
+  # Set this once and slack_configs can omit api_url. Prefer slack_api_url_file to keep
+  # the secret out of this file.
+  # slack_api_url: "https://hooks.slack.com/services/T000/B000/XXXX"
+  # slack_api_url_file: /etc/alertmanager/slack_url
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTING TREE
+# The root route catches every alert. With the default config it all flows to the
+# `null` receiver. Uncomment the child routes to split by severity once you've added
+# real receivers.
+# ─────────────────────────────────────────────────────────────────────────────
+route:
+  receiver: "null"               # default sink: discards alerts until you change it
+
+  # Group alerts that share these labels into a single notification.
+  group_by: ["alertname", "severity"]
+  group_wait: 30s                # wait this long to batch the first notification in a group
+  group_interval: 5m             # wait this long before sending an updated batch for a group
+  repeat_interval: 4h            # re-send an unresolved alert at most this often
+
+  # routes:
+  #   # Page-worthy: send critical alerts to the on-call integration.
+  #   - matchers:
+  #       - severity="critical"
+  #     receiver: "oncall-pager"
+  #     # Critical alerts shouldn't wait long to be grouped.
+  #     group_wait: 10s
+  #     repeat_interval: 1h
+  #     continue: true            # also let lower routes / inhibition see it
+  #
+  #   # Everything warning-level goes to a chat channel.
+  #   - matchers:
+  #       - severity="warning"
+  #     receiver: "team-slack"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RECEIVERS
+# A receiver with only a `name` (no integrations) is the canonical "null"/blackhole
+# receiver: valid, and it silently drops anything routed to it. Add an integration
+# block (slack_configs / email_configs / webhook_configs / pagerduty_configs / …) to a
+# receiver to make it notify, then point a route at it.
+# ─────────────────────────────────────────────────────────────────────────────
+receivers:
+  - name: "null"
+
+  # ── Slack ───────────────────────────────────────────────────────────────────
+  # Create an Incoming Webhook in Slack, then set api_url (or global.slack_api_url).
+  # - name: "team-slack"
+  #   slack_configs:
+  #     - api_url: "https://hooks.slack.com/services/T000/B000/XXXX"   # or omit if global.slack_api_url is set
+  #       channel: "#alerts"
+  #       send_resolved: true
+  #       title: '{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+  #       text: >-
+  #         {{ range .Alerts }}*{{ .Annotations.summary }}*
+  #         {{ .Annotations.description }}
+  #         _runbook:_ {{ .Annotations.runbook }}
+  #         {{ end }}
+
+  # ── Email ─────────────────────────────────────────────────────────────────────
+  # Requires the SMTP globals above (or per-receiver smarthost/auth_* fields).
+  # - name: "team-email"
+  #   email_configs:
+  #     - to: "oncall@example.com"
+  #       send_resolved: true
+  #       # from / smarthost / auth_username / auth_password inherit from global.smtp_* if set:
+  #       # from: "alertmanager@example.com"
+  #       # smarthost: "smtp.example.com:587"
+  #       # auth_username: "alertmanager@example.com"
+  #       # auth_password: "CHANGEME"
+
+  # ── Generic webhook (PagerDuty bridge, custom handler, etc.) ──────────────────
+  # POSTs the Alertmanager JSON payload to any HTTP endpoint.
+  # - name: "oncall-pager"
+  #   webhook_configs:
+  #     - url: "https://your-endpoint.example.com/alerts"
+  #       send_resolved: true
+  #       max_alerts: 0          # 0 = send all alerts in the group, no truncation
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INHIBITION RULES (v0.27+ matcher syntax)
+# Mute lower-severity noise while a higher-severity alert for the same scope is firing.
+# Uncomment once you have multiple severities routing — keeps a single incident from
+# fanning out into a wall of warnings.
+# ─────────────────────────────────────────────────────────────────────────────
+# inhibit_rules:
+#   # When a critical fires, silence warnings that share the same alertname.
+#   - source_matchers:
+#       - severity="critical"
+#     target_matchers:
+#       - severity="warning"
+#     equal: ["alertname"]
+#
+#   # When the whole target is down, silence its derivative warnings (5xx, latency, queue).
+#   - source_matchers:
+#       - alertname="GittensoryTargetDown"
+#     target_matchers:
+#       - severity="warning"
+#     equal: ["job"]

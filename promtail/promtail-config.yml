@@ -1,0 +1,76 @@
+# Promtail — scrapes the compose stack's Docker container logs and ships to Loki.
+# Verified against the Promtail config schema (Loki release-3.4.x docs; the Promtail
+# binary is in LTS and its config is stable against current Loki v3.7.x).
+#
+# docker_sd_configs talks to the Docker daemon over a READ-ONLY socket mount and
+# discovers every container in the compose project. We relabel each stream with the
+# compose service + container name, then parse our JSON log lines so operators can
+# filter by level and event.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  # Persisted on the promtail-data volume so restarts don't re-ship old logs.
+  filename: /tmp/positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Modest backoff/batching for a small host.
+    batchwait: 1s
+    batchsize: 1048576            # 1 MiB
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        # Only containers in THIS compose project (set automatically by compose).
+        # Avoids scraping unrelated containers on a shared host.
+        filters:
+          - name: label
+            values: ["com.docker.compose.project"]
+
+    relabel_configs:
+      # Compose service name -> `service` label (e.g. gittensory, prometheus, loki).
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "service"
+      # Compose project -> `compose_project` label.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "compose_project"
+      # Container name -> `container` label (strip the leading "/" Docker prepends).
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/?(.*)"
+        target_label: "container"
+      # stdout / stderr -> `stream` label.
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: "stream"
+      # Static job label so streams are easy to select: {job="docker"}.
+      - target_label: "job"
+        replacement: "docker"
+
+    pipeline_stages:
+      # gittensory logs are JSON lines; every line has an "event" field, and only
+      # error/warn lines set "level". Non-JSON lines (other images) fall through
+      # untouched because json.expressions on a non-JSON line yields empty values.
+      - json:
+          expressions:
+            level: level
+            event: event
+      # Default level to "info" when the field is absent (INFO lines omit it).
+      - template:
+          source: level
+          template: '{{ if .Value }}{{ .Value }}{{ else }}info{{ end }}'
+      # `level` is low-cardinality -> promote to an index label for fast filtering.
+      - labels:
+          level:
+      # `event` can be many distinct values -> keep it as structured metadata
+      # (queryable, no stream explosion). Requires allow_structured_metadata in Loki.
+      - structured_metadata:
+          event:

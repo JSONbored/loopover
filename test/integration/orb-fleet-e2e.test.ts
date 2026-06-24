@@ -66,6 +66,19 @@ async function seedDecidedPr(
   if (opts.reversal) await insert(`rev-${rowSeq++}`, opts.reversal, null, at(3));
 }
 
+// Forward-compat with the instance-registration gate (#1274): only registered instances count toward the
+// fleet. A no-op before that migration lands (the orb_instances table won't exist yet → the insert is ignored).
+async function registerInstance(db: D1Database, instanceId: string): Promise<void> {
+  try {
+    await db
+      .prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1) ON CONFLICT(instance_id) DO UPDATE SET registered=1`)
+      .bind(instanceId)
+      .run();
+  } catch {
+    // orb_instances doesn't exist until #1274's migration — before then, no registration is needed.
+  }
+}
+
 describe("Orb fleet pipeline end-to-end (review_audit → export → ingest → analytics)", () => {
   it("carries 5 clean merges through every stage into a 100%-precision fleet of one", async () => {
     const env = createTestEnv();
@@ -89,6 +102,7 @@ describe("Orb fleet pipeline end-to-end (review_audit → export → ingest → 
     expect(await handleOrbIngest(cap.body(), env.DB)).toEqual({ accepted: 5 });
 
     // Stage 3: analytics aggregates the instance — 5 decided ≥ MIN_DECIDED, all correct merges.
+    await registerInstance(env.DB, payload.instance_id);
     const fleet = await computeFleetAnalytics(env, { windowDays: 365 });
     expect(fleet.instanceCount).toBe(1);
     expect(fleet.fleet.mergePrecision).toBe(1);
@@ -108,6 +122,7 @@ describe("Orb fleet pipeline end-to-end (review_audit → export → ingest → 
 
     expect(await handleOrbIngest(cap.body(), env.DB)).toEqual({ accepted: 6 });
 
+    await registerInstance(env.DB, (JSON.parse(cap.body()) as { instance_id: string }).instance_id);
     const fleet = await computeFleetAnalytics(env, { windowDays: 365 });
     expect(fleet.instanceCount).toBe(1);
     expect(fleet.fleet.reversalRate).toBeCloseTo(1 / 6, 5);

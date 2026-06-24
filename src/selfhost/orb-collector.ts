@@ -1,120 +1,163 @@
-// Gittensory Orb (#1219) — local outcome-signal collector. Records gate verdict + final PR
-// outcome (merged/closed) for every PR the engine reviewed, enabling calibration of gate
-// thresholds and AI prompts from real-world feedback signals.
+// Gittensory Orb (#1255) — fleet calibration EXPORTER. Each self-hosted instance already records de-noised
+// ground truth in review_audit (gate_decision + pr_outcome + reversal_reopened/reversal_reverted) via the
+// engine's outcomes-wire. This ships an anonymized, reversal-aware signal UP to gittensory's central
+// collector so the gate can be calibrated across the whole self-host fleet.
 //
-// Collection is always local (DB only). Export to the central collector is opt-in:
-//   ORB_ENABLED=true          — activates collection (off by default)
-//   ORB_COLLECTOR_URL=<url>   — endpoint to export batches to (default: gittensory's hosted collector)
-//   ORB_AIR_GAP=true          — keep all events local, never send externally
-//   ORB_ANONYMIZE=true        — HMAC-hash repo/owner before export (default: true)
+//   ORB_ENABLED=true          — activates export (off by default)
+//   ORB_COLLECTOR_URL=<url>   — endpoint (default: gittensory's hosted collector)
+//   ORB_AIR_GAP=true          — keep everything local, never send externally
+//   ORB_ANONYMIZE=true        — HMAC-hash repo/PR before export (default: true)
 //
-// Nothing is ever sent without ORB_ENABLED=true. No diffs, no code, no comments, no user
-// identifiers — only aggregate outcome metadata (repo-hash, verdict, outcome, timing).
+// No diffs, no code, no comments, no logins, no commit SHAs — only verdict + outcome + reversal + a bucketed
+// reason category + cycle time, with repo/PR identifiers HMAC'd by THIS instance's own secret (the collector
+// holds no instance secret, so it can never de-anonymize).
 import { createHash, createHmac } from "node:crypto";
 import { incr } from "./metrics";
 
-export interface OrbEvent {
-  repo: string;
-  pr_number: number;
-  head_sha: string;
-  outcome: "merged" | "closed";
-  gate_verdict?: string;
-  time_to_close_ms?: number;
+/** One de-noised, resolved-PR row read from review_audit (the join below). */
+interface FleetRow {
+  project: string; // repo full name (review_audit.project)
+  target_id: string; // `repo#pr`
+  verdict: string | null; // gate_decision.decision: merge | close | hold
+  reasoncode: string | null; // gate_decision.summary (raw — bucketed before export)
+  decided_at: string; // gate_decision.created_at — non-null (NOT NULL column + inner join)
+  outcome: string; // pr_outcome.decision: merged | closed
+  outcome_at: string;
+  reverted: number; // 0|1
+  reopened: number; // 0|1
+  event_at: string; // max(outcome_at, latest reversal time) — the export watermark unit
 }
 
-interface OrbRow {
-  id: number;
-  repo: string;
-  pr_number: number;
-  head_sha: string;
-  outcome: string;
+interface FleetEvent {
+  repo_hash: string;
+  pr_hash: string;
   gate_verdict: string | null;
+  outcome: string;
+  reversal_flag: "none" | "reopened" | "reverted";
+  gate_reasoncode_bucket: string;
   time_to_close_ms: number | null;
-  created_at: string;
-  exported_at: string | null;
+  decision_timestamp: string | null;
+  outcome_timestamp: string;
 }
 
 interface OrbExportPayload {
   instance_id: string;
-  events: Array<{
-    repo_hash: string;
-    pr_hash: string;
-    outcome: string;
-    gate_verdict: string | null;
-    time_to_close_ms: number | null;
-    created_at: string;
-  }>;
+  events: FleetEvent[];
 }
 
-/** Stable instance identifier (hash of the Orb App ID — no PII). */
+/** Stable instance identifier (hash of the Orb/App ID — no PII). */
 function instanceId(): string {
-  return createHash("sha256").update(process.env.ORB_APP_ID ?? "unknown").digest("hex").slice(0, 16);
+  return createHash("sha256").update(process.env.ORB_APP_ID ?? process.env.GITHUB_APP_ID ?? "unknown").digest("hex").slice(0, 16);
 }
 
-/** HMAC a string with the webhook secret for anonymized export. */
+/** HMAC a string with the instance's own secret for anonymized export. */
 function hmacField(value: string, secret: string): string {
   return createHmac("sha256", secret).update(value).digest("hex").slice(0, 24);
 }
 
-/** Returns true only when Orb collection is explicitly enabled. */
+/** Map the gate's free-text reasonCode to a fixed, low-cardinality category — done at the source so the raw
+ *  (possibly repo-specific) reason string never leaves the instance. */
+export function bucketReasonCode(summary: string | null | undefined): string {
+  if (!summary) return "none";
+  const s = summary.toLowerCase();
+  if (s.includes("linked_issue") || s.includes("linked issue")) return "issue_policy";
+  if (s.includes("duplicate")) return "duplicate_risk";
+  if (s.includes("slop")) return "slop_advisory";
+  if (s.includes("ai_review") || s.includes("ai_consensus") || s.includes("consensus")) return "ai_quality";
+  if (s.includes("self_authored") || s.includes("author") || s.includes("maintainer_cut")) return "author_policy";
+  if (s.includes("ci_") || s.includes("ci state") || s.includes("ci passed")) return "ci_readiness";
+  return "other";
+}
+
+/** Returns true only when Orb export is explicitly enabled. */
 export function orbEnabled(): boolean {
   const v = (process.env.ORB_ENABLED ?? "").toLowerCase();
   return v === "true" || v === "1" || v === "yes";
 }
 
-/** Record a single outcome event in the local DB. No-op when ORB_ENABLED is false. */
-export async function recordOrbEvent(db: D1Database, event: OrbEvent): Promise<void> {
-  if (!orbEnabled()) return;
-  try {
-    await db
-      .prepare(
-        `INSERT OR IGNORE INTO orb_events (repo, pr_number, head_sha, outcome, gate_verdict, time_to_close_ms)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(event.repo, event.pr_number, event.head_sha, event.outcome, event.gate_verdict ?? null, event.time_to_close_ms ?? null)
-      .run();
-    incr("gittensory_orb_events_recorded_total");
-  } catch {
-    // best-effort — never let Orb collection crash job processing
-  }
+// Latest gate_decision + latest pr_outcome per target_id, plus any reversal — portable (window functions +
+// CASE, no SQLite-only bare-column-with-MAX) so it runs on the self-host SQLite OR Postgres backend.
+const FLEET_QUERY = `
+  WITH gd AS (
+    SELECT target_id, project, decision AS verdict, summary AS reasoncode, created_at AS decided_at,
+           ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
+    FROM review_audit
+    WHERE event_type = 'gate_decision' AND decision IS NOT NULL AND source = 'gittensory-native'
+  ),
+  po AS (
+    SELECT target_id, decision AS outcome, created_at AS outcome_at,
+           ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
+    FROM review_audit
+    WHERE event_type = 'pr_outcome' AND decision IS NOT NULL
+  ),
+  rev AS (
+    SELECT target_id,
+      MAX(CASE WHEN event_type = 'reversal_reverted' THEN 1 ELSE 0 END) AS reverted,
+      MAX(CASE WHEN event_type = 'reversal_reopened' THEN 1 ELSE 0 END) AS reopened,
+      MAX(created_at) AS rev_at
+    FROM review_audit
+    WHERE event_type IN ('reversal_reverted', 'reversal_reopened')
+    GROUP BY target_id
+  )
+  SELECT project, target_id, verdict, reasoncode, decided_at, outcome, outcome_at, reverted, reopened, event_at
+  FROM (
+    SELECT gd.project AS project, gd.target_id AS target_id, gd.verdict AS verdict, gd.reasoncode AS reasoncode,
+           gd.decided_at AS decided_at, po.outcome AS outcome, po.outcome_at AS outcome_at,
+           COALESCE(rev.reverted, 0) AS reverted, COALESCE(rev.reopened, 0) AS reopened,
+           CASE WHEN rev.rev_at IS NOT NULL AND rev.rev_at > po.outcome_at THEN rev.rev_at ELSE po.outcome_at END AS event_at
+    FROM gd
+    JOIN po ON gd.target_id = po.target_id
+    LEFT JOIN rev ON gd.target_id = rev.target_id
+    WHERE gd.rn = 1 AND po.rn = 1
+  ) AS resolved
+  WHERE event_at > ?
+  ORDER BY event_at
+  LIMIT ?`;
+
+/** ms between the gate decision and the resolution; null if implausible (NaN or negative). */
+function cycleTimeMs(decidedAt: string, outcomeAt: string): number | null {
+  const ms = new Date(outcomeAt).getTime() - new Date(decidedAt).getTime();
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
 }
 
 /**
- * Export pending Orb events to the central collector. Called periodically (e.g. hourly).
- * Reads up to `batchSize` unexported events, signs and POSTs them, marks them as exported.
- * Returns the number of events exported (0 if air-gap, disabled, or nothing pending).
+ * Export newly-resolved PR outcomes (since this instance's watermark) to the central collector. Reads from
+ * review_audit (de-noised, reversal-aware), anonymizes, signs, POSTs, then advances the cursor.
+ * Returns the number of events exported (0 if air-gap, disabled, or nothing new).
  */
-export async function exportOrbBatch(
-  db: D1Database,
-  batchSize = 200,
-  fetchFn: typeof fetch = fetch,
-): Promise<number> {
+export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: typeof fetch = fetch): Promise<number> {
   if (!orbEnabled()) return 0;
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
-  // gittensory's hosted collector (the deployed /v1/orb/ingest receiver). No shared secret is sent:
-  // the batch is anonymized (HMAC of each operator's OWN ORB_WEBHOOK_SECRET) and accepted as untrusted,
-  // rate-limited telemetry. Override only to point at your own self-hosted collector.
+  // gittensory's hosted collector. No shared secret is sent: repo/PR identifiers are HMAC'd with THIS
+  // instance's own ORB_WEBHOOK_SECRET, and the collector accepts the batch as untrusted, rate-limited telemetry.
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://gittensory-api.aethereal.dev/v1/orb/ingest";
   const secret = process.env.ORB_WEBHOOK_SECRET ?? "";
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
+  const instance = instanceId();
 
-  const { results } = await db
-    .prepare(`SELECT * FROM orb_events WHERE exported_at IS NULL ORDER BY id LIMIT ?`)
-    .bind(batchSize)
-    .all<OrbRow>();
+  // Read this instance's export watermark (resumes where the last run left off).
+  const cursorRow = await db
+    .prepare(`SELECT last_exported_at FROM orb_export_cursor WHERE instance_hash = ?`)
+    .bind(instance)
+    .first<{ last_exported_at: string }>();
+  const cursor = cursorRow?.last_exported_at ?? "2000-01-01T00:00:00Z";
 
+  const { results } = await db.prepare(FLEET_QUERY).bind(cursor, batchSize).all<FleetRow>();
   if (!results || results.length === 0) return 0;
 
   const payload: OrbExportPayload = {
-    instance_id: instanceId(),
+    instance_id: instance,
     events: results.map((r) => ({
-      repo_hash: anonymize ? hmacField(r.repo, secret) : r.repo,
-      pr_hash: anonymize ? hmacField(`${r.repo}#${r.pr_number}`, secret) : String(r.pr_number),
+      repo_hash: anonymize ? hmacField(r.project, secret) : r.project,
+      pr_hash: anonymize ? hmacField(r.target_id, secret) : r.target_id,
+      gate_verdict: r.verdict,
       outcome: r.outcome,
-      gate_verdict: r.gate_verdict,
-      time_to_close_ms: r.time_to_close_ms,
-      created_at: r.created_at,
+      reversal_flag: r.reverted ? "reverted" : r.reopened ? "reopened" : "none",
+      gate_reasoncode_bucket: bucketReasonCode(r.reasoncode),
+      time_to_close_ms: cycleTimeMs(r.decided_at, r.outcome_at),
+      decision_timestamp: r.decided_at,
+      outcome_timestamp: r.outcome_at,
     })),
   };
 
@@ -124,11 +167,7 @@ export async function exportOrbBatch(
   try {
     const res = await fetchFn(collectorUrl, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-orb-signature": `sha256=${signature}`,
-        "x-orb-instance": instanceId(),
-      },
+      headers: { "content-type": "application/json", "x-orb-signature": `sha256=${signature}`, "x-orb-instance": instance },
       body,
     });
     if (!res.ok) {
@@ -140,12 +179,13 @@ export async function exportOrbBatch(
     return 0;
   }
 
-  // Mark all exported events
-  const ids = results.map((r) => r.id);
-  const placeholders = ids.map(() => "?").join(",");
-  const now = new Date().toISOString();
-  await db.prepare(`UPDATE orb_events SET exported_at=? WHERE id IN (${placeholders})`).bind(now, ...ids).run();
+  // Advance the watermark to the newest event in this batch (rows are ordered by event_at ascending).
+  const newWatermark = results[results.length - 1]!.event_at;
+  await db
+    .prepare(`INSERT OR REPLACE INTO orb_export_cursor (instance_hash, last_exported_at, updated_at) VALUES (?, ?, ?)`)
+    .bind(instance, newWatermark, new Date().toISOString())
+    .run();
 
-  incr("gittensory_orb_events_exported_total", {}, ids.length);
-  return ids.length;
+  incr("gittensory_orb_events_exported_total", {}, results.length);
+  return results.length;
 }

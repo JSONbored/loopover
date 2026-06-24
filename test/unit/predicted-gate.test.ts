@@ -9,8 +9,8 @@ function openPr(number: number, title: string, linkedIssues: number[] = [], auth
   return { repoFullName: "acme/widgets", number, title, state: "open", authorLogin, linkedIssues, labels: [] };
 }
 
-function openIssue(number: number, title: string): IssueRecord {
-  return { repoFullName: "acme/widgets", number, title, state: "open", labels: [], linkedPrs: [], authorAssociation: null } as IssueRecord;
+function openIssue(number: number, title: string, authorLogin: string | null = null): IssueRecord {
+  return { repoFullName: "acme/widgets", number, title, state: "open", labels: [], linkedPrs: [], authorAssociation: null, authorLogin } as IssueRecord;
 }
 
 const BASE_INPUT: PredictedGateInput = {
@@ -66,6 +66,21 @@ describe("buildPredictedGateVerdict", () => {
     expect(advisory.blockers.some((b) => b.code === "missing_linked_issue")).toBe(false);
   });
 
+  it("predicts a BLOCK for a self-authored linked issue when gate.selfAuthoredLinkedIssue:block (#self-authored-parity)", () => {
+    // miner1 links issue #7 which miner1 also authored → self_authored_linked_issue (resolved from the snapshot).
+    const blocked = verdict({ gate: { selfAuthoredLinkedIssue: "block" }, issues: [openIssue(7, "Uploads should retry on 5xx", "miner1")] });
+    expect(blocked.conclusion).toBe("failure");
+    expect(blocked.blockers.some((b) => b.code === "self_authored_linked_issue")).toBe(true);
+
+    // Authored by someone else → no self-authored finding.
+    const otherAuthor = verdict({ gate: { selfAuthoredLinkedIssue: "block" }, issues: [openIssue(7, "Uploads should retry on 5xx", "reporter")] });
+    expect(otherAuthor.blockers.some((b) => b.code === "self_authored_linked_issue")).toBe(false);
+
+    // A linked issue absent from the snapshot resolves to a null author → no self-authored finding (fail-open).
+    const notInSnapshot = verdict({ gate: { selfAuthoredLinkedIssue: "block" }, input: { body: "Closes #99", linkedIssues: [99] }, issues: [] });
+    expect(notInSnapshot.blockers.some((b) => b.code === "self_authored_linked_issue")).toBe(false);
+  });
+
   it("uses linked issues inferred from the body for gate advisory parity", () => {
     const result = verdict({ gate: { linkedIssue: "block" }, input: { body: "Closes #7", linkedIssues: [] } });
     expect(result.conclusion).toBe("success");
@@ -98,6 +113,19 @@ describe("buildPredictedGateVerdict", () => {
     });
     expect(returning.conclusion).toBe("failure");
     expect(returning.blockers.some((b) => b.code === "duplicate_pr_risk")).toBe(true);
+  });
+
+  it("matches author history case-insensitively, like the live gate (#audit-§4)", () => {
+    // The merged PR's author is "MINER1" (different case from the contributor "miner1"). The predictor must
+    // count it as history — otherwise it would falsely predict newcomer grace (neutral) while the live gate fails.
+    const mixedCase = verdict({
+      gate: { duplicates: "block", firstTimeContributorGrace: true },
+      pullRequests: [
+        openPr(42, "Retry uploads on 5xx responses", [7], "someone-else"),
+        { ...openPr(9, "Earlier fix", [], "MINER1"), state: "merged", mergedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    });
+    expect(mixedCase.conclusion).toBe("failure");
   });
 
   it("denies first-contribution grace to a repeat offender via the closed-unmerged author-count path", () => {

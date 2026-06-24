@@ -2,11 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   computeAgentHealth,
   computeCalibration,
+  defaultOpsHealthDeps,
   handleInternalCalibration,
   handleInternalDecision,
   handleInternalStatus,
   type OpsAgentConfig,
 } from "../../src/review/ops";
+import { setGlobalAgentFrozen } from "../../src/db/repositories";
+import { createTestEnv } from "../helpers/d1";
+
+describe("defaultOpsHealthDeps.isFrozen — DB-backed global freeze (#audit-§5.2)", () => {
+  it("reports the live DB freeze state and fails open on a read error", async () => {
+    const env = createTestEnv();
+    expect(await defaultOpsHealthDeps.isFrozen(env, "owner/repo")).toBe(false); // default singleton frozen=0
+    await setGlobalAgentFrozen(env, true);
+    expect(await defaultOpsHealthDeps.isFrozen(env, "owner/repo")).toBe(true);
+    const broken = { ...env, DB: null } as unknown as Env;
+    expect(await defaultOpsHealthDeps.isFrozen(broken, "owner/repo")).toBe(false); // fail-open on a read error
+  });
+});
 
 // ── computeCalibration (ported from reviewbot test/calibration.test.ts) ──────────────────────────
 

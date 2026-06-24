@@ -71,8 +71,9 @@ export function defangReviewInput(input: SafetyReviewInput): {
  * (see rules/advisory.ts) so a leaked secret holds the PR. Only CONCRETE credential formats
  * ({@link HARD_SECRET_KINDS}) qualify — the weak `seed_or_mnemonic` / `bittensor_key` heuristics are ignored
  * here because they false-positive on legitimate config/workflow content (e.g. `coldkey:` / `hotkey =` lines
- * in *.toml, .github/workflows/**, or wrangler/workers config). Callers MUST gate this on
- * {@link isSafetyEnabled} — when OFF, no finding is produced so the advisory/gate is unchanged.
+ * in *.toml, .github/workflows/**, or wrangler/workers config). This is UNCONDITIONAL (#audit-3.4): a concrete,
+ * real-format committed credential is a leak on any repo, so the caller runs it regardless of the safety flag /
+ * review allowlist (unlike the prompt-injection defang, which stays flag-gated).
  */
 export function secretLeakFinding(diff: string): AdvisoryFinding | null {
   // Scan ONLY additions — the secrets THIS change introduces. A token on a removed/context line is not being

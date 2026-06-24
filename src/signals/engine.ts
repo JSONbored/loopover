@@ -4565,8 +4565,13 @@ function validationComponent(pr: PullRequestRecord, preflight: PreflightResult):
   if (preflight.status === "hold") {
     return { score: 5, evidence: "Cached preflight status is hold.", action: "Fix blocker." };
   }
-  if (missingTests && !explicitValidation) {
-    return { score: 10, evidence: "No cached test files or validation note found.", action: "Add validation note." };
+  if (missingTests) {
+    // A body validation note is an UNBACKED claim when no test files accompany the change. Cap it just above the
+    // no-signal floor so a one-line "tested" cannot lift readiness over a configured gate threshold on a
+    // zero-test PR — full credit is reserved for actual test evidence in the branch below. (#audit-2.3)
+    return explicitValidation
+      ? { score: 12, evidence: "PR body claims validation but no test files accompany the change.", action: "Add tests covering the change." }
+      : { score: 10, evidence: "No cached test files or validation note found.", action: "Add validation note." };
   }
   if (explicitValidation) {
     return { score: 25, evidence: "PR body includes validation/test evidence.", action: "No action." };

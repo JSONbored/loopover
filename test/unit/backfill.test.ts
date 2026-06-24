@@ -2800,6 +2800,96 @@ describe("GitHub backfill", () => {
       expect(aggregate.ciState).toBe("passed");
     });
 
+    it("fold-all: a failed check-runs fetch with an otherwise-green status reads PENDING, not passed (fail-closed)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        // Transient check-runs fetch failure → githubJsonWithHeaders throws → caught → check set unread.
+        if (url.includes("/check-runs?")) return new Response("upstream error", { status: 500 });
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "ci/green", state: "success" }] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      // Without the fail-closed degrade this would be "passed" (one green status, no failing) — the seam.
+      expect(aggregate.ciState).toBe("pending");
+      expect(aggregate.failingDetails).toEqual([]);
+    });
+
+    it("fold-all: a failed status fetch with an otherwise-green check-run reads PENDING, not passed (fail-closed)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success" }] });
+        if (url.includes("/status?")) return new Response("upstream error", { status: 500 });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("pending");
+    });
+
+    it("an observed required failure stays FAILED even when a later check-runs page fetch fails", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?") && url.includes("&page=1")) {
+          return Response.json(
+            { check_runs: [{ name: "build", status: "completed", conclusion: "failure", output: { title: "boom" } }] },
+            { headers: { link: '<https://api.github.com/repos/x/y/commits/abc/check-runs?page=2>; rel="next"' } },
+          );
+        }
+        if (url.includes("/check-runs?")) return new Response("upstream error", { status: 500 }); // page 2 fails → incomplete
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      // Incomplete visibility does NOT override an authoritative observed failure.
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "build" })]);
+    });
+
+    it("reports unverified when both CI sources succeed but return no checks at all", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("unverified");
+    });
+
+    it("treats a status response with no statuses field as empty (nullish-coalesce branch)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success" }] });
+        if (url.includes("/status?")) return Response.json({}); // no `statuses` key → exercises `?? []`
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("passed");
+    });
+
+    it("paginates commit-statuses so a failing status beyond page 1 is not silently dropped", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+        if (url.includes("/status?") && url.includes("&page=1")) {
+          return Response.json(
+            { statuses: [{ context: "ci/green", state: "success" }] },
+            { headers: { link: '<https://api.github.com/repos/x/y/commits/abc/status?page=2>; rel="next"' } },
+          );
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "ci/overflow", state: "failure", description: "page-2 failure" }] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "ci/overflow" })]);
+    });
+
   });
 
   describe("fetchRequiredStatusContexts", () => {

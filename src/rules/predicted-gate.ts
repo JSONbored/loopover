@@ -141,14 +141,23 @@ export function buildPredictedGateVerdict(args: {
   // LOSER, never the winner. So the predictor must keep showing the duplicate finding (the honest pre-submit
   // answer). Threading the flag here would let isDuplicateClusterWinner(0, …) treat #0 as the winner and
   // falsely suppress the block — a false-optimism regression. Do NOT add it without modeling #0 as the loser.
-  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue });
+  // Thread linked-issue authors from the issues snapshot so the predictor surfaces the self-authored-linked-issue
+  // finding too — evaluateGateCheck below already receives gate.selfAuthoredLinkedIssue, but without this finding it
+  // had nothing to act on, so a configured self-authored gate never showed in the preview. Offline path: resolved
+  // from the snapshot, never a live fetch. (#self-authored-parity)
+  const issueAuthorByNumber = new Map(issues.filter((issue) => issue.repoFullName === input.repoFullName).map((issue) => [issue.number, issue.authorLogin ?? null]));
+  const linkedIssueAuthorLogins = syntheticPr.linkedIssues.map((issueNumber) => issueAuthorByNumber.get(issueNumber) ?? null);
+  const advisory = buildPullRequestAdvisory(repo, syntheticPr, { otherOpenPullRequests: pullRequests, requireLinkedIssue, linkedIssueAuthorLogins });
 
   // Pack-aware (#693): under `oss-anti-slop` the gate blocks ANY author, so drop the confirmed-contributor
   // gate entirely (mirrors gateCheckPolicy). `gittensor` keeps it. Pack comes from the PUBLIC .gittensory.yml.
   const pack: GatePolicyPack = gate.pack ?? "gittensor";
   const effectiveConfirmedContributor = pack === "oss-anti-slop" ? undefined : args.confirmedContributor;
 
-  const authorHistory = pullRequests.filter((pr) => pr.repoFullName === input.repoFullName && pr.authorLogin === input.contributorLogin);
+  // Case-insensitive author match so the PREDICTOR agrees with the live gate (which matches case-insensitively);
+  // otherwise a contributor could see false first-time-grace optimism before a one-shot loss. (#audit-§4)
+  const contributorLoginLc = input.contributorLogin?.toLowerCase();
+  const authorHistory = pullRequests.filter((pr) => pr.repoFullName === input.repoFullName && pr.authorLogin?.toLowerCase() === contributorLoginLc);
 
   const evaluation = evaluateGateCheck(advisory, {
     linkedIssueGateMode: gate.linkedIssue ?? undefined,

@@ -36,6 +36,25 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
     getPullRequest(env, pending.repoFullName, pending.pullNumber),
     getInstallation(env, pending.installationId),
   ]);
+
+  // Re-validate the staged action against the LIVE head before executing. A staged merge records the reviewed
+  // head (expectedHeadSha); if the contributor force-pushed after staging, the live head has moved and replaying
+  // the action would act on un-reviewed code. Refuse, supersede the sticky row, and record it. This is the
+  // application-level fail-safe; the executor additionally pins the GitHub merge to the reviewed SHA as a backstop.
+  const stagedHead = pending.params.expectedHeadSha;
+  if (stagedHead && pr?.headSha && stagedHead !== pr.headSha) {
+    await setPendingAgentActionStatus(env, pending.id, { status: "rejected", decidedBy: input.decidedBy });
+    await recordAuditEvent(env, {
+      eventType: "agent.pending_action.superseded",
+      actor: input.decidedBy,
+      targetKey,
+      outcome: "denied",
+      detail: `superseded ${pending.actionClass}: staged head ${stagedHead.slice(0, 12)} no longer matches live head ${pr.headSha.slice(0, 12)} (force-push after staging)`,
+      metadata: { ...baseMetadata, stagedHeadSha: stagedHead, liveHeadSha: pr.headSha },
+    });
+    return { status: "rejected", action: { ...pending, status: "rejected", decidedBy: input.decidedBy }, executionOutcome: "head_moved" };
+  }
+
   const outcomes = await executeAgentMaintenanceActions(
     env,
     {

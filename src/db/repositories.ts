@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   advisories,
@@ -1936,6 +1936,27 @@ export async function getProductUsageRollupStatus(
   };
 }
 
+// Global agent kill-switch (#audit-§5.2). A DB-backed emergency brake an operator flips with one row (no
+// redeploy), complementing the env-var AGENT_ACTIONS_PAUSED hard backstop. Fail-OPEN on a read error (return
+// false): a transient D1 hiccup must not by itself halt the whole fleet, and the env var is the hard backstop.
+export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
+    return row?.frozen === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Flip the DB-backed global kill-switch (operator emergency brake; no redeploy required). */
+export async function setGlobalAgentFrozen(env: Env, frozen: boolean, updatedBy?: string | null): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO global_agent_controls (id, frozen, updated_at, updated_by) VALUES ('singleton', ?, CURRENT_TIMESTAMP, ?) ON CONFLICT(id) DO UPDATE SET frozen = excluded.frozen, updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+  )
+    .bind(frozen ? 1 : 0, updatedBy ?? null)
+    .run();
+}
+
 export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promise<void> {
   const db = getDb(env.DB);
   await db.insert(auditEvents).values({
@@ -2675,6 +2696,10 @@ export async function listOtherOpenPullRequests(env: Env, fullName: string, numb
     .select()
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open"), not(eq(pullRequests.number, number))))
+    // Order by ascending PR number so the 100-row cap always retains the LOWEST-numbered open siblings. The
+    // duplicate-winner adjudication elects the minimum open number as the winner, so an unordered LIMIT could
+    // drop the true winner on a repo with >100 open PRs and mis-elect a higher-numbered sibling. (#audit-3.9)
+    .orderBy(asc(pullRequests.number))
     .limit(100);
   return rows.map(toPullRequestRecordFromRow);
 }
@@ -3399,9 +3424,16 @@ export async function recordGateBlockOutcome(
     .values(values)
     .onConflictDoUpdate({
       target: [gateOutcomes.repoFullName, gateOutcomes.pullNumber],
-      // Refresh the codes/head/timestamp on a re-block; `overridden` is deliberately omitted so a true value
-      // is preserved.
-      set: { headSha: values.headSha, blockerCodesJson: values.blockerCodesJson, updatedAt: nowIso() },
+      // Refresh the codes/head/timestamp on a re-block. Preserve `overridden` ONLY when the head SHA is
+      // unchanged: a maintainer override applies to the exact commit it was granted on, so a NEW commit
+      // re-blocking must clear it — otherwise a one-time override would permanently disable the gate
+      // (and the draft-dodge auto-close) for every future push to the PR. (#audit-3.14)
+      set: {
+        headSha: values.headSha,
+        blockerCodesJson: values.blockerCodesJson,
+        updatedAt: nowIso(),
+        overridden: sql`CASE WHEN ${gateOutcomes.headSha} IS ${values.headSha} THEN ${gateOutcomes.overridden} ELSE 0 END`,
+      },
     });
 }
 

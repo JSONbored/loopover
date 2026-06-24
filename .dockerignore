@@ -1,0 +1,20 @@
+# Keep the build context lean — deps are installed fresh (npm ci) and the bundle is built in the image.
+node_modules
+**/node_modules
+dist
+dist-ssr
+.output
+.nitro
+.tanstack
+.wrangler
+.playwright-cli
+coverage
+.git
+.claude
+.DS_Store
+*.tsbuildinfo
+# Never ship secrets into the build context
+.env
+.env.*
+.dev.vars
+!.env.example

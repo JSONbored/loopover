@@ -202,13 +202,33 @@ async function lastBotActionWasClose(env: Env, targetKey: string): Promise<boole
   try {
     const row = await env.DB
       .prepare(
+        // The executor records performed and dry-run actions as outcome 'completed', with the real mode only in
+        // metadata. Exclude dry-run shadows so a "would close" cannot masquerade as an actual bot close.
+        // 'success' is only a legacy value. (#audit-reversal-reopened)
         `SELECT event_type FROM audit_events
-         WHERE target_key = ? AND event_type LIKE 'agent.action.%' AND outcome = 'success'
+         WHERE target_key = ? AND event_type LIKE 'agent.action.%' AND outcome IN ('success', 'completed')
+           AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
          ORDER BY created_at DESC LIMIT 1`,
       )
       .bind(targetKey)
       .first<{ event_type: string }>();
     return row?.event_type === "agent.action.close";
+  } catch {
+    return false;
+  }
+}
+
+/** True when our canonical ledger recorded PR #N as MERGED (a `pr_outcome`/decision=merged review_audit row —
+ *  the same store ops.ts reads for reversalRate). A "Reverts #N" PR only marks a reversal of an outcome WE
+ *  observed; otherwise an arbitrary "Reverts #N" in a contributor's merged PR would forge a reversal signal.
+ *  Fail-safe: a read error → false (record nothing rather than a false reversal). (#audit-3.2) */
+async function wasMergeRecorded(env: Env, targetId: string): Promise<boolean> {
+  try {
+    const row = await env.DB
+      .prepare(`SELECT 1 AS hit FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' AND decision = 'merged' LIMIT 1`)
+      .bind(targetId)
+      .first<{ hit: number }>();
+    return Boolean(row);
   } catch {
     return false;
   }
@@ -258,9 +278,13 @@ export async function recordReversalSignals(env: Env, eventName: string, payload
     const reverted = parseRevertedPrNumber(pr.body);
     if (!reverted) return;
     const revertedTargetKey = reviewAuditTargetId(repoFullName, reverted);
-    // The reverted PR (#N) had a recorded pr_outcome=merged only if it merged; the reversal_reverted row marks
-    // that merge as later undone so reversalRate/calibration reflect it. (Auto-revert — opening a revert PR — is
-    // a separate, larger feature and intentionally NOT wired here; this records the human-driven revert signal.)
+    // Corroborate before recording: only count a reversal of a merge WE actually observed (#audit-3.2). Without
+    // this, a contributor's legitimately-merged PR whose body cites an arbitrary "Reverts #N" would stamp a
+    // spurious reversal against PR #N, inflating reversalRate/calibration. Mirrors reviewbot's bot-merged guard.
+    if (!(await wasMergeRecorded(env, revertedTargetKey))) return;
+    // The reverted PR (#N) had a recorded pr_outcome=merged; the reversal_reverted row marks that merge as later
+    // undone so reversalRate/calibration reflect it. (Auto-revert — opening a revert PR — is a separate, larger
+    // feature and intentionally NOT wired here; this records the human-driven revert signal.)
     await appendReviewAudit(env, { project, targetId: revertedTargetKey, eventType: "reversal_reverted", summary: `Merged PR #${reverted} was reverted by #${pr.number}.` });
     await recordAuditEvent(env, {
       eventType: "reversal_reverted",

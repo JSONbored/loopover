@@ -1,0 +1,264 @@
+# One-command self-host for gittensory (#980): docker compose up --build
+#
+# SECRETS: copy .env.example → .env, fill in your GitHub App credentials and any optional secrets.
+# The file is gitignored. Every value below is a sample placeholder — never commit real secrets.
+#
+# PROFILES — activate optional services by passing --profile <name> (combine freely):
+#
+#   (none)                  SQLite single-node stack (default — no flags needed)
+#   --profile postgres      pgvector/pg16 shared database (multi-instance capable)
+#   --profile pgbouncer     PgBouncer connection pooler in front of Postgres
+#   --profile redis         Redis fixed-window rate limiter
+#   --profile ollama        Local Ollama AI backend
+#   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
+#   --profile caddy         Caddy HTTPS terminator with auto-TLS (set DOMAIN= in .env)
+#   --profile observability Prometheus + Grafana dashboards (pre-wired to /metrics)
+#   --profile tailscale     Tailscale sidecar — access the stack via your tailnet
+#   --profile runners       GitHub Actions self-hosted runner
+#
+# Examples:
+#   docker compose up --build                                    # SQLite, no AI
+#   docker compose --profile postgres --profile caddy up -d     # Postgres + HTTPS
+#   docker compose --profile observability up -d                 # add dashboards to anything
+#   docker compose --profile tailscale --profile runners up -d   # tailnet + CI runners
+
+services:
+
+  # ── Core app (always runs) ─────────────────────────────────────────────────
+  gittensory:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      # Remove this when using the caddy profile — Caddy becomes the public listener.
+      - "${PORT:-8787}:8787"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8787"
+      DATABASE_PATH: /data/gittensory.sqlite
+      # Uncomment the next two lines and activate --profile postgres to use Postgres:
+      # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@postgres:5432/gittensory
+      # PGVECTOR_ENABLED: "true"
+      # With --profile pgbouncer, route through the pooler instead of postgres directly:
+      # DATABASE_URL: postgres://gittensory:${POSTGRES_PASSWORD:-CHANGEME}@pgbouncer:5432/gittensory
+      # Uncomment for Redis rate limiting (--profile redis):
+      # REDIS_URL: redis://redis:6379
+      # Uncomment for Ollama AI (--profile ollama):
+      # AI_PROVIDER: ollama
+      # AI_BASE_URL: http://ollama:11434/v1
+    volumes:
+      - gittensory-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # ── Postgres (--profile postgres | --profile pgbouncer) ───────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    profiles: ["postgres", "pgbouncer"]
+    environment:
+      POSTGRES_USER: gittensory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGEME}
+      POSTGRES_DB: gittensory
+    volumes:
+      - gittensory-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gittensory"]
+      interval: 10s
+      retries: 5
+
+  # ── PgBouncer (--profile pgbouncer) ───────────────────────────────────────
+  # Transaction-mode pooler — allows hundreds of app clients with a small PG connection cap.
+  # Set DATABASE_URL in gittensory to: postgres://gittensory:<pw>@pgbouncer:5432/gittensory
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    profiles: ["pgbouncer"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: gittensory
+      DB_USER: gittensory
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-CHANGEME}
+      LISTEN_PORT: "5432"
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+      AUTH_TYPE: md5
+
+  # ── Redis (--profile redis) ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: ["redis"]
+    volumes:
+      - gittensory-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  # ── Qdrant (--profile qdrant) ─────────────────────────────────────────────
+  # Dedicated vector database for RAG — replaces the built-in sqlite-vec / pgvector when
+  # QDRANT_URL=http://qdrant:6333 is set. Scales to millions of vectors with ANN search.
+  # REST API: http://localhost:6333  gRPC: localhost:6334  Dashboard: http://localhost:6333/dashboard
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    profiles: ["qdrant"]
+    ports:
+      - "6333:6333"   # REST API + Web UI
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    # Qdrant's minimal image has no curl/wget/nc — healthcheck omitted.
+    # The service is ready when the gittensory startup log shows {"event":"selfhost_vectorize","backend":"qdrant"}.
+
+  # ── Ollama (--profile ollama) ──────────────────────────────────────────────
+  # After `docker compose --profile ollama up -d`, pull a model:
+  #   docker compose exec ollama ollama pull llama3.2
+  # Then set AI_PROVIDER=ollama and AI_BASE_URL=http://ollama:11434/v1 in .env.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: ["ollama"]
+    volumes:
+      - ollama-models:/root/.ollama
+
+  # ── Litestream (--profile litestream) ─────────────────────────────────────
+  # Continuous WAL backup of the SQLite DB to S3/B2/R2. Copy litestream.yml.example
+  # → litestream.yml and fill in your bucket. Set LITESTREAM_* secrets in .env.
+  litestream:
+    image: litestream/litestream:latest
+    restart: unless-stopped
+    profiles: ["litestream"]
+    command: replicate
+    depends_on:
+      gittensory:
+        condition: service_healthy
+    volumes:
+      - gittensory-data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+    environment:
+      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID}
+      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY}
+      LITESTREAM_ENDPOINT: ${LITESTREAM_ENDPOINT:-}
+      LITESTREAM_REGION: ${LITESTREAM_REGION:-us-east-1}
+
+  # ── Caddy (--profile caddy) ────────────────────────────────────────────────
+  # Auto-TLS via Let's Encrypt. Set DOMAIN=reviews.yourcompany.com in .env, then
+  # remove the plain `ports:` entry from the gittensory service above.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["caddy"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 QUIC
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    depends_on:
+      gittensory:
+        condition: service_healthy
+
+  # ── Observability (--profile observability) ────────────────────────────────
+  # Prometheus scrapes /metrics; Grafana visualises it.
+  # Grafana UI: http://localhost:3000 (admin / admin — change on first login).
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    profiles: ["observability"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on: [prometheus]
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+
+  # ── Tailscale (--profile tailscale) ───────────────────────────────────────
+  # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no
+  # public ports exposed. Generate an auth key at tailscale.com/settings/keys and
+  # set TS_AUTHKEY= in .env. The gittensory service is reachable at the tailnet IP on port 8787.
+  tailscale:
+    image: ghcr.io/tailscale/tailscale:stable
+    restart: unless-stopped
+    profiles: ["tailscale"]
+    hostname: gittensory
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    network_mode: host   # Tailscale needs host networking to advertise the host's address
+
+  # ── Self-hosted GitHub Actions runner (--profile runners) ─────────────────
+  # Runs `runs-on: self-hosted` jobs on this machine. Set RUNNER_TOKEN= (or ACCESS_TOKEN=)
+  # and RUNNER_REPO_URL= (e.g. https://github.com/your-org/your-repo) in .env.
+  # Get a token at: https://github.com/<owner>/<repo>/settings/actions/runners/new
+  runner:
+    # Pin to a specific version tag — `latest` is mutable. Find a digest via:
+    # docker pull myoung34/github-runner:ubuntu-22.04 && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-22.04
+    image: myoung34/github-runner:ubuntu-22.04
+    restart: unless-stopped
+    profiles: ["runners"]
+    environment:
+      RUNNER_SCOPE: ${RUNNER_SCOPE:-repo}
+      REPO_URL: ${RUNNER_REPO_URL}
+      RUNNER_TOKEN: ${RUNNER_TOKEN}
+      ACCESS_TOKEN: ${RUNNER_ACCESS_TOKEN:-}
+      RUNNER_NAME: ${RUNNER_NAME:-gittensory-runner}
+      LABELS: ${RUNNER_LABELS:-self-hosted,linux,x64}
+      RUNNER_WORKDIR: /tmp/runner
+      # Docker builds are disabled by default. To enable DinD (Docker-in-Docker) for workflows that
+      # need `docker build/push`, add a `dind` sidecar service and set DOCKER_HOST here. Mounting
+      # /var/run/docker.sock grants container-escape risk and is intentionally omitted.
+    volumes:
+      - runner-work:/tmp/runner
+
+volumes:
+  gittensory-data:
+  gittensory-pg:
+  gittensory-redis:
+  qdrant-data:
+  ollama-models:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:
+  tailscale-state:
+  runner-work:

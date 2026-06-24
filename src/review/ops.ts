@@ -155,7 +155,16 @@ export interface OpsHealthDeps {
 
 export const defaultOpsHealthDeps: OpsHealthDeps = {
   validateAgentConfig: () => [],
-  isFrozen: async () => false,
+  // The DB-backed global kill-switch (#audit-§5.2): /status now reports the REAL freeze state instead of a
+  // hardcoded false. Raw SQL keeps this module self-contained; fail-open on a read error.
+  isFrozen: async (env) => {
+    try {
+      const row = await env.DB.prepare("SELECT frozen FROM global_agent_controls WHERE id = 'singleton'").first<{ frozen: number }>();
+      return row?.frozen === 1;
+    } catch {
+      return false;
+    }
+  },
   isHoldOnly: async () => false,
 };
 

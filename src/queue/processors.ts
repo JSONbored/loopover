@@ -43,6 +43,7 @@ import {
   recordAuditEvent,
   recordGateBlockOutcome,
   getGateBlockOutcome,
+  isGlobalAgentFrozen,
   markGateOutcomeOverridden,
   recordProductUsageEvent,
   persistSignalSnapshot,
@@ -67,6 +68,7 @@ import {
   backfillRepositorySegment,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
+  fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
@@ -106,7 +108,7 @@ import {
   evidenceGraphTouchedRepoFullNames,
 } from "../services/contributor-evidence-graph";
 import { executeAgentRun, explainBlockersWithAgent, planNextWork, preflightBranchWithAgent, preparePrPacketWithAgent } from "../services/agent-orchestrator";
-import { isAuthorizedGitHubSessionLogin } from "../auth/security";
+import { isAuthorizedGitHubSessionLogin, parseGitHubLoginList } from "../auth/security";
 import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection } from "../settings/command-authorization";
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
@@ -172,7 +174,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
-import { isSafetyEnabled, secretLeakFinding } from "../review/safety";
+import { secretLeakFinding } from "../review/safety";
 import { buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
@@ -533,7 +535,7 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
   // Defensive: a repo can lose its acting autonomy between fan-out and processing.
   if (!isAgentConfigured(settings.autonomy)) return;
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), // env brake OR DB kill-switch (#audit-§5.2)
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -559,7 +561,10 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
   const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
   for (const pr of candidates) {
     const others = openPullRequests.filter((other) => other.number !== pr.number);
-    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: others, requireLinkedIssue, duplicateWinnerEnabled });
+    // Thread linked-issue authors so the re-gate sweep applies the self-authored-linked-issue block too — without
+    // this a self-authored PR re-gated by the sweep escapes a block the main webhook path applies. (#self-authored-parity)
+    const linkedIssueAuthorLogins = await resolveLinkedIssueAuthorLogins(env, sweepInstallationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block");
+    const advisory = buildPullRequestAdvisory(repo, pr, { otherOpenPullRequests: others, requireLinkedIssue, duplicateWinnerEnabled, linkedIssueAuthorLogins });
     const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
     verdicts[String(pr.number)] = gate.conclusion;
     if (gate.conclusion === "failure" || gate.conclusion === "action_required") flaggedPulls.push(pr.number);
@@ -812,7 +817,7 @@ async function reReviewStoredPullRequest(
   if (!(await prReadyForReview(env, installationId, repoFullName, pr, settings, deliveryId))) return;
   const [otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
     listOtherOpenPullRequests(env, repoFullName, prNumber),
-    resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
+    resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
   ]);
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
@@ -1569,11 +1574,12 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       if (payload.action === "reopened" && installationId && (await maybeRecloseDisallowedReopen(env, deliveryId, installationId, repoFullName, pr, payload).catch(() => false))) {
         return;
       }
-      const [repo, settings, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
+      // Resolve settings first so the self-authored live-fetch fallback only fires when its gate is in block mode.
+      const settings = await resolveRepositorySettings(env, repoFullName);
+      const [repo, otherOpenPullRequests, linkedIssueAuthorLogins] = await Promise.all([
         getRepository(env, repoFullName),
-        resolveRepositorySettings(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
-        resolveLinkedIssueAuthorLogins(env, repoFullName, pr.linkedIssues),
+        resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
       ]);
       const advisory = buildPullRequestAdvisory(repo, pr, {
         otherOpenPullRequests,
@@ -1600,23 +1606,43 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
         const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
         const authorIsOwner = (pr.authorLogin ?? "").toLowerCase() === repoOwner && repoOwner.length > 0;
         if (block && block.headSha === pr.headSha && !block.overridden && !authorIsOwner) {
-          const codes = block.blockerCodes.join(", ");
-          await createIssueComment(
-            env,
-            installationId,
-            repoFullName,
-            pr.number,
-            `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
-          ).catch(() => undefined);
-          await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
-          await recordAuditEvent(env, {
-            eventType: "github_app.draft_dodge_closed",
-            actor: "gittensory",
-            targetKey: `${repoFullName}#${pr.number}`,
-            outcome: "completed",
-            detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
-            metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
-          }).catch(() => undefined);
+          // Respect the agent action mode (#killswitch-gap): the outer guard already excludes a per-repo pause,
+          // but this close path must also honor the global freeze and dry-run — so a freeze is a COMPLETE stop
+          // and a dry-run records the would-be close without touching GitHub.
+          const draftMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+          if (draftMode === "live") {
+            const codes = block.blockerCodes.join(", ");
+            await createIssueComment(
+              env,
+              installationId,
+              repoFullName,
+              pr.number,
+              `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
+            ).catch(() => undefined);
+            await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
+            await recordAuditEvent(env, {
+              eventType: "github_app.draft_dodge_closed",
+              actor: "gittensory",
+              targetKey: `${repoFullName}#${pr.number}`,
+              outcome: "completed",
+              detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
+              metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
+            }).catch(() => undefined);
+          } else if (draftMode === "dry_run") {
+            /* v8 ignore next -- a deleted-account PR yields a null author login; the fallback is defensive */
+            const draftAuthor = pr.authorLogin ?? "unknown";
+            await recordAuditEvent(env, {
+              eventType: "github_app.draft_dodge_closed",
+              actor: "gittensory",
+              targetKey: `${repoFullName}#${pr.number}`,
+              outcome: "completed",
+              detail: `dry-run: would close draft-dodge attempt by ${draftAuthor} — prior gate failure on headSha ${pr.headSha} stands`,
+              metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes, mode: "dry_run" },
+            }).catch(
+              /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+              () => undefined,
+            );
+          }
         }
       }
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
@@ -1752,14 +1778,25 @@ export function shouldCollectLinkedIssueEvidence(settings: Pick<RepositorySettin
   return settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off" || mergeReadinessGateEnabled(settings);
 }
 
-// Fetch the author login for each linked issue number from the local DB. Returns a parallel array of
-// logins (null when the issue is not in the DB or has no recorded author). Errors are swallowed per-issue
-// so a DB hiccup on one issue never prevents the advisory from running — the detection is fail-open
-// (an unknown author login never triggers the self_authored_linked_issue finding).
-export async function resolveLinkedIssueAuthorLogins(env: Env, repoFullName: string, linkedIssues: number[]): Promise<(string | null)[]> {
+// Resolve the author login for each linked issue number. Prefers the local DB cache; on a cache MISS (issue not
+// cached, or no recorded author), falls back to a LIVE GitHub fetch so a stale/missing cache can't silently void
+// the self_authored_linked_issue anti-farming detection (#audit-3.11). The live token is minted lazily — only
+// when at least one issue misses the cache — so the common (fully-cached) path adds no fetch. Each lookup is
+// fail-safe: a per-issue error yields null (the detection stays fail-open only on a genuine inability to resolve).
+export async function resolveLinkedIssueAuthorLogins(env: Env, installationId: number | null | undefined, repoFullName: string, linkedIssues: number[], liveFallback = false): Promise<(string | null)[]> {
   if (linkedIssues.length === 0) return [];
-  const results = await Promise.all(linkedIssues.map((n) => getIssue(env, repoFullName, n).then((i) => i?.authorLogin ?? null).catch(() => null)));
-  return results;
+  const cached = await Promise.all(linkedIssues.map((n) => getIssue(env, repoFullName, n).then((i) => i?.authorLogin ?? null).catch(() => null)));
+  // The live-fetch fallback only fires when the self-authored gate can actually BLOCK (caller passes
+  // liveFallback) — so quiet/advisory paths add no API calls, and we pay the fetch only where a cache miss
+  // could otherwise void a hard block.
+  if (!liveFallback || !installationId || cached.every((login) => login != null)) return cached;
+  const token = await createInstallationToken(env, installationId).catch(() => undefined);
+  if (!token) return cached;
+  return Promise.all(
+    cached.map((login, index) =>
+      login != null ? Promise.resolve(login) : fetchLinkedIssueFacts(env, repoFullName, linkedIssues[index]!, token).then((facts) => facts?.authorLogin ?? null).catch(() => null),
+    ),
+  );
 }
 
 export function shouldCollectSlopEvidence(settings: Pick<RepositorySettings, "slopGateMode" | "mergeReadinessGateMode">): boolean {
@@ -2030,10 +2067,10 @@ export async function maybeAddSecretLeakFinding(
     files: Awaited<ReturnType<typeof listPullRequestFiles>> | null;
   },
 ): Promise<void> {
-  // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the secret-leak scan activates for THIS repo only when
-  // it is allowlisted AND the global safety flag is ON. Empty/unset allowlist → no-op for every repo (the
-  // advisory is byte-identical to today) regardless of GITTENSORY_REVIEW_SAFETY.
-  if (!isSafetyEnabled(env) || !isConvergenceRepoAllowed(env, args.repoFullName)) return;
+  // UNCONDITIONAL (#audit-3.4): a CONCRETE, real-format committed credential (github_token, aws_access_key, …)
+  // is unambiguously a leak regardless of which repo it lands in, so the secret-leak hard block runs for every
+  // repo — NOT only the safety-flag-on / allowlisted ones. secretLeakFinding already filters to HARD_SECRET_KINDS
+  // (the weak heuristics that false-positive on config/workflow content are dropped), so this never mis-fires.
   try {
     const files = args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pullNumber));
     const finding = secretLeakFinding(buildSecretScanDiff(files));
@@ -2408,17 +2445,14 @@ async function maybePublishPrPublicSurface(
       });
     }
 
-    // Safety secrets-scan (convergence, flag-gated by GITTENSORY_REVIEW_SAFETY). Scans the diff and, on a hit,
-    // appends a critical `secret_leak` blocker BEFORE the gate evaluates. When the scan will actually run
-    // (safety flag ON + repo allowlisted), pass the shared resolved files so it scans the REAL diff (FIX B);
-    // otherwise pass the already-loaded files (or null) and let the scan early-return. Flag-OFF (default) is an
-    // immediate no-op → the advisory/gate is byte-identical.
-    const safetyWillRun = isSafetyEnabled(env) && isConvergenceRepoAllowed(env, repoFullName);
+    // Secrets-scan (#audit-3.4): always scans the REAL resolved diff and, on a CONCRETE credential hit, appends a
+    // critical `secret_leak` hard blocker BEFORE the gate evaluates — unconditionally, since a committed token is
+    // a leak on any repo. getReviewFiles() is memoized, so this reuses the already-loaded diff when present.
     await maybeAddSecretLeakFinding(env, {
       advisory,
       repoFullName,
       pullNumber: pr.number,
-      files: safetyWillRun ? await getReviewFiles() : reviewFiles,
+      files: await getReviewFiles(),
     });
 
     // First-time-contributor grace (#552): compute the author's complete per-repo PR history
@@ -3094,17 +3128,21 @@ async function authorizePrActionActor(args: {
 
 // #824 the common "load the PR's repo context + build its advisory" step every authorized action command runs
 // before its mutation. Identical across gate-override and the PR-panel retrigger.
-async function buildAuthorizedPrActionAdvisory(
+export async function buildAuthorizedPrActionAdvisory(
   env: Env,
   repoFullName: string,
   pr: PullRequestRecord,
   settings: RepositorySettings,
 ): Promise<{ repo: Awaited<ReturnType<typeof getRepository>>; advisory: ReturnType<typeof buildPullRequestAdvisory> }> {
   const [repo, otherOpenPullRequests] = await Promise.all([getRepository(env, repoFullName), listOtherOpenPullRequests(env, repoFullName, pr.number)]);
+  // Mirror the main webhook path: thread linked-issue authors so an authorized PR action (gate-override / panel
+  // retrigger) honors the self-authored-linked-issue block too. installationId comes from the repo record. (#self-authored-parity)
+  const linkedIssueAuthorLogins = await resolveLinkedIssueAuthorLogins(env, repo?.installationId ?? null, repoFullName, pr.linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block");
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+    linkedIssueAuthorLogins,
   });
   return { repo, advisory };
 }
@@ -3167,17 +3205,43 @@ async function maybeRecloseDisallowedReopen(
   const botLogin = `${env.GITHUB_APP_SLUG}[bot]`.toLowerCase();
   if (reopener === botLogin) return false; // the bot's own nightly re-review reopen is allowed
   const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
-  const admins = (env.ADMIN_GITHUB_LOGINS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const admins = parseGitHubLoginList(env.ADMIN_GITHUB_LOGINS); // unified parse: whitespace OR comma (#audit-3.13)
   const hasMaintainerPermission = async (login: string): Promise<boolean> => {
-    if (login === repoOwner || admins.includes(login)) return true;
+    if (login === repoOwner || admins.has(login)) return true;
     const permission = await getRepositoryCollaboratorPermission(env, installationId, repoFullName, login).catch(() => null);
     return permission === "admin" || permission === "maintain" || permission === "write";
   };
   if (await hasMaintainerPermission(reopener)) return false; // owner / admin / write collaborators may reopen
   // A non-maintainer reopened: re-close ONLY if gittensory or a maintainer closed it (one-shot). A contributor
   // reopening a PR they closed themselves is allowed (fail-open on an unknown closer).
-  const closer = (await getLastCloserLogin(env, installationId, repoFullName, pr.number))?.toLowerCase() ?? null;
-  if (!closer || !(closer === botLogin || (await hasMaintainerPermission(closer)))) return false;
+  const closerResult = await getLastCloserLogin(env, installationId, repoFullName, pr.number);
+  const closer = closerResult.login?.toLowerCase() ?? null;
+  const closerIsBotOrMaintainer = closer != null && (closer === botLogin || (await hasMaintainerPermission(closer)));
+  // #audit-2.4: getLastCloserLogin inspects only a bounded newest-events window, so a contributor who appends
+  // >1000 timeline events can push the real close out of view → null closer → bypass. When we could NOT inspect
+  // the whole timeline AND found no qualifying closer, fail CLOSED — a one-shot close stands. A genuine
+  // self-close sits at the timeline end and is found in-window, so legitimate self-close reopens stay allowed.
+  const windowEvasionSuspected = closer == null && !closerResult.coveredAllPages;
+  if (!closerIsBotOrMaintainer && !windowEvasionSuspected) return false;
+  // Respect the agent action mode like every other write action (#killswitch-gap): a paused/frozen repo must
+  // NOT touch GitHub, and dry-run records the would-be re-close without acting — so a dry-run is truly inert and
+  // the global kill-switch is a COMPLETE stop. This close path previously bypassed pause/freeze/dry-run entirely.
+  const reopenSettings = await resolveRepositorySettings(env, repoFullName);
+  const reopenMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: reopenSettings.agentPaused, agentDryRun: reopenSettings.agentDryRun });
+  if (reopenMode !== "live") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: reopenMode === "dry_run" ? "completed" : "denied",
+      detail: `${reopenMode === "dry_run" ? "dry-run: would re-close" : `skipped (agent ${reopenMode}): would re-close`} a disallowed reopen by ${reopener}`,
+      metadata: { deliveryId, repoFullName, mode: reopenMode },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+      () => undefined,
+    );
+    return true; // handled (decision made); never falls through to act on a stood-down repo
+  }
   await createIssueComment(
     env,
     installationId,
@@ -3191,7 +3255,7 @@ async function maybeRecloseDisallowedReopen(
     actor: "gittensory",
     targetKey: `${repoFullName}#${pr.number}`,
     outcome: "completed",
-    detail: `re-closed a disallowed reopen by ${payload.sender?.login ?? reopener} (originally closed by ${closer}) — one-shot; resubmit a new PR`,
+    detail: `re-closed a disallowed reopen by ${reopener} (originally closed by ${closer ?? "Gittensory (close beyond the inspected event window)"}) — one-shot; resubmit a new PR`,
     metadata: { deliveryId, repoFullName },
   }).catch(() => undefined);
   return true;

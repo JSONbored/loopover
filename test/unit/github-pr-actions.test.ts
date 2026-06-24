@@ -106,7 +106,7 @@ describe("GitHub PR action primitives (#778)", () => {
       return new Response("unexpected", { status: 500 });
     });
 
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 17)).resolves.toBe("maintainer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 17)).resolves.toEqual({ login: "maintainer", coveredAllPages: true });
     expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=1"))).toBe(true);
     expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=2"))).toBe(true);
   });
@@ -116,7 +116,7 @@ describe("GitHub PR action primitives (#778)", () => {
       if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
       throw new Error("network failure");
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 18)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 18)).resolves.toEqual({ login: null, coveredAllPages: false });
   });
 
   it("records null lastCloser when the closed event has a null actor", async () => {
@@ -125,7 +125,7 @@ describe("GitHub PR action primitives (#778)", () => {
       if (input.toString().includes("/issues/19/events")) return Response.json([{ event: "closed", actor: null }]);
       return new Response("not found", { status: 404 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 19)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 19)).resolves.toEqual({ login: null, coveredAllPages: true });
   });
 
   it("reads the newest bounded event pages instead of the oldest prefix", async () => {
@@ -148,7 +148,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 20)).resolves.toBe("maintainer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 20)).resolves.toEqual({ login: "maintainer", coveredAllPages: false });
     expect(fetchedPages).toEqual([1, 12, 11]);
     expect(fetchedPages).not.toContain(2);
   });
@@ -166,7 +166,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 21)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 21)).resolves.toEqual({ login: null, coveredAllPages: false });
     expect(fetchedPages).toEqual([1, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
   });
 
@@ -184,23 +184,62 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 22)).resolves.toBe("page1-closer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 22)).resolves.toEqual({ login: "page1-closer", coveredAllPages: true });
   });
 
-  it("treats a link header without rel=last as a single-page result (issueEventsLastPage FALSE branch)", async () => {
-    // Link header present but only contains rel="next" — no rel="last" match → lastPage stays 1
-    // → firstEvents from page 1 is returned directly without a second request.
+  it("follows rel=next forward when GitHub omits rel=last, finding the later maintainer close (#audit-rel-last)", async () => {
+    // GitHub paginated WITHOUT rel="last" (only rel="next"). Trusting page 1 alone would surface the early
+    // contributor close and miss the later maintainer close on page 2 — a window-evasion fail-OPEN. The forward
+    // scan follows rel="next" to the tail (page 3, no Link) and reports the most recent close.
+    const fetchedPages: number[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       if (url.includes("/issues/23/events")) {
-        return Response.json([{ event: "closed", actor: { login: "solo-closer" } }], {
-          headers: { link: '<https://api.github.test/issues/23/events?per_page=100&page=2>; rel="next"' },
-        });
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        fetchedPages.push(page);
+        if (page === 1) return Response.json([{ event: "closed", actor: { login: "early-contributor" } }], { headers: { link: '<https://api.github.test/issues/23/events?per_page=100&page=2>; rel="next"' } });
+        if (page === 2) return Response.json([{ event: "closed", actor: { login: "maintainer" } }], { headers: { link: '<https://api.github.test/issues/23/events?per_page=100&page=3>; rel="next"' } });
+        return Response.json([{ event: "labeled" }]); // page 3: the tail (no Link header)
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 23)).resolves.toBe("solo-closer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 23)).resolves.toEqual({ login: "maintainer", coveredAllPages: true });
+    expect(fetchedPages).toEqual([1, 2, 3]);
+  });
+
+  it("fails CLOSED when rel=next never terminates within the page budget (no rel=last)", async () => {
+    // Every page advertises rel="next" and never a rel="last": the forward scan exhausts the page budget without
+    // reaching the tail, so it cannot prove no later close exists → coveredAllPages false, login null (fail-closed).
+    const fetchedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/25/events")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        fetchedPages.push(page);
+        return Response.json([{ event: "labeled" }], { headers: { link: `<https://api.github.test/issues/25/events?per_page=100&page=${page + 1}>; rel="next"` } });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 25)).resolves.toEqual({ login: null, coveredAllPages: false });
+    expect(fetchedPages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]); // page 1 + the 10-page budget
+  });
+
+  it("returns null but covered when a rel=next forward scan reaches the tail with no close at all", async () => {
+    // No rel="last", forward scan reaches the tail (page 2, no Link) and finds no close on any page → the latest
+    // close stays undefined → undefined ?? null = null, yet coveredAllPages is true (the whole timeline was read).
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/26/events")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        if (page === 1) return Response.json([{ event: "labeled" }], { headers: { link: '<https://api.github.test/issues/26/events?per_page=100&page=2>; rel="next"' } });
+        return Response.json([{ event: "labeled" }]); // page 2: the tail (no Link header)
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 26)).resolves.toEqual({ login: null, coveredAllPages: true });
   });
 
   it("returns null when bounded window (firstPageToRead=2) AND page 1 also have no close event (?? null right branch)", async () => {
@@ -216,7 +255,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 24)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 24)).resolves.toEqual({ login: null, coveredAllPages: true });
   });
 
   it("updates branch without an expected head sha (omits expected_head_sha — FALSE branch of the spread ternary)", async () => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { isDuplicateClusterWinner } from "../../src/signals/duplicate-winner";
 import { dupWinnerLinkedDuplicateCount } from "../../src/queue/processors";
+import { listOtherOpenPullRequests, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { createTestEnv } from "../helpers/d1";
 
 describe("isDuplicateClusterWinner (#dup-winner)", () => {
   it("the lowest open sibling number wins", () => {
@@ -48,5 +50,22 @@ describe("dupWinnerLinkedDuplicateCount (#dup-winner close-reason seam)", () => 
   it("no siblings ⇒ 0 regardless of the flag", () => {
     expect(dupWinnerLinkedDuplicateCount([], 12, true)).toBe(0);
     expect(dupWinnerLinkedDuplicateCount([], 12, false)).toBe(0);
+  });
+});
+
+describe("listOtherOpenPullRequests ordering (#audit-3.9)", () => {
+  it("orders by ascending number so the lowest open sibling survives the 100-row cap", async () => {
+    const env = createTestEnv();
+    // Insert the LOWEST number (#1) LAST so an unordered insertion-order LIMIT(100) would drop it (and thus
+    // mis-elect the duplicate-winner, which is the minimum open number).
+    const numbers = [...Array.from({ length: 101 }, (_, i) => i + 2), 1]; // 2..102, then 1
+    for (const n of numbers) {
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: n, title: `PR ${n}`, state: "open", user: { login: "c" }, head: { sha: `s${n}` }, labels: [], body: "x" });
+    }
+    const siblings = await listOtherOpenPullRequests(env, "owner/repo", 200); // siblings of a non-existent #200
+    const siblingNumbers = siblings.map((p) => p.number);
+    expect(siblings).toHaveLength(100); // capped
+    expect(Math.min(...siblingNumbers)).toBe(1); // the true winner #1 is retained despite being inserted last
+    expect(siblingNumbers).not.toContain(102); // the lowest 100 (1..100) are returned, not the first-inserted 100
   });
 });

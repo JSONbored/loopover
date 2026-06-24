@@ -130,7 +130,7 @@ describe("GITTENSORY_REVIEW_SAFETY secrets-scan wired into the review FINALIZE p
     expect(seen.conclusion).toBe("failure");
   });
 
-  it("FLAG-OFF (default): the SAME leaked secret produces NO blocker — the finalized gate is byte-identical (not failed on the secret)", async () => {
+  it("FLAG-OFF: a leaked secret STILL fails the gate — the concrete-credential block is unconditional (#audit-3.4)", async () => {
     const env = createTestEnv({ GITTENSORY_REVIEW_SAFETY: "false", GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedGateEnabledRepo(env);
     await seedLeakedSecretFile(env);
@@ -141,11 +141,12 @@ describe("GITTENSORY_REVIEW_SAFETY secrets-scan wired into the review FINALIZE p
     } finally {
       vi.unstubAllGlobals();
     }
-    // No secret_leak finding is produced flag-OFF → the gate is not driven to failure by the (ignored) secret.
-    expect(seen.conclusion).not.toBe("failure");
+    // A real-format committed credential is a leak on any repo, so the secret_leak hard block fires regardless
+    // of GITTENSORY_REVIEW_SAFETY (only the prompt-injection defang / AI review remain flag-gated).
+    expect(seen.conclusion).toBe("failure");
   });
 
-  it("UNSET behaves identically to explicit-false (the flag-OFF branch is the default — no new branch taken)", async () => {
+  it("UNSET (default): a leaked secret also fails the gate — the secret-leak block does not depend on the flag", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() }); // GITTENSORY_REVIEW_SAFETY unset
     await seedGateEnabledRepo(env);
     await seedLeakedSecretFile(env);
@@ -156,6 +157,6 @@ describe("GITTENSORY_REVIEW_SAFETY secrets-scan wired into the review FINALIZE p
     } finally {
       vi.unstubAllGlobals();
     }
-    expect(seen.conclusion).not.toBe("failure");
+    expect(seen.conclusion).toBe("failure");
   });
 });

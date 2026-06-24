@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { gateCheckPolicy, resolveLinkedIssueAuthorLogins, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
+import { clearInstallationTokenCacheForTest } from "../../src/github/app";
+import { buildAuthorizedPrActionAdvisory, gateCheckPolicy, resolveLinkedIssueAuthorLogins, shouldCollectLinkedIssueEvidence, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "../../src/queue/processors";
 import { createTestEnv } from "../helpers/d1";
 import { upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { parseFocusManifest, resolveEffectiveSettings } from "../../src/signals/focus-manifest";
-import type { Advisory, RepositorySettings } from "../../src/types";
+import type { Advisory, PullRequestRecord, RepositorySettings } from "../../src/types";
 
 function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
   return {
@@ -109,6 +111,20 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
     expect(result.conclusion).toBe("neutral");
     expect(result.blockers).toEqual([]);
+  });
+
+  it("a deterministic hard blocker (secret_leak) still FAILS even when the AI review is inconclusive (#audit-3.5)", () => {
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [
+        { code: "secret_leak", title: "Possible leaked secret", severity: "critical", detail: "a committed token", action: "remove and rotate it" },
+        { code: "ai_review_inconclusive", title: "AI review could not be completed", severity: "warning", detail: "no usable verdict", action: "held for human" },
+      ],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    // An inconclusive AI can no longer bury a real violation in a "held" state — the secret_leak still hard-blocks.
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
   });
 });
 
@@ -371,9 +387,12 @@ describe("focus-manifest policy gate (#555)", () => {
 });
 
 describe("resolveLinkedIssueAuthorLogins", () => {
+  // Clear the global installation-token cache so each live-fetch test mints deterministically (no cross-test reuse).
+  beforeEach(() => clearInstallationTokenCacheForTest());
+
   it("returns [] immediately for an empty linkedIssues array (no DB work)", async () => {
     const env = createTestEnv();
-    const result = await resolveLinkedIssueAuthorLogins(env, "owner/repo", []);
+    const result = await resolveLinkedIssueAuthorLogins(env, null, "owner/repo", []);
     expect(result).toEqual([]);
   });
 
@@ -383,13 +402,13 @@ describe("resolveLinkedIssueAuthorLogins", () => {
     await upsertIssueFromGitHub(env, "owner/repo", { number: 10, title: "Bug report", body: "", state: "open", user: { login: "alice" }, labels: [], html_url: "https://github.com/owner/repo/issues/10", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
     await upsertIssueFromGitHub(env, "owner/repo", { number: 11, title: "Feature", body: "", state: "open", user: { login: "bob" }, labels: [], html_url: "https://github.com/owner/repo/issues/11", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
 
-    const result = await resolveLinkedIssueAuthorLogins(env, "owner/repo", [10, 11]);
+    const result = await resolveLinkedIssueAuthorLogins(env, null, "owner/repo", [10, 11]);
     expect(result).toEqual(["alice", "bob"]);
   });
 
   it("returns null for an issue not in the DB (fail-open: unknown author does not trigger the finding)", async () => {
     const env = createTestEnv();
-    const result = await resolveLinkedIssueAuthorLogins(env, "owner/repo", [99]);
+    const result = await resolveLinkedIssueAuthorLogins(env, null, "owner/repo", [99]);
     expect(result).toEqual([null]);
   });
 
@@ -397,7 +416,105 @@ describe("resolveLinkedIssueAuthorLogins", () => {
     const env = createTestEnv();
     // Pass a broken DB binding to force a DB error.
     const brokenEnv = { ...env, DB: null } as unknown as typeof env;
-    const result = await resolveLinkedIssueAuthorLogins(brokenEnv, "owner/repo", [1]);
+    const result = await resolveLinkedIssueAuthorLogins(brokenEnv, null, "owner/repo", [1]);
     expect(result).toEqual([null]);
+  });
+
+  it("falls back to a LIVE fetch for the author when the issue is not cached (#audit-3.11)", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "gittensory" });
+    // Issue #50 is NOT in the local cache; a fresh GitHub fetch must still resolve its author so the
+    // self-authored detection isn't silently voided by a cache miss.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/50")) return Response.json({ number: 50, state: "open", user: { login: "self-farmer" }, labels: [], assignees: [] });
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      const result = await resolveLinkedIssueAuthorLogins(env, 123, "owner/repo", [50], true);
+      expect(result).toEqual(["self-farmer"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("returns the cached results unchanged when the live token cannot be minted", async () => {
+    clearInstallationTokenCacheForTest(); // ensure the bad-key mint actually runs (no cached token from a prior test)
+    // createTestEnv's GITHUB_APP_PRIVATE_KEY is not a real RSA key → the JWT/token mint throws → fail-safe.
+    const env = createTestEnv();
+    const result = await resolveLinkedIssueAuthorLogins(env, 424242, "owner/repo", [50], true);
+    expect(result).toEqual([null]);
+  });
+
+  it("yields null for a cache-missed issue whose live fetch returns no facts (fail-safe)", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "gittensory" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 }); // the issue fetch 404s → no facts → null
+    });
+    try {
+      const result = await resolveLinkedIssueAuthorLogins(env, 555, "owner/repo", [50], true);
+      expect(result).toEqual([null]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("live-fetches only the cache-missed issues, keeping the cached authors (mixed list)", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "gittensory" });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 1);
+    await upsertIssueFromGitHub(env, "owner/repo", { number: 10, title: "Cached", body: "", state: "open", user: { login: "alice" }, labels: [], html_url: "https://github.com/owner/repo/issues/10", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/11")) return Response.json({ number: 11, state: "open", user: { login: "bob" }, labels: [], assignees: [] });
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      const result = await resolveLinkedIssueAuthorLogins(env, 123, "owner/repo", [10, 11], true);
+      expect(result).toEqual(["alice", "bob"]); // #10 from cache (no fetch), #11 resolved live
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("buildAuthorizedPrActionAdvisory self-authored parity (#self-authored-parity)", () => {
+  it("threads linked-issue authors so an authorized PR action blocks a self-authored linked issue", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 1);
+    await upsertIssueFromGitHub(env, "owner/repo", { number: 12, title: "Self-authored bug", body: "", state: "open", user: { login: "miner1" }, labels: [], html_url: "https://github.com/owner/repo/issues/12", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
+    // PR author "Miner1" matches issue author "miner1" case-insensitively → self-authored.
+    const pr: PullRequestRecord = { repoFullName: "owner/repo", number: 99, title: "Fix self-authored bug", state: "open", authorLogin: "Miner1", body: "Closes #12", labels: [], linkedIssues: [12] };
+
+    const policy = settings({ selfAuthoredLinkedIssueGateMode: "block" });
+    const { advisory } = await buildAuthorizedPrActionAdvisory(env, "owner/repo", pr, policy);
+    const gate = evaluateGateCheck(advisory, gateCheckPolicy(policy, null));
+
+    expect(advisory.findings.some((finding) => finding.code === "self_authored_linked_issue")).toBe(true);
+    expect(gate.conclusion).toBe("failure");
+    expect(gate.blockers.some((finding) => finding.code === "self_authored_linked_issue")).toBe(true);
+  });
+
+  it("does not flag a linked issue authored by someone else", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 1);
+    await upsertIssueFromGitHub(env, "owner/repo", { number: 13, title: "Reported by another", body: "", state: "open", user: { login: "reporter" }, labels: [], html_url: "https://github.com/owner/repo/issues/13", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
+    const pr: PullRequestRecord = { repoFullName: "owner/repo", number: 100, title: "Fix reported bug", state: "open", authorLogin: "fixer", body: "Closes #13", labels: [], linkedIssues: [13] };
+
+    const { advisory } = await buildAuthorizedPrActionAdvisory(env, "owner/repo", pr, settings({ selfAuthoredLinkedIssueGateMode: "block" }));
+    expect(advisory.findings.some((finding) => finding.code === "self_authored_linked_issue")).toBe(false);
+  });
+
+  it("tolerates a repo absent from the DB and a non-blocking mode (no installation id, no live fetch)", async () => {
+    const env = createTestEnv();
+    // No repository row → getRepository returns null → repo?.installationId ?? null = null; mode !== "block" → no live fetch.
+    const pr: PullRequestRecord = { repoFullName: "owner/missing", number: 101, title: "Fix something", state: "open", authorLogin: "someone", body: "Closes #14", labels: [], linkedIssues: [14] };
+    const { advisory } = await buildAuthorizedPrActionAdvisory(env, "owner/missing", pr, settings({ selfAuthoredLinkedIssueGateMode: "advisory" }));
+    expect(advisory.findings.some((finding) => finding.code === "self_authored_linked_issue")).toBe(false);
   });
 });

@@ -64,7 +64,7 @@ jobs:
         run: |
           docker run -d --name gt -p 8787:8787 gittensory:selfhost-ci
           ok=0
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8787/health >/dev/null; then ok=1; break; fi
             sleep 2
           done

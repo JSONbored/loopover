@@ -87,14 +87,31 @@ export async function refreshScoringModelSnapshot(env: Env): Promise<ScoringMode
   const warnings: string[] = [];
   const fetchedAt = nowIso();
   const upstream = scoringUpstreamConfig(env);
-  const constantsUrl = upstreamRawUrl(upstream, "gittensor/constants.py");
-  const programmingLanguagesUrl = upstreamRawUrl(upstream, "gittensor/validator/weights/programming_languages.json");
-  const [registrySnapshot, constantsResult, languagesResult, upstreamSourceSha] = await Promise.all([
+  // Pin the fetch to the upstream ref's immutable HEAD commit SHA so a force-push / branch-rename can't silently
+  // change what every repo scores against: resolve ref → SHA first, then fetch the constants AT that SHA (an
+  // atomic SHA↔constants binding, recorded in the payload). Best-effort — if the SHA can't be resolved (a
+  // transient API error) fall back to the mutable ref so a refresh is never blocked purely on the SHA lookup.
+  const upstreamSourceSha = await fetchUpstreamRefSha(upstream, env.GITHUB_PUBLIC_TOKEN);
+  const fetchRef = upstreamSourceSha ?? upstream.ref;
+  const constantsUrl = upstreamRawUrl({ repo: upstream.repo, ref: fetchRef }, "gittensor/constants.py");
+  const programmingLanguagesUrl = upstreamRawUrl({ repo: upstream.repo, ref: fetchRef }, "gittensor/validator/weights/programming_languages.json");
+  const [registrySnapshot, constantsResult, languagesResult] = await Promise.all([
     getLatestRegistrySnapshot(env),
     fetchText(constantsUrl, env.GITHUB_PUBLIC_TOKEN),
     fetchJson(programmingLanguagesUrl, env.GITHUB_PUBLIC_TOKEN),
-    fetchUpstreamRefSha(upstream, env.GITHUB_PUBLIC_TOKEN),
   ]);
+
+  // FAIL-CLOSED (#scoring-fail-closed): a failed constants fetch must NEVER silently overwrite the last verified
+  // upstream constants with hardcoded DEFAULT_SCORING_CONSTANTS — that would move live scoring with no one
+  // noticing. Freeze the last-good snapshot instead (its age is surfaced by scoringSnapshotStalenessWarning), and
+  // only bootstrap to defaults when there is no verified last-good to fall back to.
+  if (!constantsResult.ok) {
+    const lastGood = await getLatestScoringModelSnapshot(env);
+    if (lastGood && lastGood.sourceKind !== "fallback") {
+      const frozenNote = `Upstream scoring constants refresh failed (${constantsResult.error}); froze the last-good snapshot rather than reverting to default constants.`;
+      return { ...lastGood, warnings: [...lastGood.warnings, frozenNote] };
+    }
+  }
 
   let sourceKind: ScoringModelSnapshotRecord["sourceKind"] = "raw-github";
   let constants = { ...DEFAULT_SCORING_CONSTANTS };

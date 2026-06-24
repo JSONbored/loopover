@@ -476,6 +476,61 @@ NOVELTY_BONUS_SCALAR = 3
     expect(refreshed.sourceKind).toBe("raw-github");
   });
 
+  it("pins the constants fetch to the resolved upstream SHA (immutable) when it can be resolved", async () => {
+    const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "custom/upstream", GITTENSOR_UPSTREAM_REF: "test" });
+    const SHA = "0123456789abcdef0123456789abcdef01234567";
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      fetchedUrls.push(url);
+      if (url.includes("api.github.com") && url.includes("/commits/test")) return Response.json({ sha: SHA });
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    // The constants are fetched from the immutable SHA path, not the mutable branch ref.
+    expect(refreshed.sourceUrl).toBe(`https://raw.githubusercontent.com/custom/upstream/${SHA}/gittensor/constants.py`);
+    expect(fetchedUrls).toContain(`https://raw.githubusercontent.com/custom/upstream/${SHA}/gittensor/constants.py`);
+    expect(fetchedUrls).not.toContain("https://raw.githubusercontent.com/custom/upstream/test/gittensor/constants.py");
+    expect(refreshed.payload.upstreamSourceSha).toBe(SHA);
+    expect(refreshed.sourceKind).toBe("raw-github");
+  });
+
+  it("FAILS CLOSED on a failed constants fetch: freezes the last-good snapshot instead of reverting to defaults", async () => {
+    const env = createTestEnv();
+    // 1) A good refresh persists a verified raw-github snapshot.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\nOSS_EMISSION_SHARE = 0.5\n");
+      if (url.includes("programming_languages.json")) return Response.json({ TypeScript: 1 });
+      return new Response("not found", { status: 404 });
+    });
+    const good = await refreshScoringModelSnapshot(env);
+    expect(good.sourceKind).toBe("raw-github");
+    expect(good.constants.OSS_EMISSION_SHARE).toBe(0.5);
+
+    // 2) Upstream now fails. Fail-closed: keep the last-good constants, do NOT revert to DEFAULT_SCORING_CONSTANTS.
+    vi.stubGlobal("fetch", async () => new Response("upstream down", { status: 500 }));
+    const frozen = await refreshScoringModelSnapshot(env);
+    expect(frozen.id).toBe(good.id); // same snapshot — froze the last-good
+    expect(frozen.sourceKind).toBe("raw-github"); // NOT "fallback"
+    expect(frozen.constants.OSS_EMISSION_SHARE).toBe(0.5); // verified upstream value, never the hardcoded default
+    expect(frozen.warnings.join(" ")).toMatch(/froze the last-good snapshot/i);
+    // No defaults snapshot was persisted — the latest is still the verified last-good.
+    await expect(getLatestScoringModelSnapshot(env)).resolves.toMatchObject({ id: good.id, sourceKind: "raw-github" });
+  });
+
+  it("bootstraps to defaults (fallback) on a failed fetch ONLY when there is no verified last-good", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    const bootstrap = await refreshScoringModelSnapshot(env);
+    expect(bootstrap.sourceKind).toBe("fallback");
+    expect(bootstrap.warnings.join(" ")).toMatch(/fetch failed/i);
+  });
+
   it("uses saturation math as the active private preview model", () => {
     const saturationSnapshot: ScoringModelSnapshotRecord = {
       ...snapshot,

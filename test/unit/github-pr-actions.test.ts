@@ -106,7 +106,7 @@ describe("GitHub PR action primitives (#778)", () => {
       return new Response("unexpected", { status: 500 });
     });
 
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 17)).resolves.toBe("maintainer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 17)).resolves.toEqual({ login: "maintainer", coveredAllPages: true });
     expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=1"))).toBe(true);
     expect(calls.some((url) => url.includes("per_page=100") && url.includes("page=2"))).toBe(true);
   });
@@ -116,7 +116,7 @@ describe("GitHub PR action primitives (#778)", () => {
       if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
       throw new Error("network failure");
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 18)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 18)).resolves.toEqual({ login: null, coveredAllPages: false });
   });
 
   it("records null lastCloser when the closed event has a null actor", async () => {
@@ -125,7 +125,7 @@ describe("GitHub PR action primitives (#778)", () => {
       if (input.toString().includes("/issues/19/events")) return Response.json([{ event: "closed", actor: null }]);
       return new Response("not found", { status: 404 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 19)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 19)).resolves.toEqual({ login: null, coveredAllPages: true });
   });
 
   it("reads the newest bounded event pages instead of the oldest prefix", async () => {
@@ -148,7 +148,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 20)).resolves.toBe("maintainer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 20)).resolves.toEqual({ login: "maintainer", coveredAllPages: false });
     expect(fetchedPages).toEqual([1, 12, 11]);
     expect(fetchedPages).not.toContain(2);
   });
@@ -166,7 +166,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 21)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 21)).resolves.toEqual({ login: null, coveredAllPages: false });
     expect(fetchedPages).toEqual([1, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
   });
 
@@ -184,7 +184,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 22)).resolves.toBe("page1-closer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 22)).resolves.toEqual({ login: "page1-closer", coveredAllPages: true });
   });
 
   it("treats a link header without rel=last as a single-page result (issueEventsLastPage FALSE branch)", async () => {
@@ -200,7 +200,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 23)).resolves.toBe("solo-closer");
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 23)).resolves.toEqual({ login: "solo-closer", coveredAllPages: true });
   });
 
   it("returns null when bounded window (firstPageToRead=2) AND page 1 also have no close event (?? null right branch)", async () => {
@@ -216,7 +216,7 @@ describe("GitHub PR action primitives (#778)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 24)).resolves.toBeNull();
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 24)).resolves.toEqual({ login: null, coveredAllPages: true });
   });
 
   it("updates branch without an expected head sha (omits expected_head_sha — FALSE branch of the spread ternary)", async () => {

@@ -3399,9 +3399,16 @@ export async function recordGateBlockOutcome(
     .values(values)
     .onConflictDoUpdate({
       target: [gateOutcomes.repoFullName, gateOutcomes.pullNumber],
-      // Refresh the codes/head/timestamp on a re-block; `overridden` is deliberately omitted so a true value
-      // is preserved.
-      set: { headSha: values.headSha, blockerCodesJson: values.blockerCodesJson, updatedAt: nowIso() },
+      // Refresh the codes/head/timestamp on a re-block. Preserve `overridden` ONLY when the head SHA is
+      // unchanged: a maintainer override applies to the exact commit it was granted on, so a NEW commit
+      // re-blocking must clear it — otherwise a one-time override would permanently disable the gate
+      // (and the draft-dodge auto-close) for every future push to the PR. (#audit-3.14)
+      set: {
+        headSha: values.headSha,
+        blockerCodesJson: values.blockerCodesJson,
+        updatedAt: nowIso(),
+        overridden: sql`CASE WHEN ${gateOutcomes.headSha} IS ${values.headSha} THEN ${gateOutcomes.overridden} ELSE 0 END`,
+      },
     });
 }
 

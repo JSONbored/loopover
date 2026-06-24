@@ -3176,8 +3176,15 @@ async function maybeRecloseDisallowedReopen(
   if (await hasMaintainerPermission(reopener)) return false; // owner / admin / write collaborators may reopen
   // A non-maintainer reopened: re-close ONLY if gittensory or a maintainer closed it (one-shot). A contributor
   // reopening a PR they closed themselves is allowed (fail-open on an unknown closer).
-  const closer = (await getLastCloserLogin(env, installationId, repoFullName, pr.number))?.toLowerCase() ?? null;
-  if (!closer || !(closer === botLogin || (await hasMaintainerPermission(closer)))) return false;
+  const closerResult = await getLastCloserLogin(env, installationId, repoFullName, pr.number);
+  const closer = closerResult.login?.toLowerCase() ?? null;
+  const closerIsBotOrMaintainer = closer != null && (closer === botLogin || (await hasMaintainerPermission(closer)));
+  // #audit-2.4: getLastCloserLogin inspects only a bounded newest-events window, so a contributor who appends
+  // >1000 timeline events can push the real close out of view → null closer → bypass. When we could NOT inspect
+  // the whole timeline AND found no qualifying closer, fail CLOSED — a one-shot close stands. A genuine
+  // self-close sits at the timeline end and is found in-window, so legitimate self-close reopens stay allowed.
+  const windowEvasionSuspected = closer == null && !closerResult.coveredAllPages;
+  if (!closerIsBotOrMaintainer && !windowEvasionSuspected) return false;
   await createIssueComment(
     env,
     installationId,
@@ -3191,7 +3198,7 @@ async function maybeRecloseDisallowedReopen(
     actor: "gittensory",
     targetKey: `${repoFullName}#${pr.number}`,
     outcome: "completed",
-    detail: `re-closed a disallowed reopen by ${payload.sender?.login ?? reopener} (originally closed by ${closer}) — one-shot; resubmit a new PR`,
+    detail: `re-closed a disallowed reopen by ${reopener} (originally closed by ${closer ?? "Gittensory (close beyond the inspected event window)"}) — one-shot; resubmit a new PR`,
     metadata: { deliveryId, repoFullName },
   }).catch(() => undefined);
   return true;

@@ -170,8 +170,10 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const acting = (actionClass: AgentActionClass) => isActingAutonomyLevel(level(actionClass));
   const approval = (actionClass: AgentActionClass) => autonomyRequiresApproval(level(actionClass));
 
-  // App/infra-neutral verdicts (not evaluated yet) never drive an action.
-  if (input.conclusion === "neutral" || input.conclusion === "skipped") return actions;
+  // Only a SKIPPED gate (genuinely not evaluated) drives no action. A NEUTRAL gate (advisory-only blockers on a
+  // non-confirmed contributor, or eval-not-ready) is gate-NON-BLOCKING: it flows to the disposition so the PR is
+  // merged (clean+green) or HELD with a label — never left silently undecided. (#harm-stop neutral-silent-stuck)
+  if (input.conclusion === "skipped") return actions;
 
   // CI state over ALL of the PR's checks (required OR not — codecov/patch included) — reviewbot's ci_red
   // parity. A red CI is NEVER approved/merged and is itself a close-worthy signal (non-owner); while CI is
@@ -181,6 +183,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // Settle-before-decide: never approve / merge / close on a half-finished CI run.
   if (input.ciState === "pending") return actions;
 
+  // Only SUCCESS earns the review-good auto-merge. A NEUTRAL gate flows (no longer silently returns []) but is
+  // NOT auto-merged — it falls through to a HELD + labeled state for review. (Auto-merging neutral / non-confirmed
+  // contributor PRs is a separate trust/policy decision, deliberately NOT bundled into the harm-stop.) (#harm-stop)
   const gatePassing = input.conclusion === "success";
   // A changed path matching a hard guardrail forces manual review (suppresses auto-MERGE / auto-approve / auto-close).
   // Fail SAFE on UNKNOWN paths (#1062): when guardrails are configured but the changed-file set is empty (cache
@@ -214,7 +219,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // hallucinated reject on a crucial PR must NOT auto-close a good change (the #1528 near-miss); the owner
   // verifies and closes/merges. The BULK (non-guarded) contributor PRs still auto-close one-shot on a bad
   // verdict / conflict — only the small crucial set is held. Owner/automation PRs are never closed regardless.
-  const willClose = !guardrailHit && isContributor && acting("close") && (!reviewGood || isConflict);
+  // CLOSE a contributor PR ONLY on a REAL adverse signal — a confirmed gate FAILURE, a red required CI, or a base
+  // CONFLICT. NEVER close merely because CI is UNVERIFIED (a fork whose Actions await approval, or unreadable
+  // checks) or otherwise not-yet-mergeable — those are HELD for review, not killed (#harm-stop fork-false-close).
+  // Owner/automation PRs are never closed (isContributor); guarded paths are held (guardrailHit).
+  const willClose = !guardrailHit && isContributor && acting("close") && (input.conclusion === "failure" || ciFailed || isConflict);
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
   // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
   // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR
@@ -336,7 +345,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     // Contributor PR that is NOT review-good (gate blockers / red / unverified CI) OR conflicts with base →
     // CLOSE one-shot when no hard guardrail requires manual review. Cite the concrete reasons.
     const closeReasons: string[] = [];
-    if (ciFailed || ciUnverified) closeReasons.push(ciReason);
+    if (ciFailed) closeReasons.push(ciReason);
     if (isConflict) closeReasons.push("conflicts with the base branch — resolve and open a fresh PR");
     for (const blockerTitle of input.blockerTitles) closeReasons.push(blockerTitle);
     if (input.pr.slopRisk != null && input.pr.slopRisk >= slopGateMinScore) closeReasons.push(`slop score ${input.pr.slopRisk} ≥ ${slopGateMinScore}`);

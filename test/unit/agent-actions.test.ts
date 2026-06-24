@@ -22,9 +22,14 @@ function input(overrides: Partial<AgentActionPlanInput> & { conclusion: GateChec
 const classes = (actions: ReturnType<typeof planAgentMaintenanceActions>) => actions.map((a) => a.actionClass);
 
 describe("planAgentMaintenanceActions (#778)", () => {
-  it("plans nothing for a not-yet-evaluated verdict (neutral / skipped)", () => {
-    expect(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { merge: "auto", label: "auto", close: "auto" } }))).toEqual([]);
+  it("plans nothing for SKIPPED; a NEUTRAL verdict FLOWS (advisory non-blocking, never silently undecided)", () => {
+    // skipped = genuinely not evaluated → no action.
     expect(planAgentMaintenanceActions(input({ conclusion: "skipped", autonomy: { approve: "auto" } }))).toEqual([]);
+    // neutral = advisory-only blockers → NON-blocking: flows to the disposition, earns a label (clean+green here),
+    // and is NEVER left silently undecided or auto-closed. (#harm-stop neutral-silent-stuck)
+    const neutral = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { merge: "auto", label: "auto", close: "auto" } })));
+    expect(neutral).not.toEqual([]);
+    expect(neutral).not.toContain("close");
   });
 
   it("plans nothing when every class is at a non-acting level", () => {
@@ -50,10 +55,12 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(noClose).not.toContain("request_changes");
   });
 
-  it("never emits request_changes even for an action_required verdict (merge-or-close, never block)", () => {
+  it("an action_required verdict is HELD — never request_changes, never closed (awaiting action ≠ failure)", () => {
     const plan = classes(planAgentMaintenanceActions(input({ conclusion: "action_required", autonomy: { request_changes: "auto", close: "auto", label: "auto" }, blockerTitles: [] })));
     expect(plan).not.toContain("request_changes");
-    expect(plan).toContain("close"); // contributor + not review-good → close
+    // awaiting-action (e.g. a fork's CI awaiting approval) → HELD + labeled, NOT a one-shot close. (#harm-stop)
+    expect(plan).not.toContain("close");
+    expect(plan).toContain("label");
   });
 
   it("approves a passing verdict and never re-approves; a failing one closes (never approves, never requests changes)", () => {
@@ -278,13 +285,13 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "pending", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }))).toEqual([]);
     });
 
-    it("CLOSES a contributor's gate-passing PR whose CI is UNVERIFIED (fork workflows awaiting approval → green can't be confirmed)", () => {
+    it("HOLDS a contributor's gate-passing PR whose CI is UNVERIFIED — NEVER closes it (fork workflows awaiting approval) (#harm-stop)", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { label: "auto", approve: "auto", merge: "auto", close: "auto" }, ciState: "unverified", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const cls = classes(plan);
-      expect(cls).not.toContain("merge");
-      expect(cls).not.toContain("approve");
-      expect(cls).toContain("close");
-      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_CHANGES);
+      expect(cls).not.toContain("merge"); // can't merge — green not confirmed
+      expect(cls).not.toContain("approve"); // can't approve — green not confirmed
+      expect(cls).not.toContain("close"); // NEVER close on unverified CI — held for review, not killed
+      expect(cls).toContain("label"); // labeled (held), never silently stuck
     });
 
     it("NEVER closes the OWNER's unverified-CI PR — held (no blocking request_changes), left open", () => {

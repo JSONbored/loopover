@@ -14,7 +14,7 @@ import worker from "./index";
 import { processJob } from "./queue/processors";
 import { createSelfHostAi } from "./selfhost/ai";
 import { credentialsToEnv, exchangeManifestCode, renderSetupPage } from "./selfhost/setup-wizard";
-import { orbEnabled, exportOrbBatch } from "./selfhost/orb-collector";
+import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
 import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
@@ -321,16 +321,14 @@ async function main(): Promise<void> {
     );
   }, intervalMs);
 
-  // Orb hourly export — batch-send pending outcome signals to the central collector.
-  // No-op when ORB_ENABLED is not set or ORB_AIR_GAP=true.
-  if (orbEnabled()) {
-    const runExport = () =>
-      exportOrbBatch(backend.db)
-        .then((n) => { if (n > 0) console.log(JSON.stringify({ event: "selfhost_orb_export", exported: n })); })
-        .catch((error) => console.error(JSON.stringify({ level: "error", event: "selfhost_orb_export_error", error: error instanceof Error ? error.message : "unknown error" })));
-    void runExport(); // flush any pending events from a previous run at startup
-    setInterval(runExport, 3_600_000); // then hourly
-  }
+  // Orb fleet-telemetry export — ALWAYS ON (the fleet-calibration contract of self-hosting). Self-gates
+  // inside exportOrbBatch: a no-op until the GitHub App is configured, or when ORB_AIR_GAP=true.
+  const runOrbExport = () =>
+    exportOrbBatch(backend.db)
+      .then((n) => { if (n > 0) console.log(JSON.stringify({ event: "selfhost_orb_export", exported: n })); })
+      .catch((error) => console.error(JSON.stringify({ level: "error", event: "selfhost_orb_export_error", error: error instanceof Error ? error.message : "unknown error" })));
+  void runOrbExport(); // flush any pending events at startup
+  setInterval(runOrbExport, 3_600_000); // then hourly
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;

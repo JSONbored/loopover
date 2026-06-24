@@ -3,9 +3,11 @@
 // engine's outcomes-wire. This ships an anonymized, reversal-aware signal UP to gittensory's central
 // collector so the gate can be calibrated across the whole self-host fleet.
 //
-//   ORB_ENABLED=true          — activates export (off by default)
+// Export is ALWAYS ON once the GitHub App is configured (the fleet-telemetry contract of self-hosting) —
+// there is no opt-out flag. It self-gates on a configured App webhook secret (no App → no review data to
+// export anyway), and uses that secret as the per-instance anonymization key.
 //   ORB_COLLECTOR_URL=<url>   — endpoint (default: gittensory's hosted collector)
-//   ORB_AIR_GAP=true          — keep everything local, never send externally
+//   ORB_AIR_GAP=true          — air-gapped/offline deployments only: compute locally, never send
 //   ORB_ANONYMIZE=true        — HMAC-hash repo/PR before export (default: true)
 //
 // No diffs, no code, no comments, no logins, no commit SHAs — only verdict + outcome + reversal + a bucketed
@@ -69,12 +71,6 @@ export function bucketReasonCode(summary: string | null | undefined): string {
   return "other";
 }
 
-/** Returns true only when Orb export is explicitly enabled. */
-export function orbEnabled(): boolean {
-  const v = (process.env.ORB_ENABLED ?? "").toLowerCase();
-  return v === "true" || v === "1" || v === "yes";
-}
-
 // Latest gate_decision + latest pr_outcome per target_id, plus any reversal — portable (window functions +
 // CASE, no SQLite-only bare-column-with-MAX) so it runs on the self-host SQLite OR Postgres backend.
 const FLEET_QUERY = `
@@ -122,17 +118,18 @@ function cycleTimeMs(decidedAt: string, outcomeAt: string): number | null {
 
 /**
  * Export newly-resolved PR outcomes (since this instance's watermark) to the central collector. Reads from
- * review_audit (de-noised, reversal-aware), anonymizes, signs, POSTs, then advances the cursor.
- * Returns the number of events exported (0 if air-gap, disabled, or nothing new).
+ * review_audit (de-noised, reversal-aware), anonymizes, signs, POSTs, then advances the cursor. Always on.
+ * Returns the number of events exported (0 if air-gapped, the App isn't configured, or nothing new).
  */
 export async function exportOrbBatch(db: D1Database, batchSize = 200, fetchFn: typeof fetch = fetch): Promise<number> {
-  if (!orbEnabled()) return 0;
+  // Always on (no opt-out). Air-gapped/offline deployments may suppress the outbound call.
   if ((process.env.ORB_AIR_GAP ?? "").toLowerCase() === "true") return 0;
 
   // gittensory's hosted collector. No shared secret is sent: repo/PR identifiers are HMAC'd with THIS
-  // instance's own ORB_WEBHOOK_SECRET, and the collector accepts the batch as untrusted, rate-limited telemetry.
+  // instance's OWN GitHub App webhook secret, so the collector can never de-anonymize them.
   const collectorUrl = process.env.ORB_COLLECTOR_URL ?? "https://gittensory-api.aethereal.dev/v1/orb/ingest";
-  const secret = process.env.ORB_WEBHOOK_SECRET ?? "";
+  const secret = process.env.GITHUB_WEBHOOK_SECRET ?? "";
+  if (!secret) return 0; // App not configured yet — no anonymization key, and no review data to export
   const anonymize = (process.env.ORB_ANONYMIZE ?? "true").toLowerCase() !== "false";
   const instance = instanceId();
 

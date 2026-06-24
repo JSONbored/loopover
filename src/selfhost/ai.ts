@@ -159,11 +159,12 @@ async function defaultSpawn(): Promise<SpawnFn> {
       const stdio: ["pipe", "pipe", "pipe"] = ["pipe", "pipe", "pipe"];
       const child = cp.spawn(cmd, args, { env: o.env as NodeJS.ProcessEnv, stdio });
       let stdout = "";
+      /* v8 ignore start */ // a 120s subprocess timeout is not unit-testable without a 2-minute wait
       const timer = setTimeout(() => {
-        /* v8 ignore next 2 */ // a 120s subprocess timeout is not unit-testable without a 2-minute wait
         child.kill("SIGKILL");
         reject(new Error("subscription_cli_timeout"));
       }, o.timeoutMs);
+      /* v8 ignore stop */
       child.stdout?.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
       child.on("error", (e) => {
         clearTimeout(timer);

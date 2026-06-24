@@ -55,4 +55,12 @@ describe("createD1Adapter (#980 self-host D1-over-SQLite)", () => {
   it("dump() returns an ArrayBuffer (D1 surface completeness)", async () => {
     expect(await makeD1().dump()).toBeInstanceOf(ArrayBuffer);
   });
+
+  it("first(colName) returns the named column value", async () => {
+    const d1 = makeD1();
+    await d1.exec("CREATE TABLE t (id INTEGER, x TEXT)");
+    await d1.prepare("INSERT INTO t (id, x) VALUES (1, 'val')").run();
+    expect(await d1.prepare("SELECT x FROM t").first("x")).toBe("val");
+    expect(await d1.prepare("SELECT x FROM t WHERE id=99").first("x")).toBeNull(); // no row → null
+  });
 });

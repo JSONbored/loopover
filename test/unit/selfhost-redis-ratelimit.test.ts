@@ -43,4 +43,22 @@ describe("createRedisRateLimiter (#977)", () => {
     const res = await ns.get(ns.idFromName("k")).fetch("https://rl/check", { method: "POST", body: JSON.stringify({}) });
     expect(res.status).toBe(400);
   });
+
+  it("accepts a Request object and handles a missing TTL", async () => {
+    const noTtl = {
+      async incr() {
+        return 1;
+      },
+      async expire() {
+        return 1;
+      },
+      async pttl() {
+        return -1; // no expiry set → resetMs falls back to windowSeconds
+      },
+    } as unknown as Redis;
+    const ns = createRedisRateLimiter(noTtl);
+    const req = new Request("https://rl/check", { method: "POST", body: JSON.stringify({ key: "k", limit: 5, windowSeconds: 60 }) });
+    const res = await ns.get(ns.idFromName("k")).fetch(req); // pass a Request (not url+init)
+    expect(res.status).toBe(200);
+  });
 });

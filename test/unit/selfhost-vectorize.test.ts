@@ -41,6 +41,18 @@ describe("createSqliteVectorize (#979 local RAG)", () => {
     expect(res2.matches.map((m) => m.id)).toEqual(["x"]);
   });
 
+  it("returns matches with and without metadata in one query", async () => {
+    const v = makeVectorize();
+    await v.upsert([
+      { id: "withMeta", values: [1, 0], namespace: "n", metadata: { path: "p" } },
+      { id: "noMeta", values: [0, 1], namespace: "n" },
+    ]);
+    const res = await v.query([1, 1], { topK: 10, namespace: "n" });
+    expect(res.matches).toHaveLength(2);
+    expect(res.matches.some((m) => m.metadata)).toBe(true);
+    expect(res.matches.some((m) => !m.metadata)).toBe(true);
+  });
+
   it("upsert overwrites by id; deleteByIds removes", async () => {
     const v = makeVectorize();
     await v.upsert([{ id: "d", values: [1, 0], namespace: "n", metadata: { path: "old" } }]);

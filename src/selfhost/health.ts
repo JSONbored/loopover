@@ -19,6 +19,7 @@ export async function readiness(db: D1Database): Promise<Readiness> {
   }
   try {
     const row = await db.prepare("SELECT COUNT(*) AS c FROM _selfhost_migrations").first<{ c: number }>();
+    /* v8 ignore next */ // COUNT(*) always returns exactly one row, so the row?./?? 0 guards never fire
     migrations = Number(row?.c ?? 0) > 0;
   } catch {
     /* migrations table missing */

@@ -147,6 +147,23 @@ describe("branch coverage — defaults + edge inputs", () => {
     await expect(createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/claude_code_exit_null/);
     await expect(createCodexAi({}, nullExit).run("m", { prompt: "x" })).rejects.toThrow(/codex_exit_null/);
   });
+  it("embed uses the bge-m3 default when no embedModel is set", async () => {
+    let sentModel = "";
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      sentModel = JSON.parse(init.body).model;
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }));
+    await createOpenAiCompatibleAi({ baseUrl: "http://o/v1" }).run("m", { text: ["a"] });
+    expect(sentModel).toBe("bge-m3");
+  });
+  it("anthropic with no content field → empty response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })));
+    expect((await createAnthropicAi({ apiKey: "k" }).run("m", { prompt: "x" })).response).toBe("");
+  });
+  it("extractCliText reads content + response fields", () => {
+    expect(extractCliText(JSON.stringify({ content: "c" }))).toBe("c");
+    expect(extractCliText(JSON.stringify({ response: "r" }))).toBe("r");
+  });
   it("chain wraps a non-Error throw", async () => {
     const p = {
       name: "p",

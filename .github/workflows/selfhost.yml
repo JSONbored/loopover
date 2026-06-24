@@ -1,6 +1,8 @@
-# Self-host stack CI (#980/#982). Builds the Node bundle + the Docker image, boots the container, and
-# smoke-tests the operational endpoints — the integration coverage the unit tests can't give. Runs on
-# Node 24 because node:sqlite (the SQLite backing store) is only stable there.
+# Self-host stack CI (#980/#982). Provides integration coverage the main CI can't:
+#   1. Postgres integration test — needs a real PG service container
+#   2. Self-host bundle build validation (build-selfhost.mjs)
+#   3. Docker image build + container smoke test (/health, /ready, /metrics)
+# Unit tests and typecheck are NOT duplicated here — the main CI validate job covers them.
 name: self-host
 
 on:
@@ -15,6 +17,7 @@ on:
       - "docker-compose.yml"
       - "migrations/**"
       - "test/unit/selfhost-*"
+      - "test/integration/selfhost-pg*"
       - ".github/workflows/selfhost.yml"
   pull_request:
     paths:
@@ -26,6 +29,7 @@ on:
       - "docker-compose.yml"
       - "migrations/**"
       - "test/unit/selfhost-*"
+      - "test/integration/selfhost-pg*"
       - ".github/workflows/selfhost.yml"
 
 # Least privilege — the smoke test only reads the repo; no writes, no packages.
@@ -51,21 +55,35 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "24"
+          cache: "npm"
+
       - name: Install deps
         run: npm ci --ignore-scripts
-      - name: Self-host unit tests
-        run: npx vitest run test/unit/selfhost-*.test.ts
+
       - name: Postgres integration test (real PG)
         run: PG_TEST_URL=postgres://postgres:devpw@localhost:5432/gittensory npx vitest run test/integration/selfhost-pg.test.ts
-      - name: Typecheck
-        run: npx tsc --noEmit
+
       - name: Build the self-host bundle
         run: node scripts/build-selfhost.mjs
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - name: Build the Docker image
-        run: docker build -t gittensory:selfhost-ci .
+        run: |
+          for i in 1 2 3; do
+            docker buildx build \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              --load \
+              -t gittensory:selfhost-ci . && break
+            echo "Docker build attempt $i failed, retrying in 15s…"
+            sleep 15
+          done
+
       - name: Boot the container + smoke-test /health, /ready, /metrics, migrations
         run: |
           docker run -d --name gt -p 8787:8787 gittensory:selfhost-ci

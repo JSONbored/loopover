@@ -1,6 +1,7 @@
 import {
   countOpenIssues,
   countOpenPullRequests,
+  countRecentSubmissionsByAuthor,
   getAgentCommandAnswer,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -175,7 +176,7 @@ import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
-import { loadHardGuardrailGlobs } from "../review/guardrail-config";
+import { loadHardGuardrailGlobs, loadSubmissionFloodLimit } from "../review/guardrail-config";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
@@ -652,6 +653,20 @@ async function maybeRunAgentMaintenance(
   const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
 
+  // Anti-farming (#anti-gaming-flood): a CONTRIBUTOR who has submitted more than the per-repo limit within the
+  // configured window is HELD for manual review (never auto-merged/approved) — this catches farming that merges
+  // fast, which an open-PR count alone would miss. Owner/automation are exempt; disabled (no hold) when the repo
+  // has no flood limit configured in KV, or on any read fault (fail-open, never false-hold).
+  let submissionFloodHit = false;
+  if (!authorIsOwner && !authorIsAutomationBot && authorLogin.length > 0) {
+    const floodLimit = await loadSubmissionFloodLimit(env, repoFullName).catch(() => null);
+    if (floodLimit) {
+      const sinceIso = new Date(Date.now() - floodLimit.windowHours * 3_600_000).toISOString();
+      const recent = await countRecentSubmissionsByAuthor(env, repoFullName, authorLogin, sinceIso).catch(() => 0);
+      submissionFloodHit = recent > floodLimit.maxPerWindow;
+    }
+  }
+
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
   // MORE closing references than we can safely verify (overflow) is itself a violation; otherwise evaluate the
   // linked issues' facts (fail-open per issue). The decision is extracted into resolveLinkedIssueHardRule (pure,
@@ -678,6 +693,7 @@ async function maybeRunAgentMaintenance(
     hardGuardrailGlobs,
     authorIsOwner,
     authorIsAutomationBot,
+    submissionFloodHit,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),

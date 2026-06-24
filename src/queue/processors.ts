@@ -1707,6 +1707,23 @@ export function buildAiReviewDiff(files: Awaited<ReturnType<typeof listPullReque
 }
 
 /**
+ * Build the complete inline patch corpus for deterministic secret scanning. Unlike {@link buildAiReviewDiff},
+ * this is intentionally unbudgeted and does not reorder files or drop hunks: security controls must inspect
+ * every raw patch GitHub returned instead of the lossy AI-review prompt view.
+ */
+export function buildSecretScanDiff(files: Awaited<ReturnType<typeof listPullRequestFiles>>): string {
+  return files
+    .map((file) => {
+      const status = file.status ?? "modified";
+      const header = `### ${file.path} (${status}) +${file.additions ?? 0}/-${file.deletions ?? 0}`;
+      const patch = typeof file.payload?.patch === "string" ? file.payload.patch : "";
+      return patch ? `${header}\n${patch}` : header;
+    })
+    .join("\n\n")
+    .trim();
+}
+
+/**
  * Run the opt-in AI maintainer review and fold it into the gate + panel. Mutates `advisory.findings`
  * with a dual-model consensus defect (when `aiReviewMode: block` and the free Workers-AI pair agrees with
  * high confidence) so it can become a gate blocker BEFORE evaluateGateCheck runs. The default `gittensor`
@@ -1835,7 +1852,7 @@ export async function maybeAddSecretLeakFinding(
   if (!isSafetyEnabled(env) || !isConvergenceRepoAllowed(env, args.repoFullName)) return;
   try {
     const files = args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pullNumber));
-    const finding = secretLeakFinding(buildAiReviewDiff(files));
+    const finding = secretLeakFinding(buildSecretScanDiff(files));
     if (finding) args.advisory.findings.push(finding);
   } catch (error) {
     /* v8 ignore next -- fail-safe: a file-load error never destabilizes the gate. */

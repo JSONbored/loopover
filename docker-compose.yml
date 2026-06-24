@@ -17,6 +17,10 @@ services:
     environment:
       PORT: "8787"
       DATABASE_PATH: /data/gittensory.sqlite
+      # Scale out: uncomment the postgres + redis services below, then point at them here (a shared Postgres +
+      # Redis lets you run multiple replicas of this service behind a load balancer):
+      # DATABASE_URL: postgres://gittensory:CHANGEME@postgres:5432/gittensory
+      # REDIS_URL: redis://redis:6379
       # Point at the Ollama service below to enable local AI review (uncomment the ollama service too):
       # AI_PROVIDER: ollama
       # AI_BASE_URL: http://ollama:11434/v1
@@ -52,6 +56,31 @@ services:
   #     LITESTREAM_ENDPOINT: ${LITESTREAM_ENDPOINT}
   #     LITESTREAM_REGION: ${LITESTREAM_REGION}
 
+  # Optional: Postgres backend (shared DB → multi-instance). Uncomment, set DATABASE_URL above, and add
+  # `depends_on: [postgres]` to the gittensory service.
+  # postgres:
+  #   image: postgres:16-alpine
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: gittensory
+  #     POSTGRES_PASSWORD: CHANGEME    # SAMPLE — set your own
+  #     POSTGRES_DB: gittensory
+  #   volumes:
+  #     - gittensory-pg:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U gittensory"]
+  #     interval: 10s
+  #     retries: 5
+
+  # Optional: Redis (distributed rate limiter). Uncomment + set REDIS_URL above.
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+  #   volumes:
+  #     - gittensory-redis:/data
+
 volumes:
   gittensory-data:
   # ollama-models:
+  # gittensory-pg:
+  # gittensory-redis:

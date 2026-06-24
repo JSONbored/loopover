@@ -168,13 +168,28 @@ repository settings. The authoritative reference for all of these is
 
 ---
 
-## 7. What is not on self-host
+## 7. Scaling out — Postgres + Redis (multi-instance)
+
+The SQLite default is ideal for a single instance. To run **multiple replicas** behind a load balancer, switch
+to a shared Postgres + Redis:
+
+- **`DATABASE_URL=postgres://user:pw@host:5432/db`** — uses Postgres instead of SQLite. The same 56 migrations
+  apply (translated to Postgres at startup), and the job queue moves to Postgres with `FOR UPDATE SKIP LOCKED`
+  claiming, so replicas never double-process a job.
+- **`REDIS_URL=redis://host:6379`** — a shared fixed-window rate limiter across all replicas.
+
+Uncomment the `postgres` + `redis` services in `docker-compose.yml`, set the two URLs on the app service, and
+scale (`docker compose up --scale gittensory=3`). Postgres is **beta**: the migrations + the exercised query
+paths are validated against a real Postgres, but report any dialect edge cases. RAG (the SQLite vector store)
+is **not** available on the Postgres backend yet — it degrades to no-context.
+
+## 8. What is not on self-host
 
 These are Cloudflare-platform features; they degrade cleanly and the core reviewer is unaffected:
 
 - **Visual PR capture** (Browser Rendering binding) — off; reviews run text-only.
 - **The `/mcp` server** (Durable-Object-backed Agents SDK) — returns `501`. The deterministic API + review
   path is unaffected; a native MCP-on-Node port is a follow-up.
-- **Distributed rate limiting** (RateLimiter Durable Object) — absent, so the limiter is a no-op. Put your
-  reverse proxy / WAF in front if you expose the endpoint publicly.
+- **Distributed rate limiting** (RateLimiter Durable Object) — off by default; set `REDIS_URL` for a
+  Redis-backed fixed-window limiter (see §7). Otherwise put a reverse proxy / WAF in front.
 - **Vectorize-backed RAG** and **R2 audit storage** — inert unless you wire equivalent backends.

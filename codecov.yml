@@ -38,3 +38,7 @@ ignore:
   - "src/server.ts"
   - "src/selfhost/cf-workers-shim.ts"
   - "src/selfhost/stubs/**"
+  # Postgres runtime adapters: validated by the real-Postgres integration test (test/integration/selfhost-pg.ts,
+  # gated on PG_TEST_URL) + the real-PG boot. The dialect translation itself IS unit-tested (pg-dialect.ts).
+  - "src/selfhost/pg-adapter.ts"
+  - "src/selfhost/pg-queue.ts"

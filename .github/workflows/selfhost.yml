@@ -33,6 +33,16 @@ jobs:
     name: build + boot smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: devpw
+          POSTGRES_DB: gittensory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,6 +52,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Self-host unit tests
         run: npx vitest run test/unit/selfhost-*.test.ts
+      - name: Postgres integration test (real PG)
+        run: PG_TEST_URL=postgres://postgres:devpw@localhost:5432/gittensory npx vitest run test/integration/selfhost-pg.test.ts
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Build the self-host bundle

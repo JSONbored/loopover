@@ -114,7 +114,7 @@ import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "..
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
-import { buildIssueSlopAssessment, buildSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
+import { buildIssueSlopAssessment, buildSlopAssessment } from "../signals/slop";
 import { buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
@@ -1100,7 +1100,7 @@ export class GittensoryMcp {
       "gittensory_check_slop_risk",
       {
         description:
-          "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+          "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns band (clean/low/elevated/high) and actionable findings. No repo data needed.",
         inputSchema: checkSlopRiskShape,
         outputSchema: checkSlopRiskOutputSchema,
       },
@@ -1111,7 +1111,7 @@ export class GittensoryMcp {
       "gittensory_check_issue_slop",
       {
         description:
-          "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only: issues never block.",
+          "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns band and findings. Advisory-only: issues never block.",
         inputSchema: checkIssueSlopShape,
         outputSchema: checkIssueSlopOutputSchema,
       },
@@ -1974,19 +1974,39 @@ export class GittensoryMcp {
     };
   }
 
+  // Per-actor rate-limit for slop-check tools: 20 calls per 5 min prevents systematic weight enumeration
+  // via controlled inputs. Skips gracefully when RATE_LIMITER is unavailable (test / local environments).
+  private async enforceToolRateLimit(toolName: string): Promise<void> {
+    if (!this.env.RATE_LIMITER) return;
+    const key = `mcp-tool:${toolName}:${this.identity.actor}`;
+    const id = this.env.RATE_LIMITER.idFromName(key);
+    const response = await this.env.RATE_LIMITER.get(id).fetch("https://rate-limit/check", {
+      method: "POST",
+      body: JSON.stringify({ key, limit: 20, windowSeconds: 300 }),
+    });
+    if (response.status === 429) {
+      const body = (await response.json().catch(() => ({}))) as { retryAfterSeconds?: number };
+      throw new Error(`Rate limit exceeded. Retry after ${body.retryAfterSeconds ?? 60}s.`);
+    }
+  }
+
   private async checkSlopRisk(input: z.infer<z.ZodObject<typeof checkSlopRiskShape>>): Promise<ToolPayload> {
+    await this.enforceToolRateLimit("gittensory_check_slop_risk");
     const assessment = buildSlopAssessment(input);
+    // Return band + findings only — omit the exact numeric score and rubric thresholds to prevent
+    // weight reverse-engineering via controlled inputs (#mcp-slop-blunt).
     return {
-      summary: `Slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
-      data: { ...assessment, rubric: SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
+      summary: `Slop risk: ${assessment.band}.`,
+      data: { band: assessment.band, findings: assessment.findings } as unknown as Record<string, unknown>,
     };
   }
 
   private async checkIssueSlop(input: z.infer<z.ZodObject<typeof checkIssueSlopShape>>): Promise<ToolPayload> {
+    await this.enforceToolRateLimit("gittensory_check_issue_slop");
     const assessment = buildIssueSlopAssessment(input);
     return {
-      summary: `Issue slop risk: ${assessment.slopRisk}/100 (${assessment.band}).`,
-      data: { ...assessment, rubric: ISSUE_SLOP_RUBRIC_MARKDOWN } as unknown as Record<string, unknown>,
+      summary: `Issue slop risk: ${assessment.band}.`,
+      data: { band: assessment.band, findings: assessment.findings } as unknown as Record<string, unknown>,
     };
   }
 

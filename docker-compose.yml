@@ -289,8 +289,10 @@ services:
   # read env/secrets + all container logs, create a privileged container and escape to the host — the
   # same risk the `runner` service notes below). This proxy is the ONLY container touching the socket; it
   # allows just the read-only `/containers/*` endpoints docker_sd needs (list/inspect/logs) and blocks
-  # every mutating call (POST=0 → no create/exec/start). It publishes no host port — reachable only on the
-  # internal compose network.
+  # every mutating call (POST=0 → no create/exec/start). Even read-only, GET /containers/{id}/json still
+  # returns each container's Config.Env, so the proxy is isolated on a dedicated `docker-proxy` network
+  # shared ONLY with Promtail (publishing no host port is not enough — the default network is reachable by
+  # every service). No other container can reach :2375 to harvest secrets from peers' environments.
   docker-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0
     restart: unless-stopped
@@ -301,6 +303,7 @@ services:
       POST: "0"         # deny every mutating call; strictly read-only (no create/exec/start)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-proxy]   # isolated — only Promtail joins this network
 
   promtail:
     image: grafana/promtail:latest
@@ -312,8 +315,10 @@ services:
       - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
       # Persist read positions so restarts don't re-ship the whole log history.
       - promtail-data:/tmp/positions
-    # No Docker-socket mount — Promtail discovers containers via the docker-proxy above (read-only
-    # Docker API). See that service for why a direct `:ro` socket mount would still be host-root-equivalent.
+    # `default` reaches Loki for pushes; `docker-proxy` reaches the socket proxy for discovery. Promtail is
+    # the only service on `docker-proxy`, so the inspect endpoint (and the env it exposes) is unreachable
+    # from any other container. No Docker-socket mount — discovery goes through the proxy's read-only API.
+    networks: [default, docker-proxy]
 
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
   # Joins your tailnet so the stack is accessible via Tailscale IP/hostname — no
@@ -374,3 +379,13 @@ volumes:
   promtail-data:
   tailscale-state:
   runner-work:
+
+networks:
+  # The implicit project network every service joins by default (declared so it can be referenced
+  # explicitly where a service also needs the isolated proxy network below).
+  default:
+  # Isolated network for the Docker-socket proxy. `internal: true` blocks external/internet egress, and
+  # only docker-proxy + promtail join it — so the proxy's inspect endpoint (which exposes every
+  # container's Config.Env) is unreachable from any other service. See the docker-proxy service notes.
+  docker-proxy:
+    internal: true

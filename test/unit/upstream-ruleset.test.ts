@@ -809,6 +809,25 @@ describe("upstream ruleset drift tracking", () => {
     await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "disabled", created: 0, updated: 0, skipped: 0 });
   });
 
+  it("REGRESSION (#audit-rawfetch-pause): the global agent brake / freeze halts drift-issue filing (raw PAT writes outside the chokepoint)", async () => {
+    // DB freeze arm: enabled + token + a real report, but a global freeze must skip ALL GitHub writes.
+    const frozenEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(frozenEnv, driftReport("frozen-fingerprint"));
+    await repositories.setGlobalAgentFrozen(frozenEnv, true);
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${(init?.method ?? "GET").toUpperCase()} ${String(input)}`);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    await expect(fileUpstreamDriftIssues(frozenEnv)).resolves.toMatchObject({ status: "paused", created: 0, updated: 0, skipped: 0 });
+    expect(calls.some((c) => c.startsWith("POST") || c.startsWith("PATCH"))).toBe(false); // no GitHub issue write reached the network
+
+    // env brake arm: AGENT_ACTIONS_PAUSED short-circuits before the DB freeze read.
+    const pausedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
+    await upsertUpstreamDriftReport(pausedEnv, driftReport("paused-fingerprint"));
+    await expect(fileUpstreamDriftIssues(pausedEnv)).resolves.toMatchObject({ status: "paused", created: 0, updated: 0, skipped: 0 });
+  });
+
   it("files or reuses upstream drift issues only when explicitly enabled", async () => {
     const missingTokenEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true" });
     await expect(fileUpstreamDriftIssues(missingTokenEnv)).resolves.toMatchObject({ status: "skipped", reason: "missing_issue_token" });

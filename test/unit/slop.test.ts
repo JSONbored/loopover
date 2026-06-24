@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildPullRequestAdvisory, evaluateGateCheck } from "../../src/rules/advisory";
 import {
   buildDuplicateClusterFinding,
   buildEmptyDescriptionFinding,
@@ -20,6 +21,14 @@ import {
 
 const FORBIDDEN_PUBLIC_TERMS =
   /wallet|hotkey|coldkey|mnemonic|reward|payout|raw trust|trust score|scoreability|private reviewability|\/Users|\/home|\/tmp/i;
+
+// The gate's default slop block threshold = the `high` band (60), used when a maintainer sets slop: block
+// without a minScore (see DEFAULT_SLOP_BLOCK_THRESHOLD in src/rules/advisory.ts).
+const DEFAULT_SLOP_BLOCK_THRESHOLD = 60;
+
+// A PR advisory with no app-state findings — overriding findings to [] avoids the `repo_not_registered`
+// short-circuit so evaluateGateCheck reaches the slop blocker (mirrors the rules.test.ts pattern).
+const cleanAdvisory = () => ({ ...buildPullRequestAdvisory(null, null), findings: [] });
 
 describe("buildSlopAssessment", () => {
   it("exports rubric bands and a deterministic assessment shell", () => {
@@ -116,14 +125,15 @@ describe("buildSlopAssessment", () => {
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
-  it("raises missing-test-evidence slop for code-only diffs without tests", () => {
+  it("raises missing-test-evidence slop for code-only diffs without tests (weak/corroborating 15 → low band)", () => {
     const result = buildSlopAssessment({
       changedFiles: [{ path: "src/registry/sync.ts", additions: 24, deletions: 2 }],
       description: "Add retry-with-backoff to the registry sync client.",
     });
 
+    // De-weighted to 15: missing-test alone is corroborating, not decisive, and lands in `low` (1-24).
     expect(result.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence);
-    expect(result.band).toBe("elevated");
+    expect(result.band).toBe("low");
     expect(result.findings).toEqual([
       expect.objectContaining({
         code: "missing_test_evidence",
@@ -131,6 +141,46 @@ describe("buildSlopAssessment", () => {
       }),
     ]);
     expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("missing-test paired with one strong-30 signal totals 45 — elevated, NOT blockable at the default 60 (#deweight)", () => {
+    // PAIRING delta: the de-weight's real effect. A genuine strong concern (trivial whitespace churn, 30)
+    // plus "no tests" (15) reaches 45 — `elevated`, below the default block threshold (60). Pre-change this
+    // pairing was 60 and auto-blocked; now a single genuine strong signal + missing-test no longer blocks.
+    const result = buildSlopAssessment({
+      changedFiles: [
+        { path: "src/x.ts", additions: 2, deletions: 1 }, // negligible source share → trivial_whitespace_churn (30)
+        { path: "src/state.snap", additions: 60, deletions: 40 }, // non-code churn dominates the diff
+      ],
+      description: "Reformat the module.", // non-empty → suppresses empty_pr_description
+    });
+    expect(result.slopRisk).toBe(SLOP_WEIGHTS.trivialWhitespaceChurn + SLOP_WEIGHTS.missingTestEvidence);
+    expect(result.slopRisk).toBe(45);
+    expect(result.band).toBe("elevated");
+    expect(result.slopRisk).toBeLessThan(DEFAULT_SLOP_BLOCK_THRESHOLD); // not blockable at the default high-band threshold
+    expect(result.findings.map((finding) => finding.code).sort()).toEqual(["missing_test_evidence", "trivial_whitespace_churn"]);
+    expect(JSON.stringify(result)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("with slopGateMinScore tuned down to 30, missing-test-only (15) does NOT block — an intended behavior reversal (#deweight)", () => {
+    // A repo that explicitly tuned the slop block threshold DOWN to 30 (via .gittensory.yml / the DB column)
+    // used to block a missing-test-only PR (old score 30 ≥ 30) and now will not (new score 15 < 30). The gate
+    // predicate is `slopRisk >= slopGateMinScore`; we assert the slop score against that tuned threshold.
+    const tunedDownThreshold = 30;
+    const missingTestOnly = buildSlopAssessment({
+      changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }],
+      description: "Add retry logic to the sync client.",
+    });
+    expect(missingTestOnly.slopRisk).toBe(SLOP_WEIGHTS.missingTestEvidence);
+    expect(missingTestOnly.slopRisk).toBeLessThan(tunedDownThreshold); // 15 < 30 → does NOT block
+    // The real gate path: a `block` slop gate at minScore 30 produces no slop blocker for this score.
+    // Override findings to [] so the bare null/null advisory's app-state finding does not short-circuit the gate.
+    const gate = evaluateGateCheck(cleanAdvisory(), {
+      slopGateMode: "block",
+      slopGateMinScore: tunedDownThreshold,
+      slopRisk: missingTestOnly.slopRisk,
+    });
+    expect(gate.blockers.map((blocker) => blocker.code)).not.toContain("slop_risk_above_threshold");
   });
 
   it("raises trivial-churn slop for high-churn diffs with minimal source lines", () => {
@@ -231,11 +281,11 @@ describe("buildSlopAssessment", () => {
   });
 
   it("reaches the high band when multiple strong signals stack", () => {
-    // Code change, no tests, no description: missing-test-evidence (30) + empty-description (15) = elevated.
+    // Code change, no tests, no description: missing-test-evidence (15) + empty-description (15) = 30 = elevated.
     const elevated = buildSlopAssessment({ changedFiles: [{ path: "src/x.ts", additions: 10, deletions: 1 }], description: "" });
     expect(elevated.band).toBe("elevated");
 
-    // High-whitespace-churn code change + no tests + no description: 30 + 30 + 15 = 75 -> high (>=60).
+    // High-whitespace-churn code change + no tests + no description: 30 + 15 + 15 = 60 -> high (>=60).
     const high = buildSlopAssessment({
       changedFiles: [
         { path: "src/x.ts", additions: 2, deletions: 1 },
@@ -439,23 +489,23 @@ describe("slop golden fixtures & determinism (#565)", () => {
     { name: "low — generic commit subject", input: { commitMessages: ["wip"] }, slopRisk: 15, band: "low", codes: ["low_quality_commit_message"] },
     { name: "low — no linked issue and no rationale", input: { hasLinkedIssue: false }, slopRisk: 15, band: "low", codes: ["no_linked_issue_without_rationale"] },
     {
-      name: "elevated — code change without test evidence",
+      name: "low — code change without test evidence",
       input: { changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }], description: "Add retry logic to the sync client." },
-      slopRisk: 30,
-      band: "elevated",
+      slopRisk: 15,
+      band: "low",
       codes: ["missing_test_evidence"],
     },
     {
       name: "elevated — untested code change inside a duplicate cluster",
       input: { changedFiles: [{ path: "src/svc.ts", additions: 12, deletions: 3 }], description: "Add retry logic to the sync client.", inDuplicateCluster: true },
-      slopRisk: 45,
+      slopRisk: 30,
       band: "elevated",
       codes: ["duplicate_cluster_membership", "missing_test_evidence"],
     },
     {
       name: "high — whitespace churn, untested code, and empty description",
       input: { changedFiles: [{ path: "src/x.ts", additions: 2, deletions: 1 }, { path: "src/state.snap", additions: 60, deletions: 40 }], description: "" },
-      slopRisk: 75,
+      slopRisk: 60,
       band: "high",
       codes: ["empty_pr_description", "missing_test_evidence", "trivial_whitespace_churn"],
     },
@@ -473,5 +523,26 @@ describe("slop golden fixtures & determinism (#565)", () => {
     for (const fixture of goldenFixtures) {
       expect(buildSlopAssessment(fixture.input)).toEqual(buildSlopAssessment(fixture.input));
     }
+  });
+
+  it("keeps every fixture score within the clamped 0..100 range (invariant)", () => {
+    for (const fixture of goldenFixtures) {
+      const { slopRisk } = buildSlopAssessment(fixture.input);
+      expect(slopRisk).toBeGreaterThanOrEqual(0);
+      expect(slopRisk).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("keeps the high golden case (strong-30 + missing-test-15 + empty-desc-15 = 60) blockable at the default threshold (#deweight)", () => {
+    // The de-weight must NOT make the high golden case unblockable: trivialWhitespaceChurn (30) +
+    // missingTestEvidence (15) + emptyDescription (15) = 60 stays `high` and at/above the default 60 threshold.
+    const highFixture = goldenFixtures.find((fixture) => fixture.name.startsWith("high"));
+    expect(highFixture).toBeDefined();
+    const result = buildSlopAssessment(highFixture!.input);
+    expect(result.slopRisk).toBe(60);
+    expect(result.band).toBe("high");
+    expect(result.slopRisk).toBeGreaterThanOrEqual(DEFAULT_SLOP_BLOCK_THRESHOLD);
+    const gate = evaluateGateCheck(cleanAdvisory(), { slopGateMode: "block", slopRisk: result.slopRisk });
+    expect(gate.blockers.map((blocker) => blocker.code)).toContain("slop_risk_above_threshold");
   });
 });

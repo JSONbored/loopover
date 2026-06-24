@@ -39,11 +39,14 @@ export type SlopAssessment = {
 
 // Deterministic, high-precision signals only — this score is the ONLY thing allowed to gate (block), so it
 // must be false-positive-averse. Heuristic/AI "this reads low-effort" judgments stay ADVISORY elsewhere and
-// never feed this score. Each "strong" signal is weighted 30 so the `high` band (>=60) is reachable from any
-// two of them; `clamp(.,0,100)` keeps the stacked score bounded.
+// never feed this score. The "strong" signals (trivialWhitespaceChurn, nonSubstantivePadding) are weighted 30
+// so the `high` band (>=60) is reachable from any two of them. missingTestEvidence is a weak/corroborating 15:
+// missing-test alone never blocks, and even paired with one strong-30 signal it only reaches 45 (elevated, not
+// blockable at the default block threshold) — it takes two strong signals (or one strong + two weak) to block,
+// so "no tests" corroborates a high but is no longer decisive. `clamp(.,0,100)` keeps the stacked score bounded.
 export const SLOP_WEIGHTS = {
   trivialWhitespaceChurn: 30,
-  missingTestEvidence: 30,
+  missingTestEvidence: 15,
   nonSubstantivePadding: 30,
   emptyDescription: 15,
   lowQualityCommitMessage: 15,
@@ -442,8 +445,9 @@ function ensurePublicSafeText(text: string, fallback: string): string {
 }
 
 // Documented thresholds (#565): the deterministic slopRisk (0-100) maps to fixed bands — clean = 0,
-// low = 1-24, elevated = 25-59, high = 60-100. Strong signals weigh 30 (any two reach `high`); weak/
-// traceability signals weigh 15. Identical metadata always yields an identical band (see golden fixtures).
+// low = 1-24, elevated = 25-59, high = 60-100. Strong signals (trivial churn, non-substantive padding)
+// weigh 30 (any two reach `high`); weak/corroborating/traceability signals — including missing-test-evidence
+// — weigh 15. Identical metadata always yields an identical band (see golden fixtures).
 function slopBandFor(slopRisk: number): SlopBand {
   if (slopRisk <= 0) return "clean";
   if (slopRisk < 25) return "low";

@@ -144,6 +144,16 @@ describe("contributor open PR monitor", () => {
     ).toBe("reviewable");
   });
 
+  it("classifies a GitHub-native draft PR as draft even without draft in title or labels", () => {
+    const nativeDraft = classifyOpenPullRequest({
+      pr: pr({ number: 20, title: "Add cursor pagination", isDraft: true, labels: [] }),
+      roleContext: outsideContributorRole,
+      reviews: [],
+      checks: [],
+    });
+    expect(mapPendingClassToWorkClassification(nativeDraft, { changeRequestCount: 0, checkFailureCount: 0, duplicateProne: false, missingTests: false })).toBe("draft");
+  });
+
   it("builds contributor-wide monitor answer from registered repos only", async () => {
     const env = createTestEnv();
     vi.spyOn(repositories, "listRepositories").mockResolvedValue([

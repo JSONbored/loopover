@@ -31,6 +31,7 @@ describe("queue trend windows", () => {
           openPullRequests: 12,
           unlinkedPullRequests: 2,
           stalePullRequests: 5,
+          draftPullRequests: 0,
           maintainerAuthoredPullRequests: 1,
           collisionClusters: 4,
           ageBuckets: { under7Days: 2, days7To30: 6, over30Days: 4 },

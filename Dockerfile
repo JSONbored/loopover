@@ -4,7 +4,8 @@
 # the .env file or mounted *_FILE secrets (see docker-compose.yml + .env.example).
 
 # --- build: install deps + bundle the Node entry --------------------------------------------------------
-FROM node:24-slim AS build
+# ECR Public Gallery mirrors Docker Official Images with no rate limits and no auth.
+FROM public.ecr.aws/docker/library/node:24-slim AS build
 WORKDIR /app
 COPY package*.json ./
 # --ignore-scripts: no native builds are needed (SQLite is the built-in node:sqlite; @hono/node-server is
@@ -16,7 +17,7 @@ COPY . .
 RUN node scripts/build-selfhost.mjs --all
 
 # --- runtime: slim, non-root ----------------------------------------------------------------------------
-FROM node:24-slim AS runtime
+FROM public.ecr.aws/docker/library/node:24-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     PLATFORM=self-hosted \

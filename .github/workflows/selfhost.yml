@@ -74,15 +74,11 @@ jobs:
 
       - name: Build the Docker image
         run: |
-          for i in 1 2 3; do
-            docker buildx build \
-              --cache-from type=gha \
-              --cache-to type=gha,mode=max \
-              --load \
-              -t gittensory:selfhost-ci . && break
-            echo "Docker build attempt $i failed, retrying in 15s…"
-            sleep 15
-          done
+          docker buildx build \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            -t gittensory:selfhost-ci .
 
       - name: Boot the container + smoke-test /health, /ready, /metrics, migrations
         run: |

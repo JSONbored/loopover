@@ -208,6 +208,11 @@
     ],
   },
   "triggers": {
-    "crons": ["*/30 * * * *"],
+    // Tick every 2 minutes. The light auto-maintain/recovery sweep (agent-regate-sweep) runs on EVERY tick so an
+    // approved+clean PR merges and a red-CI / stuck PR is handled within ~2 min (see src/index.ts). Heavy sync/
+    // health jobs stay on their own cadence inside the handler via `minute % 30` (30-min) and `isHourly` (hourly),
+    // so they are unaffected by the faster tick. (Was "*/30": the sweep the code intends to run every ~2 min was
+    // actually firing only every 30 min, starving the recovery rail.)
+    "crons": ["*/2 * * * *"],
   },
 }

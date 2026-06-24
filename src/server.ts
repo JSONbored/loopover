@@ -6,12 +6,13 @@
 // Serves the Hono app via @hono/node-server, drives the queue with the same processJob, ticks the same
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
 import { createSelfHostAi } from "./selfhost/ai";
+import { credentialsToEnv, exchangeManifestCode, renderSetupPage } from "./selfhost/setup-wizard";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
 import { gauge, incr, renderMetrics } from "./selfhost/metrics";
@@ -146,6 +147,22 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify(r), { status: r.ok ? 200 : 503, headers: { "content-type": "application/json" } });
         }
         if (path === "/metrics") return new Response(await renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } });
+        // First-run GitHub App setup wizard — only while no App is configured (can't rebind a live install).
+        if ((path === "/setup" || path === "/setup/callback") && !process.env.GITHUB_APP_ID) {
+          const origin = process.env.PUBLIC_API_ORIGIN ?? new URL(request.url).origin;
+          if (path === "/setup") return new Response(renderSetupPage(origin), { headers: { "content-type": "text/html; charset=utf-8" } });
+          const code = new URL(request.url).searchParams.get("code");
+          if (!code) return new Response("missing ?code", { status: 400 });
+          try {
+            const creds = await exchangeManifestCode(code);
+            const outPath = process.env.SETUP_OUTPUT_PATH ?? "/data/gittensory-app.env";
+            writeFileSync(outPath, credentialsToEnv(creds), { mode: 0o600 });
+            console.log(JSON.stringify({ event: "selfhost_app_created", slug: creds.slug, app_id: creds.id }));
+            return new Response(`<!doctype html><body style="font-family:system-ui;max-width:40rem;margin:4rem auto"><h1>GitHub App created ✓</h1><p>Credentials written to <code>${outPath}</code>. Add them to your <code>.env</code> (or load the file), install the App on your repos, and restart the container.</p></body>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+          } catch (error) {
+            return new Response(`setup failed: ${error instanceof Error ? error.message : "error"}`, { status: 500 });
+          }
+        }
         incr("gittensory_http_requests_total");
         return worker.fetch(request, env, ctx);
       },

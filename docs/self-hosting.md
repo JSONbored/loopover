@@ -48,7 +48,12 @@ GitHub Release.
 
 ## 2. Create the GitHub App
 
-Self-host needs its own GitHub App (the hosted gittensory[bot] is separate). Create one with:
+**One-click (recommended):** before setting any GitHub secrets, boot the container and visit **`/setup`**. It
+creates the App for you via GitHub's App-manifest flow (correct permissions/events + webhook URL), then writes
+the credentials to `/data/gittensory-app.env`. Add those to your `.env`, install the App on your repos, and
+restart. `/setup` is disabled once `GITHUB_APP_ID` is set, so it can't rebind a live install.
+
+**Or manually**, create a GitHub App (the hosted gittensory[bot] is separate) with:
 
 - **Webhook URL** `https://<your-host>/v1/github/webhook`, and a **webhook secret** (→ `GITHUB_WEBHOOK_SECRET`).
 - **Permissions**: Pull requests (read/write), Contents (read; read/write if you want merge), Issues

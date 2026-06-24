@@ -35,7 +35,7 @@ RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g @anthropic-ai/claude
 # Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.
 ARG INSTALL_VISUAL_REVIEW=false
 COPY --from=build /app/package*.json ./
-RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core --ignore-scripts; fi
+RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22.13.1 --ignore-scripts; fi
 # Data dir (the SQLite file) — owned by the unprivileged node user; mount a volume here to persist.
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node

@@ -7,6 +7,7 @@
 // scheduled handler on a timer, exposes /health /ready /metrics, and shuts down gracefully. The Cloudflare
 // Worker (src/index.ts) is untouched — this is a parallel entry the self-host esbuild build bundles.
 import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
@@ -159,9 +160,27 @@ async function main(): Promise<void> {
         // First-run GitHub App setup wizard — only while no App is configured (can't rebind a live install).
         if ((path === "/setup" || path === "/setup/callback") && !process.env.GITHUB_APP_ID) {
           const origin = process.env.PUBLIC_API_ORIGIN ?? new URL(request.url).origin;
-          if (path === "/setup") return new Response(renderSetupPage(origin), { headers: { "content-type": "text/html; charset=utf-8" } });
-          const code = new URL(request.url).searchParams.get("code");
+          if (path === "/setup") {
+            // Generate a per-visit CSRF nonce, embed it in the manifest's redirect_url, and bind it to
+            // this browser session via an HttpOnly cookie so the callback can validate it.
+            const state = randomUUID();
+            return new Response(renderSetupPage(origin, state), {
+              headers: {
+                "content-type": "text/html; charset=utf-8",
+                "Set-Cookie": `setup_state=${state}; Path=/setup; HttpOnly; SameSite=Lax; Max-Age=3600`,
+              },
+            });
+          }
+          const params = new URL(request.url).searchParams;
+          const code = params.get("code");
           if (!code) return new Response("missing ?code", { status: 400 });
+          // Validate the CSRF state: must match the cookie set when /setup was served.
+          const stateParam = params.get("state");
+          const cookieHeader = request.headers.get("cookie") ?? "";
+          const cookieState = cookieHeader.split(";").map((c) => c.trim()).find((c) => c.startsWith("setup_state="))?.slice("setup_state=".length);
+          if (!stateParam || !cookieState || stateParam !== cookieState) {
+            return new Response("invalid state parameter", { status: 403 });
+          }
           try {
             const creds = await exchangeManifestCode(code);
             const outPath = process.env.SETUP_OUTPUT_PATH ?? "/data/gittensory-app.env";

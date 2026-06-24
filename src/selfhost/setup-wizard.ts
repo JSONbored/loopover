@@ -14,13 +14,13 @@ export interface AppCredentials {
 }
 
 /** The GitHub App manifest — permissions + events mirror docs §2 (the manual-setup instructions). */
-export function buildManifest(origin: string): Record<string, unknown> {
+export function buildManifest(origin: string, state: string): Record<string, unknown> {
   const base = origin.replace(/\/+$/, "");
   return {
     name: "Gittensory Self-Host",
     url: base,
     hook_attributes: { url: `${base}/v1/github/webhook` },
-    redirect_url: `${base}/setup/callback`,
+    redirect_url: `${base}/setup/callback?state=${encodeURIComponent(state)}`,
     public: false,
     default_permissions: {
       pull_requests: "write",
@@ -34,9 +34,10 @@ export function buildManifest(origin: string): Record<string, unknown> {
   };
 }
 
-/** HTML page that POSTs the manifest to GitHub's App-creation flow (one click). */
-export function renderSetupPage(origin: string): string {
-  const manifest = JSON.stringify(buildManifest(origin)).replace(/'/g, "&#39;");
+/** HTML page that POSTs the manifest to GitHub's App-creation flow (one click).
+ *  `state` is a random CSRF nonce tied to the session via an HttpOnly cookie in the caller. */
+export function renderSetupPage(origin: string, state: string): string {
+  const manifest = JSON.stringify(buildManifest(origin, state)).replace(/'/g, "&#39;");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gittensory self-host setup</title></head>
 <body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
 <h1>Gittensory self-host setup</h1>

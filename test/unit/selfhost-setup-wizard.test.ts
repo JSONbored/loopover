@@ -2,20 +2,26 @@ import { describe, expect, it, vi } from "vitest";
 import { buildManifest, credentialsToEnv, exchangeManifestCode, renderSetupPage } from "../../src/selfhost/setup-wizard";
 
 describe("setup-wizard (#981 GitHub App Manifest)", () => {
-  it("builds a manifest with the webhook + redirect URLs, permissions, events", () => {
-    const m = buildManifest("https://gt.example.com/");
+  it("builds a manifest with the webhook + redirect URLs (including CSRF state), permissions, events", () => {
+    const m = buildManifest("https://gt.example.com/", "test-state-123");
     expect(m.url).toBe("https://gt.example.com"); // trailing slash trimmed
     expect((m.hook_attributes as { url: string }).url).toBe("https://gt.example.com/v1/github/webhook");
-    expect(m.redirect_url).toBe("https://gt.example.com/setup/callback");
+    expect(m.redirect_url).toBe("https://gt.example.com/setup/callback?state=test-state-123");
     expect((m.default_permissions as Record<string, string>).pull_requests).toBe("write");
     expect(m.default_events).toContain("pull_request");
   });
 
-  it("renders a form that POSTs the manifest to GitHub", () => {
-    const html = renderSetupPage("https://gt.example.com");
+  it("encodes special characters in the state parameter", () => {
+    const m = buildManifest("https://gt.example.com", "a b+c=d&e");
+    expect(m.redirect_url).toContain("state=a%20b%2Bc%3Dd%26e");
+  });
+
+  it("renders a form that POSTs the manifest to GitHub with the CSRF state embedded", () => {
+    const html = renderSetupPage("https://gt.example.com", "nonce-abc");
     expect(html).toContain('action="https://github.com/settings/apps/new"');
     expect(html).toContain('name="manifest"');
     expect(html).toContain("Gittensory Self-Host");
+    expect(html).toContain("nonce-abc"); // state is baked into the manifest value
   });
 
   it("exchanges the code and serializes credentials to .env lines", async () => {

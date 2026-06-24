@@ -187,7 +187,7 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env before using --profile observability}
       GF_USERS_ALLOW_SIGN_UP: "false"
 
   # ── Tailscale (--profile tailscale) ───────────────────────────────────────
@@ -216,7 +216,9 @@ services:
   # and RUNNER_REPO_URL= (e.g. https://github.com/your-org/your-repo) in .env.
   # Get a token at: https://github.com/<owner>/<repo>/settings/actions/runners/new
   runner:
-    image: myoung34/github-runner:latest
+    # Pin to a specific version tag — `latest` is mutable. Find a digest via:
+    # docker pull myoung34/github-runner:ubuntu-22.04 && docker inspect --format='{{index .RepoDigests 0}}' myoung34/github-runner:ubuntu-22.04
+    image: myoung34/github-runner:ubuntu-22.04
     restart: unless-stopped
     profiles: ["runners"]
     environment:
@@ -227,8 +229,10 @@ services:
       RUNNER_NAME: ${RUNNER_NAME:-gittensory-runner}
       LABELS: ${RUNNER_LABELS:-self-hosted,linux,x64}
       RUNNER_WORKDIR: /tmp/runner
+      # Docker builds are disabled by default. To enable DinD (Docker-in-Docker) for workflows that
+      # need `docker build/push`, add a `dind` sidecar service and set DOCKER_HOST here. Mounting
+      # /var/run/docker.sock grants container-escape risk and is intentionally omitted.
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - runner-work:/tmp/runner
 
 volumes:

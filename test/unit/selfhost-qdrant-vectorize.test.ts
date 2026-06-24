@@ -17,7 +17,7 @@ describe("initQdrantCollection (#1217)", () => {
     vi.stubGlobal("fetch", fake);
     await initQdrantCollection(BASE);
     expect(fake).toHaveBeenCalledOnce();
-    const [url, init] = fake.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${BASE}/collections/gittensory`);
     const body = JSON.parse(init.body as string) as { vectors: { size: number; distance: string } };
     expect(body.vectors.distance).toBe("Cosine");
@@ -38,7 +38,7 @@ describe("initQdrantCollection (#1217)", () => {
     const fake = mockFetch(200);
     vi.stubGlobal("fetch", fake);
     await initQdrantCollection(BASE, "custom-col", 768);
-    const [url, init] = fake.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("custom-col");
     expect((JSON.parse(init.body as string) as { vectors: { size: number } }).vectors.size).toBe(768);
   });
@@ -52,7 +52,7 @@ describe("initQdrantCollection — QDRANT_API_KEY header", () => {
     const fake = mockFetch(200);
     vi.stubGlobal("fetch", fake);
     await initQdrantCollection(BASE);
-    const init = (fake.mock.calls[0] as [string, RequestInit])[1];
+    const init = (fake.mock.calls[0] as unknown as [string, RequestInit])[1];
     expect((init.headers as Record<string, string>)["api-key"]).toBe("secret-key");
   });
 
@@ -61,7 +61,7 @@ describe("initQdrantCollection — QDRANT_API_KEY header", () => {
     const fake = mockFetch(200);
     vi.stubGlobal("fetch", fake);
     await initQdrantCollection(BASE);
-    const init = (fake.mock.calls[0] as [string, RequestInit])[1];
+    const init = (fake.mock.calls[0] as unknown as [string, RequestInit])[1];
     expect((init.headers as Record<string, string>)["api-key"]).toBeUndefined();
   });
 });
@@ -77,7 +77,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     const v = createQdrantVectorize(BASE);
     const result = await v.upsert([{ id: "repo/file:1", values: [0.1, 0.2], namespace: "ns1", metadata: { path: "a.ts" } }]);
     expect(result).toEqual({ count: 1, ids: ["repo/file:1"] });
-    const [url, init] = fake.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("/points");
     const body = JSON.parse(init.body as string) as { points: Array<{ id: string; payload: { _orig_id: string; namespace: string } }> };
     expect(body.points[0]?.payload._orig_id).toBe("repo/file:1");
@@ -90,7 +90,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", mockFetch(200));
     const v = createQdrantVectorize(BASE);
     await v.upsert([{ id: "no-ns", values: [1, 0] }]);
-    const init = (vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1];
+    const init = (vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1];
     const body = JSON.parse(init.body as string) as { points: Array<{ payload: { namespace: string } }> };
     expect(body.points[0]?.payload.namespace).toBe("");
   });
@@ -114,10 +114,10 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", mockFetch(200));
     const v = createQdrantVectorize(BASE);
     await v.upsert([{ id: "stable-id", values: [1] }]);
-    const body1 = JSON.parse(((vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1].body) as string) as { points: Array<{ id: string }> };
+    const body1 = JSON.parse(((vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1].body) as string) as { points: Array<{ id: string }> };
     vi.mocked(fetch).mockClear();
     await v.upsert([{ id: "stable-id", values: [1] }]);
-    const body2 = JSON.parse(((vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1].body) as string) as { points: Array<{ id: string }> };
+    const body2 = JSON.parse(((vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1].body) as string) as { points: Array<{ id: string }> };
     expect(body1.points[0]?.id).toBe(body2.points[0]?.id);
   });
 
@@ -134,7 +134,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     expect(matches[0]?.id).toBe("repo/f:1"); // _orig_id restored
     expect(matches[0]?.score).toBeCloseTo(0.92);
     expect(matches[0]?.metadata?.path).toBe("f.ts");
-    const init = (vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1];
+    const init = (vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1];
     const body = JSON.parse(init.body as string) as { filter?: { must: Array<{ key: string; match: { value: string } }> } };
     expect(body.filter?.must[0]?.key).toBe("namespace");
     expect(body.filter?.must[0]?.match.value).toBe("ns");
@@ -144,7 +144,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", mockFetch(200, { result: [] }));
     const v = createQdrantVectorize(BASE);
     await v.query([1, 0], { topK: 10 });
-    const body = JSON.parse(((vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1].body) as string) as { filter?: unknown };
+    const body = JSON.parse(((vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1].body) as string) as { filter?: unknown };
     expect(body.filter).toBeUndefined();
   });
 
@@ -152,7 +152,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", mockFetch(200, { result: [] }));
     const v = createQdrantVectorize(BASE);
     await v.query([1, 0], {});
-    const body = JSON.parse(((vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1].body) as string) as { limit: number };
+    const body = JSON.parse(((vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1].body) as string) as { limit: number };
     expect(body.limit).toBe(12);
   });
 
@@ -208,7 +208,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     const v = createQdrantVectorize(BASE);
     const result = await v.deleteByIds(["id-1", "id-2"]);
     expect(result).toEqual({ count: 2 });
-    const init = (vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[1];
+    const init = (vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit])[1];
     const body = JSON.parse(init.body as string) as { points: string[] };
     expect(body.points).toHaveLength(2);
     body.points.forEach((p) => expect(p).toMatch(/^[0-9a-f]{8}-/));
@@ -235,7 +235,7 @@ describe("createQdrantVectorize (#1217 Qdrant adapter)", () => {
     vi.stubGlobal("fetch", fake);
     const v = createQdrantVectorize("http://qdrant:6333/");
     await v.query([1], {});
-    const [url] = fake.mock.calls[0] as [string];
+    const [url] = fake.mock.calls[0] as unknown as [string];
     expect(url).not.toContain("//collections");
   });
 });

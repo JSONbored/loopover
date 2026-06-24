@@ -1940,11 +1940,32 @@ export type LiveCiAggregate = {
 };
 
 /**
+ * Operator-configured fallback set of REQUIRED CI contexts (comma-separated `GITTENSORY_REQUIRED_CI_CONTEXTS`,
+ * e.g. "Superagent Security Scan,validate,Gittensory Gate"). This is the config-as-code belt for
+ * fetchRequiredStatusContexts: when the LIVE branch-protection read fails — most commonly a 403 because the
+ * installation token lacks `administration:read` — folding ALL checks into the gate makes review wait on
+ * non-required checks (slow) and lets a non-required red (e.g. codecov variance) drive an automated close
+ * (unfair). Using the configured trusted set instead keeps required-only behavior during that window. Returns
+ * `null` when unset/empty so the caller keeps the conservative fold-all default (byte-identical to before).
+ * The names MUST match the exact check-run / status contexts. Granting the App `administration:read` makes the
+ * live read succeed (per-repo accurate) and reduces this fallback to a transient-failure safety net.
+ */
+export function configuredRequiredCiContexts(env: { GITTENSORY_REQUIRED_CI_CONTEXTS?: string }): Set<string> | null {
+  const names = new Set<string>();
+  for (const part of (env.GITTENSORY_REQUIRED_CI_CONTEXTS ?? "").split(",")) {
+    const trimmed = part.trim();
+    if (trimmed.length > 0) names.add(trimmed);
+  }
+  return names.size > 0 ? names : null;
+}
+
+/**
  * RC2 best-effort fetch of the base branch's branch-protection REQUIRED status-check contexts. Returns the set
  * of required context names (covering both the legacy `contexts` array and the newer `checks[].context` shape),
- * or `null` when none can be determined — a 404 (no protection / no required checks), a 403 (token lacks
- * admin:repo, common for installations/forks), or any other error. `null`/empty makes fetchLiveCiAggregate fall
- * back to folding ALL red checks into the gate, so a fetch failure can never silently pass a required red check.
+ * or the operator-configured fallback (`GITTENSORY_REQUIRED_CI_CONTEXTS`) — else `null` — when none can be
+ * determined: a 404 (no protection / no required checks), a 403 (token lacks `administration:read`, common for
+ * installations/forks), or any other error. `null`/empty makes fetchLiveCiAggregate fall back to folding ALL
+ * red checks into the gate, so a fetch failure can never silently pass a required red check.
  */
 export async function fetchRequiredStatusContexts(env: Env, repoFullName: string, baseRef: string | null | undefined, token: string | undefined): Promise<Set<string> | null> {
   if (!baseRef) return null;
@@ -1954,7 +1975,7 @@ export async function fetchRequiredStatusContexts(env: Env, repoFullName: string
     `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`,
     token,
   ).catch(() => undefined);
-  if (!result) return null; // 404 (no protection) / 403 (no admin) — treat as "unknown".
+  if (!result) return configuredRequiredCiContexts(env); // 404 / 403 (no admin:read) / error → configured fallback, else null (fold-all).
   const names = new Set<string>();
   for (const ctx of result.data.contexts ?? []) {
     if (typeof ctx === "string" && ctx.trim().length > 0) names.add(ctx);

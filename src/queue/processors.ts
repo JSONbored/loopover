@@ -1,6 +1,7 @@
 import {
   countOpenIssues,
   countOpenPullRequests,
+  countRecentSubmissionsByAuthor,
   getAgentCommandAnswer,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -64,7 +65,6 @@ import {
   backfillRepositorySegment,
   enqueueRepositoryOpenDataBackfill,
   fetchAndStorePullRequestFilesForReview,
-  fetchLinkedIssueFacts,
   fetchLiveCiAggregate,
   fetchLivePullRequestMergeState,
   fetchLivePullRequestReviewDecision,
@@ -176,8 +176,8 @@ import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
-import { loadHardGuardrailGlobs } from "../review/guardrail-config";
-import { evaluateLinkedIssueHardRules, loadLinkedIssueHardRules } from "../review/linked-issue-hard-rules";
+import { loadHardGuardrailGlobs, loadSubmissionFloodLimit } from "../review/guardrail-config";
+import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { isHoldOnly, recordPrOutcome, recordReversalSignals, runSelfTuneBreaker } from "../review/outcomes-wire";
@@ -563,9 +563,10 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
     // re-gate above only recomputes the audit verdict; without this re-publish, an idle PR keeps a stale comment
     // (e.g. "safe to merge" from before a fix) and a stale status label forever. reReviewStoredPullRequest reads
     // the freshly-synced head + the live CI, so the comment + label + action all reflect reality. Paced at
-    // SWEEP_MAX_PRS per sweep; cheap now that installation tokens are cached.
+    // SWEEP_MAX_PRS per sweep; scheduled sweeps deliberately skip AI so the 2-minute cadence cannot amplify
+    // model/API spend for unchanged PR heads.
     if (sweepInstallationId != null) {
-      await reReviewStoredPullRequest(env, `regate-sweep:${repoFullName}#${pr.number}`, sweepInstallationId, repoFullName, pr.number).catch((error) => {
+      await reReviewStoredPullRequest(env, `regate-sweep:${repoFullName}#${pr.number}`, sweepInstallationId, repoFullName, pr.number, undefined, { skipAiReview: true }).catch((error) => {
         console.error(JSON.stringify({ level: "warn", event: "sweep_rereview_failed", deliveryId: `regate-sweep:${repoFullName}#${pr.number}`, repository: repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
       });
     }
@@ -652,27 +653,35 @@ async function maybeRunAgentMaintenance(
   const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
 
-  // Linked-issue HARD-RULE close (#linked-issue-hard-rules). DETERMINISTIC: if the repo enabled any rule AND
-  // this PR links at least one issue, fetch each linked issue's facts (labels/assignees/state) and evaluate.
-  // Skip the fetch entirely when no rule is on OR there are no linked issues (no extra GitHub calls on the
-  // common path). Fetches are FAIL-OPEN per issue (a fetch error skips that issue, never blocks the review);
-  // the config load is FAIL-SAFE (a KV fault yields all-off, never a surprise close).
-  let linkedIssueHardRule: { violated: boolean; reason: string | null } | undefined;
-  const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, repoFullName);
-  const anyLinkedIssueRuleOn =
-    linkedIssueRulesConfig.ownerAssignedClose === "block" ||
-    linkedIssueRulesConfig.missingPointLabelClose === "block" ||
-    linkedIssueRulesConfig.maintainerOnlyLabelClose === "block";
-  if (anyLinkedIssueRuleOn && pr.linkedIssues.length > 0) {
-    // pr.linkedIssues is already capped at MAX_LINKED_ISSUE_NUMBERS at extraction (extractLinkedIssueNumbers),
-    // so the per-issue fetch fanout is bounded at the source — no extra cap needed here.
-    const issueFacts = (
-      await Promise.all(pr.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(env, repoFullName, issueNumber, ciToken ?? env.GITHUB_PUBLIC_TOKEN)))
-    ).flatMap((facts) => (facts ? [facts] : []));
-    if (issueFacts.length > 0) {
-      linkedIssueHardRule = evaluateLinkedIssueHardRules({ issues: issueFacts, config: linkedIssueRulesConfig, repoOwner });
+  // Anti-farming (#anti-gaming-flood): a CONTRIBUTOR who has submitted more than the per-repo limit within the
+  // configured window is HELD for manual review (never auto-merged/approved) — this catches farming that merges
+  // fast, which an open-PR count alone would miss. Owner/automation are exempt; disabled (no hold) when the repo
+  // has no flood limit configured in KV, or on any read fault (fail-open, never false-hold).
+  let submissionFloodHit = false;
+  if (!authorIsOwner && !authorIsAutomationBot && authorLogin.length > 0) {
+    const floodLimit = await loadSubmissionFloodLimit(env, repoFullName).catch(() => null);
+    if (floodLimit) {
+      const sinceIso = new Date(Date.now() - floodLimit.windowHours * 3_600_000).toISOString();
+      const recent = await countRecentSubmissionsByAuthor(env, repoFullName, authorLogin, sinceIso).catch(() => 0);
+      submissionFloodHit = recent > floodLimit.maxPerWindow;
     }
   }
+
+  // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
+  // MORE closing references than we can safely verify (overflow) is itself a violation; otherwise evaluate the
+  // linked issues' facts (fail-open per issue). The decision is extracted into resolveLinkedIssueHardRule (pure,
+  // dependency-injected) so it is unit-tested directly rather than only through this orchestrator. Config load is
+  // FAIL-SAFE (a KV fault yields all-off, never a surprise close).
+  const linkedIssueRulesConfig = await loadLinkedIssueHardRules(env, repoFullName);
+  const linkedIssueHardRule = await resolveLinkedIssueHardRule({
+    env,
+    repoFullName,
+    repoOwner,
+    config: linkedIssueRulesConfig,
+    body: pr.body,
+    linkedIssues: pr.linkedIssues,
+    ciToken,
+  });
 
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
@@ -684,6 +693,7 @@ async function maybeRunAgentMaintenance(
     hardGuardrailGlobs,
     authorIsOwner,
     authorIsAutomationBot,
+    submissionFloodHit,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ...(linkedIssueHardRule !== undefined ? { linkedIssueHardRule } : {}),
@@ -745,7 +755,15 @@ async function maybeRunAgentMaintenance(
  * "the CI event WAKES the existing row and re-runs the full review". The PR's persisted head SHA is used as-is
  * (never overwritten from the CI payload — reviewbot scope parity). Best-effort throughout.
  */
-async function reReviewStoredPullRequest(env: Env, deliveryId: string, installationId: number, repoFullName: string, prNumber: number, previewPollAttempt?: number): Promise<void> {
+async function reReviewStoredPullRequest(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+  previewPollAttempt?: number,
+  options: { skipAiReview?: boolean } = {},
+): Promise<void> {
   const [repo, settings] = await Promise.all([getRepository(env, repoFullName), resolveRepositorySettings(env, repoFullName)]);
   const pr = await getPullRequest(env, repoFullName, prNumber);
   if (!pr || pr.state !== "open") return;
@@ -759,7 +777,11 @@ async function reReviewStoredPullRequest(env: Env, deliveryId: string, installat
   if (shouldCollectSlopEvidence(settings) || settings.manifestPolicyGateMode !== "off") {
     await refreshPullRequestDetails(env, repoFullName, prNumber).catch(() => undefined);
   }
-  const gate = await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, { deliveryId, ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}) }).catch((error) => {
+  const gate = await maybePublishPrPublicSurface(env, installationId, repoFullName, pr, repo, settings, advisory, {
+    deliveryId,
+    ...(previewPollAttempt !== undefined ? { previewPollAttempt } : {}),
+    ...(options.skipAiReview ? { skipAiReview: true } : {}),
+  }).catch((error) => {
     console.error(JSON.stringify({ level: "warn", event: "pr_public_surface_failed", deliveryId, repository: repoFullName, pullNumber: prNumber, error: errorMessage(error) }));
     return undefined;
   });
@@ -2006,7 +2028,7 @@ async function maybePublishPrPublicSurface(
   repo: Awaited<ReturnType<typeof getRepository>>,
   settings: Awaited<ReturnType<typeof getRepositorySettings>>,
   advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>,
-  webhook: { deliveryId: string; authorType?: string | undefined; action?: string | undefined; previewPollAttempt?: number | undefined },
+  webhook: { deliveryId: string; authorType?: string | undefined; action?: string | undefined; previewPollAttempt?: number | undefined; skipAiReview?: boolean | undefined },
 ): Promise<ReturnType<typeof evaluateGateCheck> | undefined> {
   const author = pr.authorLogin ?? null;
   // Per-repo cutover gate (GITTENSORY_REVIEW_REPOS): the unified converged comment renders for THIS repo
@@ -2218,18 +2240,20 @@ async function maybePublishPrPublicSurface(
     // BEFORE the gate evaluates, and returns advisory notes for the panel. Inside the try so any AI
     // failure is caught and the gate is still finalized (never left in_progress). Pass the shared resolved
     // files so the review (+ grounding + RAG) sees the REAL diff even on a pre-detail-sync first review (FIX B);
-    // resolve only when the review will actually run (aiReviewMode !== off + a head SHA) to keep gate-only
-    // repos free of an extra file resolve.
-    const aiReviewWillRun = settings.aiReviewMode !== "off" && Boolean(advisory.headSha);
-    aiReview = await runAiReviewForAdvisory(env, {
-      settings,
-      advisory,
-      repoFullName,
-      pr,
-      author,
-      confirmedContributor,
-      ...(aiReviewWillRun ? { files: await getReviewFiles() } : {}),
-    });
+    // resolve only when the review will actually run (aiReviewMode !== off + a head SHA + not a scheduled
+    // sweep backstop) to keep gate-only and sweep-only repos free of an extra file resolve.
+    const aiReviewWillRun = !webhook.skipAiReview && settings.aiReviewMode !== "off" && Boolean(advisory.headSha);
+    if (aiReviewWillRun) {
+      aiReview = await runAiReviewForAdvisory(env, {
+        settings,
+        advisory,
+        repoFullName,
+        pr,
+        author,
+        confirmedContributor,
+        files: await getReviewFiles(),
+      });
+    }
 
     // Safety secrets-scan (convergence, flag-gated by GITTENSORY_REVIEW_SAFETY). Scans the diff and, on a hit,
     // appends a critical `secret_leak` blocker BEFORE the gate evaluates. When the scan will actually run

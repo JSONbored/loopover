@@ -225,6 +225,25 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
+  describe("anti-farming: a per-author submission flood forces a manual hold (#anti-gaming-flood)", () => {
+    it("HOLDS a flooding author's clean+green+approved PR — needs-human, never merged/approved/closed", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, submissionFloodHit: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const cls = classes(plan);
+      expect(cls).not.toContain("merge");
+      expect(cls).not.toContain("approve");
+      expect(cls).not.toContain("close"); // a clean flooding PR is HELD for review, not killed
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+    });
+    it("still CLOSES a flooding author's red-CI PR (a broken PR closes regardless of the flood hold)", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, submissionFloodHit: true, ciState: "failed", pr: { labels: [] } })));
+      expect(plan).toContain("close");
+    });
+    it("does NOT hold a normal author (submissionFloodHit false) — a clean PR still auto-merges", () => {
+      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", label: "auto" }, submissionFloodHit: false, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
+      expect(plan).toContain("merge");
+    });
+  });
+
   describe("owner-PR guard: never auto-close the repo owner's own PRs", () => {
     it("does NOT auto-close a noisy failing PR authored by the repo owner", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "failure", autonomy: { close: "auto" }, blockerTitles: ["x"], authorIsOwner: true, pr: { labels: [], slopRisk: 95 } })));

@@ -42,3 +42,23 @@ export async function loadHardGuardrailGlobs(env: Env, repoFullName: string): Pr
     return FAIL_CLOSED_GUARDRAIL_GLOBS;
   }
 }
+
+/**
+ * Anti-farming submission-flood limit for a repo, read from the same shared REVIEW_CONFIG KV (key = repo slug):
+ * `maxSubmissionsPerAuthorWindow` (the per-author cap) + `submissionWindowHours` (the window, default 24h). Returns
+ * null when unset/invalid (the feature is DISABLED for that repo) or on a KV fault — never throws, and a fault
+ * disables rather than false-holding a contributor. (#anti-gaming-flood)
+ */
+export async function loadSubmissionFloodLimit(env: Env, repoFullName: string): Promise<{ maxPerWindow: number; windowHours: number } | null> {
+  const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
+  if (!env.REVIEW_CONFIG) return null;
+  try {
+    const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { maxSubmissionsPerAuthorWindow?: JsonValue; submissionWindowHours?: JsonValue } | null;
+    const maxPerWindow = Number(config?.maxSubmissionsPerAuthorWindow);
+    if (!Number.isFinite(maxPerWindow) || maxPerWindow <= 0) return null; // unset / invalid → disabled
+    const hours = Number(config?.submissionWindowHours);
+    return { maxPerWindow, windowHours: Number.isFinite(hours) && hours > 0 ? hours : 24 };
+  } catch {
+    return null; // KV fault → disabled (never false-hold)
+  }
+}

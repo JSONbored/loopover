@@ -11,22 +11,28 @@ import {
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
   extractLinkedIssueNumbers,
+  extractLinkedIssueNumbersWithOverflow,
   MAX_LINKED_ISSUE_NUMBERS,
 } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("database row parser hardening", () => {
 
-  it("caps linked issues extracted from attacker-controlled PR bodies", () => {
+  it("caps linked issues extracted from attacker-controlled PR bodies and reports overflow", () => {
     const body = Array.from({ length: MAX_LINKED_ISSUE_NUMBERS + 25 }, (_, index) => `Fixes #${index + 1}`).join("\n");
 
     expect(extractLinkedIssueNumbers(body)).toEqual(Array.from({ length: MAX_LINKED_ISSUE_NUMBERS }, (_, index) => index + 1));
+    expect(extractLinkedIssueNumbersWithOverflow(body)).toEqual({
+      numbers: Array.from({ length: MAX_LINKED_ISSUE_NUMBERS }, (_, index) => index + 1),
+      overflow: true,
+    });
   });
 
   it("deduplicates linked issues before applying the extraction cap", () => {
     const body = [`Fixes #1`, ...Array.from({ length: MAX_LINKED_ISSUE_NUMBERS }, (_, index) => `Resolves #${index + 1}`)].join("\n");
 
     expect(extractLinkedIssueNumbers(body)).toEqual(Array.from({ length: MAX_LINKED_ISSUE_NUMBERS }, (_, index) => index + 1));
+    expect(extractLinkedIssueNumbersWithOverflow(body).overflow).toBe(false);
   });
 
   it("returns no linked issues when the cap is zero or negative", () => {

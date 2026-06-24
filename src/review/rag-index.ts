@@ -69,12 +69,12 @@ function ghHeaders(token: string | undefined, accept: string): Record<string, st
  * (fail-safe: a tree we can't read = nothing to index). `truncated` is honored (GitHub truncates very large
  * trees) — we index whatever it returned; the MAX_CHUNKS cap is the real bound anyway.
  */
-async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token: string | undefined): Promise<TreeEntry[]> {
+async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token: string | undefined): Promise<TreeEntry[] | null> {
   try {
     const { owner, name } = repoParts(repoFullName);
     const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
     const response = await fetch(url, { headers: ghHeaders(token, "application/vnd.github+json") });
-    if (!response.ok) return [];
+    if (!response.ok) return null;
     const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number }> } | null;
     const entries: TreeEntry[] = [];
     for (const node of body?.tree ?? []) {
@@ -84,7 +84,7 @@ async function fetchRepoTree(env: Env, repoFullName: string, ref: string, token:
     return entries;
   } catch (error) {
     console.log(JSON.stringify({ ev: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
-    return [];
+    return null;
   }
 }
 
@@ -168,6 +168,38 @@ async function upsertChunksCapped(env: Env, project: string, repo: string, chunk
   return upserted;
 }
 
+
+/** Return distinct paths currently retained for a repo in the chunk text store. Fail-safe: [] on error. */
+async function listStoredChunkPaths(infra: ReturnType<typeof createReviewAdapters>, project: string, repo: string): Promise<string[]> {
+  try {
+    const rows = await infra.storage
+      .prepare("SELECT DISTINCT path FROM repo_chunks WHERE project=? AND repo=?")
+      .bind(project, repo)
+      .all<{ path: string }>();
+    return (rows.results ?? []).map((row) => row.path).filter((path) => typeof path === "string" && path.length > 0);
+  } catch (error) {
+    console.log(JSON.stringify({ ev: "rag_list_paths_error", project, repo, message: String(error).slice(0, 200) }));
+    return [];
+  }
+}
+
+/**
+ * Prune chunks for paths that are no longer indexable in the current default-branch tree. This is the full-index
+ * counterpart to reindexChangedPaths' delete-first behavior and prevents deleted/renamed files from being retained
+ * indefinitely in repo_chunks/Vectorize.
+ */
+async function pruneMissingPaths(
+  infra: ReturnType<typeof createReviewAdapters>,
+  project: string,
+  repo: string,
+  currentIndexablePaths: Set<string>,
+): Promise<void> {
+  const storedPaths = await listStoredChunkPaths(infra, project, repo);
+  const stalePaths = storedPaths.filter((path) => !currentIndexablePaths.has(path));
+  if (stalePaths.length === 0) return;
+  await deleteChunksForPaths(infra, project, repo, stalePaths);
+}
+
 /** Split `owner/name` into the (project, repo) pair RAG namespaces on (same convention as rag-wire's splitRepo). */
 function splitRepo(repoFullName: string): [string, string] {
   const slash = repoFullName.indexOf("/");
@@ -204,10 +236,15 @@ export async function indexRepo(
     const token = await resolveReadToken(env, repo.installationId);
     const ref = indexRef(repo.defaultBranch);
 
-    // 1. Fetch the tree, filter to indexable code/docs, prioritize source before docs (so the cap keeps code).
-    const tree = (await fetchRepoTree(env, repoFullName, ref, token))
+    // 1. Fetch the tree, filter to indexable code/docs, and prune retained chunks for files that disappeared
+    //    or moved to a non-indexable path. If the tree fetch fails (null), skip pruning to avoid deleting good
+    //    chunks during a transient GitHub/API failure.
+    const rawTree = await fetchRepoTree(env, repoFullName, ref, token);
+    if (rawTree === null) return empty;
+    const tree = rawTree
       .filter((entry) => isIndexablePath(entry.path, entry.size))
       .sort((a, b) => filePriority(a.path) - filePriority(b.path) || a.path.localeCompare(b.path));
+    await pruneMissingPaths(infra, project, repoName, new Set(tree.map((entry) => entry.path)));
     if (tree.length === 0) return empty;
 
     // 2. Fetch + chunk + upsert, stopping once the per-repo vector cap is reached.

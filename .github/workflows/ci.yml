@@ -86,7 +86,7 @@ jobs:
       - name: Install dependencies (retry on transient failures)
         run: |
           for attempt in 1 2 3; do
-            if npm ci; then
+            if npm ci --prefer-offline --no-audit --no-fund; then
               exit 0
             fi
             echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
@@ -116,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -132,7 +132,7 @@ jobs:
       - name: Install dependencies (retry on transient failures)
         run: |
           for attempt in 1 2 3; do
-            if npm ci; then
+            if npm ci --prefer-offline --no-audit --no-fund; then
               exit 0
             fi
             echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
@@ -142,16 +142,16 @@ jobs:
           exit 1
       - name: Prepare test reports dir
         run: mkdir -p reports/junit
-      - name: Test with coverage (shard ${{ matrix.shard }}/2)
+      - name: Test with coverage (shard ${{ matrix.shard }}/3)
         id: coverage
         env:
           COVERAGE_NO_THRESHOLDS: "1"
           VITEST_JUNIT_PATH: reports/junit/vitest-shard-${{ matrix.shard }}.xml
-        run: npm run test:coverage -- --shard=${{ matrix.shard }}/2
+        run: npm run test:coverage -- --shard=${{ matrix.shard }}/3
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Tests::A test in shard ${{ matrix.shard }}/2 failed."
+          echo "::error title=Tests::A test in shard ${{ matrix.shard }}/3 failed."
           echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from the merged shards."
           echo "Reproduce locally with the full suite: 'npm run test:coverage' (no sharding)."
       - name: Upload coverage to Codecov
@@ -191,7 +191,7 @@ jobs:
       - name: Install dependencies (retry on transient failures)
         run: |
           for attempt in 1 2 3; do
-            if npm ci; then
+            if npm ci --prefer-offline --no-audit --no-fund; then
               exit 0
             fi
             echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
@@ -222,7 +222,7 @@ jobs:
       - name: Install dependencies (retry on transient failures)
         run: |
           for attempt in 1 2 3; do
-            if npm ci; then
+            if npm ci --prefer-offline --no-audit --no-fund; then
               exit 0
             fi
             echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"
@@ -257,7 +257,7 @@ jobs:
       - name: Install dependencies (retry on transient failures)
         run: |
           for attempt in 1 2 3; do
-            if npm ci; then
+            if npm ci --prefer-offline --no-audit --no-fund; then
               exit 0
             fi
             echo "::warning::npm ci failed (attempt ${attempt}/3); retrying in 10s"

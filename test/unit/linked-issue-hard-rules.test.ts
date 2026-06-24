@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTestEnv } from "../helpers/d1";
 import {
   DEFAULT_LINKED_ISSUE_HARD_RULES,
   evaluateLinkedIssueHardRules,
   loadLinkedIssueHardRules,
+  resolveLinkedIssueHardRule,
   type LinkedIssueFacts,
   type LinkedIssueHardRulesConfig,
 } from "../../src/review/linked-issue-hard-rules";
@@ -280,5 +282,58 @@ describe("loadLinkedIssueHardRules", () => {
     expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 9999 } })), "o/r")).closeDelaySeconds).toBe(300);
     expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: 45.9 } })), "o/r")).closeDelaySeconds).toBe(45);
     expect((await loadLinkedIssueHardRules(envWith(async () => ({ linkedIssueHardRules: { closeDelaySeconds: "30" } })), "o/r")).closeDelaySeconds).toBe(30);
+  });
+});
+
+describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  // Defaults: body=null and ciToken=undefined so the `?? ""` and `?? env.GITHUB_PUBLIC_TOKEN` fallbacks are
+  // exercised; tests that need the other arm pass a string body / a CI token explicitly.
+  const args = (over: Record<string, unknown> = {}) => ({
+    env: createTestEnv({}),
+    repoFullName: "owner/repo",
+    repoOwner: "owner",
+    config: config(),
+    body: null as string | null | undefined,
+    linkedIssues: [] as number[],
+    ciToken: undefined as string | undefined,
+    ...over,
+  });
+
+  it("returns undefined and fetches nothing when no rule is in block mode", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    expect(await resolveLinkedIssueHardRule(args({ config: config(), body: "closes #1", linkedIssues: [1] }))).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("flags a body that overflows the cap (>50 closing refs) as a violation, without fetching", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const body = Array.from({ length: 60 }, (_, i) => `closes #${i + 1}`).join(" ");
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), body, linkedIssues: [1] }));
+    expect(r?.violated).toBe(true);
+    expect(r?.reason).toMatch(/more issues than Gittensory can safely verify/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined when a rule is on but the PR links no issues (null body → no overflow)", async () => {
+    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), body: null, linkedIssues: [] }))).toBeUndefined();
+  });
+
+  it("is fail-open: undefined when every fetch fails (404), with no CI token → public-token fallback", async () => {
+    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, linkedIssues: [1, 2] }))).toBeUndefined();
+  });
+
+  it("fetches with the CI token and runs the deterministic evaluator over the facts", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/issues/")
+        ? Response.json({ number: 1, state: "open", labels: [], assignees: ["owner"] })
+        : new Response("missing", { status: 404 }),
+    );
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", body: "closes #1", linkedIssues: [1] }));
+    expect(r).toBeDefined();
+    expect(typeof r?.violated).toBe("boolean");
   });
 });

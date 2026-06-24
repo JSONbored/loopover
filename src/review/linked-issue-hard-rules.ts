@@ -1,4 +1,6 @@
 import type { JsonValue } from "../types";
+import { fetchLinkedIssueFacts } from "../github/backfill";
+import { extractLinkedIssueNumbersWithOverflow } from "../db/repositories";
 
 // Linked-issue HARD-RULE auto-close (#linked-issue-hard-rules). A DETERMINISTIC rule about the issue(s) a
 // contributor PR links — not an AI verdict. When a contributor links an issue that violates one of the
@@ -191,4 +193,39 @@ export function evaluateLinkedIssueHardRules(input: {
   }
 
   return NO_VIOLATION;
+}
+
+/**
+ * Orchestrate the per-PR linked-issue hard-rule decision (the testable core of maybeRunAgentMaintenance's
+ * linked-issue block). Returns the hard-rule result, or undefined when no rule applies. Takes the raw PR body +
+ * CI token so the overflow check and per-issue fact fetch happen here (the call-site stays branch-free):
+ *   - no rule in "block" mode → undefined (skip entirely, no fetch).
+ *   - the PR body links MORE closing references than the cap (overflow) → a violation: too many to verify safely.
+ *   - otherwise fetch each linked issue's facts (fail-open per issue) and run the deterministic evaluator.
+ */
+export async function resolveLinkedIssueHardRule(args: {
+  env: Env;
+  repoFullName: string;
+  repoOwner: string;
+  config: LinkedIssueHardRulesConfig;
+  body: string | null | undefined;
+  linkedIssues: number[];
+  ciToken: string | undefined;
+}): Promise<LinkedIssueHardRuleResult | undefined> {
+  const anyRuleOn =
+    args.config.ownerAssignedClose === "block" ||
+    args.config.missingPointLabelClose === "block" ||
+    args.config.maintainerOnlyLabelClose === "block";
+  if (!anyRuleOn) return undefined;
+  if (extractLinkedIssueNumbersWithOverflow(args.body ?? "").overflow) {
+    return {
+      violated: true,
+      reason: "PR body links more issues than Gittensory can safely verify automatically; please reduce linked closing references or request maintainer review.",
+    };
+  }
+  if (args.linkedIssues.length === 0) return undefined;
+  const token = args.ciToken ?? args.env.GITHUB_PUBLIC_TOKEN;
+  const issueFacts = (await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token)))).flatMap((facts) => (facts ? [facts] : []));
+  if (issueFacts.length === 0) return undefined;
+  return evaluateLinkedIssueHardRules({ issues: issueFacts, config: args.config, repoOwner: args.repoOwner });
 }

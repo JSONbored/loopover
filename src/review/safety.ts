@@ -75,13 +75,18 @@ export function defangReviewInput(input: SafetyReviewInput): {
  * {@link isSafetyEnabled} — when OFF, no finding is produced so the advisory/gate is unchanged.
  */
 export function secretLeakFinding(diff: string): AdvisoryFinding | null {
-  // Scan ONLY added lines — the secrets THIS change introduces. A token on a removed/context line is not being
+  // Scan ONLY additions — the secrets THIS change introduces. A token on a removed/context line is not being
   // committed by the PR, so flagging it would wrongly block a change that merely REMOVES or refactors a
-  // secret-shaped string (e.g. deleting/defanging a test fixture, or rotating a credential out). The input is the
-  // buildAiReviewDiff/buildSecretScanDiff patch corpus, so keep `+` additions and drop the `+++`/`### …` headers.
+  // secret-shaped string (e.g. deleting/defanging a test fixture, or rotating a credential out). Added/renamed
+  // file paths are also committed PR state, but buildSecretScanDiff carries them only in `### path (status)`
+  // headers, so keep those metadata lines while still dropping modified/removed headers and `+++` patch headers.
   const added = diff
     .split("\n")
-    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .filter(
+      (line) =>
+        (line.startsWith("+") && !line.startsWith("+++")) ||
+        /^### .+ \((?:added|renamed)\) /.test(line),
+    )
     .join("\n");
   // Only CONCRETE credential formats hard-block. The raw scanner also returns the weak `seed_or_mnemonic` /
   // `bittensor_key` heuristics, which false-positive on `coldkey:` / `hotkey =` / "mnemonic" lines in

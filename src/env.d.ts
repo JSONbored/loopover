@@ -135,6 +135,13 @@ declare global {
      *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
      *  See review/public-stats.ts. */
     GITTENSORY_PUBLIC_STATS?: string;
+    /** Comma-separated fallback set of REQUIRED CI contexts (e.g. "Superagent Security Scan,validate,Gittensory Gate").
+     *  Used ONLY when the live branch-protection read in fetchRequiredStatusContexts fails — usually a 403 because the
+     *  installation token lacks `administration:read`. It keeps required-only CI evaluation (review starts once the
+     *  required checks pass; a non-required red does not drive an automated close) instead of conservatively folding
+     *  ALL checks. Unset/empty preserves the byte-identical fold-all default. The names MUST match the exact
+     *  check-run/status contexts. See github/backfill.ts:configuredRequiredCiContexts. */
+    GITTENSORY_REQUIRED_CI_CONTEXTS?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */

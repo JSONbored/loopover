@@ -31,8 +31,10 @@ import {
   buildInstallationRepairDiagnostics,
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
+  configuredRequiredCiContexts,
   fetchAndStorePullRequestFilesForReview,
   fetchLiveCiAggregate,
+  fetchRequiredStatusContexts,
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
@@ -2748,6 +2750,58 @@ describe("GitHub backfill", () => {
       expect(aggregate.failingDetails).toEqual([expect.objectContaining({ name: "Gittensory Gate", summary: "External status failed" })]);
     });
 
+  });
+
+  describe("configuredRequiredCiContexts", () => {
+    it("returns null when the var is unset (preserves the fold-all default)", () => {
+      expect(configuredRequiredCiContexts({})).toBeNull();
+    });
+
+    it("returns null when the var is empty or only separators/whitespace", () => {
+      expect(configuredRequiredCiContexts({ GITTENSORY_REQUIRED_CI_CONTEXTS: "" })).toBeNull();
+      expect(configuredRequiredCiContexts({ GITTENSORY_REQUIRED_CI_CONTEXTS: "  , ,, " })).toBeNull();
+    });
+
+    it("parses a comma-separated set, trimming whitespace and dropping empty entries", () => {
+      const parsed = configuredRequiredCiContexts({ GITTENSORY_REQUIRED_CI_CONTEXTS: "Superagent Security Scan, validate ,,Gittensory Gate" });
+      expect(parsed).not.toBeNull();
+      expect([...(parsed as Set<string>)].sort()).toEqual(["Gittensory Gate", "Superagent Security Scan", "validate"]);
+    });
+  });
+
+  describe("fetchRequiredStatusContexts", () => {
+    it("returns null without fetching when baseRef is missing", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REQUIRED_CI_CONTEXTS: "validate" });
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", null, "public-token")).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns the live required set when branch protection is readable (both contexts and checks shapes)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REQUIRED_CI_CONTEXTS: "ignored-when-live-read-works" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString().includes("/protection/required_status_checks")) {
+          return Response.json({ contexts: ["validate", "", null], checks: [{ context: "Superagent Security Scan" }, { context: "  " }] });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const required = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+      expect([...(required as Set<string>)].sort()).toEqual(["Superagent Security Scan", "validate"]);
+    });
+
+    it("falls back to the configured set when the live read fails (e.g. 403, no admin:read)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", GITTENSORY_REQUIRED_CI_CONTEXTS: "Superagent Security Scan,validate,Gittensory Gate" });
+      vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
+      const required = await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token");
+      expect([...(required as Set<string>)].sort()).toEqual(["Gittensory Gate", "Superagent Security Scan", "validate"]);
+    });
+
+    it("returns null when the live read fails and no fallback is configured (conservative fold-all)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
+      expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
+    });
   });
 
 });

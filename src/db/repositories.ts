@@ -2627,6 +2627,19 @@ export async function countOpenPullRequests(env: Env, fullName: string): Promise
   return Number(row?.count ?? 0);
 }
 
+// Anti-farming (#anti-gaming-flood): how many PRs this author has SUBMITTED to this repo since `sinceIso` (ANY
+// state — open/merged/closed), so a flood that merges fast is still caught. createdAt is the row-insert time
+// (≈ when gittensory first saw the PR), a good proxy for submission time on live webhook-driven PRs.
+export async function countRecentSubmissionsByAuthor(env: Env, fullName: string, authorLogin: string, sinceIso: string): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.authorLogin, authorLogin), gte(pullRequests.createdAt, sinceIso)));
+  /* v8 ignore next -- SQL aggregate count always returns one row; fallback protects D1 driver anomalies. */
+  return Number(row?.count ?? 0);
+}
+
 export async function markUnseenOpenPullRequestsClosed(env: Env, fullName: string, seenOpenAt: string): Promise<number> {
   const db = getDb(env.DB);
   const result = await db
@@ -5363,9 +5376,13 @@ function loginMatches(column: unknown, login: string) {
 
 export const MAX_LINKED_ISSUE_NUMBERS = 50;
 
-export function extractLinkedIssueNumbers(text: string, limit = MAX_LINKED_ISSUE_NUMBERS): number[] {
+export type LinkedIssueExtractionResult = {
+  numbers: number[];
+  overflow: boolean;
+};
+
+export function extractLinkedIssueNumbersWithOverflow(text: string, limit = MAX_LINKED_ISSUE_NUMBERS): LinkedIssueExtractionResult {
   const normalizedLimit = Math.max(0, Math.floor(limit));
-  if (normalizedLimit === 0) return [];
 
   const linkedIssues: number[] = [];
   const seen = new Set<number>();
@@ -5373,10 +5390,14 @@ export function extractLinkedIssueNumbers(text: string, limit = MAX_LINKED_ISSUE
     const value = Number(match[1]);
     if (!Number.isInteger(value) || value <= 0 || seen.has(value)) continue;
     seen.add(value);
+    if (linkedIssues.length >= normalizedLimit) return { numbers: linkedIssues, overflow: true };
     linkedIssues.push(value);
-    if (linkedIssues.length >= normalizedLimit) break;
   }
-  return linkedIssues;
+  return { numbers: linkedIssues, overflow: false };
+}
+
+export function extractLinkedIssueNumbers(text: string, limit = MAX_LINKED_ISSUE_NUMBERS): number[] {
+  return extractLinkedIssueNumbersWithOverflow(text, limit).numbers;
 }
 
 function extractLinkedPrNumbers(text: string): number[] {

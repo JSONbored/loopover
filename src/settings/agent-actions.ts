@@ -64,6 +64,10 @@ export type AgentActionPlanInput = {
   // neither auto-merge, auto-approve, nor auto-close such a PR; it falls through to a human.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
+  // Anti-farming (#anti-gaming-flood): true when this PR's author has exceeded the per-repo submission-flood
+  // limit (more than N PRs in the configured window). Forces the SAME manual hold as a guarded path — a flooding
+  // author's PR is never auto-merged/approved; a human reviews the batch. Does NOT force a close.
+  submissionFloodHit?: boolean | undefined;
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
@@ -195,6 +199,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const guardrailHit =
     input.hardGuardrailGlobs.length > 0 &&
     (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
+  // A per-author submission FLOOD forces the SAME manual hold as a guarded path: a flooding author's PR is never
+  // auto-merged/approved — a human reviews the batch (anti-farming). It does NOT force a close (a clean flooding
+  // PR is HELD, not killed; a red-CI / conflict flooding PR still closes via the normal path). (#anti-gaming-flood)
+  const submissionFloodHit = input.submissionFloodHit === true;
+  const heldForManualReview = guardrailHit || submissionFloodHit;
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
@@ -213,7 +222,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // reviewDecision to APPROVED, so reviewDecision alone can't dedup). A new commit makes the heads differ →
   // approve may fire again. Absent approved-head SHA (never approved by the bot) ⇒ not idempotent-skipped.
   const alreadyApprovedThisHead = input.pr.approvedHeadSha != null && input.pr.headSha != null && input.pr.approvedHeadSha === input.pr.headSha;
-  const canMerge = reviewGood && !guardrailHit && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
+  const canMerge = reviewGood && !heldForManualReview && acting("merge") && mergeableClean && approvalsSatisfied && !mergeTerminallyBlocked;
   // A guarded/CRUCIAL path (CI, the review engine, visual) → ALWAYS held for the owner, never auto-actioned —
   // not auto-approved, not auto-merged, AND not auto-closed. Operator decision (#hold-crucial-on-reject): a
   // hallucinated reject on a crucial PR must NOT auto-close a good change (the #1528 near-miss); the owner
@@ -272,13 +281,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // linked-issue hard-rule close (flag OR close pass) forces the changes-requested label regardless of the gate
   // verdict (the PR is about to be closed for an ineligible linked issue). Idempotent.
   if (acting("label")) {
-    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : guardrailHit ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
+    const label = linkedIssueCloseInFlight || !reviewGood ? AGENT_LABEL_CHANGES : heldForManualReview ? AGENT_LABEL_NEEDS_REVIEW : AGENT_LABEL_READY;
     const reason = linkedIssueCloseInFlight
       ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
       : !reviewGood
         ? `verdict=${input.conclusion}${ciReason ? `; ${ciReason}` : ""}`
-        : guardrailHit
-          ? `verdict=${input.conclusion}; guarded path → owner safety review`
+        : heldForManualReview
+          ? `verdict=${input.conclusion}; ${submissionFloodHit ? "submission flood → manual review (anti-farming)" : "guarded path → owner safety review"}`
           : `verdict=${input.conclusion}; CI green`;
     if (!hasLabel(input.pr.labels, label)) {
       actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });
@@ -318,7 +327,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // OWNER/automation PR is HELD via the needs-human label + the (non-blocking) unified review comment — never a
   // formal request-changes. (#no-request-changes) Either merge/approve, or close, with the rare manual hold left
   // open + commented, never blocked.
-  if (reviewGood && !guardrailHit && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
+  if (reviewGood && !heldForManualReview && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),

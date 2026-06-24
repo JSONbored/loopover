@@ -13,13 +13,28 @@ const targets = [
   "apps/gittensory-ui/src",
 ].map((target) => join(root, target));
 
-const latest = process.env.GITTENSORY_MCP_LATEST_VERSION ?? (await fetchLatestVersion());
+// The live npm-registry check is BEST-EFFORT: a transient registry blip must not fail CI, because a red
+// required check one-shot-closes a contributor PR. Set GITTENSORY_MCP_LATEST_VERSION to make it fully
+// offline/deterministic. The deterministic stale-version-string scan below always runs regardless.
+let latest = process.env.GITTENSORY_MCP_LATEST_VERSION ?? null;
+let latestSkipReason = null;
+if (!latest) {
+  try {
+    latest = await fetchLatestVersion();
+  } catch (error) {
+    latestSkipReason = error instanceof Error ? error.message : "unknown error";
+  }
+}
 const sourceLatest = readKnownLatestVersion(sourceLatestPath);
 const failures = [];
 
-if (sourceLatest !== latest) {
+if (latest && sourceLatest !== latest) {
   failures.push(
     `apps/gittensory-ui/src/lib/mcp-package.ts: known latest ${sourceLatest} does not match npm dist-tags.latest ${latest}`,
+  );
+} else if (!latest) {
+  console.warn(
+    `::warning::skipped the npm dist-tag drift check (registry unavailable: ${latestSkipReason}); set GITTENSORY_MCP_LATEST_VERSION to enforce it offline`,
   );
 }
 
@@ -56,7 +71,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`MCP UI version copy ok: npm latest ${latest}, scanned ${targets.length} target(s)`);
+console.log(`MCP UI version copy ok: npm latest ${latest ?? "unchecked"}, scanned ${targets.length} target(s)`);
 
 function collectSourceFiles(path) {
   const stat = statSync(path);

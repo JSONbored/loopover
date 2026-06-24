@@ -363,4 +363,24 @@ describe("secretLeakFinding scans only ADDED lines", () => {
     const diff = `### src/config.ts (modified) +1/-0\n@@\n const token = "${fakeToken}";\n+const unrelated = 1;`;
     expect(secretLeakFinding(diff)).toBeNull();
   });
+
+  it("flags a secret introduced in an added file path", () => {
+    const diff = `### fixtures/${fakeToken}.txt (added) +1/-0\n@@\n+benign fixture content`;
+    expect(secretLeakFinding(diff)?.code).toBe("secret_leak");
+  });
+
+  it("flags a secret introduced in a renamed file path", () => {
+    const diff = `### fixtures/${fakeToken}.txt (renamed) +0/-0\n(no inline patch — binary or too large)`;
+    expect(secretLeakFinding(diff)?.code).toBe("secret_leak");
+  });
+
+  it("does NOT flag a secret in a modified file path header", () => {
+    const diff = `### fixtures/${fakeToken}.txt (modified) +1/-0\n@@\n+const unrelated = 1;`;
+    expect(secretLeakFinding(diff)).toBeNull();
+  });
+
+  it("does NOT flag a secret in a removed file path header", () => {
+    const diff = `### fixtures/${fakeToken}.txt (removed) +0/-1\n@@\n-const unrelated = 1;`;
+    expect(secretLeakFinding(diff)).toBeNull();
+  });
 });

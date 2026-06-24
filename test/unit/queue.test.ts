@@ -6055,6 +6055,48 @@ describe("one-shot reopen prevention", () => {
     expect(audit?.detail).toContain("originally closed by maintainer");
   });
 
+  it("does NOT re-close a disallowed reopen while the global freeze is on — records a skip instead (#killswitch-gap)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.setGlobalAgentFrozen(env, true); // emergency brake on
+    await processJob(env, { type: "github-webhook", deliveryId: "reopen-frozen", eventName: "pull_request", payload: reopenedPayload("contributor") });
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("denied");
+    expect(audit?.detail).toContain("skipped (agent paused)");
+  });
+
+  it("dry-run: audits a would-be reopen re-close without touching GitHub (#killswitch-gap)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.endsWith("/collaborators/maintainer/permission")) return Response.json({ permission: "write" });
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+    await processJob(env, { type: "github-webhook", deliveryId: "reopen-dryrun", eventName: "pull_request", payload: reopenedPayload("contributor") });
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("completed");
+    expect(audit?.detail).toContain("dry-run: would re-close");
+  });
+
   it("allows an admin reopener to reopen without reclosing (fast-path hasMaintainerPermission)", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -6257,6 +6299,43 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
     const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ detail: string }>();
     expect(audit?.detail).toContain("abc123");
     expect(audit?.detail).toContain("contributor");
+  });
+
+  it("does NOT draft-dodge close while the global freeze is on (#killswitch-gap)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env);
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    await repositoriesModule.setGlobalAgentFrozen(env, true);
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-frozen", eventName: "pull_request", payload: draftPayload("contributor") });
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed under freeze
+    expect(await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ n: number }>()).toMatchObject({ n: 0 });
+  });
+
+  it("dry-run: audits a would-be draft-dodge close without touching GitHub (#killswitch-gap)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await setupRepo(env, { agentDryRun: true });
+    await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
+    await processJob(env, { type: "github-webhook", deliveryId: "draft-dryrun", eventName: "pull_request", payload: draftPayload("contributor") });
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed in dry-run
+    const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.draft_dodge_closed").first<{ outcome: string; detail: string }>();
+    expect(audit?.outcome).toBe("completed");
+    expect(audit?.detail).toContain("dry-run: would close");
   });
 
   it("no-ops when no prior gate failure exists for the PR", async () => {

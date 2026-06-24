@@ -1603,23 +1603,43 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
         const repoOwner = repoFullName.includes("/") ? repoFullName.slice(0, repoFullName.indexOf("/")).toLowerCase() : "";
         const authorIsOwner = (pr.authorLogin ?? "").toLowerCase() === repoOwner && repoOwner.length > 0;
         if (block && block.headSha === pr.headSha && !block.overridden && !authorIsOwner) {
-          const codes = block.blockerCodes.join(", ");
-          await createIssueComment(
-            env,
-            installationId,
-            repoFullName,
-            pr.number,
-            `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
-          ).catch(() => undefined);
-          await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
-          await recordAuditEvent(env, {
-            eventType: "github_app.draft_dodge_closed",
-            actor: "gittensory",
-            targetKey: `${repoFullName}#${pr.number}`,
-            outcome: "completed",
-            detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
-            metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
-          }).catch(() => undefined);
+          // Respect the agent action mode (#killswitch-gap): the outer guard already excludes a per-repo pause,
+          // but this close path must also honor the global freeze and dry-run — so a freeze is a COMPLETE stop
+          // and a dry-run records the would-be close without touching GitHub.
+          const draftMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+          if (draftMode === "live") {
+            const codes = block.blockerCodes.join(", ");
+            await createIssueComment(
+              env,
+              installationId,
+              repoFullName,
+              pr.number,
+              `Gate verdict stands for this commit — converting to draft does not reset the review. Re-submit a new PR with the issues addressed${codes ? ` (${codes})` : ""}.`,
+            ).catch(() => undefined);
+            await closePullRequest(env, installationId, repoFullName, pr.number).catch(() => undefined);
+            await recordAuditEvent(env, {
+              eventType: "github_app.draft_dodge_closed",
+              actor: "gittensory",
+              targetKey: `${repoFullName}#${pr.number}`,
+              outcome: "completed",
+              detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
+              metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes },
+            }).catch(() => undefined);
+          } else if (draftMode === "dry_run") {
+            /* v8 ignore next -- a deleted-account PR yields a null author login; the fallback is defensive */
+            const draftAuthor = pr.authorLogin ?? "unknown";
+            await recordAuditEvent(env, {
+              eventType: "github_app.draft_dodge_closed",
+              actor: "gittensory",
+              targetKey: `${repoFullName}#${pr.number}`,
+              outcome: "completed",
+              detail: `dry-run: would close draft-dodge attempt by ${draftAuthor} — prior gate failure on headSha ${pr.headSha} stands`,
+              metadata: { deliveryId, repoFullName, headSha: pr.headSha, blockerCodes: block.blockerCodes, mode: "dry_run" },
+            }).catch(
+              /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+              () => undefined,
+            );
+          }
         }
       }
       if (installationId && shouldProcessPullRequestPublicSurface(payload.action)) {
@@ -3196,6 +3216,25 @@ async function maybeRecloseDisallowedReopen(
   // self-close sits at the timeline end and is found in-window, so legitimate self-close reopens stay allowed.
   const windowEvasionSuspected = closer == null && !closerResult.coveredAllPages;
   if (!closerIsBotOrMaintainer && !windowEvasionSuspected) return false;
+  // Respect the agent action mode like every other write action (#killswitch-gap): a paused/frozen repo must
+  // NOT touch GitHub, and dry-run records the would-be re-close without acting — so a dry-run is truly inert and
+  // the global kill-switch is a COMPLETE stop. This close path previously bypassed pause/freeze/dry-run entirely.
+  const reopenSettings = await resolveRepositorySettings(env, repoFullName);
+  const reopenMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: reopenSettings.agentPaused, agentDryRun: reopenSettings.agentDryRun });
+  if (reopenMode !== "live") {
+    await recordAuditEvent(env, {
+      eventType: "github_app.reopen_reclosed",
+      actor: "gittensory",
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: reopenMode === "dry_run" ? "completed" : "denied",
+      detail: `${reopenMode === "dry_run" ? "dry-run: would re-close" : `skipped (agent ${reopenMode}): would re-close`} a disallowed reopen by ${reopener}`,
+      metadata: { deliveryId, repoFullName, mode: reopenMode },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+      () => undefined,
+    );
+    return true; // handled (decision made); never falls through to act on a stood-down repo
+  }
   await createIssueComment(
     env,
     installationId,

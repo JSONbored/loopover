@@ -1,5 +1,6 @@
 import type { Advisory, GitHubWebhookPayload } from "../types";
 import { makeInstallationOctokit } from "./client";
+import { maintainerControlPanelUrl } from "./footer";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { signRs256Jwt } from "../utils/crypto";
 import { evaluateGateCheck, formatCheckRunOutput, formatGateCheckOutput, type CheckRunAnnotationContext, type CheckRunOutput, type GateCheckConclusion, type GateCheckPolicy } from "../rules/advisory";
@@ -281,6 +282,10 @@ async function createOrUpdateNamedCheckRun(
   // makeInstallationOctokit injects the shared per-request timeout (a stalled PATCH can never orphan the
   // in_progress check) AND suppresses the check-run writes under a non-live mode (dry-run / pause / freeze).
   const octokit = makeInstallationOctokit(env, token, check.mode);
+  // Point the merge-box "Details" link at the repo's Gittensory maintainer panel instead of GitHub's generic
+  // check page. Spread conditionally so a URL-construction failure (null) just omits it. (#audit-details-url)
+  const detailsUrl = maintainerControlPanelUrl(env, repoFullName);
+  const detailsUrlBody = detailsUrl ? { details_url: detailsUrl } : {};
 
   try {
     if (check.checkRunId) {
@@ -293,6 +298,7 @@ async function createOrUpdateNamedCheckRun(
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
         output: outputForCheckRunUpdate(check.output),
+        ...detailsUrlBody,
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -316,6 +322,7 @@ async function createOrUpdateNamedCheckRun(
         status: check.status ?? "completed",
         ...(check.conclusion ? { conclusion: check.conclusion } : {}),
         output: outputForCheckRunUpdate(check.output),
+        ...detailsUrlBody,
       });
       const data = response.data as CheckRunResponse;
       return publishedOutcome(data);
@@ -329,6 +336,7 @@ async function createOrUpdateNamedCheckRun(
       status: check.status ?? "completed",
       ...(check.conclusion ? { conclusion: check.conclusion } : {}),
       output: check.output,
+      ...detailsUrlBody,
     });
     const data = response.data as CheckRunResponse;
     return publishedOutcome(data);

@@ -81,7 +81,7 @@ import {
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
 import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
 import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
-import { gittensoryFooter, gittensorRepoEarnUrl } from "../github/footer";
+import { gittensoryFooter, gittensorRepoEarnUrl, maintainerControlPanelUrl } from "../github/footer";
 import {
   buildMaintainerQueueDigest,
   buildPublicAgentCommandComment,
@@ -3619,18 +3619,6 @@ async function loadQueueCheckSummariesByPullNumber(
   const openPullRequests = pullRequests.filter((pr) => pr.state === "open").slice(0, 50);
   const entries = await Promise.all(openPullRequests.map(async (pr) => [pr.number, await listCheckSummaries(env, repoFullName, pr.number)] as const));
   return Object.fromEntries(entries);
-}
-
-function maintainerControlPanelUrl(env: Env, repoFullName: string): string | null {
-  const origin = env.PUBLIC_SITE_ORIGIN ?? "https://gittensory.aethereal.dev";
-  try {
-    const url = new URL("/app", origin);
-    url.searchParams.set("view", "maintainer");
-    url.searchParams.set("repo", repoFullName);
-    return url.toString();
-  } catch {
-    return null;
-  }
 }
 
 async function recordAgentCommandFeedbackPrompt(

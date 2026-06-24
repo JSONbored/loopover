@@ -56,14 +56,30 @@ function syntheticWriteResponse(url: string): { status: number; url: string; hea
 }
 
 /**
+ * Instance-wide self-host kill switch (#selfhost-deployment-mode). SELFHOST_DEPLOYMENT_MODE=dry-run|disabled
+ * forces write suppression for the WHOLE instance regardless of the per-call mode — so a self-host running in
+ * PARALLEL with the live cloud App can receive the same webhooks but provably post NOTHING (no check-run /
+ * comment / label / merge) until an explicit cutover, without relying on every call site threading the repo mode.
+ * Unset (the cloud Worker never sets it) → null → behavior is byte-identical to today.
+ */
+export function forcedSelfhostMode(env: { SELFHOST_DEPLOYMENT_MODE?: string | undefined }): AgentActionMode | null {
+  const m = (env.SELFHOST_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
+  if (m === "disabled") return "paused"; // suppress + audit as denied
+  if (m === "dry-run" || m === "dry_run") return "dry_run"; // suppress + audit as completed-shadow
+  return null; // "live" / unset → no forcing
+}
+
+/**
  * Build an installation Octokit from an ALREADY-minted token. Takes the token (not the installationId) so this
  * module never imports createInstallationToken — the mint stays in app.ts via raw fetch and can never be reached
  * by the suppression hook. `mode` defaults to "live", so the action helpers (pr-actions) that are already gated by
  * the executor are not double-denied; surface callers (check-run / comment / label) pass the resolved repo mode.
+ * A SELFHOST_DEPLOYMENT_MODE override beats the per-call mode so the whole instance can be forced non-actuating.
  */
 export function makeInstallationOctokit(env: Env, token: string, mode: AgentActionMode = "live"): Octokit {
   const octokit = new Octokit({ auth: token, request: { fetch: timeoutFetch } });
-  if (mode !== "live") {
+  const effectiveMode = forcedSelfhostMode(env) ?? mode;
+  if (effectiveMode !== "live") {
     octokit.hook.wrap("request", async (request, options) => {
       const method = options.method.toUpperCase();
       if (!WRITE_METHODS.has(method)) return request(options); // reads + create-vs-update probes always run
@@ -72,9 +88,9 @@ export function makeInstallationOctokit(env: Env, token: string, mode: AgentActi
         eventType: "github.write.suppressed",
         actor: "gittensory",
         targetKey: url,
-        outcome: mode === "dry_run" ? "completed" : "denied",
-        detail: `${mode}: suppressed ${method} ${url}`,
-        metadata: { method, url, mode },
+        outcome: effectiveMode === "dry_run" ? "completed" : "denied",
+        detail: `${effectiveMode}: suppressed ${method} ${url}`,
+        metadata: { method, url, mode: effectiveMode },
       }).catch(
         /* v8 ignore next -- fail-safe: an audit-write failure never blocks the suppression itself */
         () => undefined,

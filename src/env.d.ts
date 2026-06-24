@@ -51,6 +51,9 @@ declare global {
     SCORING_TIME_DECAY_ENABLED?: string;
     /** #776 agent-layer GLOBAL kill-switch — when truthy, halts ALL agent actions across every repo. */
     AGENT_ACTIONS_PAUSED?: string;
+    /** Self-host instance-wide write switch: "dry-run" | "disabled" forces EVERY installation write to be
+     *  suppressed regardless of per-repo mode (the cloud→self-host parallel-run kill switch). Unset = live. */
+    SELFHOST_DEPLOYMENT_MODE?: string;
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;

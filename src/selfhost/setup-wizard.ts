@@ -27,7 +27,9 @@ export function buildManifest(origin: string, state: string): Record<string, unk
       pull_requests: "write",
       contents: "write",
       issues: "write",
-      checks: "read",
+      // checks:write — the gate posts a check-run (POST /repos/{o}/{r}/check-runs in src/github/app.ts);
+      // checks:read would 403 that write (swallowed as a permission_missing warning → silent first-review failure).
+      checks: "write",
       metadata: "read",
       statuses: "read",
     },

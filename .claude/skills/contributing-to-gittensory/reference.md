@@ -1,8 +1,14 @@
 # gittensory contribution — deep reference
 
 Exhaustive tables and patterns behind the `SKILL.md` playbook. Read the section you need; you don't
-need all of it for every change. All commands run from the repo root unless noted. Node is pinned by
-`.nvmrc` (use it: `nvm use`).
+need all of it for every change. All commands run from the repo root unless noted.
+
+**Bootstrap (fresh clone):** external contributors **fork** `JSONbored/gittensory`, then
+`git clone` their fork, `nvm use` (Node 22 via `.nvmrc`), and **`npm ci`** (required before any check
+runs). Add the upstream remote — `git remote add upstream https://github.com/JSONbored/gittensory` —
+and `git fetch upstream && git rebase upstream/main` before pushing if `main` moved (a base conflict
+auto-closes a contributor PR). Push to your fork; open the PR from it. A first fork PR's Actions wait
+for maintainer approval (CI shows unverified → the engine **holds**, never closes — this is expected).
 
 ---
 
@@ -10,7 +16,9 @@ need all of it for every change. All commands run from the repo root unless note
 
 The single **required** status check is **`validate`** (it aggregates `changes, lint, test, workers,
 mcp, ui, security`; a path-skipped job counts as success). **Codecov** posts `codecov/patch` (the real
-coverage gate) and `codecov/project` (informational) independently. On a PR, jobs run only if their
+coverage gate) and `codecov/project` (informational) independently. The review engine also posts its
+own check run named **`Gittensory Gate`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
+verdict (§3), separate from CI. On a PR, jobs run only if their
 path filter matched; on push to `main`, everything runs.
 
 | Check | Runs | Local command | Fails when |
@@ -107,8 +115,16 @@ PR-side signals that raise slop risk (band: clean 0 / low 1–24 / elevated 25�
 
 ## 5. MCP pre-submit tools (`@jsonbored/gittensory-mcp`)
 
-Install: `npm install -g @jsonbored/gittensory-mcp@latest && gittensory-mcp login`. All are
-metadata-only (no source upload). Run in this order:
+Install + configure (let the CLI print the right config for your tool — **Codex is TOML, not JSON**):
+
+```sh
+npm install -g @jsonbored/gittensory-mcp@latest
+gittensory-mcp login                        # GitHub device flow
+gittensory-mcp init-client --print codex    # → ~/.codex/config.toml  ([mcp_servers.gittensory])
+gittensory-mcp init-client --print claude   # or --print cursor  (→ mcpServers JSON)
+```
+
+All tools are metadata-only (no source upload). Run in this order:
 
 1. `gittensory_check_before_start` — `{owner, repo, issueNumber, plannedChange{title, paths}}` →
    go/raise/avoid (claimed? duplicate cluster? already solved?).
@@ -147,6 +163,12 @@ const row = await env.DB.prepare(`SELECT * FROM repositories WHERE full_name = ?
 `vi.stubGlobal("fetch", async (input, init) => Response.json({...}))`, clean up in
 `afterEach(() => vi.unstubAllGlobals())`. **Clock:** `vi.useFakeTimers(); vi.setSystemTime(new
 Date("2026-05-28T00:00:00Z"))` then `vi.useRealTimers()`.
+
+**Iterate, then verify.** Scope while writing: `npx vitest run test/unit/<file>.test.ts` (or `-t`),
+or the `test:unit` / `test:integration` scripts. Verify before pushing with the full unsharded
+`npm run test:coverage`. **Find a partial branch:** read the v8 text report's **% Branch** column and
+the **Uncovered Line #s** for your changed file (or open `coverage/lcov-report/…` / `coverage/lcov.info`)
+— a line at 100% lines but <100% branch has an un-taken side. Aim ≥98% branch on the diff locally.
 
 **Branch coverage — the rule that fails most PRs.** Each of `if/else`, `? :`, `&&`, `||`, and `??`
 is two branches; exercise **both**.
@@ -222,6 +244,13 @@ edit `CHANGELOG.md` in a normal PR.**
   `test/tested/vitest/npm test/validated/verified/smoke`). Don't leave an unfilled template.
 - All evidence is run through the public-comment sanitizer — forbidden terms (`wallet, hotkey,
   coldkey, payout, reward, trust score, scoreability, …`) are dropped; just don't use them.
+
+**The PR body itself** = GitHub pre-fills `.github/pull_request_template.md` (sections `Summary / Scope
+/ Validation / Safety / UI Evidence / Notes`, each a checkbox list). Fill it honestly — don't replace
+it: write a real Summary, tick only the Validation commands you actually ran, and complete the Safety
+boxes (auth/CORS **negative-path tests**, no-secrets) and the **UI Evidence** thumbnail table
+(JPG/PNG, never SVG, never committed) for any visible change. That filled template is what scores
+`lint_pr_text` *strong*.
 
 ---
 

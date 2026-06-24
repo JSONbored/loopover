@@ -75,26 +75,38 @@ opening a **fresh** PR. This is the entire reason to get it right before you pus
 
 ---
 
-## Phase 0 — Install the gittensory MCP (your pre-submit oracle)
+## Phase 0 — Bootstrap your working tree + the MCP
 
-The gittensory MCP lets you **predict the gate before you push** — the single biggest win for a
-one-shot review. Install and use it:
+**Get a working tree — every local command in this skill needs it:**
+
+```sh
+# External contributor? Fork JSONbored/gittensory on GitHub first, then clone YOUR fork:
+git clone https://github.com/<you>/gittensory && cd gittensory
+git remote add upstream https://github.com/JSONbored/gittensory   # to sync main later
+nvm use            # Node 22 (.nvmrc)
+npm ci             # installs the whole workspace, incl. apps/gittensory-ui — required before any check
+```
+
+All `npm run …` commands run from the **repo root**. As an external contributor you **push to your
+fork** and open the PR from it. On your **first** fork PR, GitHub Actions wait for a maintainer to
+approve the run, so the checks sit *unverified* for a bit — that is **expected**: the engine **holds**
+an unverified-CI PR (it does **not** close it). Don't open a duplicate; wait for the run to be
+approved, then confirm it's green.
+
+**Install the gittensory MCP** — your pre-submit oracle that predicts the gate before you push:
 
 ```sh
 npm install -g @jsonbored/gittensory-mcp@latest
-gittensory-mcp login          # GitHub device flow; needed for the auth'd preflight tools
+gittensory-mcp login                       # GitHub device flow (for the auth'd preflight tools)
+gittensory-mcp init-client --print codex   # prints TOML for ~/.codex/config.toml ([mcp_servers.gittensory])
+gittensory-mcp init-client --print claude  # or --print cursor — prints the correct config per tool
 ```
 
-Add it to your agent (Claude Code / Codex / Cursor) MCP config:
-
-```json
-{ "mcpServers": { "gittensory": { "command": "gittensory-mcp", "args": ["--stdio"] } } }
-```
-
-You'll use these tools in Phase 1 and Phase 6 (full list + inputs in `reference.md`):
-`gittensory_check_before_start`, `gittensory_validate_linked_issue`, `gittensory_check_slop_risk`,
-`gittensory_lint_pr_text`, `gittensory_predict_gate`. All run on **metadata only** (paths, counts,
-PR text) — no source upload, no secrets.
+Use that generator instead of hand-writing config (**Codex uses TOML, Claude/Cursor use JSON** — a
+pasted JSON block will not work in Codex). You'll use these tools in Phases 1 and 6 (inputs in
+`reference.md`): `gittensory_check_before_start`, `gittensory_validate_linked_issue`,
+`gittensory_check_slop_risk`, `gittensory_lint_pr_text`, `gittensory_predict_gate` — all metadata-only
+(no source upload, no secrets).
 
 ---
 
@@ -165,9 +177,14 @@ This is where most PRs fail Codecov. The bar is **every changed line AND every c
   state leaks). Mirror existing invariant suites.
 - **Regression test for every bug fix:** add a test named for the bug that reproduces it and pins the
   fix. A fix without a regression test is incomplete.
-- **Measure honestly — unsharded:** `npm run test:coverage` runs the *whole* suite locally and is the
-  only faithful local coverage signal (CI shards the run and merges, so a single shard under-reports).
-  Read the coverage output; if any changed line/branch is uncovered or "partial", add the case.
+- **Iterate fast, then measure honestly.** While writing tests, scope to one file:
+  `npx vitest run test/unit/<file>.test.ts` (or `-t "<name>"`). Before pushing, run the whole suite
+  **unsharded** — `npm run test:coverage` — the only faithful local coverage signal (CI shards + merges,
+  so a single shard under-reports).
+- **Find the uncovered branch.** In the v8 text report, read the **% Branch** column and the
+  **Uncovered Line #s** for your changed file — a line at 100% lines but <100% branch has an un-taken
+  `??`/ternary/`&&` side; add that case. Aim for **≥98% branch on your diff locally** so normal CI
+  variance never drops you under the 97% wall.
 
 ---
 
@@ -204,6 +221,11 @@ red tree. (Full per-check table in `reference.md`.)
 If `ui:lint` fails on formatting, run `npm --workspace @jsonbored/gittensory-ui run format`. If
 `ui:openapi:check` fails, you forgot Phase 4's `ui:openapi`.
 
+**Sync with `main` before you push if it moved** — a base conflict auto-closes a contributor PR:
+`git fetch upstream && git rebase upstream/main`, resolve, re-run the gate, then push. On the PR, the
+required status check is **`validate`** (it aggregates the CI jobs) and the engine posts a check run
+named **`Gittensory Gate`** — watch both go green/passing.
+
 ---
 
 ## Phase 6 — Predict the gittensory gate before you push
@@ -239,28 +261,14 @@ test(stats): cover the nullish SUM fallbacks in public-stats (#1059)
 Allowed types: `feat fix test docs refactor build ci chore revert`. Avoid bare generic words
 (`update`, `fix`, `wip`, `cleanup`, `misc`).
 
-**PR body** — make it pass `lint_pr_text` as *strong* (template + the rubric in `reference.md`):
-
-```markdown
-## Summary
-<1–3 lines: what changed and why>
-
-## What changed
-- <specific change 1>
-- <specific change 2>
-
-## Validation
-Ran from repo root, all green:
-`npm run test:ci` · `npm audit --audit-level=moderate`
-<note new tests / coverage of changed branches>
-
-## Linked issue
-Fixes #<n>            <!-- or: No issue — small docs/maintenance fix, because … -->
-```
-
-For UI/visual changes, attach **JPG/PNG** screenshots as captioned, clickable thumbnails (HTML
-`<a><img></a>`), annotated — but do **not** commit screenshots to the repo. Note any
-API/OpenAPI/migration/secret implications.
+**PR body** — GitHub pre-fills `.github/pull_request_template.md`. **Fill it out; do not replace it.**
+Write a real `## Summary`, then honestly check every box in `## Scope`, `## Validation` (the exact
+command list — only check what you actually ran), and `## Safety` (especially the auth/CORS
+**negative-path tests** box and the no-secrets box). For any visible UI/frontend/docs change, fill the
+**`## UI Evidence`** table with captioned, clickable **JPG/PNG** thumbnails (`<a href><img></a>`) —
+SVG is not accepted, and review-only screenshots are never committed to the repo. A filled Summary +
+the Validation evidence + a linked issue (or an explicit no-issue rationale in the Summary) is exactly
+what makes `lint_pr_text` read *strong*.
 
 ---
 
@@ -271,9 +279,11 @@ API/OpenAPI/migration/secret implications.
 - [ ] **Every changed line and branch is tested** (both sides of each `??`/ternary/`&&`); invariants +
       a regression test for any fix; `npm run test:coverage` shows no uncovered/partial changed lines.
 - [ ] Regenerated + committed: OpenAPI / `cf-typegen` / migrations as applicable (Phase 4).
+- [ ] Branch current with `main` (no base conflict): `git fetch upstream && git rebase upstream/main`.
 - [ ] `git diff --check` clean · **`npm run test:ci` fully green** · `npm audit --audit-level=moderate` clean.
 - [ ] MCP: `predict_gate` = pass, `check_slop_risk` = low, `lint_pr_text` = strong; no advisory findings left.
-- [ ] Conventional Commit subject; PR body has summary + validation + linked issue/rationale; no AI attribution.
+- [ ] Conventional Commit subject (no AI attribution); `.github/pull_request_template.md` filled honestly —
+      the Scope + Validation + Safety boxes, and the UI Evidence table for any visual change.
 - [ ] No changelog edit; no `site/`/`CNAME`/`lovable` changes.
 
 If every box is checked, the PR has the best possible chance of a one-shot approve-and-merge. If any

@@ -1922,7 +1922,8 @@ export class GittensoryMcp {
       fullName,
       input.windowDays !== undefined ? { windowDays: input.windowDays } : {},
     );
-    const worst = report.perGateType
+    const perGateType = report.perGateType ?? [];
+    const worst = perGateType
       .filter((type) => type.falsePositiveRate !== null)
       .reduce<(typeof report.perGateType)[number] | null>(
         (acc, type) => (acc === null || type.falsePositiveRate! > acc.falsePositiveRate! ? type : acc),

@@ -6083,6 +6083,36 @@ describe("one-shot reopen prevention", () => {
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
   });
 
+  it("re-closes when the close event is hidden beyond the inspected event window (window-evasion fail-closed, #audit-2.4)", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
+      if (url.includes("/issues/42/events")) {
+        // Long timeline (lastPage=12): the contributor padded the events so the real close sits before the
+        // inspected newest window. No "closed" appears in the read pages → null closer + coveredAllPages=false.
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        if (page === 1) {
+          return Response.json([{ event: "labeled", actor: { login: "contributor" } }], {
+            headers: { link: '<https://api.github.com/repos/owner/repo/issues/42/events?per_page=100&page=12>; rel="last"' },
+          });
+        }
+        return Response.json([{ event: "labeled", actor: { login: "contributor" } }]);
+      }
+      if (url.endsWith("/issues/42/comments")) return Response.json({ id: 99 }, { status: 201 });
+      if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    await processJob(env, { type: "github-webhook", deliveryId: "window-evasion-reclose", eventName: "pull_request", payload: reopenedPayload("contributor") });
+    expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+    const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.reopen_reclosed").first<{ detail: string }>();
+    expect(audit?.detail).toContain("beyond the inspected event window");
+  });
+
   it("re-closes when the bot itself was the last closer", async () => {
     const calls: Array<{ url: string; method: string }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

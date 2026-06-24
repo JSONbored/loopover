@@ -155,14 +155,33 @@ describe("loadGatePrecisionReport (env loader)", () => {
     expect(JSON.stringify(report)).not.toMatch(/reward|payout|trust score|wallet|hotkey|login|actor/i);
   });
 
-  it("preserves overridden across a later re-block (a re-block must not clear a maintainer override)", async () => {
+  it("preserves overridden across a SAME-head re-block (a re-block on the same commit keeps the override)", async () => {
     const env = createTestEnv();
-    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 5, blockerCodes: ["x"] });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 5, headSha: "sha-a", blockerCodes: ["x"] });
     await markGateOutcomeOverridden(env, "owner/repo", 5);
-    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 5, blockerCodes: ["x", "y"] });
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 5, headSha: "sha-a", blockerCodes: ["x", "y"] });
     const [row] = await listGateOutcomes(env, { repoFullName: "owner/repo" });
     expect(row).toMatchObject({ overridden: true });
     expect(row!.blockerCodes).toEqual(["x", "y"]);
+  });
+
+  it("preserves overridden across a re-block when neither block records a head SHA (null-safe IS)", async () => {
+    const env = createTestEnv();
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 6, blockerCodes: ["x"] });
+    await markGateOutcomeOverridden(env, "owner/repo", 6);
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 6, blockerCodes: ["x", "y"] });
+    const [row] = await listGateOutcomes(env, { repoFullName: "owner/repo" });
+    expect(row).toMatchObject({ overridden: true });
+  });
+
+  it("CLEARS overridden when a NEW commit re-blocks (an override binds to the commit it was granted on, #audit-3.14)", async () => {
+    const env = createTestEnv();
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 7, headSha: "sha-old", blockerCodes: ["x"] });
+    await markGateOutcomeOverridden(env, "owner/repo", 7);
+    // The contributor pushes a new commit; the gate re-blocks on the new head → the prior override must NOT carry over.
+    await recordGateBlockOutcome(env, { repoFullName: "owner/repo", pullNumber: 7, headSha: "sha-new", blockerCodes: ["x"] });
+    const [row] = await listGateOutcomes(env, { repoFullName: "owner/repo" });
+    expect(row).toMatchObject({ headSha: "sha-new", overridden: false });
   });
 
   it("markGateOutcomeOverridden is a no-op when no block was recorded", async () => {

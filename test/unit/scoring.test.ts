@@ -531,6 +531,63 @@ NOVELTY_BONUS_SCALAR = 3
     expect(bootstrap.warnings.join(" ")).toMatch(/fetch failed/i);
   });
 
+  it("does not freeze a prior fallback snapshot — bootstraps fresh defaults instead", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => new Response("gone", { status: 410 }));
+    // First refresh → fallback stored (no verified last-good yet).
+    const first = await refreshScoringModelSnapshot(env);
+    expect(first.sourceKind).toBe("fallback");
+    // Second refresh — constants still fail; lastGood exists but sourceKind === "fallback"
+    // → the guard (lastGood && sourceKind !== "fallback") is false → must NOT freeze → new fallback.
+    const second = await refreshScoringModelSnapshot(env);
+    expect(second.sourceKind).toBe("fallback");
+    expect(second.id).not.toBe(first.id);
+    expect(second.warnings.join(" ")).not.toMatch(/froze the last-good/i);
+  });
+
+  it("falls back to the mutable ref when the upstream SHA lookup throws (fetchUpstreamRefSha catch path)", async () => {
+    const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "custom/upstream", GITTENSOR_UPSTREAM_REF: "test" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("api.github.com") && url.includes("/commits/")) throw new Error("network failure");
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+    const snapshot = await refreshScoringModelSnapshot(env);
+    expect(snapshot.sourceUrl).toContain("/test/gittensor/constants.py");
+    expect((snapshot.payload as Record<string, unknown>).upstreamSourceSha).toBeUndefined();
+    expect(snapshot.sourceKind).toBe("raw-github");
+  });
+
+  it("falls back to the mutable ref when the SHA endpoint returns a non-string sha", async () => {
+    const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "custom/upstream", GITTENSOR_UPSTREAM_REF: "test" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("api.github.com") && url.includes("/commits/")) return Response.json({ sha: 42 });
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+    const snapshot = await refreshScoringModelSnapshot(env);
+    expect(snapshot.sourceUrl).toContain("/test/gittensor/constants.py");
+    expect((snapshot.payload as Record<string, unknown>).upstreamSourceSha).toBeUndefined();
+  });
+
+  it("falls back to the mutable ref when the SHA endpoint returns an empty sha string", async () => {
+    const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "custom/upstream", GITTENSOR_UPSTREAM_REF: "test" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("api.github.com") && url.includes("/commits/")) return Response.json({ sha: "" });
+      if (url.includes("constants.py")) return new Response("MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      return new Response("not found", { status: 404 });
+    });
+    const snapshot = await refreshScoringModelSnapshot(env);
+    expect(snapshot.sourceUrl).toContain("/test/gittensor/constants.py");
+    expect((snapshot.payload as Record<string, unknown>).upstreamSourceSha).toBeUndefined();
+  });
+
   it("uses saturation math as the active private preview model", () => {
     const saturationSnapshot: ScoringModelSnapshotRecord = {
       ...snapshot,

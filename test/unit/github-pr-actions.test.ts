@@ -127,6 +127,28 @@ describe("GitHub PR action primitives (#778)", () => {
     });
     await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 19)).resolves.toBeNull();
   });
+
+  it("returns the best-known closer when the 10-page event cap is reached (page-cap exit path)", async () => {
+    const fetchedPages: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      if (url.includes("/issues/20/events")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        fetchedPages.push(page);
+        // Page 5 contains the close event; all pages return exactly 100 entries so the loop never exits early.
+        const events = Array.from({ length: 100 }, (_, i) =>
+          page === 5 && i === 50 ? { event: "closed", actor: { login: "capped-closer" } } : { event: "labeled" },
+        );
+        return Response.json(events);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    await expect(getLastCloserLogin(envWithKey(), 123, "owner/repo", 20)).resolves.toBe("capped-closer");
+    // Loop ran pages 1–10 and then exited via the cap, never requesting page 11.
+    expect(fetchedPages).toHaveLength(10);
+    expect(fetchedPages).not.toContain(11);
+  });
 });
 
 function generateRsaPrivateKeyPem(): string {

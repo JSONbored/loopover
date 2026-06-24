@@ -120,7 +120,8 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
     const token = await createInstallationToken(env, installationId);
     const octokit = new Octokit({ auth: token });
     let lastCloser: string | null = null;
-    for (let page = 1; ; page += 1) {
+    // Cap at 10 pages (1 000 events) — enough for any real PR timeline without risking API rate exhaustion.
+    for (let page = 1; page <= 10; page += 1) {
       // issue-events are returned oldest-first; walk every page so the final `closed` entry is truly the latest.
       const response = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}/events", { owner, repo, issue_number: issueNumber, per_page: 100, page });
       const events = response.data as Array<{ event?: string; actor?: { login?: string | null } | null }>;
@@ -129,6 +130,7 @@ export async function getLastCloserLogin(env: Env, installationId: number, repoF
       }
       if (events.length < 100) return lastCloser;
     }
+    return lastCloser;
   } catch {
     return null;
   }

@@ -41,6 +41,20 @@ const row = (e: Env, delivery: string) =>
   (e.DB as unknown as TestD1Database).prepare("SELECT event_name, action, installation_id, repository_full_name, status FROM orb_webhook_events WHERE delivery_id=?").bind(delivery).first<{ event_name: string; action: string; installation_id: number; repository_full_name: string; status: string }>();
 
 describe("handleOrbWebhook (POST /v1/orb/webhook)", () => {
+  it("500 + records 'error' when the install-registry upsert fails (so GitHub redelivers)", async () => {
+    const e = env();
+    const real = e.DB;
+    // Throw on the installations upsert only; the webhook_events read/write still go to the real DB.
+    (e as { DB: unknown }).DB = {
+      prepare: (sql: string) =>
+        sql.includes("orb_github_installations") ? { bind: () => ({ run: () => Promise.reject(new Error("boom")) }) } : real.prepare(sql),
+    };
+    const res = await post(e, INSTALL, { delivery: "up-err" });
+    expect(res.status).toBe(500);
+    const stored = await (real as unknown as TestD1Database).prepare("SELECT status FROM orb_webhook_events WHERE delivery_id=?").bind("up-err").first<{ status: string }>();
+    expect(stored?.status).toBe("error"); // not suppressed → GitHub can retry
+  });
+
   it("400 when the GitHub delivery or event header is missing", async () => {
     expect((await post(env(), INSTALL, { delivery: null as unknown as string })).status).toBe(400);
     expect((await post(env(), INSTALL, { event: null as unknown as string })).status).toBe(400);

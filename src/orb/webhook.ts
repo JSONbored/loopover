@@ -10,6 +10,7 @@
 import type { Context } from "hono";
 import type { GitHubWebhookPayload } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
+import { upsertOrbInstallation } from "./installations";
 
 const DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -53,15 +54,26 @@ export async function handleOrbWebhook(c: Context<{ Bindings: Env }>): Promise<R
     return c.json({ ok: true, deliveryId, eventName, status: "duplicate" }, 202);
   }
 
-  await recordOrbWebhookEvent(c.env, {
+  const eventMeta = {
     deliveryId,
     eventName,
     action: payload.action ?? null,
     installationId: payload.installation?.id ?? null,
     repositoryFullName: payload.repository?.full_name ?? null,
     payloadHash,
-  });
+  };
 
+  // Maintain the installation registry from `installation` lifecycle events BEFORE recording, so a failed
+  // upsert is flipped to "error" + 500 and GitHub redelivers (the dedup guard only suppresses non-error rows).
+  // No-op for every other event in PR2 — PR/review-outcome processing lands in a later queue-backed PR.
+  try {
+    await upsertOrbInstallation(c.env, eventName, payload);
+  } catch {
+    await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "error" });
+    return c.json({ error: "processing_failed", deliveryId }, 500);
+  }
+
+  await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "received" });
   return c.json({ ok: true, deliveryId, eventName, status: "received" }, 202);
 }
 
@@ -74,16 +86,16 @@ async function getOrbWebhookEvent(env: Env, deliveryId: string): Promise<{ paylo
 
 async function recordOrbWebhookEvent(
   env: Env,
-  e: { deliveryId: string; eventName: string; action: string | null; installationId: number | null; repositoryFullName: string | null; payloadHash: string },
+  e: { deliveryId: string; eventName: string; action: string | null; installationId: number | null; repositoryFullName: string | null; payloadHash: string; status: string },
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO orb_webhook_events (delivery_id, event_name, action, installation_id, repository_full_name, payload_hash, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'received')
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(delivery_id) DO UPDATE SET
-       status = 'received', payload_hash = excluded.payload_hash, action = excluded.action,
+       status = excluded.status, payload_hash = excluded.payload_hash, action = excluded.action,
        installation_id = excluded.installation_id, repository_full_name = excluded.repository_full_name`,
   )
-    .bind(e.deliveryId, e.eventName, e.action, e.installationId, e.repositoryFullName, e.payloadHash)
+    .bind(e.deliveryId, e.eventName, e.action, e.installationId, e.repositoryFullName, e.payloadHash, e.status)
     .run();
 }
 

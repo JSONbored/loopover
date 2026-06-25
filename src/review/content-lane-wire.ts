@@ -63,16 +63,16 @@ export function surfaceVerdictToGate(result: SurfaceReviewResult): {
   return { evaluation: { enabled: true, conclusion: "failure", title: SURFACE_TITLE, summary, blockers: [finding], warnings: [] }, finding };
 }
 
-/** Merge the surface override onto the generic gate while PRESERVING the generic gate's hard blockers. A surface
- *  "merge" must NOT clear a real critical (e.g. a committed secret) the generic gate already raised — so when the
- *  generic gate carries blockers, they survive and the conclusion stays a failure. `null` surface ⇒ defer (the
- *  generic gate is returned unchanged). PURE. */
+/** Merge the surface override onto the generic gate while PRESERVING generic holds/blockers. A surface "merge"
+ *  must NOT clear either a real critical (e.g. a committed secret) or a deliberate generic neutral/action-required
+ *  hold (e.g. first-contribution grace). `null` surface ⇒ defer (the generic gate is returned unchanged). PURE. */
 export function applySurfaceGate(
   generic: GateCheckEvaluation | undefined,
   surface: GateCheckEvaluation | null,
 ): GateCheckEvaluation | undefined {
   if (surface === null) return generic;
-  if (!generic || generic.blockers.length === 0) return surface; // gate off, or generic was clean → surface stands
+  if (!generic || generic.conclusion === "success") return surface; // gate off, or generic was clean → surface stands
+  if (generic.blockers.length === 0) return surface.conclusion === "success" ? generic : surface; // preserve generic holds
   return {
     enabled: true,
     conclusion: "failure",

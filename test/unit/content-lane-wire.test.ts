@@ -78,6 +78,15 @@ describe("applySurfaceGate", () => {
     expect(out?.conclusion).toBe("failure"); // the secret still blocks the merge
     expect(out?.blockers).toEqual([secret]); // the generic blocker survives the override
   });
+  it("preserves a generic neutral hold over a surface merge", () => {
+    const generic = gate({ conclusion: "neutral", title: "First-contribution grace", blockers: [], warnings: [] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    expect(applySurfaceGate(generic, surfaceMerge)).toBe(generic);
+  });
+  it("lets a surface rejection override a generic neutral hold", () => {
+    const generic = gate({ conclusion: "neutral", title: "First-contribution grace", blockers: [], warnings: [] });
+    expect(applySurfaceGate(generic, surfaceClose)).toBe(surfaceClose);
+  });
 });
 
 describe("runMetagraphedSurfaceGate (injected loader — adapter logic)", () => {

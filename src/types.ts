@@ -193,6 +193,12 @@ export type JobMessage =
       type: "submit-draft";
       requestedBy: "api" | "test";
       draftId: string;
+    }
+  | {
+      // Orb relay retry (#relay-retry): re-attempt previously-failed forwardOrbEvent calls (container was down).
+      // Enqueued by the cron every sweep cycle (≈2 min) ONLY when ORB_BROKER_ENABLED is set.
+      type: "retry-orb-relay";
+      requestedBy: "schedule" | "test";
     };
 
 export type GitHubWebhookPayload = {

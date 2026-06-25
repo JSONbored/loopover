@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveModel, resolveProviderNames, routeProviders } from "../../src/selfhost/ai";
+import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveEffort, resolveModel, resolveProviderNames, routeProviders } from "../../src/selfhost/ai";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -14,6 +14,19 @@ describe("resolveModel (#979 — never leak the Workers-AI default to a self-hos
   });
   it("passes through a real model the core supplied", () => {
     expect(resolveModel(undefined, "gpt-4o", "sonnet")).toBe("gpt-4o");
+  });
+});
+
+describe("resolveEffort (#selfhost-effort — Claude Code intelligence dial, default high)", () => {
+  it("passes a valid level through, trimmed + lowercased", () => {
+    expect(resolveEffort("low")).toBe("low");
+    expect(resolveEffort("  Medium ")).toBe("medium");
+    expect(resolveEffort("MAX")).toBe("max");
+  });
+  it("defaults to high when unset or unrecognized so a typo can't downgrade reviews", () => {
+    expect(resolveEffort(undefined)).toBe("high"); // ?? right side
+    expect(resolveEffort("")).toBe("high"); // present but not in the valid set
+    expect(resolveEffort("ultra")).toBe("high"); // unrecognized → safe default
   });
 });
 
@@ -296,11 +309,35 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("t");
   });
 
-  it("Codex returns text on success and throws on a non-zero exit", async () => {
-    const ok: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 });
-    expect((await createCodexAi({}, ok).run("gpt-5", { prompt: "x" })).response).toBe("codex review");
+  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; AI_MODEL/AI_EFFORT override", async () => {
+    let seen: string[] = [];
+    const cap: StubSpawn = async (_c, a) => {
+      seen = a;
+      return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
+    };
+    // empty model id (the dual-router default) + no AI_MODEL → pinned claude-sonnet-4-6; no AI_EFFORT → high
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("high");
+    // operator overrides flow through to the argv
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", AI_MODEL: "claude-opus-4-8", AI_EFFORT: "low" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("low");
+  });
+
+  it("Codex: 0.142+ exec flags (no --ask-for-approval, has --skip-git-repo-check); --model only when configured", async () => {
+    let seen: string[] = [];
+    const ok: StubSpawn = async (_cmd, args) => { seen = args; return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 }; };
+    // no configured model + the dual-router's empty model id → OMIT --model (codex picks the account default;
+    // forcing e.g. gpt-5 fails on a ChatGPT-account login). And the removed --ask-for-approval must never appear.
+    expect((await createCodexAi({}, ok).run("", { prompt: "x" })).response).toBe("codex review");
+    expect(seen).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--", "x"]);
+    expect(seen).not.toContain("--ask-for-approval");
+    // an explicit model (AI_MODEL, or a `codex:<model>` reviewer id) IS passed through
+    await createCodexAi({ AI_MODEL: "o4-mini" }, ok).run("", { prompt: "x" });
+    expect(seen.join(" ")).toContain("--model o4-mini");
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
-    await expect(createCodexAi({}, bad).run("gpt-5", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+    await expect(createCodexAi({}, bad).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
   });
 
   it("drives the REAL subprocess (defaultSpawn) against a fake `claude` on PATH", async () => {

@@ -198,6 +198,7 @@ import { isCloseHoldOnly, isHoldOnly, recordPrOutcome, recordReversalSignals, ru
 import { recordNativeGateDecision } from "../review/parity-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
+import { retryFailedRelays } from "../orb/relay";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -392,6 +393,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     case "submit-draft":
       // Public OAuth draft-submission (GITTENSORY_REVIEW_DRAFT). No-ops internally when the flag is off.
       await processSubmitDraft(env, message.draftId);
+      return;
+    case "retry-orb-relay":
+      // Orb relay retry (#relay-retry): re-attempt events that failed to reach a brokered self-host container
+      // (container was temporarily down). Enqueued by the cron ONLY when ORB_BROKER_ENABLED is set; a stale
+      // in-flight job that arrives after the flag clears is still safe — retryFailedRelays fails open (no-op on
+      // an empty table). Never throws.
+      await retryFailedRelays(env);
       return;
   }
 }
@@ -2560,12 +2568,16 @@ async function maybePublishPrPublicSurface(
     const preMergeChecks = resolveReviewPreMergeChecks(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
     if (preMergeChecks.length > 0) {
       const checkFiles = await getReviewFiles(); // memoized — reuses the gate/slop diff when already resolved
+      // An empty resolved file set means the changed paths could not be resolved (a PR always touches >=1 file),
+      // so a path-gated check cannot be evaluated — pass filesResolved=false so an ENFORCED whenPaths check HOLDS
+      // the gate (re-evaluates later) instead of silently skipping a hard requirement into an auto-merge (#review-audit).
       advisory.findings.push(
         ...evaluatePreMergeChecks(preMergeChecks, {
           title: pr.title,
           body: pr.body,
           labels: pr.labels,
           changedPaths: checkFiles.map((file) => file.path),
+          filesResolved: checkFiles.length > 0,
         }),
       );
     }

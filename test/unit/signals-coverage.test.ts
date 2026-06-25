@@ -131,6 +131,22 @@ describe("signal coverage edge cases", () => {
     expect(strategy.nextActions).toEqual(expect.arrayContaining(["Clean up linked issue/context patterns before adding more open PRs.", "Prefer repos where the changed files match prior language evidence, or keep first submissions small."]));
   });
 
+  it("matches contributor label history case-insensitively so a Title-cased issue label still counts", () => {
+    const directRepo = repo("owner/direct", { issueDiscoveryShare: 0, labelMultipliers: { bug: 1.2 } });
+    const profile = buildContributorProfile(
+      "dev",
+      { login: "dev", topLanguages: ["Python"], source: "github" },
+      [],
+      [],
+      [{ login: "dev", repoFullName: directRepo.fullName, pullRequests: 2, mergedPullRequests: 1, openPullRequests: 0, issues: 1, stalePullRequests: 0, unlinkedPullRequests: 0, dominantLabels: ["bug"] }],
+    );
+    // Contributor history label is "bug"; the open issue carries GitHub's display-cased "Bug".
+    const issues: IssueRecord[] = [issue(directRepo.fullName, 1, "Fix a bug", { labels: ["Bug"] })];
+    const opportunities = buildContributorOpportunities(profile, [directRepo], issues, []);
+    const direct = opportunities.find((opportunity) => opportunity.issueNumber === 1);
+    expect(direct?.reasons).toEqual(expect.arrayContaining([expect.stringContaining("Issue labels overlap contributor history")]));
+  });
+
   it("does not double-count stat-derived dominant labels for repos already covered by cached records", () => {
     const profile = buildContributorProfile(
       "dev",

@@ -175,6 +175,15 @@ turned on. Per-repo settings (autonomy, required approvals, protected paths) liv
 repository settings. The authoritative reference for all of these is
 [`docs/review-configuration.md`](./review-configuration.md).
 
+**Container-private per-repo config (keep policy off the public repo).** `.gittensory.yml` lives in the repo, so
+contributors can read it — and whoever can see the gate thresholds, autonomy, or label policy can game them. To
+keep review policy private, set **`GITTENSORY_REPO_CONFIG_DIR`** to a mounted directory and drop one file per repo
+named `{owner}__{repo}.yml` (lowercased, `/` → double underscore) — e.g. `jsonbored__metagraphed.yml`. When a file
+exists for a repo the engine reads it **instead of** fetching the public `.gittensory.yml`, so the policy never
+appears in contributor-facing previews. It uses the same schema (`gate:` / `settings:` / `review:` — autonomy,
+labels, model/effort), is read fresh each review (edits apply immediately), and `.yaml` / `.json` are also
+accepted. Unset ⇒ the public file is fetched exactly as before.
+
 ---
 
 ## 6. Operations

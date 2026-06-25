@@ -35,6 +35,8 @@ import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
+import { makeLocalManifestReader } from "./selfhost/private-config";
+import { setLocalManifestReader } from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -157,6 +159,10 @@ function buildSqliteBackend(consume: (m: JobMessage) => Promise<void>): Backend 
 
 async function main(): Promise<void> {
   loadFileSecrets();
+  // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
+  // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
+  // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
+  setLocalManifestReader(makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR));
   const startedAt = Date.now();
 
   // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event

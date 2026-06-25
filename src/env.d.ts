@@ -84,6 +84,11 @@ declare global {
     /** Self-host instance-wide write switch: "dry-run" | "disabled" forces EVERY installation write to be
      *  suppressed regardless of per-repo mode (the cloud→self-host parallel-run kill switch). Unset = live. */
     SELFHOST_DEPLOYMENT_MODE?: string;
+    /** Self-host container-private per-repo config dir. When set, the focus-manifest loader reads
+     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.gittensory.yml`, so review policy (gate,
+     *  autonomy, labels, model/effort) is set privately and contributors can't read or game it. Unset ⇒ public
+     *  fetch (cloud, or a self-host without the dir, is byte-identical to before). */
+    GITTENSORY_REPO_CONFIG_DIR?: string;
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;

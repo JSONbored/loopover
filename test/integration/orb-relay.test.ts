@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
 import { forwardOrbEvent, registerOrbRelay, relaySignature, relayVerify, retryFailedRelays, storeRelayFailure } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
 const seedInstall = (e: Env, id: number, cols: Record<string, string | number | null> = {}) => {
@@ -103,6 +105,7 @@ describe("relaySignature", () => {
 });
 
 describe("forwardOrbEvent", () => {
+  const publicDns = async () => ["203.0.113.10"];
   const capture = (resp: Response) => {
     const calls: { url: string; init?: RequestInit | undefined }[] = [];
     const fetchImpl = ((u: RequestInfo | URL, init?: RequestInit) => {
@@ -127,7 +130,7 @@ describe("forwardOrbEvent", () => {
     await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
     const { fetchImpl, calls } = capture(new Response("ok"));
     const body = '{"action":"opened","number":7}';
-    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 800, deliveryId: "del-1", rawBody: body }, fetchImpl)).toBe("forwarded");
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 800, deliveryId: "del-1", rawBody: body }, fetchImpl, publicDns)).toBe("forwarded");
     expect(calls[0]?.url).toBe("https://c.example/v1/orb/relay");
     const h = calls[0]?.init?.headers as Record<string, string>;
     expect(h["x-github-event"]).toBe("pull_request");
@@ -136,12 +139,38 @@ describe("forwardOrbEvent", () => {
     expect(calls[0]?.init?.body).toBe(body);
   });
 
+  it("revalidates the relay DNS destination at forward time before posting", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 805);
+    await registerOrbRelay(e, secret, "https://dns-checked.example/v1/orb/relay");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const type = url.searchParams.get("type");
+      return Response.json({ Answer: type === "A" ? [{ type: 1, data: "203.0.113.20" }] : [{ type: 28, data: "2001:db8::20" }] });
+    });
+    const { fetchImpl, calls } = capture(new Response("ok"));
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 805, deliveryId: "d", rawBody: "{}" }, fetchImpl)).toBe("forwarded");
+    expect(calls[0]?.url).toBe("https://dns-checked.example/v1/orb/relay");
+  });
+
   it("returns FAILED (never throws) on a non-ok response or a thrown fetch — the Orb 202 always stands", async () => {
     const e = brokeredEnv();
     const secret = await enroll(e, 802);
     await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
-    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 802, deliveryId: "d", rawBody: "{}" }, (() => Promise.resolve(new Response("no", { status: 503 }))) as typeof fetch)).toBe("failed");
-    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 802, deliveryId: "d", rawBody: "{}" }, (() => Promise.reject(new Error("down"))) as typeof fetch)).toBe("failed");
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 802, deliveryId: "d", rawBody: "{}" }, (() => Promise.resolve(new Response("no", { status: 503 }))) as typeof fetch, publicDns)).toBe("failed");
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 802, deliveryId: "d", rawBody: "{}" }, (() => Promise.reject(new Error("down"))) as typeof fetch, publicDns)).toBe("failed");
+  });
+
+  it("rejects a registered relay destination that resolves to loopback/private or has no DNS answers", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 804);
+    await registerOrbRelay(e, secret, "https://rebinding.example/v1/orb/relay");
+    const { fetchImpl, calls } = capture(new Response("ok"));
+    const args = { eventName: "pull_request", installationId: 804, deliveryId: "d", rawBody: "{}" };
+    expect(await forwardOrbEvent(e, args, fetchImpl, async () => ["127.0.0.1"])).toBe("failed");
+    expect(await forwardOrbEvent(e, args, fetchImpl, async () => ["10.0.0.5"])).toBe("failed");
+    expect(await forwardOrbEvent(e, args, fetchImpl, async () => [])).toBe("failed");
+    expect(calls).toHaveLength(0);
   });
 
   it("SKIPS when the server's encryption secret is gone (can't decrypt the stored secret)", async () => {

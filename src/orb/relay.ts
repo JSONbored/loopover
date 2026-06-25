@@ -8,6 +8,36 @@ import { hashToken } from "../auth/security";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import { decryptSecret, encryptSecret } from "../utils/crypto";
 
+type RelayDnsResolver = (hostname: string) => Promise<string[]>;
+
+function addressAsUrlHost(address: string): string {
+  return address.includes(":") ? `[${address.replace(/^\[|\]$/g, "")}]` : address;
+}
+
+function resolvedAddressIsSafe(address: string): boolean {
+  return isSafeHttpUrl(`https://${addressAsUrlHost(address)}/`);
+}
+
+async function resolveRelayHostname(hostname: string): Promise<string[]> {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) return [hostname];
+  const answers: string[] = [];
+  for (const type of ["A", "AAAA"]) {
+    const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(3_000) });
+    if (!res.ok) throw new Error("dns_resolution_failed");
+    const json = (await res.json()) as { Answer?: { data?: string; type?: number }[] };
+    for (const answer of json.Answer ?? []) {
+      if ((answer.type === 1 || answer.type === 28) && answer.data) answers.push(answer.data);
+    }
+  }
+  return answers;
+}
+
+async function relayDestinationIsSafe(raw: string, resolveHostname: RelayDnsResolver): Promise<boolean> {
+  if (!isSafeHttpUrl(raw)) return false;
+  const addresses = await resolveHostname(new URL(raw).hostname.toLowerCase());
+  return addresses.length > 0 && addresses.every(resolvedAddressIsSafe);
+}
+
 // The events a brokered container needs to review/act on. Installation-lifecycle + other Orb-internal events are
 // deliberately NOT forwarded (the container runs under the CENTRAL Orb App, not its own, so it must not treat
 // those as its own installation state).
@@ -154,6 +184,7 @@ export async function forwardOrbEvent(
   env: Env,
   args: { eventName: string; installationId: number | null | undefined; deliveryId: string; rawBody: string },
   fetchImpl: typeof fetch = fetch,
+  resolveHostname: RelayDnsResolver = resolveRelayHostname,
 ): Promise<"forwarded" | "skipped" | "failed"> {
   if (!args.installationId || !RELAY_FORWARD_EVENTS.has(args.eventName)) return "skipped";
   const row = await env.DB
@@ -162,6 +193,7 @@ export async function forwardOrbEvent(
     .first<{ relay_url: string; relay_secret_enc: string; relay_secret_iv: string; relay_secret_salt: string | null }>();
   if (!row || !env.TOKEN_ENCRYPTION_SECRET) return "skipped";
   try {
+    if (!(await relayDestinationIsSafe(row.relay_url, resolveHostname))) return "failed";
     const secret = await decryptSecret(row.relay_secret_enc, row.relay_secret_iv, env.TOKEN_ENCRYPTION_SECRET, row.relay_secret_salt);
     const signature = await relaySignature(secret, args.rawBody);
     const res = await fetchImpl(row.relay_url, {

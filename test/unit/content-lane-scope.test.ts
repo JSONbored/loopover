@@ -125,6 +125,11 @@ describe("ContentRepoSpec (a self-hosted curated list parameterizes the lane)", 
     urlFields: new Set(["url"]),
     domainOnlyExclusions: new Set(["github.com"]),
     multiEntryCatalogUrls: new Set(),
+    sourceUrlFields: ["url"],
+    sourceUrlListFields: new Set(["urls"]),
+    distributionSourceFields: new Set(["downloadUrl"]),
+    distributionSourceHosts: new Set(["npmjs.com"]),
+    primaryCanonicalSourceFields: new Set(["url"]),
   };
 
   it("the default spec carries awesome-claude's categories + entry layout", () => {

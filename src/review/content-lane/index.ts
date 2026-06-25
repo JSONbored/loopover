@@ -55,8 +55,6 @@ export {
   sourceEvidenceCloseDecision,
   sourceEvidenceSummary,
   sourceEvidenceToDecisionEvidence,
-  DISTRIBUTION_SOURCE_HOSTS,
-  TRUSTED_SOURCE_HOSTS,
   type SourceEvidenceDecision,
   type SourceEvidenceItem,
   type SourceEvidenceReport,

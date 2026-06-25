@@ -22,6 +22,16 @@ export interface ContentRepoSpec {
   domainOnlyExclusions: ReadonlySet<string>;
   /** Catalog roots that legitimately back MANY entries; a shared root alone is never strict (only a shared subpath). */
   multiEntryCatalogUrls: ReadonlySet<string>;
+  /** Scalar source-URL frontmatter fields, in extraction ORDER (the source-evidence gate reads them in sequence). */
+  sourceUrlFields: readonly string[];
+  /** Array-valued source-URL frontmatter fields (e.g. retrievalSources/sourceUrls) read as real source evidence. */
+  sourceUrlListFields: ReadonlySet<string>;
+  /** Source fields treated as distribution (download/package) rather than canonical provenance. */
+  distributionSourceFields: ReadonlySet<string>;
+  /** Hosts that classify any source URL as distribution regardless of field (package registries / artifact hosts). */
+  distributionSourceHosts: ReadonlySet<string>;
+  /** Canonical fields that anchor the close decision + block inconclusive-downgrade (the primary provenance links). */
+  primaryCanonicalSourceFields: ReadonlySet<string>;
 }
 
 /** The default curated-list spec — awesome-claude's categories, entry layout, and maintenance branches. */
@@ -86,4 +96,34 @@ export const AWESOME_CLAUDE_CONTENT_SPEC: ContentRepoSpec = {
     "https://github.com/snowflake-labs/mcp",
     "https://github.com/twilio-labs/mcp",
   ]),
+  sourceUrlFields: [
+    "documentationUrl",
+    "docsUrl",
+    "downloadUrl",
+    "githubUrl",
+    "packageUrl",
+    "repoUrl",
+    "repositoryUrl",
+    "sourceUrl",
+    "websiteUrl",
+  ],
+  sourceUrlListFields: new Set(["sourceUrls", "retrievalSources"]),
+  distributionSourceFields: new Set(["downloadUrl", "packageUrl"]),
+  distributionSourceHosts: new Set([
+    "crates.io",
+    "files.pythonhosted.org",
+    "hub.docker.com",
+    "marketplace.visualstudio.com",
+    "mvnrepository.com",
+    "npmjs.com",
+    "packagist.org",
+    "pkg.go.dev",
+    "plugins.gradle.org",
+    "pypi.org",
+    "registry.npmjs.org",
+    "repo1.maven.org",
+    "rubygems.org",
+    "www.npmjs.com",
+  ]),
+  primaryCanonicalSourceFields: new Set(["githubUrl", "repoUrl", "repositoryUrl", "sourceUrl"]),
 };

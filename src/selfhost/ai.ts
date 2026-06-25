@@ -278,8 +278,15 @@ export function routeProviders(providers: Array<{ name: string; ai: SelfHostAi }
   const chain = createChainAi(providers);
   return {
     async run(model, options) {
-      const direct = byName.get(model.trim().toLowerCase());
-      return (direct ?? chain).run(model, options);
+      // A reviewer id of `<provider>` or `<provider>:<model>` addresses ONE provider directly (the dual-review
+      // path). When it matches, hand the provider the model PART (after the colon) — or "" so it falls to its own
+      // default — NOT the provider name, which is not a real model id (`claude --model claude-code` would fail).
+      // Any other id (a real model name, or an embed model for RAG) routes to the fallback chain unchanged.
+      const trimmed = model.trim();
+      const colon = trimmed.indexOf(":");
+      const name = (colon < 0 ? trimmed : trimmed.slice(0, colon)).toLowerCase();
+      const direct = byName.get(name);
+      return direct ? direct.run(colon < 0 ? "" : trimmed.slice(colon + 1), options) : chain.run(model, options);
     },
   };
 }

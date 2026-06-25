@@ -138,23 +138,31 @@ describe("createChainAi (fallback)", () => {
 });
 
 describe("routeProviders (#dual-ai-combiner — address one provider by name for dual review)", () => {
-  const mk = (name: string) => ({ name, ai: { run: vi.fn(async () => ({ response: name })) } });
+  // The mock echoes back the MODEL it received, so we can assert the router never passes the provider NAME
+  // through as a model id (`claude --model claude-code` would fail — the bug this guards).
+  const mk = (name: string) => ({ name, ai: { run: vi.fn(async (model: string) => ({ response: `${name}|${model}` })) } });
 
-  it("routes .run(<providerName>) to THAT provider; any other model id falls through to the chain (first provider)", async () => {
+  it("routes .run(<providerName>) to THAT provider with an EMPTY model (→ provider default), never the name", async () => {
     const cc = mk("claude-code");
     const cx = mk("codex");
     const route = routeProviders([cc, cx]);
-    expect((await route.run("codex", { prompt: "x" })).response).toBe("codex"); // direct by name
+    expect((await route.run("codex", { prompt: "x" })).response).toBe("codex|"); // direct; model is "" (default), NOT "codex"
     expect(cx.ai.run).toHaveBeenCalledTimes(1);
     expect(cc.ai.run).not.toHaveBeenCalled();
-    expect((await route.run("@cf/some/model", { prompt: "x" })).response).toBe("claude-code"); // non-name → chain → first
-    expect((await route.run("  CODEX ", { prompt: "x" })).response).toBe("codex"); // case-insensitive + trimmed
+    expect((await route.run("  CODEX ", { prompt: "x" })).response).toBe("codex|"); // case-insensitive + trimmed
+    expect((await route.run("@cf/some/model", { prompt: "x" })).response).toBe("claude-code|@cf/some/model"); // non-name → chain → first, model passed through
+  });
+
+  it("a `<provider>:<model>` id hands that provider the explicit model", async () => {
+    const cc = mk("claude-code");
+    const cx = mk("codex");
+    expect((await routeProviders([cc, cx]).run("claude-code:opus", { prompt: "x" })).response).toBe("claude-code|opus");
   });
 
   it("the chain fallback still skips a failed provider for a non-name model id", async () => {
     const fail = { name: "claude-code", ai: { run: vi.fn(async () => { throw new Error("down"); }) } };
     const ok = mk("codex");
-    expect((await routeProviders([fail, ok]).run("sonnet", { prompt: "x" })).response).toBe("codex");
+    expect((await routeProviders([fail, ok]).run("sonnet", { prompt: "x" })).response).toBe("codex|sonnet"); // chain passes the real model through
   });
 
   it("createSelfHostAi wires routing for a 2+ provider AI_PROVIDER (addressable by name)", async () => {

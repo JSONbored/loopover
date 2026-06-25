@@ -40,6 +40,15 @@ describe("generateIssuePlan (#issue-coding-plan)", () => {
     expect(userMessage).toContain("We need a config flag.");
   });
 
+  it("covers the title/body fallbacks and routes through the AI Gateway when configured", async () => {
+    const run = vi.fn(async () => ({ response: "plan" }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_GATEWAY_ID: "gw-1" });
+    expect(await generateIssuePlan(env, { title: "only a title", body: "" })).toBe("plan"); // body fallback
+    expect(await generateIssuePlan(env, { title: "", body: "only a body" })).toBe("plan"); // title fallback
+    // the configured gateway id is threaded as the 3rd run() arg
+    expect((run.mock.calls[0] as unknown as unknown[])[2]).toEqual({ gateway: { id: "gw-1" } });
+  });
+
   it("returns null when there is no issue text to plan from (no AI call)", async () => {
     const run = vi.fn(async () => ({ response: "x" }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });

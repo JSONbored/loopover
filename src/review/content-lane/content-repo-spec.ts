@@ -13,6 +13,15 @@ export interface ContentRepoSpec {
   /** Head-branch prefixes used by bulk maintenance automation (link-health, etc.); these legitimately edit many
    *  entries in one PR and are ignored, never closed. */
   maintenanceBranchPrefixes: readonly string[];
+  /** Frontmatter fields whose edit on a MODIFIED entry is a protected close — identity / provenance /
+   *  verification / structural / monetization + supply-chain links. */
+  protectedFrontmatterFields: ReadonlySet<string>;
+  /** URL-bearing frontmatter keys (camelCase + snake_case) normalized + compared for duplicate detection. */
+  urlFields: ReadonlySet<string>;
+  /** Generic ecosystem hosts that never make a strict/aggressive domain-only match (a shared one is at most "related"). */
+  domainOnlyExclusions: ReadonlySet<string>;
+  /** Catalog roots that legitimately back MANY entries; a shared root alone is never strict (only a shared subpath). */
+  multiEntryCatalogUrls: ReadonlySet<string>;
 }
 
 /** The default curated-list spec — awesome-claude's categories, entry layout, and maintenance branches. */
@@ -20,4 +29,61 @@ export const AWESOME_CLAUDE_CONTENT_SPEC: ContentRepoSpec = {
   categories: new Set(["agents", "collections", "commands", "guides", "hooks", "mcp", "rules", "skills", "statuslines", "tools"]),
   entryPathPattern: /^content\/([^/]+)\/([^/]+)\.mdx$/i,
   maintenanceBranchPrefixes: ["links/"],
+  // PROTECTED = identity / provenance / verification / structural / monetization + supply-chain links. The entry's
+  // own REFERENCE/DOCS URLs are deliberately NOT protected (those links rot + legitimately need fixing); download/
+  // package/affiliate URLs stay protected (supply-chain / monetization risk).
+  protectedFrontmatterFields: new Set([
+    "affiliateUrl",
+    "author",
+    "authorProfileUrl",
+    "category",
+    "claimStatus",
+    "claimUrl",
+    "dateAdded",
+    "disclosure",
+    "downloadUrl",
+    "importPrNumber",
+    "importPrUrl",
+    "packageUrl",
+    "packageVerified",
+    "pricingModel",
+    "reviewedAt",
+    "reviewedBy",
+    "reviewedPrNumber",
+    "slug",
+    "submittedAt",
+    "submittedBy",
+    "submittedByUrl",
+    "sourceSubmissionNumber",
+    "sourceSubmissionUrl",
+  ]),
+  urlFields: new Set([
+    "documentationUrl",
+    "docsUrl",
+    "downloadUrl",
+    "githubUrl",
+    "packageUrl",
+    "repoUrl",
+    "repositoryUrl",
+    "sourceUrl",
+    "websiteUrl",
+    "docs_url",
+    "download_url",
+    "github_url",
+    "package_url",
+    "repo_url",
+    "repository_url",
+    "source_url",
+    "website_url",
+  ]),
+  domainOnlyExclusions: new Set(["github.com", "npmjs.com", "pypi.org", "raw.githubusercontent.com", "registry.npmjs.org"]),
+  multiEntryCatalogUrls: new Set([
+    "https://code.claude.com/docs/en/hooks",
+    "https://code.claude.com/docs/en/statusline",
+    "https://github.com/awslabs/mcp",
+    "https://github.com/microsoft/mcp",
+    "https://github.com/modelcontextprotocol/servers",
+    "https://github.com/snowflake-labs/mcp",
+    "https://github.com/twilio-labs/mcp",
+  ]),
 };

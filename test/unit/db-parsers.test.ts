@@ -13,12 +13,15 @@ import {
   markPullRequestRegated,
   markPullRequestsRegated,
   recordAuditEvent,
+  recordWebhookEvent,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
   extractLinkedIssueNumbers,
   extractLinkedIssueNumbersWithOverflow,
   MAX_LINKED_ISSUE_NUMBERS,
 } from "../../src/db/repositories";
+import { getDb } from "../../src/db/client";
+import { webhookEvents } from "../../src/db/schema";
 import { createTestEnv } from "../helpers/d1";
 
 describe("database row parser hardening", () => {
@@ -122,6 +125,22 @@ describe("database row parser hardening", () => {
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:50.000Z", W)).toBe(false); // +50s, still inside → loses
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:31.000Z", W)).toBe(true); // +91s, outside window → wins again
     expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:40.000Z", W)).toBe(false); // back inside the new window → loses
+  });
+
+  it("REGRESSION: webhook_events.received_at is always a real ISO timestamp, never the 'CURRENT_TIMESTAMP' literal (#audit-ts-literal)", async () => {
+    const env = createTestEnv();
+    // Real path: recordWebhookEvent always passes nowIso().
+    await recordWebhookEvent(env, { deliveryId: "ts-1", eventName: "pull_request", payloadHash: "h", status: "queued" });
+    const r1 = await env.DB.prepare("select received_at from webhook_events where delivery_id = 'ts-1'").first<{ received_at: string }>();
+    expect(r1?.received_at).not.toBe("CURRENT_TIMESTAMP");
+    expect(Number.isFinite(Date.parse(r1?.received_at ?? "not-a-date"))).toBe(true);
+    // Backstop: a Drizzle insert that OMITS received_at must hit the $defaultFn (real ISO), not a static-default
+    // literal — this is the exact omit path that corrupted ~20,472 rows before the schema was switched to $defaultFn.
+    const db = getDb(env.DB);
+    await db.insert(webhookEvents).values({ deliveryId: "ts-2", eventName: "issues", payloadHash: "h2", status: "queued" });
+    const r2 = await env.DB.prepare("select received_at from webhook_events where delivery_id = 'ts-2'").first<{ received_at: string }>();
+    expect(r2?.received_at).not.toBe("CURRENT_TIMESTAMP");
+    expect(Number.isFinite(Date.parse(r2?.received_at ?? "not-a-date"))).toBe(true);
   });
 
   it("claimRegateFanoutSlot fails open (returns true) on a DB error so the fleet never stalls", async () => {

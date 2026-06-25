@@ -9,6 +9,7 @@ import {
   parseFocusManifest,
   parseFocusManifestContent,
   resolveEffectiveSettings,
+  excludeReviewPaths,
   resolveReviewPathInstructions,
   resolveReviewPromptOverrides,
   reviewConfigToJson,
@@ -430,7 +431,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1126,9 +1127,37 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
-    const manifest = parseFocusManifest({ review: { profile: "chill", path_instructions: [{ path: "src/**", instructions: "be strict" }] } });
-    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", pathInstructions: [{ path: "src/**", instructions: "be strict" }] });
+    const manifest = parseFocusManifest({ review: { profile: "chill", path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
     // A null manifest (load failure) yields the byte-identical defaults.
-    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, pathInstructions: [] });
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, pathInstructions: [], excludePaths: [] });
+  });
+});
+
+describe("review.exclude_paths (#review-exclude-paths)", () => {
+  it("parses exclude_paths, trims, drops blanks/non-strings with warnings, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { exclude_paths: [" **/*.lock ", "dist/**", "", 42, "  "] } });
+    expect(m.review.excludePaths).toEqual(["**/*.lock", "dist/**"]);
+    expect(m.review.present).toBe(true);
+    expect(m.warnings.some((w) => /exclude_paths\[2\]/.test(w))).toBe(true); // empty string
+    expect(m.warnings.some((w) => /exclude_paths\[3\]/.test(w))).toBe(true); // non-string
+    expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.excludePaths).toEqual(m.review.excludePaths);
+  });
+
+  it("ignores a non-array exclude_paths and caps the list", () => {
+    const bad = parseFocusManifest({ review: { exclude_paths: "dist/**" } });
+    expect(bad.review.excludePaths).toEqual([]);
+    expect(bad.warnings.some((w) => /exclude_paths.*must be a list/.test(w))).toBe(true);
+    const many = parseFocusManifest({ review: { exclude_paths: Array.from({ length: 60 }, (_, i) => `dir${i}/**`) } });
+    expect(many.review.excludePaths).toHaveLength(50);
+    expect(many.warnings.some((w) => /exclude_paths.*capped/.test(w))).toBe(true);
+  });
+
+  it("excludeReviewPaths filters matching files; empty globs return the same array (byte-identical)", () => {
+    const files = [{ path: "src/a.ts" }, { path: "pnpm-lock.yaml" }, { path: "dist/bundle.js" }];
+    // `*` collapses to `.*` (crosses slashes), so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
+    expect(excludeReviewPaths(files, ["*.yaml", "dist/**"])).toEqual([{ path: "src/a.ts" }]);
+    expect(excludeReviewPaths(files, ["docs/**"])).toEqual(files); // no match → unchanged
+    expect(excludeReviewPaths(files, [])).toBe(files); // empty → same reference (no-op)
   });
 });

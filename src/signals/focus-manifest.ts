@@ -104,6 +104,11 @@ export type FocusManifestReviewConfig = {
   /** `review.path_instructions`: per-path natural-language guidance handed to the AI reviewer when the PR's
    *  changed files match the glob. Empty (default) ⇒ byte-identical reviewer prompt. (#review-path-instructions) */
   pathInstructions: ReviewPathInstruction[];
+  /** `review.exclude_paths`: globs whose matching files are EXCLUDED from the AI review (diff + grounding + RAG)
+   *  — generated/vendored/lockfiles the maintainer doesn't want reviewed. Empty (default) ⇒ every file is
+   *  reviewed (byte-identical). Gate/slop/secret-scan are UNAFFECTED — this only narrows the AI review.
+   *  (#review-exclude-paths) */
+  excludePaths: string[];
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
@@ -205,7 +210,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [] },
+  review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] },
   warnings: [],
 };
 
@@ -218,7 +223,7 @@ export function isFocusManifestPublicSafe(text: string): boolean {
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {
-  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [] } };
+  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] } };
 }
 
 function normalizeStringList(value: JsonValue | undefined, field: string, warnings: string[]): string[] {
@@ -496,7 +501,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [] };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -518,14 +523,41 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const note = parsePublicSafeText(r.note, "review.note", warnings);
   const profile = parseReviewProfile(r.profile, warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
+  const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
   return {
-    present: footerText !== null || note !== null || profile !== null || pathInstructions.length > 0 || Object.keys(fields).length > 0,
+    present: footerText !== null || note !== null || profile !== null || pathInstructions.length > 0 || excludePaths.length > 0 || Object.keys(fields).length > 0,
     footerText,
     note,
     fields,
     profile,
     pathInstructions,
+    excludePaths,
   };
+}
+
+/** Parse `review.exclude_paths` — an array of manifest glob strings whose matching files are excluded from the AI
+ *  review. Each must be a non-empty string; blanks/non-strings are dropped with a warning. Capped at
+ *  MAX_PATH_INSTRUCTIONS so a hostile manifest can't bloat the matcher. (#review-exclude-paths) */
+function parseReviewExcludePaths(value: JsonValue | undefined, warnings: string[]): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    warnings.push(`Manifest "review.exclude_paths" must be a list of path globs; ignoring it.`);
+    return [];
+  }
+  const out: string[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (out.length >= MAX_PATH_INSTRUCTIONS) {
+      warnings.push(`Manifest "review.exclude_paths" is capped at ${MAX_PATH_INSTRUCTIONS} entries; dropping the rest.`);
+      break;
+    }
+    const glob = typeof entry === "string" ? entry.trim() : "";
+    if (!glob) {
+      warnings.push(`Manifest "review.exclude_paths[${index}]" must be a non-empty string; ignoring it.`);
+      continue;
+    }
+    out.push(glob);
+  }
+  return out;
 }
 
 /** Parse `review.path_instructions` — an array of `{ path, instructions }` entries. Each must have a non-empty
@@ -587,6 +619,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.note !== null) out.note = review.note;
   if (review.profile !== null) out.profile = review.profile;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
+  if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];
   if (Object.keys(review.fields).length > 0) out.fields = { ...review.fields } as Record<string, JsonValue>;
   return out;
 }
@@ -605,12 +638,20 @@ export function resolveReviewPathInstructions(pathInstructions: ReviewPathInstru
   return `\n\nPath-specific review instructions from the maintainer — apply these to the changed files that match each glob:\n${lines.join("\n")}`;
 }
 
-/** Resolve the AI-reviewer prompt overrides (`review.profile` + `review.path_instructions`) from a possibly-null
- *  manifest (null = load failure). A null manifest yields the byte-identical defaults. Centralized so the AI-review
- *  caller threads both in one place with the null-manifest branch covered here (unit-tested) rather than inline in
- *  the processor. (#review-profile / #review-path-instructions) */
-export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; pathInstructions: ReviewPathInstruction[] } {
-  return { profile: manifest?.review.profile ?? null, pathInstructions: manifest?.review.pathInstructions ?? [] };
+/** Resolve the AI-reviewer overrides (`review.profile` + `review.path_instructions` + `review.exclude_paths`) from
+ *  a possibly-null manifest (null = load failure). A null manifest yields the byte-identical defaults. Centralized
+ *  so the AI-review caller threads them in one place with the null-manifest branch covered here (unit-tested)
+ *  rather than inline in the processor. (#review-profile / #review-path-instructions / #review-exclude-paths) */
+export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; pathInstructions: ReviewPathInstruction[]; excludePaths: string[] } {
+  return { profile: manifest?.review.profile ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], excludePaths: manifest?.review.excludePaths ?? [] };
+}
+
+/** Filter a PR's changed files down to the set the AI review should see — dropping any whose path matches a
+ *  `review.exclude_paths` glob (generated/vendored/lockfiles). Empty `excludePaths` ⇒ the same array (byte-identical
+ *  review). Pure; the gate/slop/secret-scan operate on the unfiltered files. (#review-exclude-paths) */
+export function excludeReviewPaths<T extends { path: string }>(files: T[], excludePaths: string[]): T[] {
+  if (excludePaths.length === 0) return files;
+  return files.filter((file) => !excludePaths.some((glob) => matchesManifestPath(file.path, glob)));
 }
 
 /**

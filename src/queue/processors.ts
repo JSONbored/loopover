@@ -173,7 +173,7 @@ import type { CheckFailureDetail, MergeReadiness } from "../review/unified-comme
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
-import { buildFocusManifestGuidance, resolveReviewPathInstructions, resolveReviewPromptOverrides, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
+import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstructions, resolveReviewPromptOverrides, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
@@ -2030,6 +2030,10 @@ export async function runAiReviewForAdvisory(
     // cached manifest. The CONFIG (not a fetch) is threaded in; the per-PR glob match against `files` happens
     // here (pure), so the AI path makes no extra manifest fetch. Absent/empty ⇒ byte-identical reviewer prompt.
     reviewPathInstructions?: ReviewPathInstruction[] | undefined;
+    // `.gittensory.yml` review.exclude_paths (#review-exclude-paths), resolved by the caller from the cached
+    // manifest. Globs whose files are dropped from the AI review (diff + grounding + RAG) — generated/lockfiles
+    // the maintainer doesn't want reviewed. Empty ⇒ every file is reviewed (byte-identical). The gate is unaffected.
+    reviewExcludePaths?: string[] | undefined;
   },
 ): Promise<{ notes: string; reviewerCount: number } | undefined> {
   const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
@@ -2059,7 +2063,9 @@ export async function runAiReviewForAdvisory(
         : null;
     // FIX B: prefer the caller's pre-resolved files (real diff even on a pre-sync first review); fall back to
     // the stored read when the caller didn't pass them (e.g. unit tests calling this function directly).
-    const files = args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pr.number));
+    // review.exclude_paths (#review-exclude-paths): drop maintainer-excluded files (generated/lockfiles) so the
+    // AI review (diff + grounding + RAG) ignores them; empty excludePaths ⇒ the same array (byte-identical).
+    const files = excludeReviewPaths(args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pr.number)), args.reviewExcludePaths ?? []);
     // Grounding (convergence, flag-gated by GITTENSORY_REVIEW_GROUNDING). Build the FINISHED CI status + the full
     // content of the changed files so the reviewer verifies its claims against reality instead of guessing.
     // Flag-OFF (default) → we take no new branch at all: NO check/repo load, NO file fetch, and `grounding`
@@ -2528,11 +2534,12 @@ async function maybePublishPrPublicSurface(
     // to keep gate-only and advisory-sweep repos free of an extra file resolve.
     const aiReviewWillRun = !webhook.skipAiReview && settings.aiReviewMode !== "off" && Boolean(advisory.headSha);
     if (aiReviewWillRun) {
-      // `.gittensory.yml` review.profile + review.path_instructions (#review-profile / #review-path-instructions):
-      // resolve from the manifest (cached from settings resolution, so a cheap cache hit — no extra fetch) and
-      // thread them into the AI review. Profile shapes nitpickiness; path-instructions add per-path guidance.
-      // Absent ⇒ byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
-      const { profile: reviewProfile, pathInstructions: reviewPathInstructions } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
+      // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
+      // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
+      // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
+      // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
+      // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
+      const { profile: reviewProfile, pathInstructions: reviewPathInstructions, excludePaths: reviewExcludePaths } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
       aiReview = await runAiReviewForAdvisory(env, {
         settings,
         advisory,
@@ -2543,6 +2550,7 @@ async function maybePublishPrPublicSurface(
         files: await getReviewFiles(),
         reviewProfile,
         reviewPathInstructions,
+        reviewExcludePaths,
       });
     }
 

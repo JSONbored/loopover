@@ -12,6 +12,10 @@
 //
 // PURE + testable: callers pass the raw MDX/markdown source string and may inject a fetchImpl
 // (defaults to global fetch). All I/O is the injected fetch.
+//
+// Source-field config (scalar/list source fields, distribution fields + hosts, primary-canonical fields) is sourced
+// from the per-repo ContentRepoSpec so a self-hosted curated list overrides it; the default preserves awesome-claude exactly.
+import { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "./content-repo-spec";
 import { isSafeHttpUrl } from "./safe-url";
 
 // Browser-like request headers — major doc hosts return 403 to a missing/bot User-Agent even for
@@ -84,66 +88,11 @@ const SOURCE_EVIDENCE_LABELS = {
   close: "submission-closed-by-gate",
 } as const;
 
-const SOURCE_URL_FIELDS = [
-  "documentationUrl",
-  "docsUrl",
-  "downloadUrl",
-  "githubUrl",
-  "packageUrl",
-  "repoUrl",
-  "repositoryUrl",
-  "sourceUrl",
-  "websiteUrl",
-] as const;
-
-// Array-valued source fields. `retrievalSources` is the documented grounding field; read it (and
-// `sourceUrls`) as real source evidence.
-const SOURCE_URL_LIST_FIELDS = new Set(["sourceUrls", "retrievalSources"]);
 const SOURCE_EVIDENCE_TIMEOUT_MS = 5_000; // HEAD fast-path probe (failure falls through to the GET).
 const SOURCE_EVIDENCE_GET_TIMEOUT_MS = 12_000;
 const SOURCE_EVIDENCE_GET_ATTEMPTS = 2;
 const MAX_SOURCE_EVIDENCE_URLS = 10;
 const MAX_SOURCE_EVIDENCE_REDIRECTS = 4;
-const DISTRIBUTION_SOURCE_FIELDS = new Set(["downloadUrl", "packageUrl"]);
-
-export const DISTRIBUTION_SOURCE_HOSTS = new Set([
-  "crates.io",
-  "files.pythonhosted.org",
-  "hub.docker.com",
-  "marketplace.visualstudio.com",
-  "mvnrepository.com",
-  "npmjs.com",
-  "packagist.org",
-  "pkg.go.dev",
-  "plugins.gradle.org",
-  "pypi.org",
-  "registry.npmjs.org",
-  "repo1.maven.org",
-  "rubygems.org",
-  "www.npmjs.com",
-]);
-
-export const TRUSTED_SOURCE_HOSTS = new Set([
-  "bitbucket.org",
-  "crates.io",
-  "deno.land",
-  "docs.anthropic.com",
-  "docs.github.com",
-  "gist.github.com",
-  "github.com",
-  "gitlab.com",
-  "jsr.io",
-  "codeload.github.com",
-  "marketplace.visualstudio.com",
-  "npmjs.com",
-  "pkg.go.dev",
-  "pypi.org",
-  "raw.githubusercontent.com",
-  "www.npmjs.com",
-]);
-
-const TRUSTED_SOURCE_HOST_SUFFIXES: readonly string[] = [];
-const PRIMARY_CANONICAL_SOURCE_FIELDS = new Set(["githubUrl", "repoUrl", "repositoryUrl", "sourceUrl"]);
 
 function stripYamlComment(value: string): string {
   return value.replace(/\s+#.*$/, "").trim();
@@ -222,7 +171,7 @@ function scalarSourceUrlValues(value: string): string[] {
   return [unquoteYamlValue(trimmed)].filter(Boolean);
 }
 
-function listSourceUrlValues(source: string): SubmittedSourceUrl[] {
+function listSourceUrlValues(source: string, spec: ContentRepoSpec): SubmittedSourceUrl[] {
   const values: SubmittedSourceUrl[] = [];
   let activeField = "";
   for (const line of frontmatterBlock(source).split(/\r?\n/)) {
@@ -230,7 +179,7 @@ function listSourceUrlValues(source: string): SubmittedSourceUrl[] {
     if (topLevel) {
       const key = topLevel[1] as string;
       const value = topLevel[2] as string;
-      activeField = SOURCE_URL_LIST_FIELDS.has(key) ? key : "";
+      activeField = spec.sourceUrlListFields.has(key) ? key : "";
       if (activeField && value && value !== "|" && value !== ">") {
         for (const url of scalarSourceUrlValues(value)) {
           values.push({ field: activeField, url });
@@ -256,22 +205,25 @@ function isAbsoluteHttpUrl(url: string): boolean {
   }
 }
 
-export function extractSubmittedSourceUrls(source: string): SubmittedSourceUrl[] {
+export function extractSubmittedSourceUrls(
+  source: string,
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
+): SubmittedSourceUrl[] {
   const fields = parseSimpleFrontmatter(source);
   const urls: SubmittedSourceUrl[] = [];
-  for (const field of SOURCE_URL_FIELDS) {
+  for (const field of spec.sourceUrlFields) {
     for (const url of scalarSourceUrlValues(fields[field] || "")) {
       urls.push({ field, url });
     }
   }
-  urls.push(...listSourceUrlValues(source));
+  urls.push(...listSourceUrlValues(source, spec));
 
   const seen = new Set<string>();
   return urls.filter((item) => {
     // A DISTRIBUTION field (downloadUrl/packageUrl) with a SITE-RELATIVE value is the build's own
     // generated artifact (e.g. `/downloads/skills/<slug>.zip`) — not external provenance and not
     // fetchable as written, so drop it. External distribution URLs are absolute and remain verified.
-    if (DISTRIBUTION_SOURCE_FIELDS.has(item.field) && !isAbsoluteHttpUrl(item.url)) return false;
+    if (spec.distributionSourceFields.has(item.field) && !isAbsoluteHttpUrl(item.url)) return false;
     const key = `${item.field}\n${item.url}`;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -279,11 +231,11 @@ export function extractSubmittedSourceUrls(source: string): SubmittedSourceUrl[]
   });
 }
 
-function sourceRole(item: SubmittedSourceUrl): SourceEvidenceRole {
-  if (DISTRIBUTION_SOURCE_FIELDS.has(item.field)) return "distribution";
+function sourceRole(item: SubmittedSourceUrl, spec: ContentRepoSpec): SourceEvidenceRole {
+  if (spec.distributionSourceFields.has(item.field)) return "distribution";
   try {
     const host = new URL(item.url).hostname.toLowerCase();
-    if (DISTRIBUTION_SOURCE_HOSTS.has(host)) return "distribution";
+    if (spec.distributionSourceHosts.has(host)) return "distribution";
   } catch {
     // Malformed URLs are classified separately as hard failures.
   }
@@ -293,11 +245,12 @@ function sourceRole(item: SubmittedSourceUrl): SourceEvidenceRole {
 function withSourceDefaults(
   item: SubmittedSourceUrl,
   values: Omit<SourceEvidenceItem, keyof SubmittedSourceUrl | "role" | "blocking">,
+  spec: ContentRepoSpec,
 ): SourceEvidenceItem {
   return {
     ...item,
     ...values,
-    role: sourceRole(item),
+    role: sourceRole(item, spec),
     blocking: true,
   };
 }
@@ -309,26 +262,6 @@ function sourceStatusFromHttpStatus(status: number): "passed" | "hard_failure" |
   if (status >= 400 && status < 500) return "hard_failure";
   return "retryable";
 }
-
-/* v8 ignore start -- Dead parity retainer: only ever called by _sourceHostIsTrusted (itself ignored, allowlist-free live gate). */
-function normalizeHostname(hostname: string): string {
-  return hostname.toLowerCase().replace(/\.$/, "");
-}
-/* v8 ignore stop */
-
-// Retained for parity with the reviewbot source (the allowlist is the gate's documented posture);
-// the live gate fetches any safe public host, not just an allowlist — see validateFetchableSourceUrl.
-/* v8 ignore start -- Dead parity retainer: never called (the live gate is allowlist-free); kept byte-faithful to reviewbot's documented allowlist posture. */
-function _sourceHostIsTrusted(hostname: string): boolean {
-  const normalized = normalizeHostname(hostname);
-  return (
-    TRUSTED_SOURCE_HOSTS.has(normalized) ||
-    DISTRIBUTION_SOURCE_HOSTS.has(normalized) ||
-    TRUSTED_SOURCE_HOST_SUFFIXES.some((suffix) => normalized.endsWith(suffix))
-  );
-}
-/* v8 ignore stop */
-void _sourceHostIsTrusted;
 
 type FetchableValidation = { ok: true; parsed: URL } | { ok: false; outcome: string; error: string };
 
@@ -375,16 +308,21 @@ async function fetchSourceUrl(
   method: "HEAD" | "GET",
   fetchImpl: typeof fetch,
   timeoutMs: number = SOURCE_EVIDENCE_TIMEOUT_MS,
+  spec: ContentRepoSpec,
 ): Promise<SourceEvidenceItem> {
   let currentUrl = item.url;
   for (let redirects = 0; redirects <= MAX_SOURCE_EVIDENCE_REDIRECTS; redirects += 1) {
     const validation = validateFetchableSourceUrl(currentUrl);
     if (!validation.ok) {
-      return withSourceDefaults(item, {
-        status: "hard_failure",
-        outcome: validation.outcome,
-        error: validation.error,
-      });
+      return withSourceDefaults(
+        item,
+        {
+          status: "hard_failure",
+          outcome: validation.outcome,
+          error: validation.error,
+        },
+        spec,
+      );
     }
 
     const response = await fetchImpl(currentUrl, {
@@ -397,51 +335,71 @@ async function fetchSourceUrl(
     if (response.status >= 300 && response.status < 400) {
       const nextUrl = redirectLocation(response, currentUrl);
       if (!nextUrl) {
-        return withSourceDefaults(item, {
-          status: "retryable",
-          outcome: "redirect_without_location",
-          httpStatus: response.status,
-          finalUrl: currentUrl,
-        });
+        return withSourceDefaults(
+          item,
+          {
+            status: "retryable",
+            outcome: "redirect_without_location",
+            httpStatus: response.status,
+            finalUrl: currentUrl,
+          },
+          spec,
+        );
       }
       if (redirects === MAX_SOURCE_EVIDENCE_REDIRECTS) {
-        return withSourceDefaults(item, {
-          status: "retryable",
-          outcome: "too_many_redirects",
-          httpStatus: response.status,
-          finalUrl: currentUrl,
-        });
+        return withSourceDefaults(
+          item,
+          {
+            status: "retryable",
+            outcome: "too_many_redirects",
+            httpStatus: response.status,
+            finalUrl: currentUrl,
+          },
+          spec,
+        );
       }
       currentUrl = nextUrl;
       continue;
     }
 
     const status = sourceStatusFromHttpStatus(response.status);
-    return withSourceDefaults(item, {
-      status,
-      outcome: status === "passed" ? "reachable" : status === "hard_failure" ? "http_hard_failure" : "source_inconclusive",
-      httpStatus: response.status,
-      finalUrl: currentUrl,
-    });
+    return withSourceDefaults(
+      item,
+      {
+        status,
+        outcome: status === "passed" ? "reachable" : status === "hard_failure" ? "http_hard_failure" : "source_inconclusive",
+        httpStatus: response.status,
+        finalUrl: currentUrl,
+      },
+      spec,
+    );
   }
 
   /* v8 ignore next -- Unreachable: the loop runs redirects 0..MAX inclusive and always returns (the redirects===MAX hop returns too_many_redirects); this trailing return only satisfies the type checker. */
-  return withSourceDefaults(item, { status: "retryable", outcome: "too_many_redirects" });
+  return withSourceDefaults(item, { status: "retryable", outcome: "too_many_redirects" }, spec);
 }
 
-async function checkOneSourceUrl(item: SubmittedSourceUrl, fetchImpl: typeof fetch): Promise<SourceEvidenceItem> {
+async function checkOneSourceUrl(
+  item: SubmittedSourceUrl,
+  fetchImpl: typeof fetch,
+  spec: ContentRepoSpec,
+): Promise<SourceEvidenceItem> {
   const validation = validateFetchableSourceUrl(item.url);
   if (!validation.ok) {
     const invalidProtocol = validation.outcome === "invalid_url";
-    return withSourceDefaults(item, {
-      status: invalidProtocol ? "hard_failure" : "passed",
-      outcome: validation.outcome,
-      error: validation.error,
-    });
+    return withSourceDefaults(
+      item,
+      {
+        status: invalidProtocol ? "hard_failure" : "passed",
+        outcome: validation.outcome,
+        error: validation.error,
+      },
+      spec,
+    );
   }
 
   try {
-    const head = await fetchSourceUrl(item, "HEAD", fetchImpl, SOURCE_EVIDENCE_TIMEOUT_MS);
+    const head = await fetchSourceUrl(item, "HEAD", fetchImpl, SOURCE_EVIDENCE_TIMEOUT_MS, spec);
     if (head.status === "passed") return head;
   } catch {
     // Some source hosts reject HEAD or transiently fail it. Confirm with GET.
@@ -452,16 +410,20 @@ async function checkOneSourceUrl(item: SubmittedSourceUrl, fetchImpl: typeof fet
   let lastError: unknown;
   for (let attempt = 1; attempt <= SOURCE_EVIDENCE_GET_ATTEMPTS; attempt += 1) {
     try {
-      return await fetchSourceUrl(item, "GET", fetchImpl, SOURCE_EVIDENCE_GET_TIMEOUT_MS);
+      return await fetchSourceUrl(item, "GET", fetchImpl, SOURCE_EVIDENCE_GET_TIMEOUT_MS, spec);
     } catch (error) {
       lastError = error;
     }
   }
-  return withSourceDefaults(item, {
-    status: "retryable",
-    outcome: "fetch_error",
-    error: lastError instanceof Error ? lastError.message : "Source URL fetch failed before a response was returned.",
-  });
+  return withSourceDefaults(
+    item,
+    {
+      status: "retryable",
+      outcome: "fetch_error",
+      error: lastError instanceof Error ? lastError.message : "Source URL fetch failed before a response was returned.",
+    },
+    spec,
+  );
 }
 
 function sourceEvidenceHashInput(urls: SourceEvidenceItem[]): string {
@@ -479,48 +441,53 @@ function sourceEvidenceHashInput(urls: SourceEvidenceItem[]): string {
   );
 }
 
-function hasVerifiableCanonicalSource(urls: SourceEvidenceItem[]): boolean {
+function hasVerifiableCanonicalSource(urls: SourceEvidenceItem[], spec: ContentRepoSpec): boolean {
   const reachableCanonical = urls.filter(
     (item) => item.role === "canonical" && item.status === "passed" && item.outcome === "reachable",
   );
   return (
     reachableCanonical.length >= 2 ||
-    reachableCanonical.some((item) => PRIMARY_CANONICAL_SOURCE_FIELDS.has(item.field))
+    reachableCanonical.some((item) => spec.primaryCanonicalSourceFields.has(item.field))
   );
 }
 
-function isDowngradableInconclusiveSource(item: SourceEvidenceItem): boolean {
-  if (item.status === "retryable" && !PRIMARY_CANONICAL_SOURCE_FIELDS.has(item.field)) {
+function isDowngradableInconclusiveSource(item: SourceEvidenceItem, spec: ContentRepoSpec): boolean {
+  if (item.status === "retryable" && !spec.primaryCanonicalSourceFields.has(item.field)) {
     return true;
   }
   return item.status === "hard_failure" && item.role === "distribution" && item.outcome === "source_host_not_checked";
 }
 
-function downgradeInconclusiveSourceWarnings(urls: SourceEvidenceItem[]): SourceEvidenceItem[] {
-  if (!hasVerifiableCanonicalSource(urls)) return urls;
-  return urls.map((item) => (isDowngradableInconclusiveSource(item) ? { ...item, blocking: false } : item));
+function downgradeInconclusiveSourceWarnings(urls: SourceEvidenceItem[], spec: ContentRepoSpec): SourceEvidenceItem[] {
+  if (!hasVerifiableCanonicalSource(urls, spec)) return urls;
+  return urls.map((item) => (isDowngradableInconclusiveSource(item, spec) ? { ...item, blocking: false } : item));
 }
 
 export async function checkSubmittedSourceEvidence(
   source: string,
   fetchImpl: typeof fetch = fetch,
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): Promise<SourceEvidenceReport> {
-  const extracted = extractSubmittedSourceUrls(source);
+  const extracted = extractSubmittedSourceUrls(source, spec);
   // Check the URLs in PARALLEL — each is independent. Promise.all preserves order, so the evidence
   // hash is unchanged.
   const checkedUrls: SourceEvidenceItem[] = await Promise.all(
-    extracted.slice(0, MAX_SOURCE_EVIDENCE_URLS).map((item) => checkOneSourceUrl(item, fetchImpl)),
+    extracted.slice(0, MAX_SOURCE_EVIDENCE_URLS).map((item) => checkOneSourceUrl(item, fetchImpl, spec)),
   );
   for (const item of extracted.slice(MAX_SOURCE_EVIDENCE_URLS)) {
     checkedUrls.push(
-      withSourceDefaults(item, {
-        status: "hard_failure",
-        outcome: "too_many_source_urls",
-        error: `Only ${MAX_SOURCE_EVIDENCE_URLS} source URLs can be checked automatically.`,
-      }),
+      withSourceDefaults(
+        item,
+        {
+          status: "hard_failure",
+          outcome: "too_many_source_urls",
+          error: `Only ${MAX_SOURCE_EVIDENCE_URLS} source URLs can be checked automatically.`,
+        },
+        spec,
+      ),
     );
   }
-  const urls = downgradeInconclusiveSourceWarnings(checkedUrls);
+  const urls = downgradeInconclusiveSourceWarnings(checkedUrls, spec);
   const blockingUrls = urls.filter((item) => item.blocking);
   const status = blockingUrls.some((item) => item.status === "hard_failure")
     ? "failed"
@@ -565,14 +532,17 @@ export function sourceEvidenceToDecisionEvidence(report: SourceEvidenceReport): 
     }));
 }
 
-function authoritativeSourceItems(report: SourceEvidenceReport): SourceEvidenceItem[] {
+function authoritativeSourceItems(report: SourceEvidenceReport, spec: ContentRepoSpec): SourceEvidenceItem[] {
   return report.urls.filter(
-    (item) => item.blocking && (item.role === "canonical" || PRIMARY_CANONICAL_SOURCE_FIELDS.has(item.field)),
+    (item) => item.blocking && (item.role === "canonical" || spec.primaryCanonicalSourceFields.has(item.field)),
   );
 }
 
-export function shouldHardCloseSourceEvidence(report: SourceEvidenceReport): boolean {
-  const authoritative = authoritativeSourceItems(report);
+export function shouldHardCloseSourceEvidence(
+  report: SourceEvidenceReport,
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
+): boolean {
+  const authoritative = authoritativeSourceItems(report, spec);
   if (!authoritative.length) return false;
   const hardFailures = authoritative.filter((item) => item.status === "hard_failure");
   if (!hardFailures.length) return false;
@@ -614,10 +584,13 @@ function sourceEvidenceManualDecision(
   };
 }
 
-export function sourceEvidenceCloseDecision(report: SourceEvidenceReport): SourceEvidenceDecision | null {
+export function sourceEvidenceCloseDecision(
+  report: SourceEvidenceReport,
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
+): SourceEvidenceDecision | null {
   const evidence = sourceEvidenceToDecisionEvidence(report);
   if (!evidence.length) return null;
-  if (!shouldHardCloseSourceEvidence(report)) {
+  if (!shouldHardCloseSourceEvidence(report, spec)) {
     return sourceEvidenceManualDecision(report, evidence);
   }
   return {

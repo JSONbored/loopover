@@ -44,9 +44,11 @@ describe("listOrbAppInstallations", () => {
 describe("createOrbInstallationToken", () => {
   const env = async (): Promise<Env> => orbEnv({ ORB_GITHUB_APP_PRIVATE_KEY: await pkcs8Pem() });
 
-  it("returns the minted token", async () => {
-    vi.stubGlobal("fetch", async () => Response.json({ token: "ghs_minted" }));
-    expect(await createOrbInstallationToken(await env(), 42)).toBe("ghs_minted");
+  it("returns the minted token + GitHub's real expiry (empty only when absent)", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ token: "ghs_minted", expires_at: "2026-06-25T07:00:00Z" }));
+    expect(await createOrbInstallationToken(await env(), 42)).toEqual({ token: "ghs_minted", expiresAt: "2026-06-25T07:00:00Z" });
+    vi.stubGlobal("fetch", async () => Response.json({ token: "ghs_noexp" }));
+    expect((await createOrbInstallationToken(await env(), 42)).expiresAt).toBe("");
   });
 
   it("throws on a non-ok response or a missing token", async () => {

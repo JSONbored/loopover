@@ -190,7 +190,11 @@ export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput):
   // the daily neuron budget.
   const freeCalls = input.providerKey ? 0 : WORKERS_SLOP_MAX_CALLS;
   const estimatedNeurons = freeCalls === 0 ? 0 : estimateNeurons(SLOP_SYSTEM_PROMPT.length + user.length, maxTokens, freeCalls);
-  const budget = clampNumber(Number(env.AI_DAILY_NEURON_BUDGET || 10000), 0, 1_000_000);
+  // Resolve the shared daily neuron budget IDENTICALLY to the AI review path (ai-review.ts): default HIGH
+  // (10,000,000) and clamp to 10,000,000 — both features sum into ONE usage counter (sumAiEstimatedNeuronsSince),
+  // so the old 10k default + 1M ceiling here starved slop AI into quota_exceeded well under the real shared budget.
+  const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
+  const budget = clampNumber(env.AI_DAILY_NEURON_BUDGET && Number.isFinite(rawNeuronBudget) ? rawNeuronBudget : 10_000_000, 0, 10_000_000);
   const used = await sumAiEstimatedNeuronsSince(env, utcDayStartIso());
   const remainingBudget = Math.max(0, budget - used);
   if (estimatedNeurons > remainingBudget) {

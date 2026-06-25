@@ -86,6 +86,11 @@
     // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
     // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
     "GITTENSORY_REVIEW_RAG": "true",
+    // Convergence (content/registry SURFACE LANE): when truthy AND the repo is in GITTENSORY_REVIEW_REPOS, the
+    // deterministic, AI-FREE surface review drives the gate for registry-submission PRs (metagraphed). Default
+    // OFF (false): the processor takes no new branch + resolves no files, so the gate disposition is byte-
+    // identical until deliberately enabled per-repo. See review/content-lane-wire.
+    "GITTENSORY_REVIEW_CONTENT_LANE": "false",
     // Convergence (self-improve / auto-tune): run the ported self-improvement loop on the cron tick over
     // gittensory's own review-outcome data — compute tuning recommendations, SHADOW-SOAK any strictly-
     // tightening one, and AUTO-PROMOTE it to live ONLY after the soak window passes the gate; every action is
@@ -94,6 +99,10 @@
     // identical to today. Config-application (reading a promoted override into the live gate) is a deferred
     // follow-up — see src/review/selftune-wire.ts.
     "GITTENSORY_REVIEW_SELFTUNE": "false",
+    // Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
+    // through to the existing mention path (byte-identical). ON → a MAINTAINER comment of `@gittensory plan` on
+    // an issue generates an implementation plan from the issue text via Workers AI and posts it as a comment.
+    "GITTENSORY_REVIEW_PLANNER": "false",
     // Convergence (port): public OAuth draft-submission flow ported from reviewbot. Default OFF — every
     // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
     // DRAFT_TOKEN_ENCRYPTION_SECRET worker secret + GITHUB_OAUTH_CLIENT_SECRET to be set.
@@ -120,9 +129,11 @@
     // Duplicate-winner adjudication (#dup-winner): when a same-issue cluster of OPEN PRs forms, spare exactly
     // ONE winner — the lowest-numbered (earliest opened) open PR — instead of blocking/closing every sibling.
     // Only the LOSERS get the duplicate blocker + close reason + slop penalty + panel block; the winner is
-    // judged on its own merits. DEFAULT OFF — flag-OFF every duplicate sibling dies (today's behavior,
-    // byte-identical). See src/signals/duplicate-winner.ts.
-    "GITTENSORY_DUPLICATE_WINNER": "false",
+    // judged on its own merits. See src/signals/duplicate-winner.ts. ENABLED (#dup-winner-enable): a live
+    // dry-run audit found the flag-OFF behavior closing EVERY sibling of a duplicate cluster (e.g. #1648 AND
+    // #1695 both closed) — the opposite of "spare one good PR". With it ON, the earliest open PR in a cluster
+    // is judged on its merits and only the true duplicates close.
+    "GITTENSORY_DUPLICATE_WINNER": "true",
   },
   "routes": [
     {

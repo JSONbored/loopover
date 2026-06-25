@@ -11,6 +11,10 @@
 // duplicate) permanently rejects a legitimate submission, so the strict boundary is unchanged.
 // The only deltas vs the reviewbot source are mechanical guards for gittensory's stricter tsconfig
 // (noUncheckedIndexedAccess + exactOptionalPropertyTypes) — they do not change behavior.
+//
+// Dedup config (protected fields, URL fields, domain exclusions, multi-entry catalog roots) is sourced from the
+// per-repo ContentRepoSpec so a self-hosted curated list overrides it; the default preserves awesome-claude exactly.
+import { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "./content-repo-spec";
 
 export type ContentDuplicateSignals = {
   filePath: string;
@@ -35,81 +39,6 @@ export type ContentDuplicateReview = {
   strictDuplicate: ContentDuplicateMatch | null;
   relatedCandidates: ContentDuplicateMatch[];
 };
-
-// ── Protected frontmatter (identity / provenance / source / verification) ─────────────────
-// An edit to ANY of these fields (modified PR only) → protected close. PROTECTED = identity /
-// provenance / verification / structural / monetization + supply-chain links. The entry's own
-// REFERENCE/DOCS URLs are deliberately NOT protected — those links rot and legitimately need
-// fixing, and a changed URL flows through the normal review (grounding re-fetches it). down
-// loadUrl/packageUrl/affiliateUrl stay protected (supply-chain/monetization risk).
-const PROTECTED_FRONTMATTER_FIELDS = new Set([
-  "affiliateUrl",
-  "author",
-  "authorProfileUrl",
-  "category",
-  "claimStatus",
-  "claimUrl",
-  "dateAdded",
-  "disclosure",
-  "downloadUrl",
-  "importPrNumber",
-  "importPrUrl",
-  "packageUrl",
-  "packageVerified",
-  "pricingModel",
-  "reviewedAt",
-  "reviewedBy",
-  "reviewedPrNumber",
-  "slug",
-  "submittedAt",
-  "submittedBy",
-  "submittedByUrl",
-  "sourceSubmissionNumber",
-  "sourceSubmissionUrl",
-]);
-
-// URL-bearing frontmatter keys, camelCase + snake_case.
-const URL_FIELDS = new Set([
-  "documentationUrl",
-  "docsUrl",
-  "downloadUrl",
-  "githubUrl",
-  "packageUrl",
-  "repoUrl",
-  "repositoryUrl",
-  "sourceUrl",
-  "websiteUrl",
-  "docs_url",
-  "download_url",
-  "github_url",
-  "package_url",
-  "repo_url",
-  "repository_url",
-  "source_url",
-  "website_url",
-]);
-
-// Generic ecosystem hosts that never make a strict/aggressive domain-only match. A SHARED domain
-// here is, at most, "related".
-const DOMAIN_ONLY_EXCLUSIONS = new Set([
-  "github.com",
-  "npmjs.com",
-  "pypi.org",
-  "raw.githubusercontent.com",
-  "registry.npmjs.org",
-]);
-
-// Catalog roots that legitimately back MANY entries; a shared root alone is never a strict
-// duplicate (only a shared distinct subpath can be).
-const MULTI_ENTRY_CATALOG_URLS = new Set([
-  "https://code.claude.com/docs/en/hooks",
-  "https://code.claude.com/docs/en/statusline",
-  "https://github.com/awslabs/mcp",
-  "https://github.com/microsoft/mcp",
-  "https://github.com/modelcontextprotocol/servers",
-  "https://github.com/snowflake-labs/mcp",
-  "https://github.com/twilio-labs/mcp",
-]);
 
 function unquoteYamlScalar(value: string): string {
   const trimmed = value.trim();
@@ -222,10 +151,14 @@ function normalizeProtectedValue(value: string | undefined): string {
  * Protected-edit gate. Compares before/after frontmatter and returns the sorted set of protected
  * fields that changed. A non-empty result → protected close.
  */
-export function protectedFrontmatterChanges(beforeSource: string, afterSource: string): string[] {
+export function protectedFrontmatterChanges(
+  beforeSource: string,
+  afterSource: string,
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
+): string[] {
   const before = parseSimpleFrontmatter(beforeSource);
   const after = parseSimpleFrontmatter(afterSource);
-  return [...PROTECTED_FRONTMATTER_FIELDS]
+  return [...spec.protectedFrontmatterFields]
     .filter((field) => normalizeProtectedValue(before[field]) !== normalizeProtectedValue(after[field]))
     .sort();
 }
@@ -243,7 +176,7 @@ function normalizeHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./, "");
 }
 
-function normalizeUrl(value: unknown): string {
+function normalizeUrl(value: unknown, spec: ContentRepoSpec): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
   try {
@@ -268,7 +201,7 @@ function normalizeUrl(value: unknown): string {
       const [owner, repo, ...rest] = parsed.pathname.split("/").filter(Boolean);
       if (owner && repo) {
         const repoRoot = `https://github.com/${owner.toLowerCase()}/${repo.replace(/\.git$/i, "").toLowerCase()}`;
-        if (MULTI_ENTRY_CATALOG_URLS.has(repoRoot) && rest.length) {
+        if (spec.multiEntryCatalogUrls.has(repoRoot) && rest.length) {
           return `${repoRoot}/${rest.join("/").replace(/\/+$/, "")}`;
         }
         return repoRoot;
@@ -304,19 +237,22 @@ function pathParts(filePath: string): { category: string; slug: string } {
  * content path: slug, title, normalizedTitle, normalizedDescription, the deduped normalized URL
  * set, and the domains derived from those URLs.
  */
-export function extractContentDuplicateSignals(params: {
-  filePath: string;
-  content: string;
-  label?: string;
-  url?: string;
-}): ContentDuplicateSignals {
+export function extractContentDuplicateSignals(
+  params: {
+    filePath: string;
+    content: string;
+    label?: string;
+    url?: string;
+  },
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
+): ContentDuplicateSignals {
   const fields = parseSimpleFrontmatter(params.content);
   const parts = pathParts(params.filePath);
   const urls = [
     ...new Set(
       Object.entries(fields)
-        .filter(([key]) => URL_FIELDS.has(key))
-        .map(([, value]) => normalizeUrl(value))
+        .filter(([key]) => spec.urlFields.has(key))
+        .map(([, value]) => normalizeUrl(value, spec))
         .filter(Boolean),
     ),
   ];
@@ -340,28 +276,28 @@ function intersection(left: string[], right: string[]): string[] {
   return left.filter((value) => rightSet.has(value));
 }
 
-function strictDuplicateUrls(sharedUrls: string[]): string[] {
-  return sharedUrls.filter((url) => !MULTI_ENTRY_CATALOG_URLS.has(url));
+function strictDuplicateUrls(sharedUrls: string[], spec: ContentRepoSpec): string[] {
+  return sharedUrls.filter((url) => !spec.multiEntryCatalogUrls.has(url));
 }
 
-function multiEntryCatalogRoot(url: string): string | undefined {
-  return [...MULTI_ENTRY_CATALOG_URLS].find((catalogUrl) => url === catalogUrl || url.startsWith(`${catalogUrl}/`));
+function multiEntryCatalogRoot(url: string, spec: ContentRepoSpec): string | undefined {
+  return [...spec.multiEntryCatalogUrls].find((catalogUrl) => url === catalogUrl || url.startsWith(`${catalogUrl}/`));
 }
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
-function multiEntryCatalogSubpathUrls(sharedUrls: string[]): string[] {
+function multiEntryCatalogSubpathUrls(sharedUrls: string[], spec: ContentRepoSpec): string[] {
   return sharedUrls.filter((url) => {
-    const catalogUrl = multiEntryCatalogRoot(url);
+    const catalogUrl = multiEntryCatalogRoot(url, spec);
     return catalogUrl && url !== catalogUrl;
   });
 }
 
-function sharedCatalogUrls(leftUrls: string[], rightUrls: string[]): string[] {
-  const leftCatalogUrls = leftUrls.map(multiEntryCatalogRoot).filter(isString);
-  const rightCatalogUrls = rightUrls.map(multiEntryCatalogRoot).filter(isString);
+function sharedCatalogUrls(leftUrls: string[], rightUrls: string[], spec: ContentRepoSpec): string[] {
+  const leftCatalogUrls = leftUrls.map((url) => multiEntryCatalogRoot(url, spec)).filter(isString);
+  const rightCatalogUrls = rightUrls.map((url) => multiEntryCatalogRoot(url, spec)).filter(isString);
   return intersection([...new Set(leftCatalogUrls)], [...new Set(rightCatalogUrls)]);
 }
 
@@ -379,6 +315,7 @@ function isCollectionBridge(candidate: ContentDuplicateSignals, existing: Conten
 export function findContentDuplicateMatch(
   candidate: ContentDuplicateSignals,
   existingItems: ContentDuplicateSignals[],
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): ContentDuplicateMatch | null {
   for (const existing of existingItems) {
     const reasons: string[] = [];
@@ -416,7 +353,7 @@ export function findContentDuplicateMatch(
     if (sharedDomains.length && candidate.normalizedTitle && candidate.normalizedTitle === existing.normalizedTitle) {
       reasons.push(`same source domain ${sharedDomains[0]} and title`);
     }
-    const aggressiveDomainMatch = sharedDomains.find((domain) => !DOMAIN_ONLY_EXCLUSIONS.has(domain));
+    const aggressiveDomainMatch = sharedDomains.find((domain) => !spec.domainOnlyExclusions.has(domain));
     if (aggressiveDomainMatch && candidate.category && candidate.category === existing.category) {
       reasons.push(`same non-generic source domain ${aggressiveDomainMatch} in ${candidate.category}`);
     }
@@ -439,6 +376,7 @@ export function findContentDuplicateMatch(
 export function findStrictContentDuplicateMatch(
   candidate: ContentDuplicateSignals,
   existingItems: ContentDuplicateSignals[],
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): ContentDuplicateMatch | null {
   for (const existing of existingItems) {
     const reasons: string[] = [];
@@ -450,8 +388,8 @@ export function findStrictContentDuplicateMatch(
     }
 
     const sharedUrls = intersection(candidate.urls, existing.urls);
-    const blockingSharedUrls = strictDuplicateUrls(sharedUrls);
-    const catalogSubpathUrls = multiEntryCatalogSubpathUrls(blockingSharedUrls);
+    const blockingSharedUrls = strictDuplicateUrls(sharedUrls, spec);
+    const catalogSubpathUrls = multiEntryCatalogSubpathUrls(blockingSharedUrls, spec);
     if (catalogSubpathUrls.length && candidate.category && candidate.category === existing.category) {
       reasons.push(`same multi-entry catalog subpath URL ${catalogSubpathUrls[0]}`);
     }
@@ -482,6 +420,7 @@ export function findRelatedContentMatches(
   candidate: ContentDuplicateSignals,
   existingItems: ContentDuplicateSignals[],
   limit = 5,
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): ContentDuplicateMatch[] {
   const matches: ContentDuplicateMatch[] = [];
   for (const existing of existingItems) {
@@ -500,13 +439,13 @@ export function findRelatedContentMatches(
         `same canonical source URL ${sharedUrls[0]} in ${candidate.category}, but not a strict duplicate without the same title, slug, or purpose`,
       );
     }
-    const catalogUrls = sharedCatalogUrls(candidate.urls, existing.urls);
+    const catalogUrls = sharedCatalogUrls(candidate.urls, existing.urls, spec);
     if (catalogUrls.length && candidate.category && candidate.category === existing.category) {
       reasons.push(`same multi-entry catalog source URL ${catalogUrls[0]} in ${candidate.category}`);
     }
 
     const sharedDomains = intersection(candidate.domains, existing.domains);
-    const relatedDomain = sharedDomains.find((domain) => !DOMAIN_ONLY_EXCLUSIONS.has(domain));
+    const relatedDomain = sharedDomains.find((domain) => !spec.domainOnlyExclusions.has(domain));
     if (relatedDomain && candidate.category && existing.category) {
       reasons.push(
         candidate.category === existing.category
@@ -550,11 +489,12 @@ export function findRelatedContentMatches(
 export function buildContentDuplicateReview(
   candidate: ContentDuplicateSignals,
   existingItems: ContentDuplicateSignals[],
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): ContentDuplicateReview {
   return {
-    legacyDuplicate: findContentDuplicateMatch(candidate, existingItems),
-    strictDuplicate: findStrictContentDuplicateMatch(candidate, existingItems),
-    relatedCandidates: findRelatedContentMatches(candidate, existingItems),
+    legacyDuplicate: findContentDuplicateMatch(candidate, existingItems, spec),
+    strictDuplicate: findStrictContentDuplicateMatch(candidate, existingItems, spec),
+    relatedCandidates: findRelatedContentMatches(candidate, existingItems, 5, spec),
   };
 }
 
@@ -614,6 +554,7 @@ function contentSignalSourceFromDirectoryEntry(entry: DirectoryIndexEntry): stri
 export function directoryIndexToSignals(
   entries: DirectoryIndexEntry[],
   options: { currentFilePath?: string; siteUrl?: string } = {},
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): ContentDuplicateSignals[] {
   const siteUrl = options.siteUrl ?? "";
   const currentFilePath = options.currentFilePath;
@@ -628,11 +569,14 @@ export function directoryIndexToSignals(
     .filter((item): item is { entry: DirectoryIndexEntry; filePath: string } => Boolean(item))
     .filter(({ filePath }) => filePath !== currentFilePath)
     .map(({ entry, filePath }) =>
-      extractContentDuplicateSignals({
-        filePath,
-        content: contentSignalSourceFromDirectoryEntry(entry),
-        label: `accepted entry ${filePath}`,
-        url: String(entry.canonicalUrl || "") || `${siteUrl}/entry/${String(entry.category)}/${String(entry.slug)}`,
-      }),
+      extractContentDuplicateSignals(
+        {
+          filePath,
+          content: contentSignalSourceFromDirectoryEntry(entry),
+          label: `accepted entry ${filePath}`,
+          url: String(entry.canonicalUrl || "") || `${siteUrl}/entry/${String(entry.category)}/${String(entry.slug)}`,
+        },
+        spec,
+      ),
     );
 }

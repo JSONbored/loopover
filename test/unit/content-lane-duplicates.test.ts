@@ -10,6 +10,9 @@ import {
   parseSimpleFrontmatter,
   protectedFrontmatterChanges,
 } from "../../src/review/content-lane/duplicates";
+import { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "../../src/review/content-lane/content-repo-spec";
+
+const customSpec = (over: Partial<ContentRepoSpec>): ContentRepoSpec => ({ ...AWESOME_CLAUDE_CONTENT_SPEC, ...over });
 
 const mdx = (frontmatter: Record<string, string>, body = "Body."): string => {
   const lines = Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`);
@@ -749,5 +752,52 @@ describe("directoryIndexToSignals — array guard + empty-options defaults", () 
       { category: "skills", slug: "b", title: "B" },
     ]);
     expect(signals.map((s) => s.slug).sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("per-repo ContentRepoSpec override (a self-hosted curated list re-parameterizes dedup)", () => {
+  it("protectedFrontmatterChanges honors a custom protected-field set instead of the default", () => {
+    const before = mdx({ author: "A", customField: "x" });
+    const after = mdx({ author: "B", customField: "y" });
+    expect(protectedFrontmatterChanges(before, after)).toEqual(["author"]); // default: author protected, customField not
+    const spec = customSpec({ protectedFrontmatterFields: new Set(["customField"]) });
+    expect(protectedFrontmatterChanges(before, after, spec)).toEqual(["customField"]); // custom: only customField protected
+  });
+
+  it("extractContentDuplicateSignals reads URLs from the custom url-field set", () => {
+    const content = mdx({ title: "T", category: "tools", slug: "t", myLink: "https://example.com/a", githubUrl: "https://github.com/o/r" });
+    const spec = customSpec({ urlFields: new Set(["myLink"]) });
+    const signals = extractContentDuplicateSignals({ filePath: "content/tools/t.mdx", content }, spec);
+    expect(signals.urls).toEqual(["https://example.com/a"]); // githubUrl ignored — not in the custom url-field set
+  });
+
+  it("a custom domain-exclusion set changes related-domain matching (threaded through the find functions)", () => {
+    const entry = (slug: string, title: string) =>
+      extractContentDuplicateSignals({
+        filePath: `content/tools/${slug}.mdx`,
+        content: mdx({ title, category: "tools", slug, githubUrl: `https://github.com/org/${slug}` }),
+      });
+    const a = entry("alpha", "Alpha");
+    const b = entry("beta", "Beta");
+    expect(findRelatedContentMatches(a, [b])).toEqual([]); // default: github.com is a generic excluded host
+    const spec = customSpec({ domainOnlyExclusions: new Set() });
+    const related = findRelatedContentMatches(a, [b], 5, spec); // custom: github.com no longer excluded
+    expect(related.map((m) => m.reasons.some((r) => r.includes("github.com")))).toEqual([true]);
+  });
+
+  it("buildContentDuplicateReview threads the spec into the find functions", () => {
+    const make = (slug: string, title: string) =>
+      extractContentDuplicateSignals({ filePath: `content/tools/${slug}.mdx`, content: mdx({ title, category: "tools", slug, githubUrl: `https://github.com/org/${slug}` }) });
+    const a = make("alpha", "Alpha");
+    const b = make("beta", "Beta");
+    expect(buildContentDuplicateReview(a, [b]).relatedCandidates).toEqual([]); // default: github.com is excluded
+    const spec = customSpec({ domainOnlyExclusions: new Set() });
+    expect(buildContentDuplicateReview(a, [b], spec).relatedCandidates).toHaveLength(1); // custom: shared domain surfaces
+  });
+
+  it("directoryIndexToSignals threads the spec into corpus extraction", () => {
+    const entries = [{ category: "tools", slug: "x", title: "X", githubUrl: "https://github.com/o/r" }];
+    expect(directoryIndexToSignals(entries)[0]?.urls).toEqual(["https://github.com/o/r"]); // default url fields read githubUrl
+    expect(directoryIndexToSignals(entries, {}, customSpec({ urlFields: new Set() }))[0]?.urls).toEqual([]); // custom empty set → none
   });
 });

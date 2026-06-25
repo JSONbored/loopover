@@ -35,6 +35,16 @@ declare global {
     /** Optional Cloudflare AI Gateway id. When set, free Workers-AI review calls route through the gateway
      *  for caching, rate-limiting, request logging, and fallback. Unset = direct binding calls (unchanged). */
     AI_GATEWAY_ID?: string;
+    /** Self-host AI provider selection + dual-review config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
+     *  providers (claude-code, codex, anthropic, ollama, …); `AI_COMBINE` picks single|consensus|synthesis (default
+     *  synthesis for two); `AI_ON_MERGE` is the synthesis rule either|both. `AI_EFFORT` is the Claude Code
+     *  intelligence dial (low|medium|high|xhigh|max, default high). `AI_REVIEW_PLAN` is the resolved plan
+     *  (computed from these at boot in server.ts and read at the review call site); undefined on cloud. */
+    AI_PROVIDER?: string;
+    AI_COMBINE?: string;
+    AI_ON_MERGE?: string;
+    AI_EFFORT?: string;
+    AI_REVIEW_PLAN?: { reviewers: Array<{ model: string }>; combine: import("./services/ai-review").CombineStrategy; onMerge?: import("./services/ai-review").OnMerge | undefined };
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
@@ -48,6 +58,16 @@ declare global {
     ORB_GITHUB_APP_PRIVATE_KEY?: string;
     ORB_GITHUB_CLIENT_ID?: string;
     ORB_GITHUB_CLIENT_SECRET?: string;
+    /** Master flag for the Orb token-broker (enrollment OAuth + /v1/orb/token). Default-off: every broker route
+     *  early-404s until this is "true", so the deploy is byte-identical until an operator enables it. */
+    ORB_BROKER_ENABLED?: string;
+    /** SELF-HOST broker CLIENT: the one-time enrollment secret the operator issued for this install. When set, the
+     *  engine sources GitHub installation tokens from the central Orb (POST /v1/orb/token) instead of a local App
+     *  key. Cloud never sets it ⇒ inert there. See src/orb/broker-client. (A secret — never commit a real value.) */
+    ORB_ENROLLMENT_SECRET?: string;
+    /** Override the Orb broker base URL the self-host client calls (default https://gittensory-api.aethereal.dev);
+     *  point at a private gittensory deployment if you self-host the broker too. */
+    ORB_BROKER_URL?: string;
     GITHUB_APP_PRIVATE_KEY: string;
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;
@@ -64,6 +84,11 @@ declare global {
     /** Self-host instance-wide write switch: "dry-run" | "disabled" forces EVERY installation write to be
      *  suppressed regardless of per-repo mode (the cloud→self-host parallel-run kill switch). Unset = live. */
     SELFHOST_DEPLOYMENT_MODE?: string;
+    /** Self-host container-private per-repo config dir. When set, the focus-manifest loader reads
+     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.gittensory.yml`, so review policy (gate,
+     *  autonomy, labels, model/effort) is set privately and contributors can't read or game it. Unset ⇒ public
+     *  fetch (cloud, or a self-host without the dir, is byte-identical to before). */
+    GITTENSORY_REPO_CONFIG_DIR?: string;
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;
@@ -133,6 +158,12 @@ declare global {
      *  unreachable when off). Even when ON, retrieval is INERT until a vector index exists for the repo (a
      *  cold/missing index degrades to no context) — the index-population job is a deploy-time follow-up. */
     GITTENSORY_REVIEW_RAG?: string;
+    /** Convergence flag: the deterministic content/registry SURFACE LANE drives the gate for registry-submission
+     *  PRs (metagraphed surfaces[]/providers/candidates). Truthy ON *AND* the repo in GITTENSORY_REVIEW_REPOS —
+     *  see review/content-lane-wire. Default OFF: unset/false takes no new branch, runs no fetch, and leaves the
+     *  gate disposition byte-identical. AI-FREE (pure structured-data adjudication), so independent of the AI
+     *  reviewer; a generic hard blocker (e.g. a committed secret) is always preserved over a surface "merge". */
+    GITTENSORY_REVIEW_CONTENT_LANE?: string;
     /** Convergence (self-improve / auto-tune): when truthy, the ported self-improvement loop
      *  (src/review/auto-tune.ts + auto-apply.ts) runs on the cron tick over gittensory's OWN review-outcome
      *  data — it computes tuning recommendations, SHADOW-SOAKS any STRICTLY-TIGHTENING recommendation in the
@@ -147,6 +178,11 @@ declare global {
      *  recording are wired, reading a promoted override into the live gate is a noted follow-up that must not
      *  risk loosening the gate. See src/review/selftune-wire.ts. */
     GITTENSORY_REVIEW_SELFTUNE?: string;
+    /** Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
+     *  through to the existing mention path, so the worker is byte-identical to today. When truthy, a MAINTAINER
+     *  comment of `@gittensory plan` on an issue generates an implementation plan from the issue text via Workers
+     *  AI and posts it as an issue comment. See src/review/planner.ts. */
+    GITTENSORY_REVIEW_PLANNER?: string;
     /** Proof of Power (#1059): when truthy, the unauthenticated `GET /v1/public/stats` endpoint serves the public
      *  homepage counter — computed LIVE from gittensory's OWN review ledger (review_targets + review_audit) behind
      *  a 60s cache, so it stays current as new reviews land. Default OFF — unset/false 404s the endpoint, so the

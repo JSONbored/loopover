@@ -101,6 +101,7 @@ export function routeClassForPath(path: string): RateLimitClass {
   if (path === "/v1/orb/webhook") return "strict";
   if (path === "/v1/orb/oauth/callback") return "strict";
   if (path === "/v1/orb/token") return "strict";
+  if (path === "/v1/orb/relay/register") return "strict";
   // Orb telemetry ingest: unauthenticated + write, accepting anonymized batches from untrusted
   // self-host instances. Strict (10/min per IP) caps abuse — legitimate instances export hourly.
   if (path === "/v1/orb/ingest") return "strict";

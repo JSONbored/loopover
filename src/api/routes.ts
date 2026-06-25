@@ -126,6 +126,7 @@ import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/broker";
+import { registerOrbRelay } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
@@ -2887,6 +2888,24 @@ export function createApp() {
     return c.json(result);
   });
 
+  // Orb event relay (#1255) — a brokered self-host registers its public relay URL so the Orb can forward its
+  // repos' events to it. Auth: the container's own enrollment secret (Bearer). Flag-gated (404 until enabled).
+  app.post("/v1/orb/relay/register", async (c) => {
+    if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const auth = c.req.header("authorization") ?? "";
+    const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
+    const body = (await c.req.json().catch(() => null)) as { relayUrl?: unknown } | null;
+    const relayUrl = typeof body?.relayUrl === "string" ? body.relayUrl.trim() : "";
+    if (!relayUrl) return c.json({ error: "missing_relay_url" }, 400);
+    const result = await registerOrbRelay(c.env, secret, relayUrl);
+    if ("error" in result) {
+      const status = result.error === "invalid_enrollment" ? 401 : result.error === "installation_not_eligible" ? 403 : result.error === "encryption_unavailable" ? 500 : 400;
+      return c.json(result, status);
+    }
+    return c.json(result);
+  });
+
   // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware
   // outcome batches from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
   // dedup is enforced via UNIQUE(instance_id, repo_hash, pr_hash) in orb_signals. Rate-limited (strict, #1254).
@@ -4935,6 +4954,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/orb/webhook") return false;
   if (path === "/v1/orb/oauth/callback") return false;
   if (path === "/v1/orb/token") return false;
+  if (path === "/v1/orb/relay/register") return false;
   if (path === "/v1/orb/ingest") return false;
   if (path.startsWith("/v1/internal/")) return false;
   return path.startsWith("/v1/");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedPathsHittingGuardrail, matchesAny } from "../../src/signals/change-guardrail";
+import { changedPathsHittingGuardrail, isGuardrailHit, matchesAny } from "../../src/signals/change-guardrail";
 
 describe("change-guardrail glob matching", () => {
   it("`**` matches across path separators (a guarded dir guards its whole subtree)", () => {
@@ -39,6 +39,19 @@ describe("change-guardrail glob matching", () => {
     expect(changedPathsHittingGuardrail(["docs/a.md", "src/scoring/x.ts", "scripts/y.mjs"], globs)).toEqual(["src/scoring/x.ts", "scripts/y.mjs"]);
     expect(changedPathsHittingGuardrail(["docs/a.md", "src/ui/b.tsx"], globs)).toEqual([]);
     expect(changedPathsHittingGuardrail(["src/scoring/x.ts"], [])).toEqual([]);
+  });
+
+  it("isGuardrailHit: boolean form shared by the disposition + the comment (#guarded-hold-comment)", () => {
+    const globs = ["src/scoring/**", "scripts/**"];
+    // No guardrails configured ⇒ never a hit (permissive).
+    expect(isGuardrailHit(["src/scoring/x.ts"], [])).toBe(false);
+    expect(isGuardrailHit([], [])).toBe(false);
+    // A changed path that hits a guarded glob ⇒ hit.
+    expect(isGuardrailHit(["docs/a.md", "scripts/y.mjs"], globs)).toBe(true);
+    // No changed path hits ⇒ not a hit.
+    expect(isGuardrailHit(["docs/a.md", "src/ui/b.tsx"], globs)).toBe(false);
+    // FAIL-SAFE (#1062): guardrails configured but the changed-file set is empty (unknown) ⇒ treat as a hit.
+    expect(isGuardrailHit([], globs)).toBe(true);
   });
 });
 

@@ -2001,6 +2001,10 @@ export async function fetchLiveCiAggregate(
   // where a transient fetch failure plus one green check could otherwise read as "passed".
   let checkRunsIncomplete = false;
   let statusIncomplete = false;
+  // Whether a FIRST-PARTY (GitHub Actions) check-run was observed at all. Used by the fold-all suites backstop:
+  // if the suites read is unreadable AND we never saw a first-party run, we cannot confirm the workflow ran, so
+  // we must fail CLOSED rather than certify "passed" off only always-on third-party checks (#review-audit, #1799).
+  let sawFirstPartyCheckRun = false;
   // Track which required context names actually appear in any API result. An absent required context
   // (never queued, in-progress, or complete) has no entry to push anyPending — without this guard it
   // would be silently ignored and ciState could become "passed" while it never ran.
@@ -2008,7 +2012,7 @@ export async function fetchLiveCiAggregate(
 
   // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
-    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown } }> }>(
+    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown }; app?: { slug?: string | null } | null }> }>(
       env,
       repoFullName,
       `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
@@ -2021,6 +2025,7 @@ export async function fetchLiveCiAggregate(
     }
     for (const run of result.data.check_runs ?? []) {
       seenContextNames?.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
+      if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
       if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs (see above)
       total += 1;
       const conclusion = (run.conclusion ?? "").toLowerCase();
@@ -2080,6 +2085,35 @@ export async function fetchLiveCiAggregate(
   if (seenContextNames) {
     for (const ctx of requiredContexts!) {
       if (!seenContextNames.has(ctx)) anyPending = true;
+    }
+  }
+
+  // FOLD-ALL hardening (#ci-foldall-checksuites): when branch protection is UNREADABLE (no `administration:read`
+  // ⇒ requiredContexts null ⇒ fold-all), the check-run/status scan above can read "passed" for a fork PR whose
+  // required workflow is AWAITING APPROVAL — its check-RUNS don't exist yet (the workflow never ran), so only the
+  // always-on third-party checks are seen and nothing fails or pends. Read the check-SUITES too: a GitHub-Actions
+  // suite still `queued`/`requested`/`waiting`/`in_progress` (not `completed`) means the first-party CI has NOT
+  // run, so hold (pending) instead of certifying a never-run workflow as green. Enforce-required mode already
+  // catches this via the absent-context guard above, so this runs ONLY in fold-all (one extra call on the degraded
+  // path), and ONLY when we would otherwise certify "passed" (no failure, nothing else pending).
+  if (!enforceRequiredOnly && headSha && failingDetails.length === 0 && !anyPending && !checkRunsIncomplete && !statusIncomplete) {
+    const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> }>(
+      env,
+      repoFullName,
+      `/commits/${headSha}/check-suites?per_page=100`,
+      token,
+    ).catch(() => undefined);
+    // Downgrade on an AFFIRMATIVE incomplete suite. AND: if the suites read itself is UNREADABLE (it 403s under the
+    // very same missing administration:read that forced fold-all, or rate-limits) we can no longer rely on it — so
+    // fail CLOSED (pending) when we ALSO never saw a first-party GitHub Actions check-run, i.e. we cannot confirm the
+    // required workflow ran at all (the #1799 false-green: a fork PR awaiting approval with only an always-on
+    // third-party status). A readable, all-completed suites result still certifies "passed" (no mass false-pending).
+    if (!suitesResult) {
+      // total === 0 means the commit has NO checks at all → genuinely unverified (no CI), not a missing first-party
+      // run, so leave it; only pend when checks DO exist but none of them is a confirmed first-party run.
+      if (!sawFirstPartyCheckRun && total > 0) anyPending = true;
+    } else if ((suitesResult.data.check_suites ?? []).some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
+      anyPending = true; // a first-party GitHub Actions workflow has not completed (e.g. a fork PR awaiting approval)
     }
   }
 

@@ -12,17 +12,19 @@ import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi } from "./selfhost/ai";
+import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
 import {
   cookieValue,
   credentialsToEnv,
   exchangeManifestCode,
   isValidSetupAuthCookie,
+  renderBrokeredSetupPage,
   renderSetupPage,
   renderTokenEntryPage,
   setupAuthCookieValue,
   timingSafeStrEqual,
 } from "./selfhost/setup-wizard";
+import { isOrbBrokerMode, registerOrbRelayTarget } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
@@ -33,6 +35,8 @@ import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
+import { makeLocalManifestReader } from "./selfhost/private-config";
+import { setLocalManifestReader } from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -155,6 +159,10 @@ function buildSqliteBackend(consume: (m: JobMessage) => Promise<void>): Backend 
 
 async function main(): Promise<void> {
   loadFileSecrets();
+  // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
+  // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
+  // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
+  setLocalManifestReader(makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR));
   const startedAt = Date.now();
 
   // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event
@@ -174,6 +182,10 @@ async function main(): Promise<void> {
 
   const ai = createSelfHostAi(process.env);
   if (ai) console.log(JSON.stringify({ event: "selfhost_ai_provider", provider: process.env.AI_PROVIDER }));
+  // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
+  // below so the review call site uses it. Undefined for a single provider's default review or no AI.
+  const aiReviewPlan = resolveAiReviewerPlan(process.env);
+  if (aiReviewPlan) console.log(JSON.stringify({ event: "selfhost_ai_review_plan", reviewers: aiReviewPlan.reviewers.map((r) => r.model), combine: aiReviewPlan.combine }));
 
   // Redis fixed-window rate limiter + webhook dedup cache (else absent when REDIS_URL is unset).
   let rateLimiter: DurableObjectNamespace | undefined;
@@ -202,7 +214,9 @@ async function main(): Promise<void> {
     ...process.env,
     DB: backend.db,
     JOBS: backend.queue.binding,
+    WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
     ...(vectorizeOverride ? { VECTORIZE: vectorizeOverride } : backend.vectorize ? { VECTORIZE: backend.vectorize } : {}),
     ...(rateLimiter ? { RATE_LIMITER: rateLimiter } : {}),
@@ -244,6 +258,14 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify(r), { status: r.ok ? 200 : 503, headers: { "content-type": "application/json" } });
         }
         if (path === "/metrics") return new Response(await renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } });
+        // Brokered mode (ORB_ENROLLMENT_SECRET set): the central Orb App provides credentials on demand, so
+        // there is no own GitHub App to create — short-circuit the setup wizard to a brokered-mode page rather
+        // than walking the operator through (and overriding with) an own-App setup they don't need.
+        if ((path === "/setup" || path === "/setup/callback") && isOrbBrokerMode({ ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET })) {
+          return new Response(renderBrokeredSetupPage(), {
+            headers: { "content-type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
+          });
+        }
         // First-run GitHub App setup wizard — only while no App is configured (can't rebind a live install).
         if ((path === "/setup" || path === "/setup/callback") && !process.env.GITHUB_APP_ID) {
           const setupToken = process.env.SELFHOST_SETUP_TOKEN;
@@ -363,6 +385,16 @@ async function main(): Promise<void> {
       .catch((error) => console.error(JSON.stringify({ level: "error", event: "selfhost_orb_export_error", error: error instanceof Error ? error.message : "unknown error" })));
   void runOrbExport(); // flush any pending events at startup
   setInterval(runOrbExport, 3_600_000); // then hourly
+
+  // Brokered self-host: register our public relay URL with the central Orb so it forwards this install's events
+  // here (best-effort, fire-and-forget — a no-op unless ORB_ENROLLMENT_SECRET + PUBLIC_API_ORIGIN are set).
+  void registerOrbRelayTarget({
+    ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
+    ORB_BROKER_URL: process.env.ORB_BROKER_URL,
+    PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
+  })
+    .then((r) => { if (r !== "skipped") console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r })); })
+    .catch(() => {});
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;

@@ -60,4 +60,15 @@ describe("getOrbGlobalStats", () => {
     await recordOrbPrOutcome(e, "pull_request", closedPr("acme/c", 3, "2026-06-24T00:00:00Z", 200)); // merged, UNREGISTERED → excluded
     expect(await getOrbGlobalStats(e)).toEqual({ merged: 1, closed: 1, total: 2 });
   });
+
+  it("excludeAccount drops an account already counted by another source (case-insensitive)", async () => {
+    const e = createTestEnv();
+    const db = e.DB as unknown as TestD1Database;
+    await db.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (1, 'JSONbored', 1)").run();
+    await db.prepare("INSERT INTO orb_github_installations (installation_id, account_login, registered) VALUES (2, 'acme', 1)").run();
+    await recordOrbPrOutcome(e, "pull_request", closedPr("jsonbored/x", 1, "2026-06-24T00:00:00Z", 1)); // JSONbored, merged
+    await recordOrbPrOutcome(e, "pull_request", closedPr("acme/y", 2, null, 2)); // acme, closed
+    expect(await getOrbGlobalStats(e, { excludeAccount: "jsonbored" })).toEqual({ merged: 0, closed: 1, total: 1 }); // JSONbored dropped
+    expect(await getOrbGlobalStats(e)).toEqual({ merged: 1, closed: 1, total: 2 }); // no exclude → both
+  });
 });

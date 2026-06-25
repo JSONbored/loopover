@@ -34,15 +34,21 @@ export interface OrbGlobalStats {
  * only (registered = 1) — an install that hasn't been opted in never contributes to the public counter. SUM over
  * no matching rows is NULL, so each total is nullish-guarded to 0 (fail-safe on an empty/cold table).
  */
-export async function getOrbGlobalStats(env: Env): Promise<OrbGlobalStats> {
+export async function getOrbGlobalStats(env: Env, opts: { excludeAccount?: string } = {}): Promise<OrbGlobalStats> {
+  // excludeAccount de-dups an account already counted by another source — the homepage counts JSONbored's own
+  // repos via cloud review_audit, so it excludes that account here to avoid double-counting. "" = include all.
+  const exclude = (opts.excludeAccount ?? "").toLowerCase();
   const row = await env.DB.prepare(
     `SELECT
        SUM(CASE WHEN o.outcome = 'merged' THEN 1 ELSE 0 END) AS merged,
        SUM(CASE WHEN o.outcome = 'closed' THEN 1 ELSE 0 END) AS closed,
        COUNT(*) AS total
      FROM orb_pr_outcomes o
-     JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1`,
-  ).first<{ merged: number | null; closed: number | null; total: number | null }>();
+     JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
+     WHERE ? = '' OR LOWER(COALESCE(i.account_login, '')) <> ?`,
+  )
+    .bind(exclude, exclude)
+    .first<{ merged: number | null; closed: number | null; total: number | null }>();
   /* v8 ignore next -- an aggregate query always returns exactly one row; this guards the nullable .first() type only */
   if (!row) return { merged: 0, closed: 0, total: 0 };
   return { merged: row.merged ?? 0, closed: row.closed ?? 0, total: row.total ?? 0 };

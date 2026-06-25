@@ -41,6 +41,13 @@ declare global {
     /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's
      *  GITHUB_WEBHOOK_SECRET. Verifies inbound POST /v1/orb/webhook deliveries. Inject as a wrangler secret. */
     ORB_GITHUB_WEBHOOK_SECRET?: string;
+    /** The central Orb GitHub App's OWN credentials (separate from the gittensory review App above). Inject as
+     *  wrangler secrets. Used to mint the Orb App JWT → list installations + mint short-lived installation tokens
+     *  (the token-broker). CLIENT_ID/SECRET drive the OAuth onboarding flow. */
+    ORB_GITHUB_APP_ID?: string;
+    ORB_GITHUB_APP_PRIVATE_KEY?: string;
+    ORB_GITHUB_CLIENT_ID?: string;
+    ORB_GITHUB_CLIENT_SECRET?: string;
     GITHUB_APP_PRIVATE_KEY: string;
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;

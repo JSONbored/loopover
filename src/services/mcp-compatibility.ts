@@ -59,7 +59,10 @@ export function classifyMcpClientVersion(version: string | null | undefined): Mc
   const minimumComparison = compareMcpSemver(version, MINIMUM_SUPPORTED_MCP_VERSION);
   if (minimumComparison === null) return "unknown";
   if (minimumComparison < 0) return "incompatible";
-  return "current";
+  // A version at/above the minimum but below the latest recommended is supported-but-behind → "stale".
+  // (The flat "current" was correct only while MINIMUM === LATEST_RECOMMENDED; #745 reopened the gap.)
+  const latestComparison = compareMcpSemver(version, LATEST_RECOMMENDED_MCP_VERSION)!;
+  return latestComparison < 0 ? "stale" : "current";
 }
 
 function parseSemver(version: string) {

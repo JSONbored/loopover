@@ -57,7 +57,7 @@ describe("MCP server telemetry", () => {
         clientVersion: "0.5.0",
         metadata: expect.objectContaining({
           toolName: "gittensory_local_status",
-          compatibilityStatus: "current",
+          compatibilityStatus: "stale",
         }),
       }),
     ]);

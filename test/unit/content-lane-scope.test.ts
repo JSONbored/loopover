@@ -5,6 +5,7 @@ import {
   SUPPORTED_CONTENT_CATEGORIES,
   touchesContentEntry,
 } from "../../src/review/content-lane/scope";
+import { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "../../src/review/content-lane/content-repo-spec";
 
 describe("importContentPathParts", () => {
   it("parses content/<cat>/<slug>.mdx, lowercasing category + slugifying slug", () => {
@@ -112,5 +113,43 @@ describe("classifyContentFiles", () => {
   it("exposes the supported categories set", () => {
     expect(SUPPORTED_CONTENT_CATEGORIES.has("skills")).toBe(true);
     expect(SUPPORTED_CONTENT_CATEGORIES.has("not-a-category")).toBe(false);
+  });
+});
+
+describe("ContentRepoSpec (a self-hosted curated list parameterizes the lane)", () => {
+  const custom: ContentRepoSpec = {
+    categories: new Set(["recipes", "tutorials"]),
+    entryPathPattern: /^entries\/([^/]+)\/([^/]+)\.md$/i,
+    maintenanceBranchPrefixes: ["bot/"],
+  };
+
+  it("the default spec carries awesome-claude's categories + entry layout", () => {
+    expect(AWESOME_CLAUDE_CONTENT_SPEC.categories.has("skills")).toBe(true);
+    expect(SUPPORTED_CONTENT_CATEGORIES).toBe(AWESOME_CLAUDE_CONTENT_SPEC.categories);
+  });
+
+  it("importContentPathParts honours a custom entry pattern", () => {
+    expect(importContentPathParts("entries/recipes/My Dish.md", custom)).toEqual({ category: "recipes", slug: "my-dish" });
+    expect(importContentPathParts("content/skills/x.mdx", custom)).toBeNull(); // the awesome layout no longer matches
+  });
+
+  it("touchesContentEntry honours a custom entry pattern", () => {
+    expect(touchesContentEntry(["entries/recipes/foo.md"], custom)).toBe(true);
+    expect(touchesContentEntry(["content/agents/foo.mdx"], custom)).toBe(false);
+  });
+
+  it("classifyContentFiles reviews a custom category and closes an unsupported one", () => {
+    expect(classifyContentFiles([{ filename: "entries/recipes/foo.md", status: "added" }], {}, custom)).toMatchObject({ kind: "review", category: "recipes" });
+    expect(classifyContentFiles([{ filename: "entries/unknown/foo.md", status: "added" }], {}, custom)).toMatchObject({ kind: "close" });
+    expect(classifyContentFiles([{ filename: "", status: "added" }], {}, custom)).toMatchObject({ kind: "ignore" }); // falsy filename → no entry
+  });
+
+  it("classifyContentFiles honours custom maintenance-branch prefixes", () => {
+    const files = [
+      { filename: "entries/recipes/a.md", status: "modified" },
+      { filename: "entries/recipes/b.md", status: "modified" },
+    ];
+    const ctx = { headRepo: "me/list", baseRepo: "me/list", headRef: "bot/link-fix" };
+    expect(classifyContentFiles(files, ctx, custom)).toMatchObject({ kind: "ignore" });
   });
 });

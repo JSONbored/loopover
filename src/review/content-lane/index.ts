@@ -32,6 +32,7 @@ export {
   type ContentFile,
   type ContentScope,
 } from "./scope";
+export { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "./content-repo-spec";
 export {
   buildContentDuplicateReview,
   directoryIndexToSignals,

@@ -37,33 +37,37 @@ describe("diffAppendedSurfaceEntry", () => {
   });
 });
 
-describe("runSurfaceReview (deterministic, conservative routing)", () => {
+describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual)", () => {
   const doc = (surfaces: unknown[]) => JSON.stringify({ netuid: 14, surfaces });
 
-  it("routes a non-submission PR to manual review", async () => {
-    expect((await review(["README.md"], {})).verdict).toBe("manual");
+  it("returns null for a non-submission PR (the surface lane defers to the generic gate)", async () => {
+    expect(await review(["README.md"], {})).toBeNull();
   });
 
-  it("merges a valid provider submission and routes an invalid one to manual (never auto-close)", async () => {
+  it("closes a submission bundled with other file changes (mixed-files)", async () => {
+    expect((await review([SUBNET, "src/index.ts"], {}))?.verdict).toBe("close");
+  });
+
+  it("merges a valid provider submission and CLOSES an invalid one (never manual)", async () => {
     const okProvider = { [`head:${PROVIDER}`]: JSON.stringify({ provider: { id: "acme", name: "Acme", website_url: "https://acme.example" } }) };
-    expect((await review([PROVIDER], okProvider)).verdict).toBe("merge");
+    expect((await review([PROVIDER], okProvider))?.verdict).toBe("merge");
     const badProvider = { [`head:${PROVIDER}`]: JSON.stringify({ provider: { name: "Acme", website_url: "https://acme.example" } }) };
-    expect((await review([PROVIDER], badProvider)).verdict).toBe("manual");
+    expect((await review([PROVIDER], badProvider))?.verdict).toBe("close");
   });
 
   it("merges a clean single append of a valid entry", async () => {
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, newEntry]), [`base:${SUBNET}`]: doc([existing]) });
-    expect(r.verdict).toBe("merge");
+    expect(r?.verdict).toBe("merge");
   });
 
   it("closes a clean single append whose entry has a clear violation", async () => {
     const bad = { ...newEntry, public_safe: false };
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, bad]), [`base:${SUBNET}`]: doc([existing]) });
-    expect(r.verdict).toBe("close");
+    expect(r?.verdict).toBe("close");
   });
 
-  it("routes a non-clean-append (multiple new entries) to manual, never auto-close", async () => {
+  it("CLOSES a non-clean append (multiple new entries) — resubmit clean, not a manual punt", async () => {
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, newEntry, { kind: "extra" }]), [`base:${SUBNET}`]: doc([existing]) });
-    expect(r.verdict).toBe("manual");
+    expect(r?.verdict).toBe("close");
   });
 });

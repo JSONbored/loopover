@@ -13,7 +13,6 @@ import {
   assessProviderDocument,
   assessSubnetDocument,
   classifyRegistryPrScope,
-  isRegistrySubmissionScope,
   toCoreVerdict,
 } from "./registry-logic";
 
@@ -60,23 +59,29 @@ export function diffAppendedSurfaceEntry(headRaw: string | null, baseRaw: string
 }
 
 function fromProvider(assessment: ProviderAssessment): SurfaceReviewResult {
-  // Conservative routing: a valid provider merges; an invalid one goes to HUMAN review — never an auto-close.
+  // Decisive: a valid provider merges; an invalid one CLOSES (resubmit clean) — never a manual punt.
   return assessment.ok
     ? { verdict: "merge", summary: assessment.summary }
-    : { verdict: "manual", summary: assessment.summary, reason: assessment.reason };
+    : { verdict: "close", summary: assessment.summary, reason: assessment.reason };
 }
 
 /**
- * Adjudication policy (deterministic): auto-close is reserved for a clean single-append whose entry has a CLEAR
- * violation (secret, not public_safe, observed-state claim, unsafe URL, unsupported kind, non-integer root netuid)
- * — the unambiguous "resubmit clean" cases assessSubnetDocument already returns `closed` for. Everything ambiguous
- * (not a direct submission, not a clean single append, an invalid provider) routes to MANUAL review and is never
- * auto-closed, so a legitimate edit/refactor PR can't be one-shot-closed.
+ * Adjudication policy (deterministic, DECISIVE): the overwhelming majority of outcomes are merge or close —
+ * manual review is the rare exception. A clean valid submission MERGES; anything invalid or non-standard
+ * (a malformed/violating entry, a non-clean append, a bundled "mixed-files" PR, an invalid provider) CLOSES with
+ * a resubmit message. A PR that is NOT a registry submission at all returns `null` — the surface lane does not
+ * apply, so the caller falls through to the generic gate. The only residual MANUAL comes from the per-entry
+ * validator (an authenticated interface needing a human to confirm the public auth scheme) — a "very few" case.
  */
-export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceReviewInput): Promise<SurfaceReviewResult> {
+export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceReviewInput): Promise<SurfaceReviewResult | null> {
   const scope = classifyRegistryPrScope(spec, input.changedFiles);
-  if (!isRegistrySubmissionScope(scope.scope)) {
-    return { verdict: "manual", summary: "Not a direct registry surface or provider submission — routing to review." };
+  // Not a registry submission at all (no entry/provider file) — the surface lane doesn't apply; the generic gate does.
+  if (scope.scope === "not-direct-submission") {
+    return null;
+  }
+  // A submission bundled with other file changes — close decisively; resubmit the entry on its own.
+  if (scope.scope === "mixed-files") {
+    return { verdict: "close", summary: "A registry submission must not bundle other file changes — resubmit the entry on its own." };
   }
   // A submission scope (entry/provider) always carries a directFile (classifier invariant; see classifyRegistryPrScope).
   const directFile = scope.directFile as string;
@@ -87,7 +92,7 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
   const baseRaw = await input.loadFile(directFile, "base");
   const appendedEntry = diffAppendedSurfaceEntry(headRaw, baseRaw, spec.collectionField);
   if (appendedEntry === null) {
-    return { verdict: "manual", summary: "PR does not cleanly append exactly one surface entry — routing to review." };
+    return { verdict: "close", summary: "A surface submission must append exactly one new surfaces[] entry — resubmit a clean single-entry append." };
   }
   const assessment = assessSubnetDocument(safeParseJson(headRaw), { ...input.opts, appendedEntry });
   return { verdict: toCoreVerdict(assessment.verdict), summary: assessment.summary, reason: assessment.reason };

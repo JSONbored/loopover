@@ -11,6 +11,8 @@ import type { Context } from "hono";
 import type { GitHubWebhookPayload } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
 import { upsertOrbInstallation } from "./installations";
+import { recordOrbPrOutcome } from "./outcomes";
+import { forwardOrbEvent, storeRelayFailure } from "./relay";
 
 const DEFAULT_MAX_ORB_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -63,17 +65,28 @@ export async function handleOrbWebhook(c: Context<{ Bindings: Env }>): Promise<R
     payloadHash,
   };
 
-  // Maintain the installation registry from `installation` lifecycle events BEFORE recording, so a failed
-  // upsert is flipped to "error" + 500 and GitHub redelivers (the dedup guard only suppresses non-error rows).
-  // No-op for every other event in PR2 — PR/review-outcome processing lands in a later queue-backed PR.
+  // Maintain the installation registry from `installation` lifecycle events, and record terminal PR outcomes
+  // from `pull_request closed` events, BEFORE recording the webhook row — so a failed write is flipped to
+  // "error" + 500 and GitHub redelivers (the dedup guard only suppresses non-error rows). Each is a no-op for
+  // every unrelated event.
   try {
     await upsertOrbInstallation(c.env, eventName, payload);
+    await recordOrbPrOutcome(c.env, eventName, payload);
   } catch {
     await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "error" });
     return c.json({ error: "processing_failed", deliveryId }, 500);
   }
 
   await recordOrbWebhookEvent(c.env, { ...eventMeta, status: "received" });
+  // Forward the event to a brokered self-host registered for this installation (best-effort, fail-safe — a down
+  // container never fails the 202; a non-forwardable event / no registered relay is a fast no-op).
+  const installId = payload.installation?.id;
+  const relayResult = await forwardOrbEvent(c.env, { eventName, installationId: installId, deliveryId, rawBody });
+  // Persist failed deliveries so the retry-orb-relay cron can re-attempt them (containers that are temporarily
+  // down recover without losing events; max 5 attempts within a 1-hour TTL).
+  if (relayResult === "failed" && installId !== undefined) {
+    await storeRelayFailure(c.env, { deliveryId, eventName, installationId: installId, rawBody });
+  }
   return c.json({ ok: true, deliveryId, eventName, status: "received" }, 202);
 }
 

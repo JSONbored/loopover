@@ -32,6 +32,7 @@ export {
   type ContentFile,
   type ContentScope,
 } from "./scope";
+export { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "./content-repo-spec";
 export {
   buildContentDuplicateReview,
   directoryIndexToSignals,
@@ -54,8 +55,6 @@ export {
   sourceEvidenceCloseDecision,
   sourceEvidenceSummary,
   sourceEvidenceToDecisionEvidence,
-  DISTRIBUTION_SOURCE_HOSTS,
-  TRUSTED_SOURCE_HOSTS,
   type SourceEvidenceDecision,
   type SourceEvidenceItem,
   type SourceEvidenceReport,
@@ -72,12 +71,10 @@ export {
 
 // metagraphed (registry) primitives
 export {
-  assessCandidateDocument,
   assessProviderDocument,
   assessSurfaceEntry,
   assessSubnetDocument,
   assessFreshness,
-  classifyPrScope,
   classifyRegistryPrScope,
   isRegistrySubmissionScope,
   METAGRAPHED_LANE_SPEC,
@@ -88,25 +85,18 @@ export {
   type RegistryScopeResult,
   computeGrounding,
   containsSecretLikeText,
-  candidateRegistryKey,
   deriveRegistryIdentityTokens,
   functionalRequired,
   isAllowedChain,
   isBaseLayerKind,
-  isDirectSubmissionScope,
   isInternalAutomationBranch,
   isNonEmptyStructuredBody,
   netuidGroundingRegex,
   normalizePublicUrl,
   probeFunctionalSurface,
   registrableDomain,
-  registryDedupKeys,
-  registryUrls,
   surfaceMatchesRegistryIdentity,
   toCoreVerdict,
-  CANDIDATE_PATTERN,
-  PROVIDER_PATTERN,
-  PROVIDER_ANY_PATTERN,
   ARTIFACT_PATTERN,
   DEFAULT_PUBLIC_API_BASE,
   STALE_REPO_DAYS,
@@ -115,10 +105,8 @@ export {
   type FreshnessSignals,
   type GroundingSignals,
   type MetaVerdict,
-  type PrScope,
   type ProviderAssessment,
   type ProviderLike,
-  type ScopeResult,
   type Verdict,
 } from "./registry-logic";
 export { runSurfaceReview, diffAppendedSurfaceEntry, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";

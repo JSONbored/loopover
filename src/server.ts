@@ -18,11 +18,13 @@ import {
   credentialsToEnv,
   exchangeManifestCode,
   isValidSetupAuthCookie,
+  renderBrokeredSetupPage,
   renderSetupPage,
   renderTokenEntryPage,
   setupAuthCookieValue,
   timingSafeStrEqual,
 } from "./selfhost/setup-wizard";
+import { isOrbBrokerMode } from "./orb/broker-client";
 import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
@@ -244,6 +246,14 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify(r), { status: r.ok ? 200 : 503, headers: { "content-type": "application/json" } });
         }
         if (path === "/metrics") return new Response(await renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } });
+        // Brokered mode (ORB_ENROLLMENT_SECRET set): the central Orb App provides credentials on demand, so
+        // there is no own GitHub App to create — short-circuit the setup wizard to a brokered-mode page rather
+        // than walking the operator through (and overriding with) an own-App setup they don't need.
+        if ((path === "/setup" || path === "/setup/callback") && isOrbBrokerMode({ ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET })) {
+          return new Response(renderBrokeredSetupPage(), {
+            headers: { "content-type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
+          });
+        }
         // First-run GitHub App setup wizard — only while no App is configured (can't rebind a live install).
         if ((path === "/setup" || path === "/setup/callback") && !process.env.GITHUB_APP_ID) {
           const setupToken = process.env.SELFHOST_SETUP_TOKEN;

@@ -2083,6 +2083,29 @@ export async function fetchLiveCiAggregate(
     }
   }
 
+  // FOLD-ALL hardening (#ci-foldall-checksuites): when branch protection is UNREADABLE (no `administration:read`
+  // ⇒ requiredContexts null ⇒ fold-all), the check-run/status scan above can read "passed" for a fork PR whose
+  // required workflow is AWAITING APPROVAL — its check-RUNS don't exist yet (the workflow never ran), so only the
+  // always-on third-party checks are seen and nothing fails or pends. Read the check-SUITES too: a GitHub-Actions
+  // suite still `queued`/`requested`/`waiting`/`in_progress` (not `completed`) means the first-party CI has NOT
+  // run, so hold (pending) instead of certifying a never-run workflow as green. Enforce-required mode already
+  // catches this via the absent-context guard above, so this runs ONLY in fold-all (one extra call on the degraded
+  // path), and ONLY when we would otherwise certify "passed" (no failure, nothing else pending).
+  if (!enforceRequiredOnly && headSha && failingDetails.length === 0 && !anyPending && !checkRunsIncomplete && !statusIncomplete) {
+    const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> }>(
+      env,
+      repoFullName,
+      `/commits/${headSha}/check-suites?per_page=100`,
+      token,
+    ).catch(() => undefined);
+    // ONLY downgrade on an AFFIRMATIVE signal — a GitHub-Actions suite that has not completed. The check-suites read
+    // is a bonus hardening, not a primary CI source, so an unreadable/absent result is left as-is (the original
+    // check-run/status verdict stands) rather than fail-closed, which would wrongly pend every fold-all-passing PR.
+    if (suitesResult && (suitesResult.data.check_suites ?? []).some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
+      anyPending = true; // a first-party GitHub Actions workflow has not completed (e.g. a fork PR awaiting approval)
+    }
+  }
+
   // ciState reflects ONLY gate-failing (required, or all-when-unknown) checks. A repo whose only red check is a
   // non-required codecov/* therefore reports "passed" and is eligible to merge/approve, with the codecov
   // failure riding along in nonRequiredFailingDetails for the contributor to see.

@@ -216,6 +216,19 @@ describe("buildUnifiedCommentBody", () => {
     const advisory = buildUnifiedCommentBody({ gate: gate({ conclusion: "skipped" }), panelRows, readinessTotal: 50, changedFiles: 2, footerMarkdown: footer });
     expect(advisory).toContain("> [!NOTE]"); // skipped → comment → advisory
   });
+
+  it("heldForReview renders a passing PR as HELD, never 'safe to merge' (#guarded-hold-comment)", () => {
+    const args = { gate: gate({ conclusion: "success" }), panelRows, readinessTotal: 90, changedFiles: 2, mergeReadiness: { ciState: "passed" as const }, footerMarkdown: footer };
+    // Without the hold, a success+green PR is the green "safe to merge" headline.
+    const ready = buildUnifiedCommentBody(args);
+    expect(ready).toContain("> [!TIP]");
+    expect(ready).toContain("safe to merge");
+    // With the guarded hold, the SAME PR renders held (WARNING), not safe-to-merge — matching the disposition.
+    const held = buildUnifiedCommentBody({ ...args, heldForReview: true });
+    expect(held).toContain("> [!WARNING]");
+    expect(held).toContain("Held for maintainer review");
+    expect(held).not.toContain("> [!TIP]");
+  });
 });
 
 // ── Reconciliation invariant (#1016): comment-verdict ↔ gate-conclusion alignment ──────────────────

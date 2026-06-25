@@ -30,7 +30,13 @@ COPY --from=build /app/migrations ./migrations
 # work in-image. Build with `--build-arg INSTALL_AI_CLIS=true`. No credentials are baked — operators mint
 # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`) / codex auth at run time and pass it via the env.
 ARG INSTALL_AI_CLIS=false
-RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0 --ignore-scripts; fi
+# codex's native (Rust) binary loads the SYSTEM CA trust store (rustls-native-certs); node:slim ships none, so the
+# `codex` provider fails every call with "no native root CA certificates found" without ca-certificates.
+RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*; fi
+# NB: NO --ignore-scripts here. claude-code's postinstall downloads its platform-native binary; skipping it makes
+# `claude` fail at runtime with "native binary not installed". These are trusted first-party CLIs, so their
+# install scripts are allowed to run.
+RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0; fi
 # Optional: enable visual review via an external Chrome sidecar (e.g. `browserless/chrome:latest`).
 # Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.
 ARG INSTALL_VISUAL_REVIEW=false

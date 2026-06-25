@@ -26,11 +26,7 @@ export function isInternalAutomationBranch(ref: string | undefined): boolean {
   return AUTOMATION_BRANCH_PREFIXES.some((prefix) => branch.startsWith(prefix));
 }
 
-export const CANDIDATE_PATTERN = /^registry\/candidates\/community\/[a-z0-9][a-z0-9-]*\.json$/;
-export const PROVIDER_PATTERN = /^registry\/providers\/community\/[a-z0-9][a-z0-9-]*\.json$/;
-/** A provider registration anywhere under registry/providers — an allowed companion in a candidate PR. */
-export const PROVIDER_ANY_PATTERN = /^registry\/providers\/(?:community\/)?[a-z0-9][a-z0-9-]*\.json$/;
-/** Generated registry artifacts a valid candidate/provider PR must regenerate — allowed companions. */
+/** Generated registry artifacts a valid PR must regenerate — allowed companions of a registry submission. */
 export const ARTIFACT_PATTERN = /^public\/metagraph\/[a-z0-9/_-]+\.json$/i;
 export const DEFAULT_PUBLIC_API_BASE = "https://api.metagraph.sh/api/v1";
 
@@ -453,38 +449,6 @@ export function assessFreshness(
   return { known: true, archived, pushedAt, ageDays, stale, reason };
 }
 
-/** Duplicate key netuid|kind|normalizedUrl (primary `url` field). */
-export function candidateRegistryKey(value: CandidateLike | null | undefined): string | null {
-  const normalizedUrl = normalizePublicUrl(value?.url);
-  if (!Number.isInteger(Number(value?.netuid)) || !value?.kind || !normalizedUrl) return null;
-  return [Number(value.netuid), String(value.kind), normalizedUrl].join("|");
-}
-
-/** ALL dedup keys a candidate OR registry surface can collide on: netuid|kind per normalized URL field
- *  it carries (`url` AND `schema_url`) — so a candidate's `url` equal to a verified surface's
- *  `schema_url` is still caught. */
-export function registryDedupKeys(value: CandidateLike | null | undefined): Set<string> {
-  const keys = new Set<string>();
-  const netuid = Number(value?.netuid);
-  if (!Number.isInteger(netuid) || !value?.kind) return keys;
-  for (const field of [value?.url, (value as { schema_url?: unknown } | null | undefined)?.schema_url]) {
-    const normalized = normalizePublicUrl(field);
-    if (normalized) keys.add([netuid, String(value.kind), normalized].join("|"));
-  }
-  return keys;
-}
-
-/** The normalized public URLs a candidate/surface carries (`url` + `schema_url`), KIND-AGNOSTIC — used
- *  to detect a same-URL-DIFFERENT-KIND collision (a mislabel/duplicate the kind-scoped key can't see). */
-export function registryUrls(value: CandidateLike | null | undefined): Set<string> {
-  const urls = new Set<string>();
-  for (const field of [value?.url, (value as { schema_url?: unknown } | null | undefined)?.schema_url]) {
-    const normalized = normalizePublicUrl(field);
-    if (normalized) urls.add(normalized);
-  }
-  return urls;
-}
-
 function fail(reason: string, summary: string, candidate: CandidateLike | null = null): Assessment {
   return {
     /* v8 ignore next -- every fail() call site passes a REVIEWER_CLOSE_REASONS member, so the "manual-review" alternative is unreachable; kept so a future non-close reason degrades to manual rather than closing. */
@@ -495,92 +459,12 @@ function fail(reason: string, summary: string, candidate: CandidateLike | null =
   };
 }
 
-/** Deterministic candidate shape/safety gate. The security checks (secret scan, public-URL safety) are
- *  gated by the agent's feature toggles, defaulting ON so callers that pass nothing keep strict behavior. */
-export function assessCandidateDocument(
-  document: unknown,
-  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean } = {},
-): Assessment {
-  const { secretsScan = true, sourceUrlValidation = true } = opts;
-  const doc = document as { candidates?: unknown; candidate?: unknown } | null;
-  const candidates: CandidateLike[] = Array.isArray(doc?.candidates)
-    ? (doc?.candidates as CandidateLike[])
-    : doc?.candidate
-      ? [doc.candidate as CandidateLike]
-      : [];
-  if (candidates.length !== 1) {
-    return fail("unsupported-shape", "Candidate PR must contain exactly one candidate entry.");
-  }
-  const candidate = candidates[0] as CandidateLike;
-  if (secretsScan && containsSecretLikeText(JSON.stringify(candidate))) {
-    return fail(
-      "secret-or-credential",
-      "Candidate appears to include secret, wallet, PAT, or private-key material.",
-      candidate,
-    );
-  }
-  // Observed-state claim (health/uptime/latency/status): probe-derived only — a submission can never assert it.
-  const observedKey = Object.keys(candidate as Record<string, unknown>).find((k) =>
-    OBSERVED_STATE_KEYS.has(k.toLowerCase()),
-  );
-  if (observedKey) {
-    return fail(
-      "observed-state-claim",
-      `Candidate asserts observed runtime state (\`${observedKey}\`). Health / uptime / latency / status are probe-derived only and can never be part of a submission — remove the field and resubmit.`,
-      candidate,
-    );
-  }
-  if (!Number.isInteger(Number(candidate.netuid))) {
-    return fail("unsupported-shape", "Candidate netuid must be an integer.", candidate);
-  }
-  const baseLayer = isBaseLayerKind(candidate.kind);
-  if (!REVIEWER_SAFE_KINDS.has(String(candidate.kind)) && !baseLayer) {
-    return fail("unsupported-shape", "Candidate kind is not supported by the reviewer.", candidate);
-  }
-  if (sourceUrlValidation) {
-    // Base-layer chain endpoints may be wss/ws (probed via JSON-RPC); content kinds must be HTTPS.
-    const urlSafe = baseLayer
-      ? isSafeEndpointUrl(String(candidate.url ?? ""))
-      : isSafeHttpUrl(String(candidate.url ?? ""));
-    if (!urlSafe) {
-      return fail(
-        "unsafe-url",
-        baseLayer ? "Candidate URL must be a public HTTPS or WSS endpoint." : "Candidate URL must be a public HTTPS URL.",
-        candidate,
-      );
-    }
-    const sourceUrl = (candidate.source_url as string) || (candidate.source_urls as string[] | undefined)?.[0];
-    if (!isSafeHttpUrl(String(sourceUrl ?? ""))) {
-      return fail("unsafe-url", "Candidate source URL must be a public HTTPS URL.", candidate);
-    }
-  }
-  // One-shot: incomplete/credentialed submissions are declined (resubmit clean), not queued.
-  if (candidate.public_safe !== true) {
-    return {
-      verdict: "closed",
-      summary:
-        "Candidate is not marked public_safe=true — declined. Resubmit with public_safe=true if the endpoint is genuinely public.",
-      candidate,
-    };
-  }
-  if (candidate.auth_required === true) {
-    // Authenticated interface: NOT auto-closed — escalate to confirm the auth scheme is documented publicly.
-    return {
-      verdict: "manual-review",
-      summary:
-        "Authenticated interface — routing to review to confirm the declared auth scheme is documented publicly (verifiable without any secret) before it can be accepted.",
-      candidate,
-    };
-  }
-  return { verdict: "merged", candidate };
-}
-
 /**
- * Surface model (the candidate-file model's successor): a contribution appends ONE entry to `surfaces[]` of a
- * `registry/subnets/<slug>.json`, whose `netuid` lives at the file ROOT (not on each entry). These two
- * deterministic validators are the per-entry and whole-document analogues of assessCandidateDocument — gittensory
- * is the sole adjudicator; no AI (surfaces are structured data). They take the appended entry / parsed document as
- * arguments; resolving "exactly one appended entry" from a head-vs-base diff is the orchestrator's job (a follow-up).
+ * Surface validators: a contribution appends ONE entry to `surfaces[]` of a `registry/subnets/<slug>.json`, whose
+ * `netuid` lives at the file ROOT (not on each entry). These two deterministic validators (per-entry +
+ * whole-document) make gittensory the sole adjudicator; no AI (surfaces are structured data). They take the
+ * appended entry / parsed document as arguments; the orchestrator resolves "exactly one appended entry" from a
+ * head-vs-base diff.
  */
 export function assessSurfaceEntry(
   entry: unknown,
@@ -765,56 +649,13 @@ export function probeFunctionalSurface(
   return { served: true, detail: "n/a" };
 }
 
-export type PrScope = "direct-candidate" | "direct-provider" | "mixed-files" | "not-direct-submission";
-
-export interface ScopeResult {
-  scope: PrScope;
-  directFile: string | null;
-  isProvider: boolean;
-}
-
-/**
- * In-scope when the PR reviews exactly ONE candidate (or, candidate-free, one provider) submission.
- * A valid candidate PR must also regenerate the public/metagraph artifacts and may register its
- * provider — those are ALLOWED COMPANIONS; any other file makes it out-of-scope. The reviewed
- * `directFile` is the candidate (else the provider).
- */
-export function classifyPrScope(changedFiles: string[]): ScopeResult {
-  const files = (changedFiles ?? []).map((f) => String(f || "").trim()).filter(Boolean);
-  const candidateFiles = files.filter((f) => CANDIDATE_PATTERN.test(f));
-  const providerFiles = files.filter((f) => PROVIDER_ANY_PATTERN.test(f));
-  const isCandidatePr = candidateFiles.length === 1;
-  const isProviderPr = candidateFiles.length === 0 && providerFiles.length === 1;
-  if (!isCandidatePr && !isProviderPr) {
-    return { scope: "not-direct-submission", directFile: null, isProvider: false };
-  }
-  // Allowed companions: provider registrations + generated public/metagraph artifacts.
-  const forbidden = files.filter(
-    (f) => !CANDIDATE_PATTERN.test(f) && !PROVIDER_ANY_PATTERN.test(f) && !ARTIFACT_PATTERN.test(f),
-  );
-  if (forbidden.length > 0) return { scope: "mixed-files", directFile: null, isProvider: false };
-  // isProviderPr ⇒ providerFiles.length === 1 and isCandidatePr ⇒ candidateFiles.length === 1 (guarded
-  // by the early return above), so [0] is always defined here; the `?? null` fallbacks exist only to
-  // satisfy noUncheckedIndexedAccess and can never fire at runtime.
-  /* v8 ignore start */
-  return isProviderPr
-    ? { scope: "direct-provider", directFile: providerFiles[0] ?? null, isProvider: true }
-    : { scope: "direct-candidate", directFile: candidateFiles[0] ?? null, isProvider: false };
-  /* v8 ignore stop */
-}
-
-export function isDirectSubmissionScope(scope: PrScope): boolean {
-  return scope === "direct-candidate" || scope === "direct-provider";
-}
-
 // ── Surface model (generic registry content-lane) ─────────────────────────────────────────────────
 //
-// The candidate-file model above is metagraphed's RETIRED lane. The current model: a community contribution
-// appends entries to an array field of ONE registry "entry file" (e.g. registry/subnets/<slug>.json::surfaces[]),
-// optionally with one flat companion provider file. To stay MODULAR — many maintainers will install gittensory
-// over wildly different registries — the engine is parameterized by a RegistryLaneSpec rather than hard-coding
-// metagraphed's paths; metagraphed is just the FIRST spec, and a spec can later be loaded from per-repo
-// .gittensory.yml config so a new registry needs config, not a gittensory code change.
+// A community contribution appends entries to an array field of ONE registry "entry file" (e.g.
+// registry/subnets/<slug>.json::surfaces[]), optionally with one flat companion provider file. To stay MODULAR —
+// many maintainers will install gittensory over wildly different registries — the engine is parameterized by a
+// RegistryLaneSpec rather than hard-coding metagraphed's paths; metagraphed is just the FIRST spec, and a spec can
+// later be loaded from per-repo .gittensory.yml config so a new registry needs config, not a code change.
 
 /** Describes where a registry keeps its community-editable entry files + allowed companions. */
 export interface RegistryLaneSpec {

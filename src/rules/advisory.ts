@@ -724,6 +724,12 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
   // gate verdict is byte-identical to today.
   if (code === "secret_leak") return true;
+  // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC
+  // finding when it fails (a required title/description phrase or label is missing). It always blocks: the
+  // per-check `enforce` flag in `.gittensory.yml` IS the opt-in (mirroring secret_leak — the finding only exists
+  // when the maintainer configured an enforced check). The advisory variant (`pre_merge_check_failed`) is a plain
+  // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
+  if (code === "pre_merge_check_required") return true;
   // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer
   // opts into manifestPolicy: block. Default off/advisory keeps them advisory-only.
   if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {

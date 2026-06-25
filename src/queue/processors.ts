@@ -173,11 +173,12 @@ import type { CheckFailureDetail, MergeReadiness } from "../review/unified-comme
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
-import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstructions, resolveReviewPromptOverrides, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
+import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstructions, resolveReviewPreMergeChecks, resolveReviewPromptOverrides, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
+import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
 import { secretLeakFinding } from "../review/safety";
 import { aiCiRefutationActive, buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
@@ -2524,6 +2525,24 @@ async function maybePublishPrPublicSurface(
           ...(finding.action !== undefined ? { action: finding.action } : {}),
         });
       }
+    }
+    // Pre-merge checks (#review-pre-merge-checks, opt-in via .gittensory.yml review.pre_merge_checks). DETERMINISTIC
+    // content assertions (title/description must contain a phrase, a label must be present), optionally path-gated.
+    // Each FAILED check appends an advisory `pre_merge_check_failed` finding — or a blocking `pre_merge_check_required`
+    // one when the maintainer set enforce: true — BEFORE the gate evaluates. No AI judgment, so this can never cause
+    // an AI false-close. The manifest is cached (settings resolution loaded it), so this is a cheap hit;
+    // resolveReviewPreMergeChecks fail-safes to [] on a load error. Empty (default) ⇒ no finding (byte-identical).
+    const preMergeChecks = resolveReviewPreMergeChecks(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
+    if (preMergeChecks.length > 0) {
+      const checkFiles = await getReviewFiles(); // memoized — reuses the gate/slop diff when already resolved
+      advisory.findings.push(
+        ...evaluatePreMergeChecks(preMergeChecks, {
+          title: pr.title,
+          body: pr.body,
+          labels: pr.labels,
+          changedPaths: checkFiles.map((file) => file.path),
+        }),
+      );
     }
 
     // AI maintainer review (opt-in via aiReviewMode). Mutates `advisory` with a consensus defect (if any)

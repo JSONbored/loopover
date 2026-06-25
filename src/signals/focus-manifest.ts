@@ -109,11 +109,30 @@ export type FocusManifestReviewConfig = {
    *  reviewed (byte-identical). Gate/slop/secret-scan are UNAFFECTED — this only narrows the AI review.
    *  (#review-exclude-paths) */
   excludePaths: string[];
+  /** `review.pre_merge_checks`: maintainer-declared DETERMINISTIC content assertions (title/description must
+   *  contain a phrase, a label must be present), optionally gated to a path glob. Each FAILED check surfaces an
+   *  advisory finding; a check with `enforce: true` becomes a hard gate blocker. Empty (default) ⇒ no finding
+   *  (byte-identical). No AI judgment is involved. (#review-pre-merge-checks) */
+  preMergeChecks: PreMergeCheck[];
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
  *  changed file matches it. */
 export type ReviewPathInstruction = { path: string; instructions: string };
+
+/** One `review.pre_merge_checks[]` entry — a DETERMINISTIC pre-merge assertion. `whenPaths` (empty ⇒ always
+ *  applies) gates the check to PRs that touch a matching path. The check PASSES only when EVERY configured
+ *  assertion holds: the PR title contains `titleContains`, the body contains `descriptionContains`, and the
+ *  `requireLabel` label is present (case-insensitive substring / label match). `enforce` ⇒ a failure is a hard
+ *  gate blocker; default (false) ⇒ advisory only. All strings are public-safe-filtered at parse time. */
+export type PreMergeCheck = {
+  name: string;
+  whenPaths: string[];
+  titleContains: string | null;
+  descriptionContains: string | null;
+  requireLabel: string | null;
+  enforce: boolean;
+};
 
 // A hard cap so a hostile/huge manifest can't bloat the reviewer prompt (mirrors REVIEW_FIELD_KEYS discipline).
 const MAX_PATH_INSTRUCTIONS = 50;
@@ -210,7 +229,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] },
+  review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
   warnings: [],
 };
 
@@ -223,7 +242,7 @@ export function isFocusManifestPublicSafe(text: string): boolean {
 }
 
 function emptyManifest(source: FocusManifestSource, warnings: string[] = []): FocusManifest {
-  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] } };
+  return { ...EMPTY_MANIFEST, source, warnings, gate: { ...EMPTY_GATE_CONFIG }, settings: {}, review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] } };
 }
 
 function normalizeStringList(value: JsonValue | undefined, field: string, warnings: string[]): string[] {
@@ -501,7 +520,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -524,40 +543,96 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const profile = parseReviewProfile(r.profile, warnings);
   const pathInstructions = parseReviewPathInstructions(r.path_instructions, warnings);
   const excludePaths = parseReviewExcludePaths(r.exclude_paths, warnings);
+  const preMergeChecks = parseReviewPreMergeChecks(r.pre_merge_checks, warnings);
   return {
-    present: footerText !== null || note !== null || profile !== null || pathInstructions.length > 0 || excludePaths.length > 0 || Object.keys(fields).length > 0,
+    present:
+      footerText !== null ||
+      note !== null ||
+      profile !== null ||
+      pathInstructions.length > 0 ||
+      excludePaths.length > 0 ||
+      preMergeChecks.length > 0 ||
+      Object.keys(fields).length > 0,
     footerText,
     note,
     fields,
     profile,
     pathInstructions,
     excludePaths,
+    preMergeChecks,
   };
 }
 
-/** Parse `review.exclude_paths` — an array of manifest glob strings whose matching files are excluded from the AI
- *  review. Each must be a non-empty string; blanks/non-strings are dropped with a warning. Capped at
- *  MAX_PATH_INSTRUCTIONS so a hostile manifest can't bloat the matcher. (#review-exclude-paths) */
-function parseReviewExcludePaths(value: JsonValue | undefined, warnings: string[]): string[] {
+/** Parse `review.pre_merge_checks` — an array of DETERMINISTIC pre-merge assertions. Each entry needs a non-empty
+ *  public-safe `name` and at least ONE assertion (`title_contains` / `description_contains` / `require_label`,
+ *  each public-safe); `when_paths` (optional) gates the check to PRs touching a matching glob; `enforce` (default
+ *  false) makes a failure a hard blocker. Invalid entries are dropped with a warning; capped at
+ *  MAX_PATH_INSTRUCTIONS so a hostile manifest can't bloat the gate. (#review-pre-merge-checks) */
+function parseReviewPreMergeChecks(value: JsonValue | undefined, warnings: string[]): PreMergeCheck[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
-    warnings.push(`Manifest "review.exclude_paths" must be a list of path globs; ignoring it.`);
+    warnings.push(`Manifest "review.pre_merge_checks" must be a list of checks; ignoring it.`);
+    return [];
+  }
+  const out: PreMergeCheck[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (out.length >= MAX_PATH_INSTRUCTIONS) {
+      warnings.push(`Manifest "review.pre_merge_checks" is capped at ${MAX_PATH_INSTRUCTIONS} entries; dropping the rest.`);
+      break;
+    }
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      warnings.push(`Manifest "review.pre_merge_checks[${index}]" must be a mapping; ignoring it.`);
+      continue;
+    }
+    const e = entry as Record<string, JsonValue>;
+    if (e.name === undefined || e.name === null) {
+      warnings.push(`Manifest "review.pre_merge_checks[${index}].name" is required; ignoring the entry.`);
+      continue;
+    }
+    const name = parsePublicSafeText(e.name, `review.pre_merge_checks[${index}].name`, warnings);
+    if (name === null) continue; // non-string / empty / not-public-safe → already warned
+    const titleContains = e.title_contains === undefined || e.title_contains === null ? null : parsePublicSafeText(e.title_contains, `review.pre_merge_checks[${index}].title_contains`, warnings);
+    const descriptionContains = e.description_contains === undefined || e.description_contains === null ? null : parsePublicSafeText(e.description_contains, `review.pre_merge_checks[${index}].description_contains`, warnings);
+    const requireLabel = e.require_label === undefined || e.require_label === null ? null : parsePublicSafeText(e.require_label, `review.pre_merge_checks[${index}].require_label`, warnings);
+    if (titleContains === null && descriptionContains === null && requireLabel === null) {
+      warnings.push(`Manifest "review.pre_merge_checks[${index}]" needs at least one of title_contains / description_contains / require_label; ignoring it.`);
+      continue;
+    }
+    const whenPaths = parseManifestGlobList(e.when_paths, `review.pre_merge_checks[${index}].when_paths`, warnings);
+    const enforce = normalizeOptionalBoolean(e.enforce, `review.pre_merge_checks[${index}].enforce`, warnings) === true;
+    out.push({ name, whenPaths, titleContains, descriptionContains, requireLabel, enforce });
+  }
+  return out;
+}
+
+/** Parse a manifest glob list (e.g. `review.exclude_paths`, a check's `when_paths`) — an array of non-empty
+ *  string globs; blanks/non-strings are dropped with a warning. Capped at MAX_PATH_INSTRUCTIONS so a hostile
+ *  manifest can't bloat the matcher. `fieldLabel` makes the warnings name the right field. */
+function parseManifestGlobList(value: JsonValue | undefined, fieldLabel: string, warnings: string[]): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    warnings.push(`Manifest "${fieldLabel}" must be a list of path globs; ignoring it.`);
     return [];
   }
   const out: string[] = [];
   for (const [index, entry] of value.entries()) {
     if (out.length >= MAX_PATH_INSTRUCTIONS) {
-      warnings.push(`Manifest "review.exclude_paths" is capped at ${MAX_PATH_INSTRUCTIONS} entries; dropping the rest.`);
+      warnings.push(`Manifest "${fieldLabel}" is capped at ${MAX_PATH_INSTRUCTIONS} entries; dropping the rest.`);
       break;
     }
     const glob = typeof entry === "string" ? entry.trim() : "";
     if (!glob) {
-      warnings.push(`Manifest "review.exclude_paths[${index}]" must be a non-empty string; ignoring it.`);
+      warnings.push(`Manifest "${fieldLabel}[${index}]" must be a non-empty string; ignoring it.`);
       continue;
     }
     out.push(glob);
   }
   return out;
+}
+
+/** Parse `review.exclude_paths` — globs whose matching files are excluded from the AI review. (#review-exclude-paths) */
+function parseReviewExcludePaths(value: JsonValue | undefined, warnings: string[]): string[] {
+  return parseManifestGlobList(value, "review.exclude_paths", warnings);
 }
 
 /** Parse `review.path_instructions` — an array of `{ path, instructions }` entries. Each must have a non-empty
@@ -620,6 +695,17 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.profile !== null) out.profile = review.profile;
   if (review.pathInstructions.length > 0) out.path_instructions = review.pathInstructions.map((entry) => ({ path: entry.path, instructions: entry.instructions }));
   if (review.excludePaths.length > 0) out.exclude_paths = [...review.excludePaths];
+  if (review.preMergeChecks.length > 0) {
+    out.pre_merge_checks = review.preMergeChecks.map((check) => {
+      const entry: Record<string, JsonValue> = { name: check.name };
+      if (check.whenPaths.length > 0) entry.when_paths = [...check.whenPaths];
+      if (check.titleContains !== null) entry.title_contains = check.titleContains;
+      if (check.descriptionContains !== null) entry.description_contains = check.descriptionContains;
+      if (check.requireLabel !== null) entry.require_label = check.requireLabel;
+      if (check.enforce) entry.enforce = true;
+      return entry;
+    });
+  }
   if (Object.keys(review.fields).length > 0) out.fields = { ...review.fields } as Record<string, JsonValue>;
   return out;
 }
@@ -644,6 +730,13 @@ export function resolveReviewPathInstructions(pathInstructions: ReviewPathInstru
  *  rather than inline in the processor. (#review-profile / #review-path-instructions / #review-exclude-paths) */
 export function resolveReviewPromptOverrides(manifest: FocusManifest | null): { profile: ReviewProfile | null; pathInstructions: ReviewPathInstruction[]; excludePaths: string[] } {
   return { profile: manifest?.review.profile ?? null, pathInstructions: manifest?.review.pathInstructions ?? [], excludePaths: manifest?.review.excludePaths ?? [] };
+}
+
+/** Resolve `review.pre_merge_checks` from a possibly-null manifest (null = load failure ⇒ no checks). Centralized
+ *  so the gate caller resolves them in one place with the null-manifest branch covered here (unit-tested) rather
+ *  than inline in the processor. (#review-pre-merge-checks) */
+export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): PreMergeCheck[] {
+  return manifest?.review.preMergeChecks ?? [];
 }
 
 /** Filter a PR's changed files down to the set the AI review should see — dropping any whose path matches a

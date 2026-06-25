@@ -11,6 +11,7 @@ import {
   resolveEffectiveSettings,
   excludeReviewPaths,
   resolveReviewPathInstructions,
+  resolveReviewPreMergeChecks,
   resolveReviewPromptOverrides,
   reviewConfigToJson,
   settingsOverrideToJson,
@@ -431,7 +432,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [] },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1159,5 +1160,62 @@ describe("review.exclude_paths (#review-exclude-paths)", () => {
     expect(excludeReviewPaths(files, ["*.yaml", "dist/**"])).toEqual([{ path: "src/a.ts" }]);
     expect(excludeReviewPaths(files, ["docs/**"])).toEqual(files); // no match → unchanged
     expect(excludeReviewPaths(files, [])).toBe(files); // empty → same reference (no-op)
+  });
+});
+
+describe("review.pre_merge_checks (#review-pre-merge-checks)", () => {
+  it("parses checks (name + assertions + when_paths + enforce), marks present, and round-trips", () => {
+    const m = parseFocusManifest({
+      review: {
+        pre_merge_checks: [
+          { name: "Migration note", when_paths: ["migrations/**"], description_contains: "migration", enforce: true },
+          { name: "Conventional title", title_contains: "(" },
+          { name: "Breaking label", require_label: "breaking-change" },
+        ],
+      },
+    });
+    expect(m.review.preMergeChecks).toEqual([
+      { name: "Migration note", whenPaths: ["migrations/**"], titleContains: null, descriptionContains: "migration", requireLabel: null, enforce: true },
+      { name: "Conventional title", whenPaths: [], titleContains: "(", descriptionContains: null, requireLabel: null, enforce: false },
+      { name: "Breaking label", whenPaths: [], titleContains: null, descriptionContains: null, requireLabel: "breaking-change", enforce: false },
+    ]);
+    expect(m.review.present).toBe(true);
+    expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.preMergeChecks).toEqual(m.review.preMergeChecks);
+  });
+
+  it("drops invalid entries with warnings: non-mapping, missing name, no assertion", () => {
+    const m = parseFocusManifest({
+      review: {
+        pre_merge_checks: [
+          "nope", // non-mapping
+          { title_contains: "x" }, // missing name
+          { name: "empty check" }, // no assertion
+          { name: 42, require_label: "x" }, // non-string (not public-safe) name → dropped at the name parse
+          { name: "ok", require_label: "ship" },
+        ],
+      },
+    });
+    expect(m.review.preMergeChecks).toEqual([{ name: "ok", whenPaths: [], titleContains: null, descriptionContains: null, requireLabel: "ship", enforce: false }]);
+    expect(m.warnings.some((w) => /pre_merge_checks\[0\]/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /pre_merge_checks\[1\]\.name/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /pre_merge_checks\[2\].*at least one/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /pre_merge_checks\[3\]\.name/.test(w))).toBe(true);
+  });
+
+  it("ignores a non-array and caps the list; when_paths warnings name the right field", () => {
+    const bad = parseFocusManifest({ review: { pre_merge_checks: { name: "x" } } });
+    expect(bad.review.preMergeChecks).toEqual([]);
+    expect(bad.warnings.some((w) => /pre_merge_checks.*must be a list/.test(w))).toBe(true);
+    const many = parseFocusManifest({ review: { pre_merge_checks: Array.from({ length: 60 }, (_, i) => ({ name: `c${i}`, require_label: "l" })) } });
+    expect(many.review.preMergeChecks).toHaveLength(50);
+    expect(many.warnings.some((w) => /pre_merge_checks.*capped/.test(w))).toBe(true);
+    const badWhen = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l", when_paths: "src/**" }] } });
+    expect(badWhen.warnings.some((w) => /pre_merge_checks\[0\]\.when_paths.*must be a list/.test(w))).toBe(true);
+  });
+
+  it("resolveReviewPreMergeChecks: non-null manifest passes checks through; null manifest → []", () => {
+    const manifest = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l" }] } });
+    expect(resolveReviewPreMergeChecks(manifest)).toEqual(manifest.review.preMergeChecks);
+    expect(resolveReviewPreMergeChecks(null)).toEqual([]);
   });
 });

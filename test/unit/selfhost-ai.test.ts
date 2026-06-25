@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveModel } from "../../src/selfhost/ai";
+import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveModel, routeProviders } from "../../src/selfhost/ai";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -134,6 +134,32 @@ describe("createChainAi (fallback)", () => {
     const a = { name: "a", ai: { run: async () => { throw new Error("err-a"); } } };
     const b = { name: "b", ai: { run: async () => { throw new Error("err-b"); } } };
     await expect(createChainAi([a, b]).run("m", { prompt: "x" })).rejects.toThrow(/err-b/);
+  });
+});
+
+describe("routeProviders (#dual-ai-combiner — address one provider by name for dual review)", () => {
+  const mk = (name: string) => ({ name, ai: { run: vi.fn(async () => ({ response: name })) } });
+
+  it("routes .run(<providerName>) to THAT provider; any other model id falls through to the chain (first provider)", async () => {
+    const cc = mk("claude-code");
+    const cx = mk("codex");
+    const route = routeProviders([cc, cx]);
+    expect((await route.run("codex", { prompt: "x" })).response).toBe("codex"); // direct by name
+    expect(cx.ai.run).toHaveBeenCalledTimes(1);
+    expect(cc.ai.run).not.toHaveBeenCalled();
+    expect((await route.run("@cf/some/model", { prompt: "x" })).response).toBe("claude-code"); // non-name → chain → first
+    expect((await route.run("  CODEX ", { prompt: "x" })).response).toBe("codex"); // case-insensitive + trimmed
+  });
+
+  it("the chain fallback still skips a failed provider for a non-name model id", async () => {
+    const fail = { name: "claude-code", ai: { run: vi.fn(async () => { throw new Error("down"); }) } };
+    const ok = mk("codex");
+    expect((await routeProviders([fail, ok]).run("sonnet", { prompt: "x" })).response).toBe("codex");
+  });
+
+  it("createSelfHostAi wires routing for a 2+ provider AI_PROVIDER (addressable by name)", async () => {
+    const ai = createSelfHostAi({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant", AI_BASE_URL: "http://o/v1" });
+    expect(typeof ai?.run).toBe("function");
   });
 });
 

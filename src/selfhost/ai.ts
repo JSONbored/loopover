@@ -267,8 +267,24 @@ export function buildProvider(name: string, env: Record<string, string | undefin
   }
 }
 
-/** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list builds a fallback chain
- *  (first to succeed wins). Returns undefined when unconfigured or no provider has its credential. */
+/** Wrap ≥2 providers so a caller can address ONE by name — `.run("codex", …)` runs codex specifically — which is
+ *  what lets the dual-reviewer path (#dual-ai-combiner) run Claude Code AND Codex as DISTINCT reviewers instead of
+ *  one fallback chain. Any other model id (a real model name, or an embed model for RAG) routes to the fallback
+ *  chain exactly as before — so single-AI / BYOK setups are unchanged. */
+export function routeProviders(providers: Array<{ name: string; ai: SelfHostAi }>): SelfHostAi {
+  const byName = new Map(providers.map((p) => [p.name, p.ai]));
+  const chain = createChainAi(providers);
+  return {
+    async run(model, options) {
+      const direct = byName.get(model.trim().toLowerCase());
+      return (direct ?? chain).run(model, options);
+    },
+  };
+}
+
+/** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list of TWO+ providers is addressable
+ *  by name for dual review (see `routeProviders`) and otherwise falls back through them in order; a single
+ *  provider is used directly. Returns undefined when unconfigured or no provider has its credential. */
 export function createSelfHostAi(env: Record<string, string | undefined>): SelfHostAi | undefined {
   const raw = (env.AI_PROVIDER ?? "").trim().toLowerCase();
   if (!raw) return undefined;
@@ -280,5 +296,5 @@ export function createSelfHostAi(env: Record<string, string | undefined>): SelfH
     .filter((p): p is { name: string; ai: SelfHostAi } => Boolean(p.ai));
   if (providers.length === 0) return undefined;
   if (providers.length === 1) return providers[0]?.ai;
-  return createChainAi(providers);
+  return routeProviders(providers);
 }

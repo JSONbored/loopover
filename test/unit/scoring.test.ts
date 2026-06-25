@@ -376,8 +376,12 @@ MAX_FILE_SIZE_BYTES = 1_000_000
 RECYCLE_UID = 0
 ISSUES_TREASURY_UID = 111
 MAX_ISSUE_ID = 999_999
+EMISSION_SHARE_TOLERANCE = 1e-9
 `);
     expect(operationalOnly).toEqual([]);
+    // EMISSION_SHARE_TOLERANCE is an emission-share-sum epsilon, not a scoring dimension; the parser does
+    // read its `1e-9` exponent literal (#992), so it must be excluded explicitly or it drifts forever (#809).
+    expect(operationalOnly).not.toContain("EMISSION_SHARE_TOLERANCE");
 
     const withScoringGap = findUnmodeledUpstreamConstants(`
 SECONDS_PER_DAY = 86400

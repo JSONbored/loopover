@@ -1948,6 +1948,27 @@ export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
   }
 }
 
+/** Atomic re-gate fan-out dedup (#audit-fanout-dedup): claim the global fan-out slot for this window. The
+ *  conditional UPDATE on the singleton matches only when the last fan-out is unset or older than `windowMs`. D1
+ *  serializes writes, so when a BURST of fan-out jobs runs at once (a deploy-restart cron catch-up, or fan-out
+ *  jobs that queued behind a per-PR backlog and drained together) exactly ONE wins the slot (changes === 1); the
+ *  rest get 0 changes and skip, collapsing the burst to a single effective fan-out. Fail-open on a driver error
+ *  (return true → the sweep still runs, degrading to the pre-dedup behaviour rather than stalling the fleet). */
+export async function claimRegateFanoutSlot(env: Env, now: string, windowMs: number): Promise<boolean> {
+  const threshold = new Date(Date.parse(now) - windowMs).toISOString();
+  try {
+    const result = await env.DB.prepare(
+      "UPDATE global_agent_controls SET last_regate_fanout_at = ?1 WHERE id = 'singleton' AND (last_regate_fanout_at IS NULL OR last_regate_fanout_at < ?2)",
+    )
+      .bind(now, threshold)
+      .run();
+    /* v8 ignore next -- D1 update metadata normally includes changes; the ?? 0 fallback protects driver anomalies. */
+    return Number(result.meta.changes ?? 0) === 1;
+  } catch {
+    return true;
+  }
+}
+
 /** Flip the DB-backed global kill-switch (operator emergency brake; no redeploy required). */
 export async function setGlobalAgentFrozen(env: Env, frozen: boolean, updatedBy?: string | null): Promise<void> {
   await env.DB.prepare(

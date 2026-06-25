@@ -16,6 +16,12 @@ export const SWEEP_MAX_PRS = 25;
 // approved PRs unmerged for up to an hour.
 export const SWEEP_FRESHNESS_MS = 2 * 60 * 1000;
 
+// Fan-out dedup window (#audit-fanout-dedup): a burst of fan-out jobs within this window collapses to ONE
+// effective fan-out. Kept BELOW the ~2-min cron cadence so a legitimate next-tick fan-out is never skipped, but
+// well above the few-seconds spread of a burst (a deploy-restart cron catch-up, or fan-out jobs that queued
+// behind a per-PR backlog and drained together).
+export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
+
 /**
  * Select the open PRs a single repo sweep should recompute: drop drafts and anything a webhook touched within
  * `freshnessWindowMs` of `now` (don't race an in-flight review), then take the `max` PRs the sweep has gone

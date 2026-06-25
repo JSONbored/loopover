@@ -41,6 +41,7 @@ import {
   persistAdvisory,
   markPullRequestsRegated,
   getLatestRegatedAt,
+  claimRegateFanoutSlot,
   recordAgentCommandFeedback,
   recordAuditEvent,
   recordGateBlockOutcome,
@@ -115,7 +116,7 @@ import { isAuthorizedGitHubSessionLogin, parseGitHubLoginList } from "../auth/se
 import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetection } from "../settings/command-authorization";
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
-import { isRegateSweepDraining, selectRegateCandidates } from "../settings/agent-sweep";
+import { SWEEP_FANOUT_DEDUP_MS, isRegateSweepDraining, selectRegateCandidates } from "../settings/agent-sweep";
 import { MAINTENANCE_RESERVED_HEADROOM, delayUntil, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type PlannedAgentAction } from "../settings/agent-actions";
 import { executeAgentMaintenanceActions, pendingClosureLabelApplied } from "../services/agent-action-executor";
@@ -432,8 +433,20 @@ async function fanOutRepoSignalSnapshotJobs(env: Env, requestedBy: "schedule" | 
 // sweep job for every repo that opted the agent in (an acting autonomy level). Mirrors the signal-snapshot
 // fan-out so each repo's sweep runs as its own bounded, retryable queue message.
 async function fanOutAgentRegateSweepJobs(env: Env, requestedBy: "schedule" | "api" | "test"): Promise<void> {
-  const repositories = await listRepositories(env);
   const now = nowIso();
+  // Atomic fan-out dedup (#audit-fanout-dedup): collapse a BURST of fan-out jobs to a SINGLE effective fan-out per
+  // window, so a deploy-restart cron catch-up (or fan-out jobs delayed behind a per-PR backlog then drained
+  // together) cannot each enqueue a redundant per-repo sweep before the per-repo dispatch-stamp guard engages.
+  if (!(await claimRegateFanoutSlot(env, now, SWEEP_FANOUT_DEDUP_MS))) {
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.fanout",
+      outcome: "denied",
+      detail: "re-gate fan-out deduped: another fan-out already claimed this window",
+      metadata: { requestedBy, deduped: true },
+    });
+    return;
+  }
+  const repositories = await listRepositories(env);
   const configured: string[] = [];
   let skippedDraining = 0;
   for (const repo of repositories) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  claimRegateFanoutSlot,
   countRecentDeadLetters,
   getLatestScorePreview,
   getRepoAuthorPullRequestHistory,
@@ -111,6 +112,22 @@ describe("database row parser hardening", () => {
     expect(typeof rows.find((p) => p.number === 5)?.lastRegatedAt).toBe("string");
     expect(typeof rows.find((p) => p.number === 7)?.lastRegatedAt).toBe("string");
     expect(rows.find((p) => p.number === 6)?.lastRegatedAt ?? null).toBeNull(); // #6 not in the batch → untouched
+  });
+
+  it("claimRegateFanoutSlot collapses a burst to one winner per window (#audit-fanout-dedup)", async () => {
+    const env = createTestEnv();
+    const W = 90 * 1000;
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:00.000Z", W)).toBe(true); // first claim wins (marker NULL)
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:05.000Z", W)).toBe(false); // +5s, inside window → loses
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:50.000Z", W)).toBe(false); // +50s, still inside → loses
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:31.000Z", W)).toBe(true); // +91s, outside window → wins again
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:40.000Z", W)).toBe(false); // back inside the new window → loses
+  });
+
+  it("claimRegateFanoutSlot fails open (returns true) on a DB error so the fleet never stalls", async () => {
+    const env = createTestEnv();
+    const broken = { ...env, DB: null } as unknown as typeof env;
+    expect(await claimRegateFanoutSlot(broken, "2026-06-25T01:00:00.000Z", 90 * 1000)).toBe(true);
   });
 
   it("REGRESSION: a later GitHub sync does NOT clobber last_regated_at (omitted from the upsert SET clause)", async () => {

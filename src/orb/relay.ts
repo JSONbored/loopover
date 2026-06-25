@@ -6,7 +6,28 @@
 // (the encryption key is a separate secret).
 import { hashToken } from "../auth/security";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
-import { encryptSecret } from "../utils/crypto";
+import { decryptSecret, encryptSecret } from "../utils/crypto";
+
+// The events a brokered container needs to review/act on. Installation-lifecycle + other Orb-internal events are
+// deliberately NOT forwarded (the container runs under the CENTRAL Orb App, not its own, so it must not treat
+// those as its own installation state).
+const RELAY_FORWARD_EVENTS = new Set([
+  "pull_request",
+  "pull_request_review",
+  "pull_request_review_comment",
+  "check_run",
+  "check_suite",
+  "issue_comment",
+  "issues",
+]);
+
+/** HMAC-SHA256 hex over the raw event body — the relay signature BOTH sides compute (the Orb with the decrypted
+ *  enrollment secret, the container with its own ORB_ENROLLMENT_SECRET). Web Crypto (worker + node). */
+export async function relaySignature(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export type RegisterResult =
   | { ok: true; installationId: number }
@@ -37,4 +58,41 @@ export async function registerOrbRelay(env: Env, secret: string, relayUrl: strin
     .bind(relayUrl, enc.ciphertext, enc.iv, enc.salt, row.enroll_id)
     .run();
   return { ok: true, installationId: row.installation_id };
+}
+
+/** Forward a webhook event to the brokered self-host registered for this installation. BEST-EFFORT + fail-safe:
+ *  a non-forwardable event, no registered relay, or ANY error returns without throwing (the Orb's webhook 202
+ *  stands; reliability hardening — a retry queue for a down container — is a follow-up). The body is HMAC-signed
+ *  with the container's enrollment secret (decrypted from the stored ciphertext); the container verifies with its
+ *  own ORB_ENROLLMENT_SECRET, so only the genuine Orb can drive it. */
+export async function forwardOrbEvent(
+  env: Env,
+  args: { eventName: string; installationId: number | null | undefined; deliveryId: string; rawBody: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<"forwarded" | "skipped" | "failed"> {
+  if (!args.installationId || !RELAY_FORWARD_EVENTS.has(args.eventName)) return "skipped";
+  const row = await env.DB
+    .prepare("SELECT relay_url, relay_secret_enc, relay_secret_iv, relay_secret_salt FROM orb_enrollments WHERE installation_id = ? AND state = 'enrolled' AND revoked_at IS NULL AND relay_url IS NOT NULL")
+    .bind(args.installationId)
+    .first<{ relay_url: string; relay_secret_enc: string; relay_secret_iv: string; relay_secret_salt: string | null }>();
+  if (!row || !env.TOKEN_ENCRYPTION_SECRET) return "skipped";
+  try {
+    const secret = await decryptSecret(row.relay_secret_enc, row.relay_secret_iv, env.TOKEN_ENCRYPTION_SECRET, row.relay_secret_salt);
+    const signature = await relaySignature(secret, args.rawBody);
+    const res = await fetchImpl(row.relay_url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-github-event": args.eventName,
+        "x-github-delivery": args.deliveryId,
+        "x-orb-signature-256": `sha256=${signature}`,
+        "user-agent": "gittensory-orb/0.1",
+      },
+      body: args.rawBody,
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok ? "forwarded" : "failed";
+  } catch {
+    return "failed"; // a down / unreachable container (or a decrypt/sign error) must never fail the Orb's 202
+  }
 }

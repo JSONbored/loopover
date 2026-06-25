@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
-import { registerOrbRelay } from "../../src/orb/relay";
+import { forwardOrbEvent, registerOrbRelay, relaySignature } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
@@ -91,5 +91,63 @@ describe("POST /v1/orb/relay/register", () => {
     const noEnc = createTestEnv({ ORB_BROKER_ENABLED: "true" });
     const s3 = await enroll(noEnc, 713);
     expect((await app.request("/v1/orb/relay/register", { method: "POST", headers: { authorization: `Bearer ${s3}` }, body: JSON.stringify({ relayUrl: "https://x.example/relay" }) }, noEnc)).status).toBe(500);
+  });
+});
+
+describe("relaySignature", () => {
+  it("is a deterministic 64-hex HMAC both sides can recompute (and key-dependent)", async () => {
+    expect(await relaySignature("s", "body")).toBe(await relaySignature("s", "body"));
+    expect(await relaySignature("s", "body")).not.toBe(await relaySignature("other", "body"));
+    expect(await relaySignature("s", "body")).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("forwardOrbEvent", () => {
+  const capture = (resp: Response) => {
+    const calls: { url: string; init?: RequestInit | undefined }[] = [];
+    const fetchImpl = ((u: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(u), init });
+      return Promise.resolve(resp);
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  };
+
+  it("SKIPS a non-forwardable event, a missing installation, and an enrolled install with no relay registered", async () => {
+    const e = brokeredEnv();
+    expect(await forwardOrbEvent(e, { eventName: "installation", installationId: 1, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: null, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+    await enroll(e, 801);
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 801, deliveryId: "d", rawBody: "{}" })).toBe("skipped"); // enrolled, no relay
+  });
+
+  it("FORWARDS a registered install's event, HMAC-signed with the container's secret (the container can verify)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 800);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    const { fetchImpl, calls } = capture(new Response("ok"));
+    const body = '{"action":"opened","number":7}';
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 800, deliveryId: "del-1", rawBody: body }, fetchImpl)).toBe("forwarded");
+    expect(calls[0]?.url).toBe("https://c.example/v1/orb/relay");
+    const h = calls[0]?.init?.headers as Record<string, string>;
+    expect(h["x-github-event"]).toBe("pull_request");
+    expect(h["x-github-delivery"]).toBe("del-1");
+    expect(h["x-orb-signature-256"]).toBe(`sha256=${await relaySignature(secret, body)}`); // matches what the container recomputes
+    expect(calls[0]?.init?.body).toBe(body);
+  });
+
+  it("returns FAILED (never throws) on a non-ok response or a thrown fetch — the Orb 202 always stands", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 802);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 802, deliveryId: "d", rawBody: "{}" }, (() => Promise.resolve(new Response("no", { status: 503 }))) as typeof fetch)).toBe("failed");
+    expect(await forwardOrbEvent(e, { eventName: "pull_request", installationId: 802, deliveryId: "d", rawBody: "{}" }, (() => Promise.reject(new Error("down"))) as typeof fetch)).toBe("failed");
+  });
+
+  it("SKIPS when the server's encryption secret is gone (can't decrypt the stored secret)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 803);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    const noKey = { ...e, TOKEN_ENCRYPTION_SECRET: undefined } as unknown as Env; // same DB, key removed
+    expect(await forwardOrbEvent(noKey, { eventName: "pull_request", installationId: 803, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
   });
 });

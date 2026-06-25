@@ -70,6 +70,7 @@ import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
+import { computeFleetAnalytics } from "../orb/analytics";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -143,6 +144,18 @@ const ownerRepoWindowShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   windowDays: z.number().int().positive().optional(),
+};
+
+const windowOnlyShape = {
+  windowDays: z.number().int().positive().optional(),
+};
+
+const fleetAnalyticsOutputSchema = {
+  windowDays: z.number().optional(),
+  instanceCount: z.number().optional(),
+  fleet: z.unknown().optional(),
+  instances: z.array(z.unknown()).optional(),
+  outliers: z.array(z.unknown()).optional(),
 };
 
 const loginShape = {
@@ -1056,6 +1069,17 @@ export class GittensoryMcp {
     );
 
     server.registerTool(
+      "gittensory_get_fleet_analytics",
+      {
+        description:
+          "Operator-only: aggregated gate-calibration analytics across the self-host fleet — median merge/close precision, false-positive + reversal rates, cycle-time percentiles, and per-instance outliers. Measurement only.",
+        inputSchema: windowOnlyShape,
+        outputSchema: fleetAnalyticsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getFleetAnalytics(input)),
+    );
+
+    server.registerTool(
       "gittensory_get_contributor_profile",
       {
         description: "Return an evidence-backed Gittensory contributor profile for a GitHub login.",
@@ -1919,6 +1943,25 @@ export class GittensoryMcp {
     const report = await buildRepoOutcomeCalibration(this.env, fullName, input.windowDays);
     return {
       summary: outcomeCalibrationSummary(fullName, report.slop),
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  // Operator-only gate: the fleet view aggregates ALL self-hosters' calibration, so a session must be an
+  // operator; private-token / static identities are trusted (the same model as the other measurement tools).
+  private async requireOperatorAccess(): Promise<void> {
+    if (this.identity.kind !== "session") return;
+    const scope = await this.loadSessionAccessScope();
+    if (scope.operator) return;
+    throw new Error("Forbidden: operator authority is required for fleet analytics.");
+  }
+
+  private async getFleetAnalytics(input: { windowDays?: number | undefined }): Promise<ToolPayload> {
+    await this.requireOperatorAccess();
+    const report = await computeFleetAnalytics(this.env, input.windowDays !== undefined ? { windowDays: input.windowDays } : {});
+    const merge = report.fleet.mergePrecision !== null ? `${Math.round(report.fleet.mergePrecision * 100)}%` : "n/a";
+    return {
+      summary: `Fleet calibration over ${report.windowDays}d: ${report.instanceCount} instance(s), median merge precision ${merge}, ${report.outliers.length} outlier(s).`,
       data: report as unknown as Record<string, unknown>,
     };
   }

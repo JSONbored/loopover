@@ -25,6 +25,7 @@ import type {
   ScoringModelSnapshotRecord,
   WeeklyValueReport,
 } from "../types";
+import { computeFleetAnalytics, type FleetAnalytics } from "../orb/analytics";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
 import { buildRecommendationQualityReport, type RecommendationQualityReport } from "./recommendation-quality-report";
@@ -57,6 +58,7 @@ export type OperatorDashboardPayload = {
   registry: RegistrySnapshot | null;
   scoringModel: ScoringModelSnapshotRecord | null;
   upstreamDrift: UpstreamStatus;
+  fleetMetrics: FleetAnalytics;
 };
 
 const USAGE_WINDOW_DAYS = 7;
@@ -79,6 +81,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     mcpCompatibilityAdoption,
     commandUsefulness,
     recommendationQuality,
+    fleetMetrics,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -95,6 +98,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     summarizeMcpCompatibilityAdoption(env, usageSince),
     getCommandUsefulnessSummary(env),
     buildRecommendationQualityReport(env, { windowDays: 90 }),
+    computeFleetAnalytics(env, { windowDays: 90 }),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -145,6 +149,16 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
         delta: "current health cache",
       },
       { label: "Rate-limit events", value: String(rateLimits.length), delta: "latest observations" },
+      {
+        label: "Fleet instances",
+        value: String(fleetMetrics.instanceCount),
+        delta: fleetMetrics.outliers.length > 0 ? `${fleetMetrics.outliers.length} outlier(s)` : "self-host fleet",
+      },
+      {
+        label: "Fleet merge precision",
+        value: fleetMetrics.fleet.mergePrecision !== null ? `${Math.round(fleetMetrics.fleet.mergePrecision * 100)}%` : "—",
+        delta: "median across the fleet",
+      },
     ],
     noiseReduction: [
       {
@@ -177,6 +191,7 @@ export async function buildOperatorDashboardPayload(env: Env): Promise<OperatorD
     registry,
     scoringModel: scoring,
     upstreamDrift,
+    fleetMetrics,
   };
 }
 

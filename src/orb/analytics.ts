@@ -91,6 +91,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
 
   let cells: Cell[] = [];
   let cycle: number[] = [];
+  let registered = new Set<string>();
   try {
     const matrix = await env.DB
       .prepare(
@@ -106,6 +107,10 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       .bind(cutoff)
       .all<{ ms: number }>();
     cycle = (cy.results ?? []).map((r) => r.ms);
+    // The fleet trust gate: only operator-registered instances count toward the median (open ingest stores
+    // everyone's signals, but a stranger can't move calibration until a human opts them in — #1255).
+    const reg = await env.DB.prepare(`SELECT instance_id FROM orb_instances WHERE registered = 1`).all<{ instance_id: string }>();
+    registered = new Set((reg.results ?? []).map((r) => r.instance_id));
   } catch {
     return { windowDays, instanceCount: 0, fleet: { mergePrecision: null, closePrecision: null, fpRate: null, reversalRate: null, cycleP50Ms: null, cycleP95Ms: null }, instances: [], outliers: [] };
   }
@@ -119,8 +124,9 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   }
   const instances = [...byInstance.entries()].map(([id, cs]) => foldInstance(id, cs)).sort((a, b) => a.instanceId.localeCompare(b.instanceId));
 
-  // Fleet = median across instances with enough volume (robust to a single bad contributor).
-  const eligible = instances.filter((i) => i.decided >= MIN_DECIDED);
+  // Fleet = median across REGISTERED instances with enough volume (robust to a single bad contributor and
+  // to unregistered/untrusted senders — registration is the fleet's trust anchor).
+  const eligible = instances.filter((i) => i.decided >= MIN_DECIDED && registered.has(i.instanceId));
   const nums = (sel: (i: InstanceMetrics) => number | null): number[] => eligible.map(sel).filter((v): v is number => v !== null);
   const fleetMergeP = median(nums((i) => i.mergePrecision));
   const fleetCloseP = median(nums((i) => i.closePrecision));

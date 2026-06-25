@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { handleOrbIngest } from "../../src/orb/ingest";
+import { handleOrbIngest, MAX_ORB_INGEST_BODY_BYTES, readOrbIngestBody } from "../../src/orb/ingest";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 describe("handleOrbIngest()", () => {
@@ -127,6 +127,61 @@ describe("handleOrbIngest()", () => {
     const db = { prepare: () => ({ bind: () => ({ run: () => Promise.resolve({ meta: { changes: 0 } }) }) }) } as unknown as D1Database;
     expect(await ingest(db, [ev()])).toEqual({ accepted: 0 });
   });
+
+  it("records the instance on first contact (registered=0) and bumps last_seen on re-ingest", async () => {
+    const db = makeDb();
+    await ingest(db, [ev({ pr_hash: "i1" })], "instX");
+    const row = await (db as unknown as TestD1Database)
+      .prepare("SELECT registered, first_seen_at, last_seen_at FROM orb_instances WHERE instance_id=?")
+      .bind("instX")
+      .first<{ registered: number; first_seen_at: string; last_seen_at: string }>();
+    expect(row?.registered).toBe(0); // not trusted until an operator registers it
+    await ingest(db, [ev({ pr_hash: "i2" })], "instX"); // same instance again → still one row
+    const cnt = await (db as unknown as TestD1Database).prepare("SELECT COUNT(*) AS n FROM orb_instances WHERE instance_id=?").bind("instX").first<{ n: number }>();
+    expect(cnt?.n).toBe(1);
+  });
+
+  it("does not fail ingest if the instance bookkeeping upsert throws", async () => {
+    // First prepare() (orb_instances upsert) rejects; ingest must still process the batch best-effort.
+    let call = 0;
+    const db = {
+      prepare: (sql: string) => {
+        call++;
+        if (sql.includes("orb_instances")) return { bind: () => ({ run: () => Promise.reject(new Error("boom")) }) };
+        return new TestD1Database().prepare(sql);
+      },
+    } as unknown as D1Database;
+    expect(await ingest(db, [ev()])).toBeTruthy();
+    expect(call).toBeGreaterThan(0);
+  });
+});
+
+describe("readOrbIngestBody()", () => {
+  const reqWithBody = (body: BodyInit, headers?: Record<string, string>) =>
+    new Request("http://collector/v1/orb/ingest", { method: "POST", body, ...(headers ? { headers } : {}) });
+
+  it("reads a normal body", async () => {
+    expect(await readOrbIngestBody(reqWithBody("hello"), "5")).toBe("hello");
+  });
+
+  it("returns '' when there is no request body", async () => {
+    expect(await readOrbIngestBody(new Request("http://collector", { method: "POST" }), null)).toBe("");
+  });
+
+  it("rejects (null) when the declared content-length exceeds the cap — without reading", async () => {
+    expect(await readOrbIngestBody(reqWithBody("tiny"), String(MAX_ORB_INGEST_BODY_BYTES + 1))).toBeNull();
+  });
+
+  it("ignores a non-numeric content-length and reads normally", async () => {
+    expect(await readOrbIngestBody(reqWithBody("ok"), "not-a-number")).toBe("ok");
+  });
+
+  it("rejects (null) when the streamed body exceeds the cap with no declared length", async () => {
+    const big = new Uint8Array(MAX_ORB_INGEST_BODY_BYTES + 8);
+    const stream = new ReadableStream<Uint8Array>({ start(ctrl) { ctrl.enqueue(big); ctrl.close(); } });
+    const req = new Request("http://collector", { method: "POST", body: stream, ...({ duplex: "half" } as object) });
+    expect(await readOrbIngestBody(req, null)).toBeNull();
+  });
 });
 
 describe("POST /v1/orb/ingest route", () => {
@@ -149,6 +204,66 @@ describe("POST /v1/orb/ingest route", () => {
   it("returns 400 for an empty body", async () => {
     const res = await app.request("/v1/orb/ingest", { method: "POST", body: "" }, createTestEnv());
     expect(res.status).toBe(400);
+  });
+
+  it("returns 413 when the body exceeds the ingest byte ceiling", async () => {
+    const huge = "x".repeat(MAX_ORB_INGEST_BODY_BYTES + 16);
+    const res = await app.request("/v1/orb/ingest", { method: "POST", body: huge }, createTestEnv());
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
+  });
+});
+
+describe("Orb instance registry routes (/v1/internal/orb/instances)", () => {
+  const app = createApp();
+  const auth = { authorization: "Bearer dev-internal-token" };
+  const ingestOne = (env: Env, instance: string) =>
+    app.request("/v1/orb/ingest", { method: "POST", body: JSON.stringify({ instance_id: instance, events: [{ repo_hash: "r", pr_hash: `${instance}-p`, outcome: "merged" }] }) }, env);
+
+  it("lists ingested instances as unregistered with their stored-signal count", async () => {
+    const env = createTestEnv();
+    await ingestOne(env, "inst-a");
+    const res = await app.request("/v1/internal/orb/instances", { headers: auth }, env);
+    expect(res.status).toBe(200);
+    const { instances } = (await res.json()) as { instances: Array<{ instanceId: string; registered: boolean; signalCount: number }> };
+    expect(instances).toEqual([expect.objectContaining({ instanceId: "inst-a", registered: false, signalCount: 1 })]);
+  });
+
+  it("401 without the internal token", async () => {
+    expect((await app.request("/v1/internal/orb/instances", {}, createTestEnv())).status).toBe(401);
+  });
+
+  it("registers an instance (and can unregister it)", async () => {
+    const env = createTestEnv();
+    await ingestOne(env, "inst-b");
+    const reg = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({ instanceId: "inst-b" }) }, env);
+    expect(((await reg.json()) as { registered: boolean }).registered).toBe(true);
+    const off = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({ instanceId: "inst-b", registered: false }) }, env);
+    expect(((await off.json()) as { registered: boolean }).registered).toBe(false);
+  });
+
+  it("registers an instance that has not ingested yet (upsert)", async () => {
+    const env = createTestEnv();
+    const reg = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({ instanceId: "never-seen" }) }, env);
+    expect(reg.status).toBe(200);
+    const list = (await (await app.request("/v1/internal/orb/instances", { headers: auth }, env)).json()) as { instances: Array<{ instanceId: string; registered: boolean }> };
+    expect(list.instances).toEqual([expect.objectContaining({ instanceId: "never-seen", registered: true })]);
+  });
+
+  it("400 when instanceId is missing", async () => {
+    const res = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: JSON.stringify({}) }, createTestEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("400 on a non-JSON register body (json().catch → null)", async () => {
+    const res = await app.request("/v1/internal/orb/instances/register", { method: "POST", headers: auth, body: "{bad" }, createTestEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it("tolerates a list query that omits results (rows.results ?? [])", async () => {
+    const env = { ...createTestEnv(), DB: { prepare: () => ({ all: () => Promise.resolve({}) }) } } as unknown as Env;
+    const res = await app.request("/v1/internal/orb/instances", { headers: auth }, env);
+    expect(((await res.json()) as { instances: unknown[] }).instances).toEqual([]);
   });
 });
 

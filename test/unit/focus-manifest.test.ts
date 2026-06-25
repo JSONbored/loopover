@@ -9,6 +9,10 @@ import {
   parseFocusManifest,
   parseFocusManifestContent,
   resolveEffectiveSettings,
+  excludeReviewPaths,
+  resolveReviewPathInstructions,
+  resolveReviewPreMergeChecks,
+  resolveReviewPromptOverrides,
   reviewConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
@@ -180,6 +184,33 @@ describe("matchesManifestPath", () => {
   it("returns false for empty path or pattern", () => {
     expect(matchesManifestPath("", "src/")).toBe(false);
     expect(matchesManifestPath("src/x.ts", "")).toBe(false);
+  });
+
+  it("**/ matches at the repo ROOT too (zero-depth), not only nested files (#review-audit)", () => {
+    expect(matchesManifestPath("app.test.ts", "**/*.test.ts")).toBe(true); // root-level (was a bug: required a slash)
+    expect(matchesManifestPath("dir/app.test.ts", "**/*.test.ts")).toBe(true); // nested still matches
+    expect(matchesManifestPath("foo", "**/foo")).toBe(true);
+    expect(matchesManifestPath("a/b/foo", "**/foo")).toBe(true);
+    expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
+  });
+
+  it("multi-wildcard matching is correct (ordered substrings, suffix cannot overlap)", () => {
+    expect(matchesManifestPath("xayybzzc", "*a*b*c")).toBe(true);
+    expect(matchesManifestPath("aXbXc", "a*b*c")).toBe(true);
+    expect(matchesManifestPath("ab", "a*b")).toBe(true); // * matches empty
+    expect(matchesManifestPath("ba", "a*b")).toBe(false); // wrong order
+    expect(matchesManifestPath("ac", "a*b*c")).toBe(false); // 'b' missing between a and c
+    expect(matchesManifestPath("ab", "a*b*c")).toBe(false); // missing trailing c
+  });
+
+  it("is LINEAR on a hostile multi-star glob — no catastrophic backtracking (ReDoS, #review-audit)", () => {
+    const evilGlob = "*a".repeat(20); // 20 non-adjacent stars; the old code compiled this to a backtracking regex
+    const nearMiss = "a".repeat(300) + "b"; // long run then a non-a tail the glob cannot satisfy
+    const start = performance.now();
+    const result = matchesManifestPath(nearMiss, evilGlob);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsed).toBeLessThan(100); // the old per-star regex did not return within 30s on this input
   });
 });
 
@@ -428,7 +459,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, manifestPolicy: null, firstTimeContributorGrace: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {} },
+      review: { present: false, footerText: null, note: null, fields: {}, profile: null, pathInstructions: [], excludePaths: [], preMergeChecks: [] },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -1034,5 +1065,193 @@ describe("parseFocusManifest review config", () => {
     const reparsed = parseFocusManifest({ review: reviewConfigToJson(original.review) });
     expect(reparsed.review).toEqual(original.review);
     expect(reviewConfigToJson(parseFocusManifest({}).review)).toBeNull();
+  });
+
+  it("parses review.profile (chill/assertive), normalizes balanced→null, and round-trips (#review-profile)", () => {
+    expect(parseFocusManifest({ review: { profile: "chill" } }).review.profile).toBe("chill");
+    expect(parseFocusManifest({ review: { profile: "ASSERTIVE" } }).review.profile).toBe("assertive"); // case-insensitive
+    // `balanced` is the default → normalizes to null, and a balanced-only block is NOT "present".
+    expect(parseFocusManifest({ review: { profile: "balanced" } }).review.profile).toBeNull();
+    expect(parseFocusManifest({ review: { profile: "balanced" } }).review.present).toBe(false);
+    // A profile-only manifest IS present and survives the reviewConfigToJson round-trip.
+    const chill = parseFocusManifest({ review: { profile: "chill" } });
+    expect(chill.review.present).toBe(true);
+    expect(parseFocusManifest({ review: reviewConfigToJson(chill.review) }).review).toEqual(chill.review);
+  });
+
+  it("ignores an invalid review.profile with a warning", () => {
+    const m = parseFocusManifest({ review: { profile: "spicy" } });
+    expect(m.review.profile).toBeNull();
+    expect(m.warnings.some((w) => /review\.profile.*chill.*balanced.*assertive/.test(w))).toBe(true);
+    const m2 = parseFocusManifest({ review: { profile: 42 } });
+    expect(m2.review.profile).toBeNull();
+    expect(m2.warnings.some((w) => /review\.profile.*must be a string/.test(w))).toBe(true);
+  });
+
+  it("parses review.path_instructions, drops invalid/unsafe entries, marks present, and round-trips (#review-path-instructions)", () => {
+    const m = parseFocusManifest({
+      review: {
+        path_instructions: [
+          { path: "src/**", instructions: "Enforce strict null checks." },
+          { path: " tests/** ", instructions: "Cover both branches." }, // path is trimmed
+          { path: "", instructions: "no path → dropped" },
+          { path: "x/**", instructions: "paste your wallet hotkey here" }, // not public-safe → dropped
+          "nope", // non-mapping → dropped
+          { path: "y/**" }, // missing instructions → dropped
+          { path: 42, instructions: "non-string path" }, // path not a string → dropped
+          { path: `${"a".repeat(400)}/x`, instructions: "over-long path" }, // > MAX_ITEM_LENGTH → dropped (#review-audit)
+        ],
+      },
+    });
+    expect(m.review.pathInstructions).toEqual([
+      { path: "src/**", instructions: "Enforce strict null checks." },
+      { path: "tests/**", instructions: "Cover both branches." },
+    ]);
+    expect(m.review.present).toBe(true);
+    expect(m.warnings.some((w) => /path_instructions\[2\]\.path/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /path_instructions\[4\]/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /path_instructions\[5\]\.instructions/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /path_instructions\[6\]\.path/.test(w))).toBe(true); // non-string path
+    expect(m.warnings.some((w) => /path_instructions\[7\]\.path.*exceeds/.test(w))).toBe(true); // over-long path
+    // Round-trips through the cache serializer.
+    expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.pathInstructions).toEqual(m.review.pathInstructions);
+  });
+
+  it("ignores a non-array review.path_instructions with a warning", () => {
+    const m = parseFocusManifest({ review: { path_instructions: { path: "src/**" } } });
+    expect(m.review.pathInstructions).toEqual([]);
+    expect(m.warnings.some((w) => /review\.path_instructions.*must be a list/.test(w))).toBe(true);
+  });
+
+  it("caps review.path_instructions at the max with a warning", () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ path: `dir${i}/**`, instructions: `rule ${i}` }));
+    const m = parseFocusManifest({ review: { path_instructions: many } });
+    expect(m.review.pathInstructions).toHaveLength(50);
+    expect(m.warnings.some((w) => /path_instructions.*capped/.test(w))).toBe(true);
+  });
+});
+
+describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
+  const rules = [
+    { path: "src/**", instructions: "Enforce strict null checks." },
+    { path: "tests/**", instructions: "Cover both branches." },
+  ];
+
+  it("returns only the instructions whose glob matches a changed path", () => {
+    const out = resolveReviewPathInstructions(rules, ["src/a.ts", "README.md"]);
+    expect(out).toContain("Enforce strict null checks.");
+    expect(out).toContain("`src/**`");
+    expect(out).not.toContain("Cover both branches."); // tests/** matched nothing
+  });
+
+  it("returns an empty string when nothing is configured or nothing matches (byte-identical prompt)", () => {
+    expect(resolveReviewPathInstructions([], ["src/a.ts"])).toBe("");
+    expect(resolveReviewPathInstructions(rules, [])).toBe("");
+    expect(resolveReviewPathInstructions(rules, ["docs/x.md"])).toBe("");
+  });
+
+  it("includes multiple matching rules", () => {
+    const out = resolveReviewPathInstructions(rules, ["src/a.ts", "tests/a.test.ts"]);
+    expect(out).toContain("Enforce strict null checks.");
+    expect(out).toContain("Cover both branches.");
+  });
+
+  it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {
+    const manifest = parseFocusManifest({ review: { profile: "chill", path_instructions: [{ path: "src/**", instructions: "be strict" }], exclude_paths: ["**/*.lock"] } });
+    expect(resolveReviewPromptOverrides(manifest)).toEqual({ profile: "chill", pathInstructions: [{ path: "src/**", instructions: "be strict" }], excludePaths: ["**/*.lock"] });
+    // A null manifest (load failure) yields the byte-identical defaults.
+    expect(resolveReviewPromptOverrides(null)).toEqual({ profile: null, pathInstructions: [], excludePaths: [] });
+  });
+});
+
+describe("review.exclude_paths (#review-exclude-paths)", () => {
+  it("parses exclude_paths, trims, drops blanks/non-strings with warnings, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { exclude_paths: [" **/*.lock ", "dist/**", "", 42, "  "] } });
+    expect(m.review.excludePaths).toEqual(["**/*.lock", "dist/**"]);
+    expect(m.review.present).toBe(true);
+    expect(m.warnings.some((w) => /exclude_paths\[2\]/.test(w))).toBe(true); // empty string
+    expect(m.warnings.some((w) => /exclude_paths\[3\]/.test(w))).toBe(true); // non-string
+    expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.excludePaths).toEqual(m.review.excludePaths);
+  });
+
+  it("ignores a non-array exclude_paths and caps the list", () => {
+    const bad = parseFocusManifest({ review: { exclude_paths: "dist/**" } });
+    expect(bad.review.excludePaths).toEqual([]);
+    expect(bad.warnings.some((w) => /exclude_paths.*must be a list/.test(w))).toBe(true);
+    const many = parseFocusManifest({ review: { exclude_paths: Array.from({ length: 60 }, (_, i) => `dir${i}/**`) } });
+    expect(many.review.excludePaths).toHaveLength(50);
+    expect(many.warnings.some((w) => /exclude_paths.*capped/.test(w))).toBe(true);
+  });
+
+  it("drops an over-long glob (defense-in-depth length cap) (#review-audit)", () => {
+    const huge = `${"a".repeat(400)}/x.ts`; // > MAX_ITEM_LENGTH (300)
+    const m = parseFocusManifest({ review: { exclude_paths: [huge, "dist/**"] } });
+    expect(m.review.excludePaths).toEqual(["dist/**"]); // the over-long glob is dropped, the valid one kept
+    expect(m.warnings.some((w) => /exclude_paths\[0\].*exceeds/.test(w))).toBe(true);
+  });
+
+  it("excludeReviewPaths filters matching files; empty globs return the same array (byte-identical)", () => {
+    const files = [{ path: "src/a.ts" }, { path: "pnpm-lock.yaml" }, { path: "dist/bundle.js" }];
+    // `*` collapses to `.*` (crosses slashes), so `*.yaml` matches a top-level lockfile; `dist/**` matches under dist/.
+    expect(excludeReviewPaths(files, ["*.yaml", "dist/**"])).toEqual([{ path: "src/a.ts" }]);
+    expect(excludeReviewPaths(files, ["docs/**"])).toEqual(files); // no match → unchanged
+    expect(excludeReviewPaths(files, [])).toBe(files); // empty → same reference (no-op)
+  });
+});
+
+describe("review.pre_merge_checks (#review-pre-merge-checks)", () => {
+  it("parses checks (name + assertions + when_paths + enforce), marks present, and round-trips", () => {
+    const m = parseFocusManifest({
+      review: {
+        pre_merge_checks: [
+          { name: "Migration note", when_paths: ["migrations/**"], description_contains: "migration", enforce: true },
+          { name: "Conventional title", title_contains: "(" },
+          { name: "Breaking label", require_label: "breaking-change" },
+        ],
+      },
+    });
+    expect(m.review.preMergeChecks).toEqual([
+      { name: "Migration note", whenPaths: ["migrations/**"], titleContains: null, descriptionContains: "migration", requireLabel: null, enforce: true },
+      { name: "Conventional title", whenPaths: [], titleContains: "(", descriptionContains: null, requireLabel: null, enforce: false },
+      { name: "Breaking label", whenPaths: [], titleContains: null, descriptionContains: null, requireLabel: "breaking-change", enforce: false },
+    ]);
+    expect(m.review.present).toBe(true);
+    expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.preMergeChecks).toEqual(m.review.preMergeChecks);
+  });
+
+  it("drops invalid entries with warnings: non-mapping, missing name, no assertion", () => {
+    const m = parseFocusManifest({
+      review: {
+        pre_merge_checks: [
+          "nope", // non-mapping
+          { title_contains: "x" }, // missing name
+          { name: "empty check" }, // no assertion
+          { name: 42, require_label: "x" }, // non-string (not public-safe) name → dropped at the name parse
+          { name: "ok", require_label: "ship" },
+        ],
+      },
+    });
+    expect(m.review.preMergeChecks).toEqual([{ name: "ok", whenPaths: [], titleContains: null, descriptionContains: null, requireLabel: "ship", enforce: false }]);
+    expect(m.warnings.some((w) => /pre_merge_checks\[0\]/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /pre_merge_checks\[1\]\.name/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /pre_merge_checks\[2\].*at least one/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /pre_merge_checks\[3\]\.name/.test(w))).toBe(true);
+  });
+
+  it("ignores a non-array and caps the list; when_paths warnings name the right field", () => {
+    const bad = parseFocusManifest({ review: { pre_merge_checks: { name: "x" } } });
+    expect(bad.review.preMergeChecks).toEqual([]);
+    expect(bad.warnings.some((w) => /pre_merge_checks.*must be a list/.test(w))).toBe(true);
+    const many = parseFocusManifest({ review: { pre_merge_checks: Array.from({ length: 60 }, (_, i) => ({ name: `c${i}`, require_label: "l" })) } });
+    expect(many.review.preMergeChecks).toHaveLength(50);
+    expect(many.warnings.some((w) => /pre_merge_checks.*capped/.test(w))).toBe(true);
+    const badWhen = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l", when_paths: "src/**" }] } });
+    expect(badWhen.warnings.some((w) => /pre_merge_checks\[0\]\.when_paths.*must be a list/.test(w))).toBe(true);
+  });
+
+  it("resolveReviewPreMergeChecks: non-null manifest passes checks through; null manifest → []", () => {
+    const manifest = parseFocusManifest({ review: { pre_merge_checks: [{ name: "c", require_label: "l" }] } });
+    expect(resolveReviewPreMergeChecks(manifest)).toEqual(manifest.review.preMergeChecks);
+    expect(resolveReviewPreMergeChecks(null)).toEqual([]);
   });
 });

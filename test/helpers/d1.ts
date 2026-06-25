@@ -57,6 +57,11 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
         return undefined;
       },
     } as unknown as Queue,
+    WEBHOOKS: {
+      async send() {
+        return undefined;
+      },
+    } as unknown as Queue,
     GITHUB_APP_ID: "3824093",
     GITHUB_APP_SLUG: "gittensory",
     GITTENSOR_UPSTREAM_REPO: "entrius/gittensor",

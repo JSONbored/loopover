@@ -1,0 +1,101 @@
+# Grafana Loki — monolithic / single-binary config for gittensory self-host.
+# Verified against Loki v3.7.x (latest stable, June 2026): TSDB store + schema v13,
+# filesystem object store (no S3), compactor-driven retention, structured metadata on.
+#
+# Activated via: docker compose --profile observability up -d
+# All state lives under /loki (the loki-data named volume).
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # Keep logs quiet on a small host; bump to debug only when troubleshooting.
+  log_level: info
+  # Bounded request sizes for a single small instance.
+  grpc_server_max_recv_msg_size: 8388608   # 8 MiB
+  grpc_server_max_send_msg_size: 8388608   # 8 MiB
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+# TSDB is the current Loki index (default since 2.8). schema v13 is required for
+# structured metadata (chunk format v4). Do NOT use the stale boltdb-shipper / v11.
+schema_config:
+  configs:
+    - from: 2024-04-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+  filesystem:
+    directory: /loki/chunks
+
+# Retention is performed by the compactor (table_manager is deprecated).
+# delete_request_store is REQUIRED whenever retention_enabled is true.
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+limits_config:
+  # Global retention: 14 days (336h). Minimum allowed is 24h.
+  retention_period: 336h
+  # Required for Promtail's structured_metadata stage (level/event metadata).
+  allow_structured_metadata: true
+  # Bound cardinality / ingest on a small self-host host.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_streams_per_user: 5000
+  max_label_names_per_series: 20
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h        # 7d
+  max_query_length: 721h                   # ~30d ceiling on a single query
+  max_query_parallelism: 16
+  volume_enabled: true
+
+querier:
+  max_concurrent: 4
+
+# Disable phone-home analytics on a self-hosted box.
+analytics:
+  reporting_enabled: false
+
+# Use the embedded cache (no external memcached) on a single small instance.
+query_range:
+  align_queries_with_step: true
+  cache_results: true
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+# Local ruler dir so Loki doesn't error on a missing rules backend (no rules shipped).
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /loki/rules-tmp
+  enable_api: true

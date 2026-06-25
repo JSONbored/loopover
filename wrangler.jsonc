@@ -86,6 +86,11 @@
     // reviewer prompt byte-identical. Even when ON it is inert until a repo's vector index is populated (the
     // index-population job + cron is a deploy-time follow-up; a cold/missing index degrades to no context).
     "GITTENSORY_REVIEW_RAG": "true",
+    // Convergence (content/registry SURFACE LANE): when truthy AND the repo is in GITTENSORY_REVIEW_REPOS, the
+    // deterministic, AI-FREE surface review drives the gate for registry-submission PRs (metagraphed). Default
+    // OFF (false): the processor takes no new branch + resolves no files, so the gate disposition is byte-
+    // identical until deliberately enabled per-repo. See review/content-lane-wire.
+    "GITTENSORY_REVIEW_CONTENT_LANE": "false",
     // Convergence (self-improve / auto-tune): run the ported self-improvement loop on the cron tick over
     // gittensory's own review-outcome data — compute tuning recommendations, SHADOW-SOAK any strictly-
     // tightening one, and AUTO-PROMOTE it to live ONLY after the soak window passes the gate; every action is
@@ -94,6 +99,10 @@
     // identical to today. Config-application (reading a promoted override into the live gate) is a deferred
     // follow-up — see src/review/selftune-wire.ts.
     "GITTENSORY_REVIEW_SELFTUNE": "false",
+    // Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
+    // through to the existing mention path (byte-identical). ON → a MAINTAINER comment of `@gittensory plan` on
+    // an issue generates an implementation plan from the issue text via Workers AI and posts it as a comment.
+    "GITTENSORY_REVIEW_PLANNER": "false",
     // Convergence (port): public OAuth draft-submission flow ported from reviewbot. Default OFF — every
     // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
     // DRAFT_TOKEN_ENCRYPTION_SECRET worker secret + GITHUB_OAUTH_CLIENT_SECRET to be set.
@@ -120,9 +129,11 @@
     // Duplicate-winner adjudication (#dup-winner): when a same-issue cluster of OPEN PRs forms, spare exactly
     // ONE winner — the lowest-numbered (earliest opened) open PR — instead of blocking/closing every sibling.
     // Only the LOSERS get the duplicate blocker + close reason + slop penalty + panel block; the winner is
-    // judged on its own merits. DEFAULT OFF — flag-OFF every duplicate sibling dies (today's behavior,
-    // byte-identical). See src/signals/duplicate-winner.ts.
-    "GITTENSORY_DUPLICATE_WINNER": "false",
+    // judged on its own merits. See src/signals/duplicate-winner.ts. ENABLED (#dup-winner-enable): a live
+    // dry-run audit found the flag-OFF behavior closing EVERY sibling of a duplicate cluster (e.g. #1648 AND
+    // #1695 both closed) — the opposite of "spare one good PR". With it ON, the earliest open PR in a cluster
+    // is judged on its merits and only the true duplicates close.
+    "GITTENSORY_DUPLICATE_WINNER": "true",
   },
   "routes": [
     {
@@ -199,15 +210,42 @@
         "binding": "JOBS",
         "queue": "gittensory-jobs",
       },
+      {
+        // Dedicated lane for incoming github-webhook jobs so a burst of heavy maintenance work (the re-gate
+        // sweep, backfills, rag-index, snapshots) on the shared `gittensory-jobs` queue can never starve real
+        // GitHub events into the DLQ. Webhooks get their own consumer concurrency + retry budget. (#audit-webhook-queue)
+        "binding": "WEBHOOKS",
+        "queue": "gittensory-webhooks",
+      },
     ],
     "consumers": [
       {
-        "queue": "gittensory-jobs",
-        "max_batch_size": 10,
-        "max_batch_timeout": 5,
-        // After max_retries failed attempts a job is dead-lettered so a persistently-failing webhook
-        // is observable rather than vanishing silently. The DLQ consumer below picks them up.
+        // Webhook lane: small/fast batches so a real PR event is dispatched promptly, isolated from the
+        // maintenance lane's throughput. Its own DLQ keeps a failing webhook observable + replayable (PR2).
+        "queue": "gittensory-webhooks",
+        "max_batch_size": 5,
+        "max_batch_timeout": 1,
         "max_retries": 3,
+        "dead_letter_queue": "gittensory-webhooks-dlq",
+      },
+      {
+        // Maintenance lane: the re-gate sweep, backfills, rag-index, snapshots. Webhooks have their own lane
+        // (above), so this lane is bounded to keep a heavy/retrying batch from re-saturating the consumer and
+        // amplifying GitHub-rate pressure (the metagraphed-dry-run overload). (#audit-bound-lane)
+        //  - max_batch_size 5 (was 10): one batch can't bundle as many heavy sweep/backfill jobs at once.
+        //  - max_concurrency 3: bounded fan-out — enough to drain metagraphed's worst sweep within the 2-min
+        //    cron interval, but not so wide it floods the shared GitHub installation rate bucket. (A follow-up
+        //    may tighten this to 2 once the sweep fans into tiny per-PR jobs.)
+        //  - retry_delay 30: a failed job backs off 30s instead of re-delivering immediately and re-hammering
+        //    the already-overloaded path.
+        "queue": "gittensory-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 5,
+        "max_concurrency": 3,
+        // After max_retries failed attempts a job is dead-lettered so a persistently-failing job is observable
+        // rather than vanishing silently. The DLQ consumer below picks them up.
+        "max_retries": 3,
+        "retry_delay": 30,
         "dead_letter_queue": "gittensory-jobs-dlq",
       },
       {
@@ -216,6 +254,15 @@
         // further retries (the job already failed max_retries times). max_retries: 0 prevents the
         // DLQ consumer itself from sending messages to a secondary DLQ on handler error.
         "queue": "gittensory-jobs-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 0,
+      },
+      {
+        // Webhook-lane DLQ consumer (#1276): a dead-lettered github-webhook carries a real GitHub event that
+        // GitHub will not redeliver, so processDlqBatch audits it AND re-drives it once onto the webhook lane
+        // (bounded by the `redriven` marker). max_retries: 0 — a DLQ message must never re-loop the DLQ.
+        "queue": "gittensory-webhooks-dlq",
         "max_batch_size": 10,
         "max_batch_timeout": 30,
         "max_retries": 0,

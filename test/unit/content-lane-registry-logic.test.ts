@@ -1,25 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
-  assessCandidateDocument,
+  assessSurfaceEntry,
+  assessSubnetDocument,
   assessFreshness,
   assessProviderDocument,
-  candidateRegistryKey,
-  classifyPrScope,
+  classifyRegistryPrScope,
+  isRegistrySubmissionScope,
+  METAGRAPHED_LANE_SPEC,
+  type RegistryLaneSpec,
   computeGrounding,
   containsSecretLikeText,
   deriveRegistryIdentityTokens,
   functionalRequired,
   isAllowedChain,
   isBaseLayerKind,
-  isDirectSubmissionScope,
   isInternalAutomationBranch,
   isNonEmptyStructuredBody,
   netuidGroundingRegex,
   normalizePublicUrl,
   probeFunctionalSurface,
   registrableDomain,
-  registryDedupKeys,
-  registryUrls,
   surfaceMatchesRegistryIdentity,
   toCoreVerdict,
 } from "../../src/review/content-lane/registry-logic";
@@ -101,51 +101,105 @@ describe("computeGrounding", () => {
   });
 });
 
-describe("assessCandidateDocument", () => {
-  const ok = {
-    candidate: { netuid: 14, kind: "subnet-api", url: "https://api.cacheon.ai", source_url: "https://github.com/cacheon/x", public_safe: true },
-  };
+describe("assessSurfaceEntry (surface model — netuid supplied from the document root)", () => {
+  // A surface entry OMITS netuid (it lives at the subnet-document root); the validator receives it as a param.
+  const ok = { kind: "subnet-api", url: "https://api.example.ai", source_url: "https://github.com/x/y", public_safe: true };
 
-  it("merges a clean public candidate", () => {
-    expect(assessCandidateDocument(ok).verdict).toBe("merged");
+  it("merges a clean public surface entry", () => {
+    expect(assessSurfaceEntry(ok, 14).verdict).toBe("merged");
   });
 
-  it("closes when not exactly one candidate", () => {
-    expect(assessCandidateDocument({ candidates: [] }).verdict).toBe("closed");
+  it("rejects a non-object entry (null and primitive)", () => {
+    expect(assessSurfaceEntry(null, 14).reason).toBe("unsupported-shape");
+    expect(assessSurfaceEntry("nope", 14).reason).toBe("unsupported-shape");
   });
 
-  it("closes a secret-bearing candidate", () => {
-    const r = assessCandidateDocument({ candidate: { ...ok.candidate, note: "ghp_" + "a".repeat(25) } });
-    expect(r.verdict).toBe("closed");
-    expect(r.reason).toBe("secret-or-credential");
+  it("closes a secret-bearing entry, unless the secrets toggle is off", () => {
+    const dirty = { ...ok, note: "ghp_" + "a".repeat(25) };
+    expect(assessSurfaceEntry(dirty, 14).reason).toBe("secret-or-credential");
+    expect(assessSurfaceEntry(dirty, 14, { secretsScan: false }).verdict).toBe("merged");
   });
 
   it("closes an observed-state claim", () => {
-    const r = assessCandidateDocument({ candidate: { ...ok.candidate, uptime: "99.9%" } });
-    expect(r.reason).toBe("observed-state-claim");
+    expect(assessSurfaceEntry({ ...ok, latency: "12ms" }, 14).reason).toBe("observed-state-claim");
   });
 
-  it("closes a non-public_safe candidate", () => {
-    const r = assessCandidateDocument({ candidate: { ...ok.candidate, public_safe: false } });
-    expect(r.verdict).toBe("closed");
+  it("tolerates an omitted, null, or matching entry netuid but rejects a conflicting one", () => {
+    expect(assessSurfaceEntry(ok, 14).verdict).toBe("merged"); // omitted
+    expect(assessSurfaceEntry({ ...ok, netuid: null }, 14).verdict).toBe("merged"); // null
+    expect(assessSurfaceEntry({ ...ok, netuid: 14 }, 14).verdict).toBe("merged"); // matching
+    expect(assessSurfaceEntry({ ...ok, netuid: 99 }, 14).reason).toBe("unsupported-shape"); // conflicting
   });
 
-  it("routes an auth_required candidate to manual-review", () => {
-    const r = assessCandidateDocument({ candidate: { ...ok.candidate, auth_required: true } });
-    expect(r.verdict).toBe("manual-review");
+  it("closes an unsupported kind", () => {
+    expect(assessSurfaceEntry({ ...ok, kind: "totally-unknown" }, 14).reason).toBe("unsupported-shape");
   });
 
-  it("closes an unsafe (private/loopback) candidate URL", () => {
-    const r = assessCandidateDocument({ candidate: { ...ok.candidate, url: "https://127.0.0.1" } });
-    expect(r.reason).toBe("unsafe-url");
+  it("accepts a base-layer (wss) endpoint but closes an unsafe one", () => {
+    const base = { kind: "subtensor-rpc", url: "wss://rpc.example.ai", source_url: "https://github.com/x/y", public_safe: true };
+    expect(assessSurfaceEntry(base, 14).verdict).toBe("merged");
+    const baseBad = assessSurfaceEntry({ ...base, url: "wss://127.0.0.1" }, 14);
+    expect(baseBad.reason).toBe("unsafe-url");
+    expect(baseBad.summary).toContain("HTTPS or WSS");
+    expect(assessSurfaceEntry({ ...base, url: undefined }, 14).reason).toBe("unsafe-url"); // base-layer, missing url
   });
 
-  it("can skip security checks when toggles are off", () => {
-    const r = assessCandidateDocument(
-      { candidate: { netuid: 14, kind: "website", url: "http://insecure.example", public_safe: true } },
-      { sourceUrlValidation: false },
-    );
-    expect(r.verdict).toBe("merged");
+  it("closes an unsafe / missing content URL with the HTTPS message", () => {
+    expect(assessSurfaceEntry({ ...ok, url: "https://127.0.0.1" }, 14).summary).toContain("public HTTPS URL");
+    expect(assessSurfaceEntry({ ...ok, url: undefined }, 14).reason).toBe("unsafe-url");
+  });
+
+  it("falls back to source_urls[0] and closes when no safe source URL is present", () => {
+    expect(assessSurfaceEntry({ kind: "subnet-api", url: "https://api.example.ai", source_urls: ["https://github.com/a/b"], public_safe: true }, 14).verdict).toBe("merged");
+    expect(assessSurfaceEntry({ kind: "subnet-api", url: "https://api.example.ai", public_safe: true }, 14).reason).toBe("unsafe-url");
+  });
+
+  it("can skip URL checks when the toggle is off", () => {
+    expect(assessSurfaceEntry({ kind: "website", url: "http://insecure.example", public_safe: true }, 14, { sourceUrlValidation: false }).verdict).toBe("merged");
+  });
+
+  it("closes a non-public_safe entry and escalates an auth_required one", () => {
+    expect(assessSurfaceEntry({ ...ok, public_safe: false }, 14).verdict).toBe("closed");
+    expect(assessSurfaceEntry({ ...ok, auth_required: true }, 14).verdict).toBe("manual-review");
+  });
+});
+
+describe("assessSubnetDocument (whole-file gate: root netuid + exactly-one appended entry)", () => {
+  const entry = { kind: "subnet-api", url: "https://api.example.ai", source_url: "https://github.com/x/y", public_safe: true };
+  const doc = { netuid: 14, surfaces: [entry] };
+
+  it("merges a valid document whose single appended entry is clean", () => {
+    expect(assessSubnetDocument(doc, { appendedEntry: entry }).verdict).toBe("merged");
+  });
+
+  it("rejects a non-object document as malformed", () => {
+    expect(assessSubnetDocument(null, { appendedEntry: entry }).reason).toBe("malformed-json");
+    expect(assessSubnetDocument(42, { appendedEntry: entry }).reason).toBe("malformed-json");
+  });
+
+  it("rejects a non-integer root netuid", () => {
+    expect(assessSubnetDocument({ netuid: "abc", surfaces: [entry] }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
+    expect(assessSubnetDocument({ surfaces: [entry] }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
+  });
+
+  it("rejects a document without a surfaces[] array", () => {
+    expect(assessSubnetDocument({ netuid: 14 }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
+  });
+
+  it("rejects when the orchestrator found zero-or-many appended entries (sentinel null/undefined)", () => {
+    expect(assessSubnetDocument(doc, { appendedEntry: null }).reason).toBe("unsupported-shape");
+    expect(assessSubnetDocument(doc, { appendedEntry: undefined }).reason).toBe("unsupported-shape");
+  });
+
+  it("catches a secret in the document envelope (outside the entry), unless the toggle is off", () => {
+    const dirty = { netuid: 14, surfaces: [entry], maintainer_token: "ghp_" + "b".repeat(25) };
+    expect(assessSubnetDocument(dirty, { appendedEntry: entry }).reason).toBe("secret-or-credential");
+    expect(assessSubnetDocument(dirty, { appendedEntry: entry, secretsScan: false }).verdict).toBe("merged");
+  });
+
+  it("threads the normalized root netuid to the entry (string root coerces; conflicting entry netuid rejected)", () => {
+    expect(assessSubnetDocument({ netuid: "14", surfaces: [entry] }, { appendedEntry: entry }).verdict).toBe("merged");
+    expect(assessSubnetDocument(doc, { appendedEntry: { ...entry, netuid: 99 } }).reason).toBe("unsupported-shape");
   });
 });
 
@@ -162,17 +216,6 @@ describe("assessProviderDocument", () => {
   it("rejects a non-https website_url", () => {
     const r = assessProviderDocument({ provider: { id: "a", name: "A", website_url: "http://x" } });
     expect(r.reason).toBe("unsafe-url");
-  });
-});
-
-describe("dedup keys + cross-kind urls", () => {
-  it("keys on netuid|kind per url AND schema_url", () => {
-    const keys = registryDedupKeys({ netuid: 14, kind: "openapi", url: "https://a/swagger", schema_url: "https://a/swagger-json" });
-    expect(keys.size).toBe(2);
-  });
-  it("registryUrls is kind-agnostic", () => {
-    const urls = registryUrls({ netuid: 1, kind: "openapi", url: "https://a/x", schema_url: "https://a/y" });
-    expect(urls.size).toBe(2);
   });
 });
 
@@ -221,23 +264,58 @@ describe("probeFunctionalSurface", () => {
   });
 });
 
-describe("classifyPrScope", () => {
-  it("recognizes a direct candidate PR with allowed companions", () => {
-    const r = classifyPrScope(["registry/candidates/community/foo.json", "public/metagraph/index.json"]);
-    expect(r.scope).toBe("direct-candidate");
-    expect(r.directFile).toBe("registry/candidates/community/foo.json");
+describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", () => {
+  const spec = METAGRAPHED_LANE_SPEC;
+  it("recognizes a subnet entry-submission with an allowed generated-artifact companion", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "public/metagraph/index.json"]);
+    expect(r.scope).toBe("entry-submission");
+    expect(r.directFile).toBe("registry/subnets/actual.json");
+    expect(r.isProvider).toBe(false);
+    expect(isRegistrySubmissionScope(r.scope)).toBe(true);
   });
-  it("recognizes a direct provider PR", () => {
-    const r = classifyPrScope(["registry/providers/community/acme.json"]);
-    expect(r.scope).toBe("direct-provider");
+
+  it("recognizes an entry-submission whose flat debut provider is an allowed companion", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/subnets/allways.json", "registry/providers/allways.json"]);
+    expect(r.scope).toBe("entry-submission");
+    expect(r.directFile).toBe("registry/subnets/allways.json");
+  });
+
+  it("recognizes a standalone flat provider-submission (no subnet file)", () => {
+    const r = classifyRegistryPrScope(spec, ["registry/providers/cacheon.json"]);
+    expect(r.scope).toBe("provider-submission");
+    expect(r.directFile).toBe("registry/providers/cacheon.json");
     expect(r.isProvider).toBe(true);
   });
-  it("flags out-of-scope code files as mixed", () => {
-    const r = classifyPrScope(["registry/candidates/community/foo.json", "src/index.ts"]);
-    expect(r.scope).toBe("mixed-files");
+
+  it("is mixed-files when an out-of-scope file rides along", () => {
+    expect(classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "src/index.ts"]).scope).toBe("mixed-files");
   });
-  it("is not-direct when no submission file is present", () => {
-    expect(classifyPrScope(["README.md"]).scope).toBe("not-direct-submission");
+
+  it("does NOT adopt the retired candidate path or the retired providers/community/ subdir", () => {
+    // a lone retired candidate file is not an entry/provider → not a direct submission
+    expect(classifyRegistryPrScope(spec, ["registry/candidates/community/foo.json"]).scope).toBe("not-direct-submission");
+    // a retired-subdir provider is not the flat pattern → not adopted as a provider submission
+    expect(classifyRegistryPrScope(spec, ["registry/providers/community/foo.json"]).scope).toBe("not-direct-submission");
+    // and riding alongside a real subnet entry, the retired path makes it mixed-files
+    expect(classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "registry/candidates/community/foo.json"]).scope).toBe("mixed-files");
+  });
+
+  it("is not-direct for no submission, and >1 entry file", () => {
+    expect(classifyRegistryPrScope(spec, ["README.md"]).scope).toBe("not-direct-submission");
+    expect(classifyRegistryPrScope(spec, ["registry/subnets/a.json", "registry/subnets/b.json"]).scope).toBe("not-direct-submission");
+    expect(isRegistrySubmissionScope("not-direct-submission")).toBe(false);
+  });
+
+  it("tolerates a nullish file list and falsy entries (the ?? [] / || '' guards)", () => {
+    expect(classifyRegistryPrScope(spec, undefined as unknown as string[]).scope).toBe("not-direct-submission");
+    expect(classifyRegistryPrScope(spec, [null as unknown as string, "registry/subnets/actual.json"]).scope).toBe("entry-submission");
+  });
+
+  it("works for a minimal spec with no provider/artifact patterns (a bare registry)", () => {
+    const bare: RegistryLaneSpec = { entryFilePattern: /^data\/[a-z]+\.json$/, collectionField: "entries" };
+    expect(classifyRegistryPrScope(bare, ["data/x.json"]).scope).toBe("entry-submission");
+    expect(classifyRegistryPrScope(bare, ["data/x.json", "data/y.json"]).scope).toBe("not-direct-submission");
+    expect(classifyRegistryPrScope(bare, ["data/x.json", "other.json"]).scope).toBe("mixed-files");
   });
 });
 
@@ -303,15 +381,6 @@ describe("functionalRequired + isAllowedChain", () => {
     expect(isAllowedChain("ethereum")).toBe(false);
     expect(isAllowedChain("")).toBe(false);
     expect(isAllowedChain(null)).toBe(false);
-  });
-});
-
-describe("isDirectSubmissionScope", () => {
-  it("is true only for the direct candidate/provider scopes", () => {
-    expect(isDirectSubmissionScope("direct-candidate")).toBe(true);
-    expect(isDirectSubmissionScope("direct-provider")).toBe(true);
-    expect(isDirectSubmissionScope("mixed-files")).toBe(false);
-    expect(isDirectSubmissionScope("not-direct-submission")).toBe(false);
   });
 });
 
@@ -382,63 +451,6 @@ describe("registry-logic edge branches (additional coverage)", () => {
     const a = normalizePublicUrl("https://x.example/p?b=2&utm_source=q&a=1&fbclid=z");
     const b = normalizePublicUrl("https://x.example/p?a=1&b=2");
     expect(a).toBe(b);
-  });
-
-  it("assessCandidateDocument closes a non-integer netuid as unsupported-shape", () => {
-    const r = assessCandidateDocument({
-      candidate: { netuid: "abc", kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true },
-    });
-    expect(r.verdict).toBe("closed");
-    expect(r.reason).toBe("unsupported-shape");
-    expect(r.summary).toContain("integer");
-  });
-
-  it("assessCandidateDocument closes an unsupported kind", () => {
-    const r = assessCandidateDocument({
-      candidate: { netuid: 14, kind: "totally-made-up", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true },
-    });
-    expect(r.verdict).toBe("closed");
-    expect(r.reason).toBe("unsupported-shape");
-    expect(r.summary).toContain("not supported");
-  });
-
-  it("assessCandidateDocument closes an unsafe source URL even when the surface URL is fine", () => {
-    const r = assessCandidateDocument({
-      candidate: { netuid: 14, kind: "website", url: "https://x.example", source_url: "http://127.0.0.1/x", public_safe: true },
-    });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("source URL");
-  });
-
-  it("assessCandidateDocument validates a base-layer kind URL via the endpoint (wss) check", () => {
-    const r = assessCandidateDocument({
-      candidate: { netuid: 14, kind: "subtensor-wss", url: "wss://entrypoint.example/ws", source_url: "https://github.com/a/b", public_safe: true },
-    });
-    expect(r.verdict).toBe("merged");
-  });
-
-  it("assessCandidateDocument closes a base-layer kind with an unsafe (non-wss/https) endpoint", () => {
-    const r = assessCandidateDocument({
-      candidate: { netuid: 14, kind: "archive", url: "ws://127.0.0.1/ws", source_url: "https://github.com/a/b", public_safe: true },
-    });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("HTTPS or WSS");
-  });
-
-  it("candidateRegistryKey builds netuid|kind|normalizedUrl, null on missing parts", () => {
-    expect(candidateRegistryKey({ netuid: 14, kind: "openapi", url: "https://www.A.example/x/" })).toBe(
-      "14|openapi|https://a.example/x",
-    );
-    expect(candidateRegistryKey({ netuid: "x", kind: "openapi", url: "https://a.example" })).toBeNull();
-    expect(candidateRegistryKey({ netuid: 14, url: "https://a.example" })).toBeNull(); // no kind
-    expect(candidateRegistryKey({ netuid: 14, kind: "openapi", url: "not-a-url" })).toBeNull();
-    expect(candidateRegistryKey(null)).toBeNull();
-  });
-
-  it("registryDedupKeys / registryUrls return empty for an invalid candidate", () => {
-    expect(registryDedupKeys({ netuid: "x", kind: "openapi", url: "https://a.example" }).size).toBe(0);
-    expect(registryDedupKeys(null).size).toBe(0);
-    expect(registryUrls({ url: "not-a-url" }).size).toBe(0);
   });
 
   it("normalizePublicUrl keeps ws/wss endpoints and strips the wss default port", () => {
@@ -642,47 +654,6 @@ describe("registry-logic branch coverage (gap-filling)", () => {
     expect(r.ok).toBe(true); // secret not scanned → accepted
   });
 
-  // ── assessCandidateDocument untested branches ─────────────────────────────
-  it("assessCandidateDocument reads the array `candidates` form (single entry merges)", () => {
-    const r = assessCandidateDocument({
-      candidates: [{ netuid: 14, kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true }],
-    });
-    expect(r.verdict).toBe("merged");
-  });
-  it("assessCandidateDocument closes when there are MULTIPLE candidates", () => {
-    const c = { netuid: 14, kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true };
-    const r = assessCandidateDocument({ candidates: [c, c] });
-    expect(r.verdict).toBe("closed"); // unsupported-shape IS a reviewer-close reason
-    expect(r.reason).toBe("unsupported-shape");
-  });
-  it("assessCandidateDocument can skip the secret scan via the toggle", () => {
-    const r = assessCandidateDocument(
-      { candidate: { netuid: 14, kind: "website", url: "https://x.example", source_url: "https://github.com/a/b", public_safe: true, note: "ghp_" + "k".repeat(25) } },
-      { secretsScan: false },
-    );
-    expect(r.verdict).toBe("merged"); // secret not scanned
-  });
-  it("assessCandidateDocument with a null document closes as unsupported-shape (zero candidates)", () => {
-    const r = assessCandidateDocument(null);
-    expect(r.reason).toBe("unsupported-shape");
-  });
-  it("assessCandidateDocument closes a base-layer kind with an unsafe HTTP url message", () => {
-    // baseLayer true → unsafe-url uses the "HTTPS or WSS" message branch.
-    const r = assessCandidateDocument({
-      candidate: { netuid: 1, kind: "subtensor-rpc", url: "http://127.0.0.1", source_url: "https://github.com/a/b", public_safe: true },
-    });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("HTTPS or WSS");
-  });
-  it("assessCandidateDocument closes a non-base-layer kind with the plain HTTPS message", () => {
-    const r = assessCandidateDocument({
-      candidate: { netuid: 1, kind: "website", url: "http://plain.example", source_url: "https://github.com/a/b", public_safe: true },
-    });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("public HTTPS URL");
-    expect(r.summary).not.toContain("WSS");
-  });
-
   // ── probeFunctionalSurface untested branches ──────────────────────────────
   it("probeFunctionalSurface: openapi version key but paths beyond the window", () => {
     const r = probeFunctionalSurface("openapi", "application/json", '{"openapi":"3.0.0"');
@@ -718,35 +689,6 @@ describe("registry-logic branch coverage (gap-filling)", () => {
   it("isBaseLayerKind coerces a non-string kind (number) to its string form", () => {
     expect(isBaseLayerKind(123)).toBe(false);
     expect(isBaseLayerKind(null)).toBe(false);
-  });
-
-  // ── classifyPrScope untested branches ─────────────────────────────────────
-  it("classifyPrScope: empty/whitespace-only entries are filtered before classification", () => {
-    // null changedFiles (?? []), blank entries filtered → not-direct-submission.
-    expect(classifyPrScope(["", "   "]).scope).toBe("not-direct-submission");
-    expect(classifyPrScope(null as unknown as string[]).scope).toBe("not-direct-submission");
-  });
-  it("classifyPrScope: a provider PR with a forbidden companion is mixed-files", () => {
-    const r = classifyPrScope(["registry/providers/community/acme.json", "docs/readme.md"]);
-    expect(r.scope).toBe("mixed-files");
-    expect(r.directFile).toBeNull();
-    expect(r.isProvider).toBe(false);
-  });
-  it("classifyPrScope: a candidate PR may register its provider as an allowed companion", () => {
-    const r = classifyPrScope([
-      "registry/candidates/community/foo.json",
-      "registry/providers/community/foo.json",
-      "public/metagraph/index.json",
-    ]);
-    expect(r.scope).toBe("direct-candidate");
-    expect(r.isProvider).toBe(false);
-  });
-  it("classifyPrScope: two candidate files (not exactly one) is not a direct submission", () => {
-    const r = classifyPrScope([
-      "registry/candidates/community/a.json",
-      "registry/candidates/community/b.json",
-    ]);
-    expect(r.scope).toBe("not-direct-submission");
   });
 
   // ── surfaceMatchesRegistryIdentity domain-label match branch ───────────────
@@ -824,44 +766,6 @@ describe("registry-logic branch coverage (second pass)", () => {
     const tokens = deriveRegistryIdentityTokens({ name: "Byzantium", source_repo: "https://github.com/discord/repo" });
     expect(tokens).not.toContain("discord");
     expect(tokens).toContain("byzantium");
-  });
-
-  // ── registryDedupKeys: a field that does not normalize is skipped (line 471) ─
-  it("registryDedupKeys skips a non-normalizable field but keeps the valid one", () => {
-    // url normalizes (added); schema_url is junk → normalizePublicUrl null → `if(normalized)` false branch.
-    const keys = registryDedupKeys({ netuid: 1, kind: "website", url: "https://a.com/x", schema_url: "not-a-url" });
-    expect([...keys]).toEqual(["1|website|https://a.com/x"]);
-  });
-
-  // ── assessCandidateDocument: url ?? "" fallbacks (lines 541, 542) ──────────
-  it("assessCandidateDocument treats a missing base-layer url as unsafe (url ?? '' fallback)", () => {
-    // baseLayer true (subtensor-rpc) + url undefined → String(undefined ?? "") === "" → isSafeEndpointUrl false.
-    const r = assessCandidateDocument({ candidate: { netuid: 1, kind: "subtensor-rpc", source_url: "https://github.com/a/b" } });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("HTTPS or WSS");
-  });
-  it("assessCandidateDocument treats a missing content-kind url as unsafe (url ?? '' fallback)", () => {
-    // baseLayer false (website) + url undefined → String(undefined ?? "") === "" → isSafeHttpUrl false.
-    const r = assessCandidateDocument({ candidate: { netuid: 1, kind: "website", source_url: "https://github.com/a/b" } });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("public HTTPS URL");
-  });
-
-  // ── assessCandidateDocument: source_url || source_urls?.[0] right side (550) ─
-  it("assessCandidateDocument falls back to source_urls[0] when source_url is absent", () => {
-    // source_url falsy → the `|| source_urls?.[0]` right side supplies the source URL.
-    const r = assessCandidateDocument({
-      candidate: { netuid: 1, kind: "website", url: "https://x.example", source_urls: ["https://github.com/a/b"], public_safe: true },
-    });
-    expect(r.verdict).toBe("merged");
-  });
-
-  // ── assessCandidateDocument: sourceUrl ?? "" fallback when no source at all (551) ─
-  it("assessCandidateDocument with NO source url is unsafe (sourceUrl ?? '' fallback)", () => {
-    // source_url and source_urls both absent → sourceUrl undefined → String(undefined ?? "") === "" → unsafe.
-    const r = assessCandidateDocument({ candidate: { netuid: 1, kind: "website", url: "https://x.example", public_safe: true } });
-    expect(r.reason).toBe("unsafe-url");
-    expect(r.summary).toContain("source URL");
   });
 
   // ── assessProviderDocument: website_url ?? "" fallback (line 618) ──────────

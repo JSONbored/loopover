@@ -23,6 +23,42 @@ describe("operator dashboard payload", () => {
     expect(payload.usageSummary).toMatchObject({ totalEvents: expect.any(Number), activeActors: expect.any(Number) });
     expect(payload.commandUsefulness.totals).toMatchObject({ feedbackCount: expect.any(Number) });
     expect(serialized).not.toMatch(FORBIDDEN_EXPORT_TERMS);
+    // Empty fleet → instanceCount 0, null precision card ("—"), no-outlier delta.
+    expect(payload.fleetMetrics.instanceCount).toBe(0);
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Fleet instances", value: "0", delta: "self-host fleet" }),
+        expect.objectContaining({ label: "Fleet merge precision", value: "—" }),
+      ]),
+    );
+  });
+
+  it("surfaces populated fleet metrics + outliers from orb_signals", async () => {
+    const env = createTestEnv();
+    let n = 0;
+    const seed = async (instance: string, count: number, outcome: string): Promise<void> => {
+      for (let i = 0; i < count; i++) {
+        await env.DB
+          .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', ?, 'none')`)
+          .bind(instance, `r${n}`, `p${n++}`, outcome)
+          .run();
+      }
+    };
+    await seed("good1", 5, "merged"); // precision 1.0
+    await seed("good2", 5, "merged"); // precision 1.0
+    await seed("bad", 5, "closed"); // precision 0.0 → outlier vs the median (1.0)
+    for (const id of ["good1", "good2", "bad"]) {
+      await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)`).bind(id).run(); // only registered instances count
+    }
+    const payload = await buildOperatorDashboardPayload(env);
+    expect(payload.fleetMetrics.instanceCount).toBe(3);
+    expect(payload.fleetMetrics.outliers.map((o) => o.instanceId)).toContain("bad");
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Fleet instances", value: "3", delta: "1 outlier(s)" }),
+        expect.objectContaining({ label: "Fleet merge precision", value: "100%" }),
+      ]),
+    );
   });
 
   it("picks the newest rollup day for adoption insights", () => {

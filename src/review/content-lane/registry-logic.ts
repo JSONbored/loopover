@@ -26,11 +26,7 @@ export function isInternalAutomationBranch(ref: string | undefined): boolean {
   return AUTOMATION_BRANCH_PREFIXES.some((prefix) => branch.startsWith(prefix));
 }
 
-export const CANDIDATE_PATTERN = /^registry\/candidates\/community\/[a-z0-9][a-z0-9-]*\.json$/;
-export const PROVIDER_PATTERN = /^registry\/providers\/community\/[a-z0-9][a-z0-9-]*\.json$/;
-/** A provider registration anywhere under registry/providers — an allowed companion in a candidate PR. */
-export const PROVIDER_ANY_PATTERN = /^registry\/providers\/(?:community\/)?[a-z0-9][a-z0-9-]*\.json$/;
-/** Generated registry artifacts a valid candidate/provider PR must regenerate — allowed companions. */
+/** Generated registry artifacts a valid PR must regenerate — allowed companions of a registry submission. */
 export const ARTIFACT_PATTERN = /^public\/metagraph\/[a-z0-9/_-]+\.json$/i;
 export const DEFAULT_PUBLIC_API_BASE = "https://api.metagraph.sh/api/v1";
 
@@ -453,38 +449,6 @@ export function assessFreshness(
   return { known: true, archived, pushedAt, ageDays, stale, reason };
 }
 
-/** Duplicate key netuid|kind|normalizedUrl (primary `url` field). */
-export function candidateRegistryKey(value: CandidateLike | null | undefined): string | null {
-  const normalizedUrl = normalizePublicUrl(value?.url);
-  if (!Number.isInteger(Number(value?.netuid)) || !value?.kind || !normalizedUrl) return null;
-  return [Number(value.netuid), String(value.kind), normalizedUrl].join("|");
-}
-
-/** ALL dedup keys a candidate OR registry surface can collide on: netuid|kind per normalized URL field
- *  it carries (`url` AND `schema_url`) — so a candidate's `url` equal to a verified surface's
- *  `schema_url` is still caught. */
-export function registryDedupKeys(value: CandidateLike | null | undefined): Set<string> {
-  const keys = new Set<string>();
-  const netuid = Number(value?.netuid);
-  if (!Number.isInteger(netuid) || !value?.kind) return keys;
-  for (const field of [value?.url, (value as { schema_url?: unknown } | null | undefined)?.schema_url]) {
-    const normalized = normalizePublicUrl(field);
-    if (normalized) keys.add([netuid, String(value.kind), normalized].join("|"));
-  }
-  return keys;
-}
-
-/** The normalized public URLs a candidate/surface carries (`url` + `schema_url`), KIND-AGNOSTIC — used
- *  to detect a same-URL-DIFFERENT-KIND collision (a mislabel/duplicate the kind-scoped key can't see). */
-export function registryUrls(value: CandidateLike | null | undefined): Set<string> {
-  const urls = new Set<string>();
-  for (const field of [value?.url, (value as { schema_url?: unknown } | null | undefined)?.schema_url]) {
-    const normalized = normalizePublicUrl(field);
-    if (normalized) urls.add(normalized);
-  }
-  return urls;
-}
-
 function fail(reason: string, summary: string, candidate: CandidateLike | null = null): Assessment {
   return {
     /* v8 ignore next -- every fail() call site passes a REVIEWER_CLOSE_REASONS member, so the "manual-review" alternative is unreachable; kept so a future non-close reason degrades to manual rather than closing. */
@@ -495,84 +459,101 @@ function fail(reason: string, summary: string, candidate: CandidateLike | null =
   };
 }
 
-/** Deterministic candidate shape/safety gate. The security checks (secret scan, public-URL safety) are
- *  gated by the agent's feature toggles, defaulting ON so callers that pass nothing keep strict behavior. */
-export function assessCandidateDocument(
-  document: unknown,
+/**
+ * Surface validators: a contribution appends ONE entry to `surfaces[]` of a `registry/subnets/<slug>.json`, whose
+ * `netuid` lives at the file ROOT (not on each entry). These two deterministic validators (per-entry +
+ * whole-document) make gittensory the sole adjudicator; no AI (surfaces are structured data). They take the
+ * appended entry / parsed document as arguments; the orchestrator resolves "exactly one appended entry" from a
+ * head-vs-base diff.
+ */
+export function assessSurfaceEntry(
+  entry: unknown,
+  netuid: number,
   opts: { secretsScan?: boolean; sourceUrlValidation?: boolean } = {},
 ): Assessment {
   const { secretsScan = true, sourceUrlValidation = true } = opts;
-  const doc = document as { candidates?: unknown; candidate?: unknown } | null;
-  const candidates: CandidateLike[] = Array.isArray(doc?.candidates)
-    ? (doc?.candidates as CandidateLike[])
-    : doc?.candidate
-      ? [doc.candidate as CandidateLike]
-      : [];
-  if (candidates.length !== 1) {
-    return fail("unsupported-shape", "Candidate PR must contain exactly one candidate entry.");
+  if (!entry || typeof entry !== "object") {
+    return fail("unsupported-shape", "Surface entry must be a JSON object.");
   }
-  const candidate = candidates[0] as CandidateLike;
-  if (secretsScan && containsSecretLikeText(JSON.stringify(candidate))) {
-    return fail(
-      "secret-or-credential",
-      "Candidate appears to include secret, wallet, PAT, or private-key material.",
-      candidate,
-    );
+  const surface = entry as CandidateLike;
+  if (secretsScan && containsSecretLikeText(JSON.stringify(surface))) {
+    return fail("secret-or-credential", "Surface entry appears to include secret, wallet, PAT, or private-key material.", surface);
   }
-  // Observed-state claim (health/uptime/latency/status): probe-derived only — a submission can never assert it.
-  const observedKey = Object.keys(candidate as Record<string, unknown>).find((k) =>
-    OBSERVED_STATE_KEYS.has(k.toLowerCase()),
-  );
+  const observedKey = Object.keys(surface as Record<string, unknown>).find((k) => OBSERVED_STATE_KEYS.has(k.toLowerCase()));
   if (observedKey) {
     return fail(
       "observed-state-claim",
-      `Candidate asserts observed runtime state (\`${observedKey}\`). Health / uptime / latency / status are probe-derived only and can never be part of a submission — remove the field and resubmit.`,
-      candidate,
+      `Surface entry asserts observed runtime state (\`${observedKey}\`). Health / uptime / latency / status are probe-derived only and can never be part of a submission — remove the field and resubmit.`,
+      surface,
     );
   }
-  if (!Number.isInteger(Number(candidate.netuid))) {
-    return fail("unsupported-shape", "Candidate netuid must be an integer.", candidate);
+  // netuid is carried by the subnet-document root in the surface model; an entry may omit it, but if it carries one
+  // it must not contradict the root (the document validator already proved the root netuid is an integer).
+  if (surface.netuid !== undefined && surface.netuid !== null && Number(surface.netuid) !== netuid) {
+    return fail("unsupported-shape", "Surface entry netuid must match the subnet document root.", surface);
   }
-  const baseLayer = isBaseLayerKind(candidate.kind);
-  if (!REVIEWER_SAFE_KINDS.has(String(candidate.kind)) && !baseLayer) {
-    return fail("unsupported-shape", "Candidate kind is not supported by the reviewer.", candidate);
+  const baseLayer = isBaseLayerKind(surface.kind);
+  if (!REVIEWER_SAFE_KINDS.has(String(surface.kind)) && !baseLayer) {
+    return fail("unsupported-shape", "Surface entry kind is not supported by the reviewer.", surface);
   }
   if (sourceUrlValidation) {
-    // Base-layer chain endpoints may be wss/ws (probed via JSON-RPC); content kinds must be HTTPS.
-    const urlSafe = baseLayer
-      ? isSafeEndpointUrl(String(candidate.url ?? ""))
-      : isSafeHttpUrl(String(candidate.url ?? ""));
+    const urlSafe = baseLayer ? isSafeEndpointUrl(String(surface.url ?? "")) : isSafeHttpUrl(String(surface.url ?? ""));
     if (!urlSafe) {
       return fail(
         "unsafe-url",
-        baseLayer ? "Candidate URL must be a public HTTPS or WSS endpoint." : "Candidate URL must be a public HTTPS URL.",
-        candidate,
+        baseLayer ? "Surface entry URL must be a public HTTPS or WSS endpoint." : "Surface entry URL must be a public HTTPS URL.",
+        surface,
       );
     }
-    const sourceUrl = (candidate.source_url as string) || (candidate.source_urls as string[] | undefined)?.[0];
+    const sourceUrl = (surface.source_url as string) || (surface.source_urls as string[] | undefined)?.[0];
     if (!isSafeHttpUrl(String(sourceUrl ?? ""))) {
-      return fail("unsafe-url", "Candidate source URL must be a public HTTPS URL.", candidate);
+      return fail("unsafe-url", "Surface entry source URL must be a public HTTPS URL.", surface);
     }
   }
-  // One-shot: incomplete/credentialed submissions are declined (resubmit clean), not queued.
-  if (candidate.public_safe !== true) {
+  if (surface.public_safe !== true) {
     return {
       verdict: "closed",
-      summary:
-        "Candidate is not marked public_safe=true — declined. Resubmit with public_safe=true if the endpoint is genuinely public.",
-      candidate,
+      summary: "Surface entry is not marked public_safe=true — declined. Resubmit with public_safe=true if the endpoint is genuinely public.",
+      candidate: surface,
     };
   }
-  if (candidate.auth_required === true) {
-    // Authenticated interface: NOT auto-closed — escalate to confirm the auth scheme is documented publicly.
+  if (surface.auth_required === true) {
     return {
       verdict: "manual-review",
       summary:
         "Authenticated interface — routing to review to confirm the declared auth scheme is documented publicly (verifiable without any secret) before it can be accepted.",
-      candidate,
+      candidate: surface,
     };
   }
-  return { verdict: "merged", candidate };
+  return { verdict: "merged", candidate: surface };
+}
+
+export function assessSubnetDocument(
+  document: unknown,
+  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean; appendedEntry: unknown },
+): Assessment {
+  const { secretsScan = true, sourceUrlValidation = true, appendedEntry } = opts;
+  if (!document || typeof document !== "object") {
+    return fail("malformed-json", "Subnet document must be a JSON object.");
+  }
+  const doc = document as { netuid?: unknown; surfaces?: unknown };
+  if (!Number.isInteger(Number(doc.netuid))) {
+    return fail("unsupported-shape", "Subnet document netuid must be an integer.");
+  }
+  const netuid = Number(doc.netuid); // normalize once; thread the canonical integer to entry + (future) grounding
+  if (!Array.isArray(doc.surfaces)) {
+    return fail("unsupported-shape", "Subnet document must carry a surfaces[] array.");
+  }
+  // The orchestrator resolves the single appended entry by diffing head vs base surfaces[]; it passes null when
+  // the PR adds zero or more than one entry (or edits an existing one) — never a silent multi-entry merge.
+  if (appendedEntry === null || appendedEntry === undefined) {
+    return fail("unsupported-shape", "PR must append exactly one surface entry to surfaces[].");
+  }
+  // Whole-document secret scan catches material in the envelope (outside the entry); the entry is re-scanned below.
+  if (secretsScan && containsSecretLikeText(JSON.stringify(doc))) {
+    return fail("secret-or-credential", "Subnet document appears to include secret, wallet, PAT, or private-key material.");
+  }
+  return assessSurfaceEntry(appendedEntry, netuid, { secretsScan, sourceUrlValidation });
 }
 
 export type ProviderLike = Record<string, unknown> & {
@@ -668,44 +649,75 @@ export function probeFunctionalSurface(
   return { served: true, detail: "n/a" };
 }
 
-export type PrScope = "direct-candidate" | "direct-provider" | "mixed-files" | "not-direct-submission";
+// ── Surface model (generic registry content-lane) ─────────────────────────────────────────────────
+//
+// A community contribution appends entries to an array field of ONE registry "entry file" (e.g.
+// registry/subnets/<slug>.json::surfaces[]), optionally with one flat companion provider file. To stay MODULAR —
+// many maintainers will install gittensory over wildly different registries — the engine is parameterized by a
+// RegistryLaneSpec rather than hard-coding metagraphed's paths; metagraphed is just the FIRST spec, and a spec can
+// later be loaded from per-repo .gittensory.yml config so a new registry needs config, not a code change.
 
-export interface ScopeResult {
-  scope: PrScope;
+/** Describes where a registry keeps its community-editable entry files + allowed companions. */
+export interface RegistryLaneSpec {
+  /** The file a contribution edits to add entries, e.g. /^registry\/subnets\/<slug>\.json$/. */
+  entryFilePattern: RegExp;
+  /** Optional flat companion debut-provider file, e.g. /^registry\/providers\/<slug>\.json$/ (flat only). */
+  providerFilePattern?: RegExp;
+  /** Optional generated artifacts a valid PR must regenerate — allowed companions. */
+  artifactPattern?: RegExp;
+  /** The array field on an entry file a contribution appends to (the surface model: "surfaces"). */
+  collectionField: string;
+}
+
+export type RegistryPrScope = "entry-submission" | "provider-submission" | "mixed-files" | "not-direct-submission";
+
+export interface RegistryScopeResult {
+  scope: RegistryPrScope;
   directFile: string | null;
   isProvider: boolean;
 }
 
 /**
- * In-scope when the PR reviews exactly ONE candidate (or, candidate-free, one provider) submission.
- * A valid candidate PR must also regenerate the public/metagraph artifacts and may register its
- * provider — those are ALLOWED COMPANIONS; any other file makes it out-of-scope. The reviewed
- * `directFile` is the candidate (else the provider).
+ * Generic surface-model scope classifier: in scope when the PR edits exactly ONE entry file (or, entry-free,
+ * one flat provider file); the spec's provider + artifact files are allowed companions; any other path —
+ * including a retired candidate path the registry no longer accepts — makes it mixed-files.
  */
-export function classifyPrScope(changedFiles: string[]): ScopeResult {
+export function classifyRegistryPrScope(spec: RegistryLaneSpec, changedFiles: string[]): RegistryScopeResult {
   const files = (changedFiles ?? []).map((f) => String(f || "").trim()).filter(Boolean);
-  const candidateFiles = files.filter((f) => CANDIDATE_PATTERN.test(f));
-  const providerFiles = files.filter((f) => PROVIDER_ANY_PATTERN.test(f));
-  const isCandidatePr = candidateFiles.length === 1;
-  const isProviderPr = candidateFiles.length === 0 && providerFiles.length === 1;
-  if (!isCandidatePr && !isProviderPr) {
+  const entryFiles = files.filter((f) => spec.entryFilePattern.test(f));
+  const providerFiles = spec.providerFilePattern ? files.filter((f) => spec.providerFilePattern!.test(f)) : [];
+  const isEntryPr = entryFiles.length === 1;
+  const isProviderPr = entryFiles.length === 0 && providerFiles.length === 1;
+  if (!isEntryPr && !isProviderPr) {
     return { scope: "not-direct-submission", directFile: null, isProvider: false };
   }
-  // Allowed companions: provider registrations + generated public/metagraph artifacts.
-  const forbidden = files.filter(
-    (f) => !CANDIDATE_PATTERN.test(f) && !PROVIDER_ANY_PATTERN.test(f) && !ARTIFACT_PATTERN.test(f),
-  );
-  if (forbidden.length > 0) return { scope: "mixed-files", directFile: null, isProvider: false };
-  // isProviderPr ⇒ providerFiles.length === 1 and isCandidatePr ⇒ candidateFiles.length === 1 (guarded
-  // by the early return above), so [0] is always defined here; the `?? null` fallbacks exist only to
-  // satisfy noUncheckedIndexedAccess and can never fire at runtime.
+  const isAllowed = (f: string): boolean =>
+    spec.entryFilePattern.test(f) || (spec.providerFilePattern?.test(f) ?? false) || (spec.artifactPattern?.test(f) ?? false);
+  if (files.some((f) => !isAllowed(f))) {
+    return { scope: "mixed-files", directFile: null, isProvider: false };
+  }
+  // isEntryPr/isProviderPr each guarantee exactly one match (guarded by the early return), so [0] is always
+  // defined; the `?? null` only satisfies noUncheckedIndexedAccess and can never fire.
   /* v8 ignore start */
   return isProviderPr
-    ? { scope: "direct-provider", directFile: providerFiles[0] ?? null, isProvider: true }
-    : { scope: "direct-candidate", directFile: candidateFiles[0] ?? null, isProvider: false };
+    ? { scope: "provider-submission", directFile: providerFiles[0] ?? null, isProvider: true }
+    : { scope: "entry-submission", directFile: entryFiles[0] ?? null, isProvider: false };
   /* v8 ignore stop */
 }
 
-export function isDirectSubmissionScope(scope: PrScope): boolean {
-  return scope === "direct-candidate" || scope === "direct-provider";
+export function isRegistrySubmissionScope(scope: RegistryPrScope): boolean {
+  return scope === "entry-submission" || scope === "provider-submission";
 }
+
+// metagraphed's spec — the first RegistryLaneSpec. surfaces[] live in registry/subnets/<slug>.json; providers
+// are FLAT registry/providers/<slug>.json (the community/ subdir was retired). A PR touching the old
+// registry/candidates/community/* path matches none of these → mixed-files / not-direct (correctly not adopted
+// as a valid submission; metagraphed CI hard-fails it).
+export const SUBNET_ENTRY_PATTERN = /^registry\/subnets\/[a-z0-9][a-z0-9-]*\.json$/;
+export const FLAT_PROVIDER_PATTERN = /^registry\/providers\/[a-z0-9][a-z0-9-]*\.json$/;
+export const METAGRAPHED_LANE_SPEC: RegistryLaneSpec = {
+  entryFilePattern: SUBNET_ENTRY_PATTERN,
+  providerFilePattern: FLAT_PROVIDER_PATTERN,
+  artifactPattern: ARTIFACT_PATTERN,
+  collectionField: "surfaces",
+};

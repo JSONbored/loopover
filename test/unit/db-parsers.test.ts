@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  claimRegateFanoutSlot,
+  countRecentDeadLetters,
   getLatestScorePreview,
   getRepoAuthorPullRequestHistory,
   getLatestScoringModelSnapshot,
@@ -8,12 +10,18 @@ import {
   listPullRequestDetailSyncStates,
   listRepoSyncSegments,
   listRepoSyncStates,
+  markPullRequestRegated,
+  markPullRequestsRegated,
+  recordAuditEvent,
+  recordWebhookEvent,
   upsertOfficialMinerDetection,
   upsertPullRequestFromGitHub,
   extractLinkedIssueNumbers,
   extractLinkedIssueNumbersWithOverflow,
   MAX_LINKED_ISSUE_NUMBERS,
 } from "../../src/db/repositories";
+import { getDb } from "../../src/db/client";
+import { webhookEvents } from "../../src/db/schema";
 import { createTestEnv } from "../helpers/d1";
 
 describe("database row parser hardening", () => {
@@ -78,6 +86,93 @@ describe("database row parser hardening", () => {
         expect.objectContaining({ number: 2, isDraft: false, mergeableState: "mergeable", reviewDecision: "APPROVED" }),
       ]),
     );
+  });
+
+  it("markPullRequestRegated stamps the internal last_regated_at marker (sweep convergence #audit-sweep-converge)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 5, title: "Stale PR", state: "open", user: { login: "alice" }, labels: [] });
+
+    const before = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 5);
+    expect(before?.lastRegatedAt ?? null).toBeNull(); // never swept yet → marker absent
+
+    await markPullRequestRegated(env, "owner/repo", 5);
+    const after = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 5);
+    expect(typeof after?.lastRegatedAt).toBe("string"); // marker stamped with an ISO timestamp
+    expect(after?.title).toBe("Stale PR"); // INVARIANT: a plain D1 UPDATE — it touches only the marker, not PR content
+  });
+
+  it("markPullRequestsRegated batch-stamps every candidate at dispatch and no-ops on an empty list (#audit-sweep-dispatch-stamp)", async () => {
+    const env = createTestEnv();
+    for (const number of [5, 6, 7]) {
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number, title: `PR${number}`, state: "open", user: { login: "alice" }, labels: [] });
+    }
+
+    await markPullRequestsRegated(env, "owner/repo", []); // empty → no-op (early return)
+    expect((await listPullRequests(env, "owner/repo")).every((p) => (p.lastRegatedAt ?? null) === null)).toBe(true);
+
+    await markPullRequestsRegated(env, "owner/repo", [5, 7]); // batch stamps only 5 and 7
+    const rows = await listPullRequests(env, "owner/repo");
+    expect(typeof rows.find((p) => p.number === 5)?.lastRegatedAt).toBe("string");
+    expect(typeof rows.find((p) => p.number === 7)?.lastRegatedAt).toBe("string");
+    expect(rows.find((p) => p.number === 6)?.lastRegatedAt ?? null).toBeNull(); // #6 not in the batch → untouched
+  });
+
+  it("claimRegateFanoutSlot collapses a burst to one winner per window (#audit-fanout-dedup)", async () => {
+    const env = createTestEnv();
+    const W = 90 * 1000;
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:00.000Z", W)).toBe(true); // first claim wins (marker NULL)
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:05.000Z", W)).toBe(false); // +5s, inside window → loses
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:00:50.000Z", W)).toBe(false); // +50s, still inside → loses
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:31.000Z", W)).toBe(true); // +91s, outside window → wins again
+    expect(await claimRegateFanoutSlot(env, "2026-06-25T01:01:40.000Z", W)).toBe(false); // back inside the new window → loses
+  });
+
+  it("REGRESSION: webhook_events.received_at is always a real ISO timestamp, never the 'CURRENT_TIMESTAMP' literal (#audit-ts-literal)", async () => {
+    const env = createTestEnv();
+    // Real path: recordWebhookEvent always passes nowIso().
+    await recordWebhookEvent(env, { deliveryId: "ts-1", eventName: "pull_request", payloadHash: "h", status: "queued" });
+    const r1 = await env.DB.prepare("select received_at from webhook_events where delivery_id = 'ts-1'").first<{ received_at: string }>();
+    expect(r1?.received_at).not.toBe("CURRENT_TIMESTAMP");
+    expect(Number.isFinite(Date.parse(r1?.received_at ?? "not-a-date"))).toBe(true);
+    // Backstop: a Drizzle insert that OMITS received_at must hit the $defaultFn (real ISO), not a static-default
+    // literal — this is the exact omit path that corrupted ~20,472 rows before the schema was switched to $defaultFn.
+    const db = getDb(env.DB);
+    await db.insert(webhookEvents).values({ deliveryId: "ts-2", eventName: "issues", payloadHash: "h2", status: "queued" });
+    const r2 = await env.DB.prepare("select received_at from webhook_events where delivery_id = 'ts-2'").first<{ received_at: string }>();
+    expect(r2?.received_at).not.toBe("CURRENT_TIMESTAMP");
+    expect(Number.isFinite(Date.parse(r2?.received_at ?? "not-a-date"))).toBe(true);
+  });
+
+  it("claimRegateFanoutSlot fails open (returns true) on a DB error so the fleet never stalls", async () => {
+    const env = createTestEnv();
+    const broken = { ...env, DB: null } as unknown as typeof env;
+    expect(await claimRegateFanoutSlot(broken, "2026-06-25T01:00:00.000Z", 90 * 1000)).toBe(true);
+  });
+
+  it("REGRESSION: a later GitHub sync does NOT clobber last_regated_at (omitted from the upsert SET clause)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 6, title: "First", state: "open", user: { login: "bob" }, labels: [] });
+    await markPullRequestRegated(env, "owner/repo", 6);
+    const stamped = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 6)?.lastRegatedAt;
+    expect(typeof stamped).toBe("string");
+
+    // A subsequent GitHub-sync upsert (new title) must NOT reset the sweep marker, or the sweep would loop again.
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 6, title: "Synced again", state: "open", user: { login: "bob" }, labels: [] });
+    const resynced = (await listPullRequests(env, "owner/repo")).find((p) => p.number === 6);
+    expect(resynced?.title).toBe("Synced again"); // the sync ran
+    expect(resynced?.lastRegatedAt).toBe(stamped); // but the marker survived
+  });
+
+  it("countRecentDeadLetters counts github_app.dlq_dead_lettered audits since a cutoff, independent of any ops flag (#1276)", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, { eventType: "github_app.dlq_dead_lettered", actor: "gittensory", targetKey: "dlq:github-webhook:a", outcome: "error", createdAt: "2026-06-24T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "github_app.dlq_dead_lettered", actor: "gittensory", targetKey: "dlq:backfill-repo-segment:b", outcome: "error", createdAt: "2026-06-24T12:00:00.000Z" });
+    // An unrelated audit event must NOT be counted (the event-type filter).
+    await recordAuditEvent(env, { eventType: "agent.sweep.regate", actor: "gittensory", targetKey: "owner/repo", outcome: "completed", createdAt: "2026-06-24T12:00:00.000Z" });
+
+    expect(await countRecentDeadLetters(env, "2026-06-24T09:00:00.000Z")).toBe(2); // both dead-letters in window
+    expect(await countRecentDeadLetters(env, "2026-06-24T11:00:00.000Z")).toBe(1); // only the 12:00 one
+    expect(await countRecentDeadLetters(env, "2026-06-24T13:00:00.000Z")).toBe(0); // none after the cutoff → count(*) returns 0
   });
 
   it("computes complete case-insensitive repo author PR history for gate grace", async () => {

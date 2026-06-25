@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runGittensoryAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import {
+  aiCiRefutationActive,
   buildCheckAggregate,
   buildReviewGroundingText,
   isGroundingEnabled,
@@ -84,6 +85,24 @@ describe("isGroundingEnabled", () => {
     expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "true" })).toBe(true);
     expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "1" })).toBe(true);
     expect(isGroundingEnabled({ GITTENSORY_REVIEW_GROUNDING: "on" })).toBe(true);
+  });
+});
+
+describe("aiCiRefutationActive (#ai-ci-refutation gate)", () => {
+  const env = (grounding: string, repos: string) => ({ GITTENSORY_REVIEW_GROUNDING: grounding, GITTENSORY_REVIEW_REPOS: repos }) as unknown as Env;
+  const REPO = "JSONbored/metagraphed";
+
+  it("is ON only when grounding is enabled AND the repo is convergence-allowlisted", () => {
+    expect(aiCiRefutationActive(env("true", REPO), REPO)).toBe(true);
+  });
+  it("is OFF when grounding is enabled but the repo is NOT allowlisted", () => {
+    expect(aiCiRefutationActive(env("true", "JSONbored/other"), REPO)).toBe(false);
+  });
+  it("is OFF when grounding is disabled even if the repo is allowlisted (short-circuits before convergence)", () => {
+    expect(aiCiRefutationActive(env("false", REPO), REPO)).toBe(false);
+  });
+  it("is OFF when both are off", () => {
+    expect(aiCiRefutationActive(env("", ""), REPO)).toBe(false);
   });
 });
 

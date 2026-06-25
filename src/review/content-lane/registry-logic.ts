@@ -575,6 +575,103 @@ export function assessCandidateDocument(
   return { verdict: "merged", candidate };
 }
 
+/**
+ * Surface model (the candidate-file model's successor): a contribution appends ONE entry to `surfaces[]` of a
+ * `registry/subnets/<slug>.json`, whose `netuid` lives at the file ROOT (not on each entry). These two
+ * deterministic validators are the per-entry and whole-document analogues of assessCandidateDocument — gittensory
+ * is the sole adjudicator; no AI (surfaces are structured data). They take the appended entry / parsed document as
+ * arguments; resolving "exactly one appended entry" from a head-vs-base diff is the orchestrator's job (a follow-up).
+ */
+export function assessSurfaceEntry(
+  entry: unknown,
+  netuid: number,
+  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean } = {},
+): Assessment {
+  const { secretsScan = true, sourceUrlValidation = true } = opts;
+  if (!entry || typeof entry !== "object") {
+    return fail("unsupported-shape", "Surface entry must be a JSON object.");
+  }
+  const surface = entry as CandidateLike;
+  if (secretsScan && containsSecretLikeText(JSON.stringify(surface))) {
+    return fail("secret-or-credential", "Surface entry appears to include secret, wallet, PAT, or private-key material.", surface);
+  }
+  const observedKey = Object.keys(surface as Record<string, unknown>).find((k) => OBSERVED_STATE_KEYS.has(k.toLowerCase()));
+  if (observedKey) {
+    return fail(
+      "observed-state-claim",
+      `Surface entry asserts observed runtime state (\`${observedKey}\`). Health / uptime / latency / status are probe-derived only and can never be part of a submission — remove the field and resubmit.`,
+      surface,
+    );
+  }
+  // netuid is carried by the subnet-document root in the surface model; an entry may omit it, but if it carries one
+  // it must not contradict the root (the document validator already proved the root netuid is an integer).
+  if (surface.netuid !== undefined && surface.netuid !== null && Number(surface.netuid) !== netuid) {
+    return fail("unsupported-shape", "Surface entry netuid must match the subnet document root.", surface);
+  }
+  const baseLayer = isBaseLayerKind(surface.kind);
+  if (!REVIEWER_SAFE_KINDS.has(String(surface.kind)) && !baseLayer) {
+    return fail("unsupported-shape", "Surface entry kind is not supported by the reviewer.", surface);
+  }
+  if (sourceUrlValidation) {
+    const urlSafe = baseLayer ? isSafeEndpointUrl(String(surface.url ?? "")) : isSafeHttpUrl(String(surface.url ?? ""));
+    if (!urlSafe) {
+      return fail(
+        "unsafe-url",
+        baseLayer ? "Surface entry URL must be a public HTTPS or WSS endpoint." : "Surface entry URL must be a public HTTPS URL.",
+        surface,
+      );
+    }
+    const sourceUrl = (surface.source_url as string) || (surface.source_urls as string[] | undefined)?.[0];
+    if (!isSafeHttpUrl(String(sourceUrl ?? ""))) {
+      return fail("unsafe-url", "Surface entry source URL must be a public HTTPS URL.", surface);
+    }
+  }
+  if (surface.public_safe !== true) {
+    return {
+      verdict: "closed",
+      summary: "Surface entry is not marked public_safe=true — declined. Resubmit with public_safe=true if the endpoint is genuinely public.",
+      candidate: surface,
+    };
+  }
+  if (surface.auth_required === true) {
+    return {
+      verdict: "manual-review",
+      summary:
+        "Authenticated interface — routing to review to confirm the declared auth scheme is documented publicly (verifiable without any secret) before it can be accepted.",
+      candidate: surface,
+    };
+  }
+  return { verdict: "merged", candidate: surface };
+}
+
+export function assessSubnetDocument(
+  document: unknown,
+  opts: { secretsScan?: boolean; sourceUrlValidation?: boolean; appendedEntry: unknown },
+): Assessment {
+  const { secretsScan = true, sourceUrlValidation = true, appendedEntry } = opts;
+  if (!document || typeof document !== "object") {
+    return fail("malformed-json", "Subnet document must be a JSON object.");
+  }
+  const doc = document as { netuid?: unknown; surfaces?: unknown };
+  if (!Number.isInteger(Number(doc.netuid))) {
+    return fail("unsupported-shape", "Subnet document netuid must be an integer.");
+  }
+  const netuid = Number(doc.netuid); // normalize once; thread the canonical integer to entry + (future) grounding
+  if (!Array.isArray(doc.surfaces)) {
+    return fail("unsupported-shape", "Subnet document must carry a surfaces[] array.");
+  }
+  // The orchestrator resolves the single appended entry by diffing head vs base surfaces[]; it passes null when
+  // the PR adds zero or more than one entry (or edits an existing one) — never a silent multi-entry merge.
+  if (appendedEntry === null || appendedEntry === undefined) {
+    return fail("unsupported-shape", "PR must append exactly one surface entry to surfaces[].");
+  }
+  // Whole-document secret scan catches material in the envelope (outside the entry); the entry is re-scanned below.
+  if (secretsScan && containsSecretLikeText(JSON.stringify(doc))) {
+    return fail("secret-or-credential", "Subnet document appears to include secret, wallet, PAT, or private-key material.");
+  }
+  return assessSurfaceEntry(appendedEntry, netuid, { secretsScan, sourceUrlValidation });
+}
+
 export type ProviderLike = Record<string, unknown> & {
   id?: unknown;
   name?: unknown;

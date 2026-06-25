@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   assessCandidateDocument,
+  assessSurfaceEntry,
+  assessSubnetDocument,
   assessFreshness,
   assessProviderDocument,
   candidateRegistryKey,
@@ -150,6 +152,108 @@ describe("assessCandidateDocument", () => {
       { sourceUrlValidation: false },
     );
     expect(r.verdict).toBe("merged");
+  });
+});
+
+describe("assessSurfaceEntry (surface model — netuid supplied from the document root)", () => {
+  // A surface entry OMITS netuid (it lives at the subnet-document root); the validator receives it as a param.
+  const ok = { kind: "subnet-api", url: "https://api.example.ai", source_url: "https://github.com/x/y", public_safe: true };
+
+  it("merges a clean public surface entry", () => {
+    expect(assessSurfaceEntry(ok, 14).verdict).toBe("merged");
+  });
+
+  it("rejects a non-object entry (null and primitive)", () => {
+    expect(assessSurfaceEntry(null, 14).reason).toBe("unsupported-shape");
+    expect(assessSurfaceEntry("nope", 14).reason).toBe("unsupported-shape");
+  });
+
+  it("closes a secret-bearing entry, unless the secrets toggle is off", () => {
+    const dirty = { ...ok, note: "ghp_" + "a".repeat(25) };
+    expect(assessSurfaceEntry(dirty, 14).reason).toBe("secret-or-credential");
+    expect(assessSurfaceEntry(dirty, 14, { secretsScan: false }).verdict).toBe("merged");
+  });
+
+  it("closes an observed-state claim", () => {
+    expect(assessSurfaceEntry({ ...ok, latency: "12ms" }, 14).reason).toBe("observed-state-claim");
+  });
+
+  it("tolerates an omitted, null, or matching entry netuid but rejects a conflicting one", () => {
+    expect(assessSurfaceEntry(ok, 14).verdict).toBe("merged"); // omitted
+    expect(assessSurfaceEntry({ ...ok, netuid: null }, 14).verdict).toBe("merged"); // null
+    expect(assessSurfaceEntry({ ...ok, netuid: 14 }, 14).verdict).toBe("merged"); // matching
+    expect(assessSurfaceEntry({ ...ok, netuid: 99 }, 14).reason).toBe("unsupported-shape"); // conflicting
+  });
+
+  it("closes an unsupported kind", () => {
+    expect(assessSurfaceEntry({ ...ok, kind: "totally-unknown" }, 14).reason).toBe("unsupported-shape");
+  });
+
+  it("accepts a base-layer (wss) endpoint but closes an unsafe one", () => {
+    const base = { kind: "subtensor-rpc", url: "wss://rpc.example.ai", source_url: "https://github.com/x/y", public_safe: true };
+    expect(assessSurfaceEntry(base, 14).verdict).toBe("merged");
+    const baseBad = assessSurfaceEntry({ ...base, url: "wss://127.0.0.1" }, 14);
+    expect(baseBad.reason).toBe("unsafe-url");
+    expect(baseBad.summary).toContain("HTTPS or WSS");
+    expect(assessSurfaceEntry({ ...base, url: undefined }, 14).reason).toBe("unsafe-url"); // base-layer, missing url
+  });
+
+  it("closes an unsafe / missing content URL with the HTTPS message", () => {
+    expect(assessSurfaceEntry({ ...ok, url: "https://127.0.0.1" }, 14).summary).toContain("public HTTPS URL");
+    expect(assessSurfaceEntry({ ...ok, url: undefined }, 14).reason).toBe("unsafe-url");
+  });
+
+  it("falls back to source_urls[0] and closes when no safe source URL is present", () => {
+    expect(assessSurfaceEntry({ kind: "subnet-api", url: "https://api.example.ai", source_urls: ["https://github.com/a/b"], public_safe: true }, 14).verdict).toBe("merged");
+    expect(assessSurfaceEntry({ kind: "subnet-api", url: "https://api.example.ai", public_safe: true }, 14).reason).toBe("unsafe-url");
+  });
+
+  it("can skip URL checks when the toggle is off", () => {
+    expect(assessSurfaceEntry({ kind: "website", url: "http://insecure.example", public_safe: true }, 14, { sourceUrlValidation: false }).verdict).toBe("merged");
+  });
+
+  it("closes a non-public_safe entry and escalates an auth_required one", () => {
+    expect(assessSurfaceEntry({ ...ok, public_safe: false }, 14).verdict).toBe("closed");
+    expect(assessSurfaceEntry({ ...ok, auth_required: true }, 14).verdict).toBe("manual-review");
+  });
+});
+
+describe("assessSubnetDocument (whole-file gate: root netuid + exactly-one appended entry)", () => {
+  const entry = { kind: "subnet-api", url: "https://api.example.ai", source_url: "https://github.com/x/y", public_safe: true };
+  const doc = { netuid: 14, surfaces: [entry] };
+
+  it("merges a valid document whose single appended entry is clean", () => {
+    expect(assessSubnetDocument(doc, { appendedEntry: entry }).verdict).toBe("merged");
+  });
+
+  it("rejects a non-object document as malformed", () => {
+    expect(assessSubnetDocument(null, { appendedEntry: entry }).reason).toBe("malformed-json");
+    expect(assessSubnetDocument(42, { appendedEntry: entry }).reason).toBe("malformed-json");
+  });
+
+  it("rejects a non-integer root netuid", () => {
+    expect(assessSubnetDocument({ netuid: "abc", surfaces: [entry] }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
+    expect(assessSubnetDocument({ surfaces: [entry] }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
+  });
+
+  it("rejects a document without a surfaces[] array", () => {
+    expect(assessSubnetDocument({ netuid: 14 }, { appendedEntry: entry }).reason).toBe("unsupported-shape");
+  });
+
+  it("rejects when the orchestrator found zero-or-many appended entries (sentinel null/undefined)", () => {
+    expect(assessSubnetDocument(doc, { appendedEntry: null }).reason).toBe("unsupported-shape");
+    expect(assessSubnetDocument(doc, { appendedEntry: undefined }).reason).toBe("unsupported-shape");
+  });
+
+  it("catches a secret in the document envelope (outside the entry), unless the toggle is off", () => {
+    const dirty = { netuid: 14, surfaces: [entry], maintainer_token: "ghp_" + "b".repeat(25) };
+    expect(assessSubnetDocument(dirty, { appendedEntry: entry }).reason).toBe("secret-or-credential");
+    expect(assessSubnetDocument(dirty, { appendedEntry: entry, secretsScan: false }).verdict).toBe("merged");
+  });
+
+  it("threads the normalized root netuid to the entry (string root coerces; conflicting entry netuid rejected)", () => {
+    expect(assessSubnetDocument({ netuid: "14", surfaces: [entry] }, { appendedEntry: entry }).verdict).toBe("merged");
+    expect(assessSubnetDocument(doc, { appendedEntry: { ...entry, netuid: 99 } }).reason).toBe("unsupported-shape");
   });
 });
 

@@ -74,6 +74,8 @@ export {
 export {
   assessCandidateDocument,
   assessProviderDocument,
+  assessSurfaceEntry,
+  assessSubnetDocument,
   assessFreshness,
   classifyPrScope,
   classifyRegistryPrScope,

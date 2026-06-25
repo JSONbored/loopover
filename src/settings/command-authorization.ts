@@ -59,8 +59,16 @@ export function normalizeCommandAuthorizationPolicy(input: unknown): { policy: R
 
 export function commandAuthorizationAllowedRoles(policy: RepositoryCommandAuthorizationPolicy | null | undefined, commandName: string): CommandAuthorizationRole[] {
   const normalized = normalizeCommandAuthorizationPolicy(policy).policy;
-  const commandRoles = Object.hasOwn(normalized.commands, commandName) ? normalized.commands[commandName] : undefined;
+  // Policy command keys are stored normalized (trimmed + lowercased) by normalizeCommandAuthorizationPolicy,
+  // so the lookup MUST normalize the probe too. A raw mixed-case name (e.g. "Gate-Override") otherwise misses
+  // its restrictive override and silently falls back to the permissive default — under-stating the restriction.
+  const key = normalizeCommandName(commandName);
+  const commandRoles = Object.hasOwn(normalized.commands, key) ? normalized.commands[key] : undefined;
   return dedupeRoles(commandRoles ?? normalized.default);
+}
+
+function normalizeCommandName(commandName: string): string {
+  return commandName.trim().toLowerCase();
 }
 
 export function commandAuthorizationNeedsMinerDetection(args: {
@@ -107,7 +115,7 @@ export function evaluateCommandAuthorization(args: {
       allowedRoles,
     };
   }
-  if (ownPrAuthor && MAINTAINER_ONLY_DEFAULT_COMMANDS.has(args.commandName) && allowedRoles.every((role) => role === "maintainer" || role === "collaborator")) {
+  if (ownPrAuthor && MAINTAINER_ONLY_DEFAULT_COMMANDS.has(normalizeCommandName(args.commandName)) && allowedRoles.every((role) => role === "maintainer" || role === "collaborator")) {
     return { authorized: false, reason: "maintainer_command_requires_maintainer", actorKind: "author", matchedRole: null, allowedRoles };
   }
   return {

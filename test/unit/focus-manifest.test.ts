@@ -1129,7 +1129,7 @@ describe("parseFocusManifest review config", () => {
           "nope", // non-mapping → dropped
           { path: "y/**" }, // missing instructions → dropped
           { path: 42, instructions: "non-string path" }, // path not a string → dropped
-          { path: `${"a".repeat(400)}/x`, instructions: "over-long path" }, // > MAX_ITEM_LENGTH → dropped (#review-audit)
+          { path: "bad\npath", instructions: "control path" }, // control character path → dropped
         ],
       },
     });
@@ -1142,7 +1142,7 @@ describe("parseFocusManifest review config", () => {
     expect(m.warnings.some((w) => /path_instructions\[4\]/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /path_instructions\[5\]\.instructions/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /path_instructions\[6\]\.path/.test(w))).toBe(true); // non-string path
-    expect(m.warnings.some((w) => /path_instructions\[7\]\.path.*exceeds/.test(w))).toBe(true); // over-long path
+    expect(m.warnings.some((w) => /path_instructions\[7\]\.path.*control characters/.test(w))).toBe(true);
     // Round-trips through the cache serializer.
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.pathInstructions).toEqual(m.review.pathInstructions);
   });
@@ -1158,6 +1158,15 @@ describe("parseFocusManifest review config", () => {
     const m = parseFocusManifest({ review: { path_instructions: many } });
     expect(m.review.pathInstructions).toHaveLength(50);
     expect(m.warnings.some((w) => /path_instructions.*capped/.test(w))).toBe(true);
+  });
+
+  it("caps review.path_instructions paths at the manifest item length with a warning", () => {
+    const longGlob = `src/${"a".repeat(400)}/**`;
+    const m = parseFocusManifest({ review: { path_instructions: [{ path: longGlob, instructions: "keep it bounded" }] } });
+    expect(m.review.pathInstructions).toHaveLength(1);
+    expect(m.review.pathInstructions[0]?.path).toHaveLength(300);
+    expect(m.review.pathInstructions[0]?.path).toBe(longGlob.slice(0, 300));
+    expect(m.warnings.some((w) => /path_instructions\[0\]\.path.*over-long/.test(w))).toBe(true);
   });
 });
 
@@ -1184,6 +1193,19 @@ describe("resolveReviewPathInstructions (#review-path-instructions)", () => {
     const out = resolveReviewPathInstructions(rules, ["src/a.ts", "tests/a.test.ts"]);
     expect(out).toContain("Enforce strict null checks.");
     expect(out).toContain("Cover both branches.");
+  });
+
+  it("bounds the resolved path guidance prompt section", () => {
+    const many = Array.from({ length: 50 }, (_, i) => ({ path: `src/${i}/**`, instructions: "x".repeat(300) }));
+    const changedPaths = many.map((entry) => `${entry.path.slice(0, -3)}/file.ts`);
+    const out = resolveReviewPathInstructions(many, changedPaths);
+    expect(out.length).toBeLessThanOrEqual(4_000);
+    expect(out).toContain("Path-specific review instructions");
+    expect(out).toContain("omitted to keep the reviewer prompt bounded");
+  });
+
+  it("returns an empty string when changed paths normalize to blanks", () => {
+    expect(resolveReviewPathInstructions(rules, ["", "///"])).toBe("");
   });
 
   it("resolveReviewPromptOverrides: non-null manifest passes the config through; null manifest → defaults", () => {

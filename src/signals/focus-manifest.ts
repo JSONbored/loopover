@@ -144,6 +144,8 @@ export type PreMergeCheck = {
 
 // A hard cap so a hostile/huge manifest can't bloat the reviewer prompt (mirrors REVIEW_FIELD_KEYS discipline).
 const MAX_PATH_INSTRUCTIONS = 50;
+const MAX_REVIEW_PATH_GUIDANCE_LENGTH = 4_000;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 
 /**
  * Normalized maintainer focus manifest. Repo owners declare which work areas are wanted,
@@ -662,8 +664,8 @@ function parseReviewExcludePaths(value: JsonValue | undefined, warnings: string[
 }
 
 /** Parse `review.path_instructions` — an array of `{ path, instructions }` entries. Each must have a non-empty
- *  string `path` (a manifest glob) and PUBLIC-SAFE string `instructions`; invalid/unsafe entries are dropped with
- *  a warning. Capped at MAX_PATH_INSTRUCTIONS so a huge manifest can't bloat the reviewer prompt. */
+ *  bounded string `path` (a manifest glob) and PUBLIC-SAFE string `instructions`; invalid/unsafe entries are
+ *  dropped with a warning. Capped at MAX_PATH_INSTRUCTIONS so a huge manifest can't bloat the reviewer prompt. */
 function parseReviewPathInstructions(value: JsonValue | undefined, warnings: string[]): ReviewPathInstruction[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -681,14 +683,18 @@ function parseReviewPathInstructions(value: JsonValue | undefined, warnings: str
       continue;
     }
     const e = entry as Record<string, JsonValue>;
-    const path = typeof e.path === "string" ? e.path.trim() : "";
+    let path = typeof e.path === "string" ? e.path.trim() : "";
     if (!path) {
       warnings.push(`Manifest "review.path_instructions[${index}].path" must be a non-empty string; ignoring the entry.`);
       continue;
     }
-    if (path.length > MAX_ITEM_LENGTH) {
-      warnings.push(`Manifest "review.path_instructions[${index}].path" exceeds ${MAX_ITEM_LENGTH} chars; ignoring the entry.`);
+    if (CONTROL_CHARACTER_PATTERN.test(path)) {
+      warnings.push(`Manifest "review.path_instructions[${index}].path" must not contain control characters; ignoring the entry.`);
       continue;
+    }
+    if (path.length > MAX_ITEM_LENGTH) {
+      warnings.push(`Manifest "review.path_instructions[${index}].path" truncated an over-long entry.`);
+      path = path.slice(0, MAX_ITEM_LENGTH);
     }
     if (e.instructions === undefined || e.instructions === null) {
       warnings.push(`Manifest "review.path_instructions[${index}].instructions" is required; ignoring the entry.`);
@@ -749,10 +755,32 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
  */
 export function resolveReviewPathInstructions(pathInstructions: ReviewPathInstruction[], changedPaths: string[]): string {
   if (pathInstructions.length === 0 || changedPaths.length === 0) return "";
-  const applicable = pathInstructions.filter((entry) => changedPaths.some((path) => matchesManifestPath(path, entry.path)));
+  const normalizedChangedPaths = changedPaths.map(normalizePathForMatch).filter(Boolean);
+  if (normalizedChangedPaths.length === 0) return "";
+  const applicable = pathInstructions.filter((entry) => {
+    const matches = compileManifestPathMatcher(entry.path);
+    return normalizedChangedPaths.some((path) => matches(path));
+  });
   if (applicable.length === 0) return "";
-  const lines = applicable.map((entry) => `- \`${entry.path}\`: ${entry.instructions}`);
-  return `\n\nPath-specific review instructions from the maintainer — apply these to the changed files that match each glob:\n${lines.join("\n")}`;
+
+  const header = "\n\nPath-specific review instructions from the maintainer — apply these to the changed files that match each glob:";
+  const lines: string[] = [];
+  let length = header.length;
+  let omitted = 0;
+  for (const entry of applicable) {
+    const line = `- \`${entry.path}\`: ${entry.instructions}`;
+    const nextLength = length + 1 + line.length;
+    if (nextLength > MAX_REVIEW_PATH_GUIDANCE_LENGTH) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(line);
+    length = nextLength;
+  }
+  if (lines.length === 0) return "";
+  const omittedLine = omitted > 0 ? `\n- (${omitted} additional matching path instruction(s) omitted to keep the reviewer prompt bounded.)` : "";
+  const guidance = `${header}\n${lines.join("\n")}${omittedLine}`;
+  return guidance.length > MAX_REVIEW_PATH_GUIDANCE_LENGTH ? guidance.slice(0, MAX_REVIEW_PATH_GUIDANCE_LENGTH) : guidance;
 }
 
 /** Resolve the AI-reviewer overrides (`review.profile` + `review.path_instructions` + `review.exclude_paths`) from

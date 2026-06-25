@@ -32,6 +32,8 @@ describe("isPublicSafeText (#542 shared public/private boundary)", () => {
   it("rejects local filesystem paths (posix and Windows)", () => {
     expect(isPublicSafeText("/Users/alice/project")).toBe(false);
     expect(isPublicSafeText("/home/bob/repo")).toBe(false);
+    expect(isPublicSafeText("/root/project/src")).toBe(false);
+    expect(isPublicSafeText("clone failed at /root/work/repo")).toBe(false);
     expect(isPublicSafeText("/tmp/scratch")).toBe(false);
     expect(isPublicSafeText("C:\\Users\\carol\\repo")).toBe(false);
     expect(isPublicSafeText("C:/Users/carol/repo")).toBe(false);

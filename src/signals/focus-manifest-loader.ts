@@ -22,6 +22,18 @@ export const MANIFEST_FILE_CANDIDATES = [
 export type RepoFocusManifestFetcher = (repoFullName: string) => Promise<string | null>;
 
 /**
+ * Optional container-private per-repo config reader (self-host GITTENSORY_REPO_CONFIG_DIR). When registered it
+ * takes priority over — and fully REPLACES — the public `.gittensory.yml` for the normal (non-preview) load, so a
+ * self-host operator sets review policy privately and contributors can't read or game it. Registered once at boot
+ * by the Node entry (server.ts); the filesystem access lives inside that injected closure, keeping THIS module
+ * Workers-safe. Unset (cloud, or a self-host without the dir) ⇒ behavior is byte-identical to the public fetch.
+ */
+let localManifestReader: RepoFocusManifestFetcher | null = null;
+export function setLocalManifestReader(reader: RepoFocusManifestFetcher | null): void {
+  localManifestReader = reader;
+}
+
+/**
  * Fetch a maintainer-owned manifest file from the public GitHub raw endpoint. Network or HTTP
  * failures resolve to null so the loader falls back to deterministic signals.
  */
@@ -78,6 +90,13 @@ async function loadRepoFocusManifestWithCachePolicy(
   options: { fetcher?: RepoFocusManifestFetcher; maxAgeMs?: number; refresh?: boolean } = {},
   cachePolicy: { publicOnly?: boolean } = {},
 ): Promise<FocusManifest> {
+  // Container-private per-repo config (self-host) takes priority over the public `.gittensory.yml`: read fresh from
+  // local fs each call (cheap, no network) so operator edits apply immediately. NEVER consulted on the publicOnly
+  // (contributor-preview) path, and never persisted — so private policy can't leak into previews or the cache.
+  if (!cachePolicy.publicOnly && localManifestReader) {
+    const localRaw = await localManifestReader(repoFullName);
+    if (localRaw !== null) return parseFocusManifestContent(localRaw, "api_record");
+  }
   const fetcher = options.fetcher ?? fetchRepoFocusManifestFile;
   const maxAgeMs = options.maxAgeMs ?? REPO_FOCUS_MANIFEST_MAX_AGE_MS;
   if (!options.refresh) {

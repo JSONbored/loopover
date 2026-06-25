@@ -18,19 +18,25 @@ export function isOrbBrokerEnabled(env: Env): boolean {
 
 export type IssueResult = { enrollId: string; secret: string } | { error: "installation_not_found" | "installation_not_registered" };
 
-/** Operator-only: mint a one-time enrollment secret for a REGISTERED install. Returns the plaintext secret ONCE
- *  (stored only hashed) for the operator to hand to the container's config. */
-export async function issueOrbEnrollment(env: Env, installationId: number): Promise<IssueResult> {
+/** Mint a one-time enrollment secret for a REGISTERED install. Returns the plaintext secret ONCE (stored only
+ *  hashed). Issued by the operator (internal endpoint) OR by a maintainer who proved install-admin via OAuth —
+ *  in the latter case the maintainer's GitHub identity is recorded for audit. installation_id is bound here and
+ *  read back (never from the request) at token-exchange time, so a secret can never mint a token for another install. */
+export async function issueOrbEnrollment(
+  env: Env,
+  installationId: number,
+  maintainer?: { login: string; githubId?: number | null | undefined },
+): Promise<IssueResult> {
   const install = await env.DB.prepare("SELECT registered FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first<{ registered: number }>();
   if (!install) return { error: "installation_not_found" };
   if (install.registered !== 1) return { error: "installation_not_registered" };
   const enrollId = createOpaqueToken("orbenr");
   const secret = createOpaqueToken("orbsec");
   await env.DB.prepare(
-    `INSERT INTO orb_enrollments (enroll_id, installation_id, secret_hash, state, authorized_at, enrolled_at)
-     VALUES (?, ?, ?, 'enrolled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    `INSERT INTO orb_enrollments (enroll_id, installation_id, maintainer_login, maintainer_github_id, secret_hash, state, authorized_at, enrolled_at)
+     VALUES (?, ?, ?, ?, ?, 'enrolled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
   )
-    .bind(enrollId, installationId, await hashToken(secret))
+    .bind(enrollId, installationId, maintainer?.login ?? null, maintainer?.githubId ?? null, await hashToken(secret))
     .run();
   return { enrollId, secret };
 }

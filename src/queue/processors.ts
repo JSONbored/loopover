@@ -2814,6 +2814,12 @@ async function maybePublishPrPublicSurface(
       // RC2: only branch-protection-required checks gate the PR; a red codecov/* is surfaced but never blocks.
       const requiredContexts = await fetchRequiredStatusContexts(env, repoFullName, pr.baseRef ?? repo?.defaultBranch, ciToken ?? env.GITHUB_PUBLIC_TOKEN);
       const liveCi = await fetchLiveCiAggregate(env, repoFullName, pr.headSha, ciToken ?? env.GITHUB_PUBLIC_TOKEN, requiredContexts);
+      // Live merge-state too — the SAME source the disposition uses (planAgentMaintenanceActions reads liveMergeState).
+      // The stored pr.mergeableState lags GitHub's async recompute, so a base-conflicting PR could read `clean` here
+      // ("✅ safe to merge") while the disposition reads the live `dirty` and auto-CLOSES it — the exact #4220
+      // contradiction. (#review-audit / #ready-needs-mergeable)
+      const liveMergeState = await fetchLivePullRequestMergeState(env, repoFullName, pr.number, ciToken ?? env.GITHUB_PUBLIC_TOKEN).catch(() => undefined);
+      const mergeStateLabel = liveMergeState ?? pr.mergeableState; // fail-safe to the stored value
       const ciState: MergeReadiness["ciState"] = liveCi.ciState === "passed" ? "passed" : liveCi.ciState === "failed" ? "failed" : "unverified";
       // Per-failed-check WHY (codecov %/test/lint reason) from each check-run output or commit-status
       // description — capped + public-safe (name + short reason only). The renderer lists these under the CI chip.
@@ -2824,7 +2830,7 @@ async function maybePublishPrPublicSurface(
       }));
       const mergeReadiness: MergeReadiness = {
         ciState,
-        ...(pr.mergeableState ? { mergeStateLabel: pr.mergeableState } : {}),
+        ...(mergeStateLabel ? { mergeStateLabel } : {}),
         ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };

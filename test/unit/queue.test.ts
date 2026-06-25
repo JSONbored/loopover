@@ -3579,6 +3579,9 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       // PR files — the unified branch (re)fetches them to count changed files for the readiness chip.
       if (url.includes("/pulls/3/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
+      // #review-audit: the LIVE merge-state the comment now reads — the base just advanced with a conflict, so the
+      // live state is `dirty` even though the stored mergeableState (unset on this payload) would not say so.
+      if (/\/pulls\/3(?:\?|$)/.test(url)) return Response.json({ number: 3, mergeable_state: "dirty" });
       // Gate check-run — must succeed so `gateEvaluation` is produced and the flag-ON branch runs.
       // The pending check is POSTed (in_progress), then PATCHed to its completed conclusion.
       if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
@@ -3634,6 +3637,9 @@ describe("queue processors", () => {
     expect(postedBody).toContain("**Code review**");
     // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
     expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
+    // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must
+    // NOT headline "safe to merge" while the disposition would auto-close the base-conflicting PR.
+    expect(postedBody).not.toMatch(/safe to merge/i);
   });
 
   // FIX B + FIX D3 at the processor call site: a unified comment for a PR whose CI has a FAILED check, with the

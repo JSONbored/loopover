@@ -48,6 +48,9 @@ declare global {
     ORB_GITHUB_APP_PRIVATE_KEY?: string;
     ORB_GITHUB_CLIENT_ID?: string;
     ORB_GITHUB_CLIENT_SECRET?: string;
+    /** Master flag for the Orb token-broker (enrollment OAuth + /v1/orb/token). Default-off: every broker route
+     *  early-404s until this is "true", so the deploy is byte-identical until an operator enables it. */
+    ORB_BROKER_ENABLED?: string;
     GITHUB_APP_PRIVATE_KEY: string;
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;

@@ -23,6 +23,16 @@ export type JobMessage =
       attempt: number;
     }
   | {
+      // One bounded re-gate unit fanned out by the scheduled sweep (#audit-sweep-fanout): re-review + stamp a
+      // single PR. Each candidate becomes its own individually-retryable, rate-limited queue message so the heavy
+      // re-review work interleaves with other jobs instead of monopolizing the consumer for all 25 at once.
+      type: "agent-regate-pr";
+      deliveryId: string;
+      repoFullName: string;
+      prNumber: number;
+      installationId: number;
+    }
+  | {
       type: "refresh-registry";
       requestedBy: "schedule" | "api" | "test";
     }
@@ -183,6 +193,12 @@ export type JobMessage =
       type: "submit-draft";
       requestedBy: "api" | "test";
       draftId: string;
+    }
+  | {
+      // Orb relay retry (#relay-retry): re-attempt previously-failed forwardOrbEvent calls (container was down).
+      // Enqueued by the cron every sweep cycle (≈2 min) ONLY when ORB_BROKER_ENABLED is set.
+      type: "retry-orb-relay";
+      requestedBy: "schedule" | "test";
     };
 
 export type GitHubWebhookPayload = {

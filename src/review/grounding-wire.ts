@@ -14,6 +14,7 @@
 import { createInstallationToken } from "../github/app";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
 import { repoParts } from "../utils/json";
+import { isConvergenceRepoAllowed } from "./cutover-gate";
 import {
   buildGrounding,
   type FileFetcher,
@@ -27,6 +28,16 @@ import {
 /** True when grounding is enabled. Flag-OFF (default) → no grounding is gathered and the prompt is unchanged. */
 export function isGroundingEnabled(env: { GITTENSORY_REVIEW_GROUNDING?: string | undefined }): boolean {
   return /^(1|true|yes|on)$/i.test(env.GITTENSORY_REVIEW_GROUNDING ?? "");
+}
+
+/** True when the AI CI-refutation (#ai-ci-refutation) is ACTIVE for this repo: grounding is ON (the converged AI
+ *  review feeds the finished CI status to the reviewer, so enforcing that ground truth is coherent) AND the repo
+ *  is convergence-allowlisted. Centralized so the disposition refutation (agent-actions) and the public-comment
+ *  reconciliation gate on the SAME condition — the merge/close action and the rendered comment can never disagree.
+ *  A single call (not an inline `&&` at the call sites) so the processor carries no branch and this is the one
+ *  place the condition is unit-tested. */
+export function aiCiRefutationActive(env: Env, repoFullName: string): boolean {
+  return isGroundingEnabled(env) && isConvergenceRepoAllowed(env, repoFullName);
 }
 
 /** When ON, both grounding inputs (CI + full files) are gathered; OFF gathers neither. One switch keeps the

@@ -16,6 +16,12 @@ export const SWEEP_MAX_PRS = 25;
 // approved PRs unmerged for up to an hour.
 export const SWEEP_FRESHNESS_MS = 2 * 60 * 1000;
 
+// Fan-out dedup window (#audit-fanout-dedup): a burst of fan-out jobs within this window collapses to ONE
+// effective fan-out. Kept BELOW the ~2-min cron cadence so a legitimate next-tick fan-out is never skipped, but
+// well above the few-seconds spread of a burst (a deploy-restart cron catch-up, or fan-out jobs that queued
+// behind a per-PR backlog and drained together).
+export const SWEEP_FANOUT_DEDUP_MS = 90 * 1000;
+
 /**
  * Select the open PRs a single repo sweep should recompute: drop drafts and anything a webhook touched within
  * `freshnessWindowMs` of `now` (don't race an in-flight review), then take the `max` PRs the sweep has gone
@@ -61,4 +67,20 @@ export function selectRegateCandidates(input: {
     })
     .sort((a, b) => regateProgress(a) - regateProgress(b) || a.number - b.number)
     .slice(0, Math.max(0, max));
+}
+
+/**
+ * In-flight guard for the per-PR fan-out (#audit-sweep-fanout): is a re-gate sweep still draining for this repo?
+ * sweepRepoRegate fans out one staggered per-PR job per candidate, each of which stamps `last_regated_at` as it
+ * runs — so the MOST RECENT stamp across the repo's open PRs (`latestRegatedAt`) being within `windowMs` of `now`
+ * means a sweep is actively working through its queue. The cron re-arms every ~2 min, far faster than a sweep
+ * drains, so without this guard a second full sweep would pile duplicate per-PR jobs onto the unfinished one. A
+ * missing/never-regated/unparseable timestamp means no sweep is in flight (proceed). Pure + deterministic.
+ */
+export function isRegateSweepDraining(latestRegatedAt: string | null | undefined, now: string, windowMs: number = SWEEP_FRESHNESS_MS): boolean {
+  if (!latestRegatedAt) return false;
+  const stampedMs = Date.parse(latestRegatedAt);
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(stampedMs) || !Number.isFinite(nowMs)) return false;
+  return nowMs - stampedMs < windowMs;
 }

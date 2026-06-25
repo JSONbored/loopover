@@ -27,7 +27,9 @@ export function buildManifest(origin: string, state: string): Record<string, unk
       pull_requests: "write",
       contents: "write",
       issues: "write",
-      checks: "read",
+      // checks:write — the gate posts a check-run (POST /repos/{o}/{r}/check-runs in src/github/app.ts);
+      // checks:read would 403 that write (swallowed as a permission_missing warning → silent first-review failure).
+      checks: "write",
       metadata: "read",
       statuses: "read",
     },
@@ -48,6 +50,17 @@ which are written to a file for you to load — then restart the container.</p>
   <input type="hidden" name="manifest" value='${manifest}'>
   <button type="submit" style="padding:.6rem 1.2rem;font-size:1rem;cursor:pointer">Create GitHub App →</button>
 </form>
+</body></html>`;
+}
+
+/** Setup page shown in BROKERED mode (ORB_ENROLLMENT_SECRET is set): there is no own GitHub App to create —
+ *  the central Gittensory Orb App provides installation tokens on demand via the enrollment secret. */
+export function renderBrokeredSetupPage(): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gittensory self-host setup</title></head>
+<body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
+<h1>Gittensory self-host — brokered mode</h1>
+<p>This instance is configured for the <strong>central Gittensory Orb App</strong> (<code>ORB_ENROLLMENT_SECRET</code> is set), so there is <strong>no GitHub App to create here</strong> — installation tokens are brokered from the Orb on demand.</p>
+<p>To onboard: install the Gittensory Orb App on your repositories and complete enrollment to obtain your <code>ORB_ENROLLMENT_SECRET</code>. No further setup is needed on this page.</p>
 </body></html>`;
 }
 

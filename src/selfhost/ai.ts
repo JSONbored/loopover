@@ -6,6 +6,8 @@
 // review proceeds deterministically. Every path returns `{ response: string }` (or throws → the caller
 // records an error and degrades — never a silent wrong answer).
 
+import type { CombineStrategy, OnMerge } from "../services/ai-review";
+
 interface AiRunOptions {
   messages?: Array<{ role: string; content: string }>;
   prompt?: string;
@@ -36,6 +38,16 @@ export function resolveModel(configured: string | undefined, passed: string, pro
 
 function configuredModel(env: Record<string, string | undefined>): string | undefined {
   return env.AI_MODEL ?? env.WORKERS_AI_SUMMARY_MODEL;
+}
+
+const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+/** Map `AI_EFFORT` (the operator's intelligence dial) to a `claude --effort` level. Defaults to "high" — the
+ *  engine wants a substantive review, not a fast shallow one — and falls back to "high" for any unset or
+ *  unrecognized value so a typo can't silently downgrade reviews. The CLI clamps a level above the model's
+ *  own ceiling (e.g. xhigh on Sonnet) down on its own. */
+export function resolveEffort(configured: string | undefined): string {
+  const level = (configured ?? "").trim().toLowerCase();
+  return VALID_EFFORTS.has(level) ? level : "high";
 }
 
 /** OpenAI-compatible endpoint (Ollama's /v1, OpenAI, vLLM, LM Studio, …) — chat + embeddings. */
@@ -192,8 +204,9 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       env.CLAUDE_CODE_OAUTH_TOKEN = token;
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
-      const claudeModel = resolveModel(configuredModel(parentEnv), model, "sonnet");
-      const { stdout, code } = await spawn("claude", ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"], { env, input: prompt, timeoutMs: 120_000 });
+      const claudeModel = resolveModel(configuredModel(parentEnv), model, "claude-sonnet-4-6");
+      const effort = resolveEffort(parentEnv.AI_EFFORT);
+      const { stdout, code } = await spawn("claude", ["--print", "--output-format", "json", "--model", claudeModel, "--permission-mode", "plan", "--effort", effort, "--disallowedTools", "Bash,Edit,Write,WebFetch,WebSearch"], { env, input: prompt, timeoutMs: 120_000 });
       if (code !== 0) throw new Error(`claude_code_exit_${code ?? "null"}`);
       const errStatus = claudeErrorStatus(stdout);
       if (errStatus) throw new Error(`claude_code_error_${errStatus}`);
@@ -204,15 +217,24 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
   };
 }
 
-/** Codex subscription (`codex exec`, auth from ~/.codex/auth.json). Gated/unverified — fail-safe. */
+/** Codex subscription (`codex exec`, auth from $CODEX_HOME/auth.json, default ~/.codex). codex needs a WRITABLE
+ *  home for its app-server state, so a brokered self-host points CODEX_HOME at a writable dir. Gated/unverified —
+ *  fail-safe. */
 export function createCodexAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
       const env = scrubBillableKeys(parentEnv);
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
-      const codexModel = resolveModel(configuredModel(parentEnv), model, "gpt-5");
-      const { stdout, code } = await spawn("codex", ["exec", "--json", "--sandbox", "read-only", "--ask-for-approval", "never", "--model", codexModel, "--", prompt], { env, timeoutMs: 120_000 });
+      // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).
+      // `--skip-git-repo-check` lets it run outside a git repo. Pass `--model` ONLY when one is explicitly
+      // configured: forcing a model (e.g. the old `gpt-5` default) fails on a ChatGPT-account login with "not
+      // supported", whose default model codex selects on its own.
+      const codexModel = resolveModel(configuredModel(parentEnv), model, "");
+      const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
+      if (codexModel) args.push("--model", codexModel);
+      args.push("--", prompt);
+      const { stdout, code } = await spawn("codex", args, { env, timeoutMs: 120_000 });
       if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}`);
       const text = extractCliText(stdout);
       if (!text) throw new Error("codex_empty_output");
@@ -267,18 +289,72 @@ export function buildProvider(name: string, env: Record<string, string | undefin
   }
 }
 
-/** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list builds a fallback chain
- *  (first to succeed wins). Returns undefined when unconfigured or no provider has its credential. */
-export function createSelfHostAi(env: Record<string, string | undefined>): SelfHostAi | undefined {
-  const raw = (env.AI_PROVIDER ?? "").trim().toLowerCase();
-  if (!raw) return undefined;
-  const providers = raw
+/** Wrap ≥2 providers so a caller can address ONE by name — `.run("codex", …)` runs codex specifically — which is
+ *  what lets the dual-reviewer path (#dual-ai-combiner) run Claude Code AND Codex as DISTINCT reviewers instead of
+ *  one fallback chain. Any other model id (a real model name, or an embed model for RAG) routes to the fallback
+ *  chain exactly as before — so single-AI / BYOK setups are unchanged. */
+export function routeProviders(providers: Array<{ name: string; ai: SelfHostAi }>): SelfHostAi {
+  const byName = new Map(providers.map((p) => [p.name, p.ai]));
+  const chain = createChainAi(providers);
+  return {
+    async run(model, options) {
+      // A reviewer id of `<provider>` or `<provider>:<model>` addresses ONE provider directly (the dual-review
+      // path). When it matches, hand the provider the model PART (after the colon) — or "" so it falls to its own
+      // default — NOT the provider name, which is not a real model id (`claude --model claude-code` would fail).
+      // Any other id (a real model name, or an embed model for RAG) routes to the fallback chain unchanged.
+      const trimmed = model.trim();
+      const colon = trimmed.indexOf(":");
+      const name = (colon < 0 ? trimmed : trimmed.slice(0, colon)).toLowerCase();
+      const direct = byName.get(name);
+      return direct ? direct.run(colon < 0 ? "" : trimmed.slice(colon + 1), options) : chain.run(model, options);
+    },
+  };
+}
+
+/** Build the credentialed providers named in AI_PROVIDER (any without a credential are silently dropped), in
+ *  order, lowercased. Shared by the adapter and the dual-review plan so they never disagree about which providers
+ *  exist (e.g. an uncredentialed entry can't become a "reviewer" the router would then miss). */
+function buildProviders(env: Record<string, string | undefined>): Array<{ name: string; ai: SelfHostAi }> {
+  return (env.AI_PROVIDER ?? "")
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
     .map((name) => ({ name, ai: buildProvider(name, env) }))
     .filter((p): p is { name: string; ai: SelfHostAi } => Boolean(p.ai));
+}
+
+/** The credentialed self-host provider names from AI_PROVIDER, in order. Empty when unconfigured. */
+export function resolveProviderNames(env: Record<string, string | undefined>): string[] {
+  return buildProviders(env).map((p) => p.name);
+}
+
+/** Select the self-host AI provider(s) from AI_PROVIDER. A comma-separated list of TWO+ providers is addressable
+ *  by name for dual review (see `routeProviders`) and otherwise falls back through them in order; a single
+ *  provider is used directly. Returns undefined when unconfigured or no provider has its credential. */
+export function createSelfHostAi(env: Record<string, string | undefined>): SelfHostAi | undefined {
+  const providers = buildProviders(env);
   if (providers.length === 0) return undefined;
   if (providers.length === 1) return providers[0]?.ai;
-  return createChainAi(providers);
+  return routeProviders(providers);
+}
+
+const COMBINE_STRATEGIES = new Set<CombineStrategy>(["single", "consensus", "synthesis"]);
+const ON_MERGE_RULES = new Set<OnMerge>(["either", "both"]);
+
+/** Resolve the self-host dual-review plan from env: the credentialed providers become the reviewer(s), `AI_COMBINE`
+ *  the strategy (default `synthesis` for two — "both review, one synthesized decision"), `AI_ON_MERGE` the
+ *  synthesis rule. Returns undefined when no provider is configured (cloud, or AI off) so ai-review keeps its
+ *  byte-identical Workers-AI consensus default; one provider ⇒ `single`; two+ ⇒ the configured strategy over the
+ *  first two. The result is attached to the self-host env at boot and passed to runGittensoryAiReview. */
+export function resolveAiReviewerPlan(
+  env: Record<string, string | undefined>,
+): { reviewers: Array<{ model: string }>; combine: CombineStrategy; onMerge: OnMerge | undefined } | undefined {
+  const names = resolveProviderNames(env);
+  if (names.length === 0) return undefined;
+  if (names.length === 1) return { reviewers: [{ model: names[0] as string }], combine: "single", onMerge: undefined };
+  const rawCombine = (env.AI_COMBINE ?? "").trim().toLowerCase() as CombineStrategy;
+  const combine: CombineStrategy = COMBINE_STRATEGIES.has(rawCombine) ? rawCombine : "synthesis";
+  const rawOnMerge = (env.AI_ON_MERGE ?? "").trim().toLowerCase() as OnMerge;
+  const onMerge = ON_MERGE_RULES.has(rawOnMerge) ? rawOnMerge : undefined;
+  return { reviewers: names.slice(0, 2).map((model) => ({ model })), combine, onMerge };
 }

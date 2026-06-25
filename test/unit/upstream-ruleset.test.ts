@@ -15,6 +15,7 @@ import {
   registryHyperparameterDriftWarningsForRepo,
   refreshUpstreamDrift,
   refreshUpstreamSourceSnapshots,
+  resolveDriftAssignees,
 } from "../../src/upstream/ruleset";
 import type { UpstreamDriftReportRecord, UpstreamRulesetSnapshotRecord, UpstreamSourceSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -877,6 +878,15 @@ describe("upstream ruleset drift tracking", () => {
     await expect(fileUpstreamDriftIssues(failingEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
   });
 
+  it("assigns filed drift issues to GITTENSORY_DRIFT_ISSUE_ASSIGNEES when a self-host operator sets it", async () => {
+    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "alice, ,bob" });
+    await upsertUpstreamDriftReport(env, driftReport("assignee-override"));
+    const calls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 70, url: "https://github.com/acme/widgets/issues/70" }, calls }));
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 1 });
+    expect(calls.find((call) => call.method === "POST")?.body?.assignees).toEqual(["alice", "bob"]); // trimmed, empty segment dropped
+  });
+
   it("handles edge cases while filing upstream drift issues", async () => {
     const defaultRepoEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "1", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "" });
     await upsertUpstreamDriftReport(defaultRepoEnv, driftReport("source-fingerprint", { severity: "medium", affectedAreas: [] }));
@@ -1472,3 +1482,16 @@ function driftReport(
     updatedAt: "2026-05-30T00:00:00.000Z",
   };
 }
+
+describe("resolveDriftAssignees", () => {
+  it("defaults to the gittensory maintainer when unset, empty, or whitespace-only", () => {
+    expect(resolveDriftAssignees(createTestEnv())).toEqual(["jsonbored"]);
+    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "" }))).toEqual(["jsonbored"]);
+    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "   " }))).toEqual(["jsonbored"]);
+  });
+
+  it("parses a comma-separated list, trimming and dropping empty segments", () => {
+    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "alice" }))).toEqual(["alice"]);
+    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: " alice , ,bob " }))).toEqual(["alice", "bob"]);
+  });
+});

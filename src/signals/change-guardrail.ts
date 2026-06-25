@@ -50,3 +50,15 @@ export function changedPathsHittingGuardrail(changedPaths: string[], hardGuardra
   if (hardGuardrailGlobs.length === 0) return [];
   return changedPaths.filter((path) => path.length > 0 && matchesAny(path, hardGuardrailGlobs));
 }
+
+/**
+ * Whether a PR's diff trips a hard guardrail — the BOOLEAN form shared by the disposition (held for owner
+ * review) and the public comment (so the headline reads "held", not "safe to merge"). FAIL-SAFE on unknown
+ * paths (#1062): when guardrails ARE configured but the changed-file set is empty (the cache is not yet / no
+ * longer populated), we cannot prove the PR avoids a guarded path, so treat it as a hit. No guardrails
+ * configured ⇒ never a hit. Pure.
+ */
+export function isGuardrailHit(changedPaths: string[], hardGuardrailGlobs: string[]): boolean {
+  if (hardGuardrailGlobs.length === 0) return false;
+  return changedPaths.length === 0 || changedPathsHittingGuardrail(changedPaths, hardGuardrailGlobs).length > 0;
+}

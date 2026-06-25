@@ -26,10 +26,17 @@ const WEBHOOK_SECRET_BY_REPO: Record<string, string> = {
 };
 
 function resolveWebhook(env: Env, repoFullName: string): string | undefined {
+  // A repo with a specific mapping uses its own channel secret (the built-in map is gittensory's OWN repos).
   const name = WEBHOOK_SECRET_BY_REPO[repoFullName.toLowerCase()];
-  if (!name) return undefined;
-  const value = (env as unknown as Record<string, unknown>)[name];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  if (name) {
+    const mapped = (env as unknown as Record<string, unknown>)[name];
+    if (typeof mapped === "string" && mapped.length > 0) return mapped;
+  }
+  // Modular self-host default: ANY repo not in the built-in map falls back to a single DISCORD_WEBHOOK_URL, so a
+  // self-host operator gets per-action notifications for THEIR repos without editing this source map. Unset →
+  // undefined → no-notify, byte-identical to today.
+  const fallback = (env as unknown as Record<string, unknown>).DISCORD_WEBHOOK_URL;
+  return typeof fallback === "string" && fallback.length > 0 ? fallback : undefined;
 }
 
 export type NotifyOutcome = "merged" | "closed" | "manual";

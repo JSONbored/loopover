@@ -129,6 +129,23 @@ describe("GitHub check runs", () => {
     expect(mints).toBe(2);
   });
 
+  it("sources the installation token from the Orb broker when an enrollment secret is set (and caches it)", async () => {
+    let brokerCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/v1/orb/token")) {
+        brokerCalls += 1;
+        return Response.json({ token: "brokered-token", installationId: 999, expiresAt: new Date(Date.now() + 60 * 60_000).toISOString() });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    // No GITHUB_APP_PRIVATE_KEY needed — a brokered self-host holds no App key.
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    expect(await createInstallationToken(env, 888)).toBe("brokered-token");
+    expect(await createInstallationToken(env, 888)).toBe("brokered-token"); // cached → no second broker exchange
+    expect(brokerCalls).toBe(1);
+  });
+
   it("fetches repository collaborator permissions with installation credentials", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];

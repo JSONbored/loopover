@@ -1948,6 +1948,27 @@ export async function isGlobalAgentFrozen(env: Env): Promise<boolean> {
   }
 }
 
+/** Atomic re-gate fan-out dedup (#audit-fanout-dedup): claim the global fan-out slot for this window. The
+ *  conditional UPDATE on the singleton matches only when the last fan-out is unset or older than `windowMs`. D1
+ *  serializes writes, so when a BURST of fan-out jobs runs at once (a deploy-restart cron catch-up, or fan-out
+ *  jobs that queued behind a per-PR backlog and drained together) exactly ONE wins the slot (changes === 1); the
+ *  rest get 0 changes and skip, collapsing the burst to a single effective fan-out. Fail-open on a driver error
+ *  (return true → the sweep still runs, degrading to the pre-dedup behaviour rather than stalling the fleet). */
+export async function claimRegateFanoutSlot(env: Env, now: string, windowMs: number): Promise<boolean> {
+  const threshold = new Date(Date.parse(now) - windowMs).toISOString();
+  try {
+    const result = await env.DB.prepare(
+      "UPDATE global_agent_controls SET last_regate_fanout_at = ?1 WHERE id = 'singleton' AND (last_regate_fanout_at IS NULL OR last_regate_fanout_at < ?2)",
+    )
+      .bind(now, threshold)
+      .run();
+    /* v8 ignore next -- D1 update metadata normally includes changes; the ?? 0 fallback protects driver anomalies. */
+    return Number(result.meta.changes ?? 0) === 1;
+  } catch {
+    return true;
+  }
+}
+
 /** Flip the DB-backed global kill-switch (operator emergency brake; no redeploy required). */
 export async function setGlobalAgentFrozen(env: Env, frozen: boolean, updatedBy?: string | null): Promise<void> {
   await env.DB.prepare(
@@ -2589,6 +2610,35 @@ export async function markPullRequestRegated(env: Env, fullName: string, number:
     .update(pullRequests)
     .set({ lastRegatedAt: now, updatedAt: now })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
+}
+
+/** Batch variant: stamp the re-gate marker for every dispatched candidate in ONE write, at sweep DISPATCH time.
+ *  Stamping here — not in the downstream per-PR job — makes getLatestRegatedAt reflect the sweep immediately, so
+ *  the in-flight guard engages on the next cron tick before the staggered/deferred per-PR re-reviews complete.
+ *  This closes the overlapping-sweep runaway where the per-PR stamp lagged minutes behind under load. A plain D1
+ *  write — never the #1258 GitHub chokepoint — so dry-run stays inert. (#audit-sweep-dispatch-stamp) */
+export async function markPullRequestsRegated(env: Env, fullName: string, numbers: number[]): Promise<void> {
+  if (numbers.length === 0) return;
+  const db = getDb(env.DB);
+  const now = nowIso();
+  await db
+    .update(pullRequests)
+    .set({ lastRegatedAt: now, updatedAt: now })
+    .where(and(eq(pullRequests.repoFullName, fullName), inArray(pullRequests.number, numbers)));
+}
+
+/** In-flight guard input for the re-gate sweep fan-out (#audit-sweep-fanout): the MOST RECENT last_regated_at
+ *  across a repo's OPEN PRs (the freshest sweep stamp), or null if none has been swept. fanOutAgentRegateSweepJobs
+ *  passes this to isRegateSweepDraining to skip re-arming a repo whose prior sweep is still draining. */
+export async function getLatestRegatedAt(env: Env, fullName: string): Promise<string | null> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ latest: sql<string | null>`max(${pullRequests.lastRegatedAt})` })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.state, "open")));
+  /* v8 ignore next -- max() always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return null;
+  return row.latest;
 }
 
 export async function getIssue(env: Env, fullName: string, number: number): Promise<IssueRecord | null> {

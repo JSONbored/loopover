@@ -1,0 +1,16 @@
+-- Fan-out dedup marker: collapse a burst of re-gate fan-out jobs to ONE effective fan-out per window.
+--
+-- BEFORE: the ~2-min cron enqueues an agent-regate-sweep fan-out job each tick; fanOutAgentRegateSweepJobs runs it
+-- with no global dedup. When a burst of fan-out jobs runs at once — a deploy-restart cron catch-up, or fan-out
+-- jobs that queued behind a heavy per-PR re-review backlog and then drained together — EACH one enqueues a
+-- per-repo sweep before the per-repo dispatch-stamp in-flight guard (0062 / #audit-sweep-dispatch-stamp) can
+-- engage, producing redundant overlapping sweeps (observed ~3x on the metagraphed dry-run).
+--
+-- AFTER: claimRegateFanoutSlot performs an atomic conditional UPDATE on this singleton column — D1 serializes
+-- writes, so only ONE concurrent fan-out's UPDATE matches the "unset or older than the dedup window" predicate
+-- and proceeds; the rest get 0 changes and skip. One effective fan-out per window keeps the per-PR load bounded,
+-- which in turn stops the backlog that was delaying subsequent fan-outs (the cascade that caused the bursts).
+--
+-- Reuses the global_agent_controls singleton (0059); nullable / no default → backward-compatible (NULL = no
+-- fan-out has claimed the slot yet, so the first one proceeds).
+ALTER TABLE global_agent_controls ADD COLUMN last_regate_fanout_at TEXT;

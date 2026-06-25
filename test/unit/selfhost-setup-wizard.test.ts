@@ -5,6 +5,7 @@ import {
   credentialsToEnv,
   exchangeManifestCode,
   isValidSetupAuthCookie,
+  renderBrokeredSetupPage,
   renderSetupPage,
   renderTokenEntryPage,
   setupAuthCookieValue,
@@ -32,6 +33,13 @@ describe("setup-wizard (#981 GitHub App Manifest)", () => {
     expect(html).toContain('name="manifest"');
     expect(html).toContain("Gittensory Self-Host");
     expect(html).toContain("nonce-abc"); // state is baked into the manifest value
+  });
+
+  it("renders a brokered-mode page that does NOT create a GitHub App", () => {
+    const html = renderBrokeredSetupPage();
+    expect(html).toContain("brokered mode");
+    expect(html).toContain("ORB_ENROLLMENT_SECRET");
+    expect(html).not.toContain("github.com/settings/apps/new"); // no own-App creation form in brokered mode
   });
 
   it("signs the setup cookie so only token-authorized setup visits can finish the callback", () => {

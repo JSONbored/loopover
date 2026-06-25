@@ -12,7 +12,7 @@ import {
 } from "../db/repositories";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { normalizeRegistryPayload } from "../registry/normalize";
-import { detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
+import { DEFAULT_GITTENSOR_UPSTREAM_REF, DEFAULT_GITTENSOR_UPSTREAM_REPO, detectActiveModel, findUnmodeledConstantKeys, parsePythonNumberConstants } from "../scoring/model";
 import { syncUnmodeledScoringConstantDrift } from "./unmodeled-scoring-drift";
 import type {
   JsonValue,
@@ -30,8 +30,8 @@ import type {
 } from "../types";
 import { errorMessage, jsonString, nowIso } from "../utils/json";
 
-const DEFAULT_UPSTREAM_REPO = "entrius/gittensor";
-const DEFAULT_UPSTREAM_REF = "test";
+// The Gittensor upstream repo/ref defaults are single-sourced from src/scoring/model.ts (where the same
+// env.GITTENSOR_UPSTREAM_* override is honoured) — see DEFAULT_GITTENSOR_UPSTREAM_REPO/REF.
 const DEFAULT_DRIFT_ISSUE_REPO = "JSONbored/gittensory";
 const UPSTREAM_STALE_MS = 2 * 60 * 60 * 1000;
 const REGISTRY_HYPERPARAMETER_DRIFT_LIMIT = 100;
@@ -275,6 +275,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   const token = env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return { status: "skipped", reason: "missing_issue_token", created: 0, updated: 0, skipped: 0 };
   const repo = env.GITTENSORY_DRIFT_ISSUE_REPO || DEFAULT_DRIFT_ISSUE_REPO;
+  const assignees = resolveDriftAssignees(env);
   const reports = (await listUpstreamDriftReports(env, 20)).filter((report) => report.status === "open");
   let created = 0;
   let updated = 0;
@@ -282,7 +283,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   for (const report of reports) {
     const existing = (await validateRecordedGitHubIssue(repo, token, report)) ?? (await findGitHubIssueForFingerprint(repo, token, report.fingerprint));
     if (existing) {
-      const issue = await updateGitHubDriftIssue(repo, token, existing.number, report);
+      const issue = await updateGitHubDriftIssue(repo, token, existing.number, report, assignees);
       if (!issue) {
         skipped += 1;
         continue;
@@ -291,7 +292,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
       updated += 1;
       continue;
     }
-    const issue = await createGitHubDriftIssue(repo, token, report);
+    const issue = await createGitHubDriftIssue(repo, token, report, assignees);
     if (!issue) {
       skipped += 1;
       continue;
@@ -392,8 +393,8 @@ export async function buildUpstreamDriftReport(current: UpstreamRulesetSnapshotR
 
 function upstreamConfig(env: Env): { repo: string; ref: string } {
   return {
-    repo: env.GITTENSOR_UPSTREAM_REPO || DEFAULT_UPSTREAM_REPO,
-    ref: env.GITTENSOR_UPSTREAM_REF || DEFAULT_UPSTREAM_REF,
+    repo: env.GITTENSOR_UPSTREAM_REPO || DEFAULT_GITTENSOR_UPSTREAM_REPO,
+    ref: env.GITTENSOR_UPSTREAM_REF || DEFAULT_GITTENSOR_UPSTREAM_REF,
   };
 }
 
@@ -1019,26 +1020,26 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
   }
 }
 
-async function createGitHubDriftIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<{ number: number; url: string } | null> {
+async function createGitHubDriftIssue(repo: string, token: string, report: UpstreamDriftReportRecord, assignees: string[]): Promise<{ number: number; url: string } | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name) return null;
   const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
     method: "POST",
     headers: githubHeaders(token, "application/vnd.github+json"),
-    body: jsonString(githubDriftIssuePayload(report)),
+    body: jsonString(githubDriftIssuePayload(report, assignees)),
   });
   if (!response.ok) return null;
   const payload = (await response.json()) as { number?: number; html_url?: string };
   return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
 }
 
-async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: number, report: UpstreamDriftReportRecord): Promise<{ number: number; url: string } | null> {
+async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: number, report: UpstreamDriftReportRecord, assignees: string[]): Promise<{ number: number; url: string } | null> {
   const [owner, name] = repo.split("/");
   if (!owner || !name || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
   const response = await fetch(`https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`, {
     method: "PATCH",
     headers: githubHeaders(token, "application/vnd.github+json"),
-    body: jsonString(githubDriftIssuePayload(report)),
+    body: jsonString(githubDriftIssuePayload(report, assignees)),
   });
   if (!response.ok) return null;
   const payload = (await response.json()) as { number?: number; html_url?: string };
@@ -1084,12 +1085,27 @@ function githubDriftIssueTitle(report: UpstreamDriftReportRecord): string {
   return `chore(upstream): reconcile Gittensor drift ${report.fingerprint.slice(0, 8)}`;
 }
 
-function githubDriftIssuePayload(report: UpstreamDriftReportRecord): Record<string, JsonValue> {
+/**
+ * Who upstream-drift issues are assigned to. Defaults to the gittensory maintainer, but a self-host operator
+ * can set GITTENSORY_DRIFT_ISSUE_ASSIGNEES (comma-separated logins; empty/whitespace = the default) so drift
+ * issues land on THEIR team instead of a login that doesn't exist on their fork. Pairs with the existing
+ * GITTENSORY_DRIFT_ISSUE_REPO override.
+ */
+export function resolveDriftAssignees(env: Env): string[] {
+  const raw = env.GITTENSORY_DRIFT_ISSUE_ASSIGNEES;
+  if (typeof raw !== "string" || !raw.trim()) return ["jsonbored"];
+  return raw
+    .split(",")
+    .map((login) => login.trim())
+    .filter((login) => login.length > 0);
+}
+
+function githubDriftIssuePayload(report: UpstreamDriftReportRecord, assignees: string[]): Record<string, JsonValue> {
   return {
     title: githubDriftIssueTitle(report),
     body: githubDriftIssueBody(report),
     labels: ["signals", "scoring", "data", report.severity === "high" || report.severity === "blocking" ? "high-impact" : "backend"],
-    assignees: ["jsonbored"],
+    assignees,
   };
 }
 

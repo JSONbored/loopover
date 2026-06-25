@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveModel } from "../../src/selfhost/ai";
+import { buildProvider, claudeErrorStatus, createAnthropicAi, createChainAi, createClaudeCodeAi, createCodexAi, createOpenAiCompatibleAi, createSelfHostAi, extractCliText, resolveAiReviewerPlan, resolveEffort, resolveModel, resolveProviderNames, routeProviders } from "../../src/selfhost/ai";
 
 describe("resolveModel (#979 — never leak the Workers-AI default to a self-host backend)", () => {
   const WORKERS_DEFAULT = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
@@ -14,6 +14,19 @@ describe("resolveModel (#979 — never leak the Workers-AI default to a self-hos
   });
   it("passes through a real model the core supplied", () => {
     expect(resolveModel(undefined, "gpt-4o", "sonnet")).toBe("gpt-4o");
+  });
+});
+
+describe("resolveEffort (#selfhost-effort — Claude Code intelligence dial, default high)", () => {
+  it("passes a valid level through, trimmed + lowercased", () => {
+    expect(resolveEffort("low")).toBe("low");
+    expect(resolveEffort("  Medium ")).toBe("medium");
+    expect(resolveEffort("MAX")).toBe("max");
+  });
+  it("defaults to high when unset or unrecognized so a typo can't downgrade reviews", () => {
+    expect(resolveEffort(undefined)).toBe("high"); // ?? right side
+    expect(resolveEffort("")).toBe("high"); // present but not in the valid set
+    expect(resolveEffort("ultra")).toBe("high"); // unrecognized → safe default
   });
 });
 
@@ -137,6 +150,61 @@ describe("createChainAi (fallback)", () => {
   });
 });
 
+describe("routeProviders (#dual-ai-combiner — address one provider by name for dual review)", () => {
+  // The mock echoes back the MODEL it received, so we can assert the router never passes the provider NAME
+  // through as a model id (`claude --model claude-code` would fail — the bug this guards).
+  const mk = (name: string) => ({ name, ai: { run: vi.fn(async (model: string) => ({ response: `${name}|${model}` })) } });
+
+  it("routes .run(<providerName>) to THAT provider with an EMPTY model (→ provider default), never the name", async () => {
+    const cc = mk("claude-code");
+    const cx = mk("codex");
+    const route = routeProviders([cc, cx]);
+    expect((await route.run("codex", { prompt: "x" })).response).toBe("codex|"); // direct; model is "" (default), NOT "codex"
+    expect(cx.ai.run).toHaveBeenCalledTimes(1);
+    expect(cc.ai.run).not.toHaveBeenCalled();
+    expect((await route.run("  CODEX ", { prompt: "x" })).response).toBe("codex|"); // case-insensitive + trimmed
+    expect((await route.run("@cf/some/model", { prompt: "x" })).response).toBe("claude-code|@cf/some/model"); // non-name → chain → first, model passed through
+  });
+
+  it("a `<provider>:<model>` id hands that provider the explicit model", async () => {
+    const cc = mk("claude-code");
+    const cx = mk("codex");
+    expect((await routeProviders([cc, cx]).run("claude-code:opus", { prompt: "x" })).response).toBe("claude-code|opus");
+  });
+
+  it("the chain fallback still skips a failed provider for a non-name model id", async () => {
+    const fail = { name: "claude-code", ai: { run: vi.fn(async () => { throw new Error("down"); }) } };
+    const ok = mk("codex");
+    expect((await routeProviders([fail, ok]).run("sonnet", { prompt: "x" })).response).toBe("codex|sonnet"); // chain passes the real model through
+  });
+
+  it("createSelfHostAi wires routing for a 2+ provider AI_PROVIDER (addressable by name)", async () => {
+    const ai = createSelfHostAi({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant", AI_BASE_URL: "http://o/v1" });
+    expect(typeof ai?.run).toBe("function");
+  });
+});
+
+describe("resolveProviderNames + resolveAiReviewerPlan (#dual-ai-combiner)", () => {
+  it("resolveProviderNames: credentialed providers only, in order, lowercased/trimmed", () => {
+    expect(resolveProviderNames({})).toEqual([]);
+    expect(resolveProviderNames({ AI_PROVIDER: "  Claude-Code , CODEX " })).toEqual(["claude-code", "codex"]); // CLI providers always credentialed
+    expect(resolveProviderNames({ AI_PROVIDER: "anthropic,ollama" })).toEqual(["ollama"]); // anthropic dropped (no key); ollama needs none
+    expect(resolveProviderNames({ AI_PROVIDER: "anthropic,ollama", ANTHROPIC_API_KEY: "sk-ant" })).toEqual(["anthropic", "ollama"]);
+  });
+
+  it("resolveAiReviewerPlan: undefined with no provider; single ⇒ single; two ⇒ default synthesis", () => {
+    expect(resolveAiReviewerPlan({})).toBeUndefined(); // cloud / AI off
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code" })).toEqual({ reviewers: [{ model: "claude-code" }], combine: "single", onMerge: undefined });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex" })).toEqual({ reviewers: [{ model: "claude-code" }, { model: "codex" }], combine: "synthesis", onMerge: undefined });
+  });
+
+  it("resolveAiReviewerPlan: honors AI_COMBINE / AI_ON_MERGE, defaults invalid values, caps at two reviewers", () => {
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_COMBINE: "consensus", AI_ON_MERGE: "both" })).toMatchObject({ combine: "consensus", onMerge: "both" });
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex", AI_COMBINE: "garbage", AI_ON_MERGE: "nonsense" })).toMatchObject({ combine: "synthesis", onMerge: undefined }); // invalid → defaults
+    expect(resolveAiReviewerPlan({ AI_PROVIDER: "claude-code,codex,ollama" })?.reviewers).toEqual([{ model: "claude-code" }, { model: "codex" }]); // first two
+  });
+});
+
 describe("branch coverage — defaults + edge inputs", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -241,11 +309,35 @@ describe("subscription CLI helpers + fail-safe", () => {
     expect(capturedEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe("t");
   });
 
-  it("Codex returns text on success and throws on a non-zero exit", async () => {
-    const ok: StubSpawn = async () => ({ stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 });
-    expect((await createCodexAi({}, ok).run("gpt-5", { prompt: "x" })).response).toBe("codex review");
+  it("Claude Code pins the default model (claude-sonnet-4-6) + --effort high; AI_MODEL/AI_EFFORT override", async () => {
+    let seen: string[] = [];
+    const cap: StubSpawn = async (_c, a) => {
+      seen = a;
+      return { stdout: JSON.stringify({ type: "result", result: "ok" }), code: 0 };
+    };
+    // empty model id (the dual-router default) + no AI_MODEL → pinned claude-sonnet-4-6; no AI_EFFORT → high
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-sonnet-4-6");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("high");
+    // operator overrides flow through to the argv
+    await createClaudeCodeAi({ CLAUDE_CODE_OAUTH_TOKEN: "t", AI_MODEL: "claude-opus-4-8", AI_EFFORT: "low" }, cap).run("", { prompt: "x" });
+    expect(seen[seen.indexOf("--model") + 1]).toBe("claude-opus-4-8");
+    expect(seen[seen.indexOf("--effort") + 1]).toBe("low");
+  });
+
+  it("Codex: 0.142+ exec flags (no --ask-for-approval, has --skip-git-repo-check); --model only when configured", async () => {
+    let seen: string[] = [];
+    const ok: StubSpawn = async (_cmd, args) => { seen = args; return { stdout: JSON.stringify({ type: "result", result: "codex review" }), code: 0 }; };
+    // no configured model + the dual-router's empty model id → OMIT --model (codex picks the account default;
+    // forcing e.g. gpt-5 fails on a ChatGPT-account login). And the removed --ask-for-approval must never appear.
+    expect((await createCodexAi({}, ok).run("", { prompt: "x" })).response).toBe("codex review");
+    expect(seen).toEqual(["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "--", "x"]);
+    expect(seen).not.toContain("--ask-for-approval");
+    // an explicit model (AI_MODEL, or a `codex:<model>` reviewer id) IS passed through
+    await createCodexAi({ AI_MODEL: "o4-mini" }, ok).run("", { prompt: "x" });
+    expect(seen.join(" ")).toContain("--model o4-mini");
     const bad: StubSpawn = async () => ({ stdout: "", code: 1 });
-    await expect(createCodexAi({}, bad).run("gpt-5", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
+    await expect(createCodexAi({}, bad).run("", { prompt: "x" })).rejects.toThrow(/codex_exit_1/);
   });
 
   it("drives the REAL subprocess (defaultSpawn) against a fake `claude` on PATH", async () => {

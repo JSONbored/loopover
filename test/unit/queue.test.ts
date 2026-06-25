@@ -993,6 +993,43 @@ describe("queue processors", () => {
     );
   });
 
+  it("does not record phantom telemetry when installation-created has no repositories (#installation-created-fallback)", async () => {
+    const env = createTestEnv();
+
+    // Case 1: neither repositories nor repository.full_name — must produce zero events (was [undefined])
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "install-no-repos",
+      eventName: "installation",
+      payload: {
+        action: "created",
+        installation: { id: 900, account: { login: "empty-org", id: 99, type: "Organization" } },
+      },
+    });
+    const eventsAfterEmpty = await listProductUsageEvents(env, { limit: 50 });
+    expect(eventsAfterEmpty.filter((e) => e.eventName === "github_installation_created")).toHaveLength(0);
+
+    // Case 2: repository fallback (no repositories array) — must produce exactly one event with consistent metadata
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "install-single-repo-fallback",
+      eventName: "installation",
+      payload: {
+        action: "created",
+        installation: { id: 901, account: { login: "single-org", id: 100, type: "Organization" } },
+        repository: { name: "my-repo", full_name: "single-org/my-repo", private: false, owner: { login: "single-org" } },
+      },
+    });
+    const eventsAfterSingle = await listProductUsageEvents(env, { limit: 50 });
+    const createdEvents = eventsAfterSingle.filter((e) => e.eventName === "github_installation_created");
+    expect(createdEvents).toHaveLength(1);
+    expect(createdEvents[0]).toMatchObject({
+      eventName: "github_installation_created",
+      repoFullName: "<redacted-actor>/my-repo",
+      metadata: expect.objectContaining({ action: "created", repoCount: 1, truncatedRepos: 0 }),
+    });
+  });
+
   it("publishes an opt-in gate without comment output, blocking a non-confirmed author normally (#gate-nonconfirmed)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

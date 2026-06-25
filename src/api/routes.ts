@@ -121,7 +121,7 @@ import {
   sanitizePublicComment,
   type GittensoryMentionCommandName,
 } from "../github/commands";
-import { handleGitHubWebhook } from "../github/webhook";
+import { handleGitHubWebhook, handleOrbRelay } from "../github/webhook";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
 import { handleOrbOAuthCallback } from "../orb/oauth";
@@ -2868,6 +2868,11 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
+  // Brokered self-host relay RECEIVER (#1255) — the central Orb forwards this container's repos' events here,
+  // HMAC-signed with the container's enrollment secret. Verified against ORB_ENROLLMENT_SECRET, then enqueued
+  // like a GitHub webhook. Auth IS the relay signature (token-exempt); 404 when not a brokered self-host.
+  app.post("/v1/orb/relay", handleOrbRelay);
+
   // Gittensory Orb central GitHub App (#1255) — inbound webhook for the ONE shared Orb App maintainers install.
   // Verifies the Orb App's OWN webhook secret, dedups, and records install + PR/review events (the homepage
   // fleet-metrics data spine). Separate App + secret from the review-app /v1/github/webhook above.
@@ -4952,6 +4957,7 @@ function requiresApiToken(path: string): boolean {
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
   if (path === "/v1/orb/webhook") return false;
+  if (path === "/v1/orb/relay") return false;
   if (path === "/v1/orb/oauth/callback") return false;
   if (path === "/v1/orb/token") return false;
   if (path === "/v1/orb/relay/register") return false;

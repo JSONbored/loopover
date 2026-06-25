@@ -29,6 +29,25 @@ export async function relaySignature(secret: string, body: string): Promise<stri
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function hexToBytes(hex: string): Uint8Array | null {
+  if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) return null;
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+}
+
+/** Verify a relay signature (the `sha256=<hex>` value of x-orb-signature-256) over the body with `secret`, in
+ *  CONSTANT TIME (crypto.subtle.verify). The container's relay receiver uses this with its ORB_ENROLLMENT_SECRET,
+ *  so only the genuine Orb (which holds the encrypted copy of that secret) can drive it. */
+export async function relayVerify(secret: string, body: string, header: string | null): Promise<boolean> {
+  if (!secret || !header) return false;
+  const hex = header.startsWith("sha256=") ? header.slice(7) : header;
+  const sigBytes = hexToBytes(hex);
+  if (!sigBytes) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  return crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(body));
+}
+
 export type RegisterResult =
   | { ok: true; installationId: number }
   | { error: "invalid_enrollment" | "installation_not_eligible" | "invalid_relay_url" | "encryption_unavailable" };

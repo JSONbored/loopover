@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { issueOrbEnrollment } from "../../src/orb/broker";
-import { forwardOrbEvent, registerOrbRelay, relaySignature } from "../../src/orb/relay";
+import { forwardOrbEvent, registerOrbRelay, relaySignature, relayVerify } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
 const db = (e: Env) => e.DB as unknown as TestD1Database;
@@ -149,5 +149,52 @@ describe("forwardOrbEvent", () => {
     await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
     const noKey = { ...e, TOKEN_ENCRYPTION_SECRET: undefined } as unknown as Env; // same DB, key removed
     expect(await forwardOrbEvent(noKey, { eventName: "pull_request", installationId: 803, deliveryId: "d", rawBody: "{}" })).toBe("skipped");
+  });
+});
+
+describe("relayVerify", () => {
+  it("accepts a valid signature (sha256= or bare hex) and rejects wrong-secret / malformed / missing", async () => {
+    const body = '{"x":1}';
+    const sig = await relaySignature("s", body);
+    expect(await relayVerify("s", body, `sha256=${sig}`)).toBe(true);
+    expect(await relayVerify("s", body, sig)).toBe(true); // bare hex tolerated
+    expect(await relayVerify("s", body, `sha256=${await relaySignature("other", body)}`)).toBe(false); // wrong secret
+    expect(await relayVerify("s", body, "sha256=zz")).toBe(false); // non-hex
+    expect(await relayVerify("s", body, "sha256=abc")).toBe(false); // odd-length hex
+    expect(await relayVerify("", body, `sha256=${sig}`)).toBe(false); // no secret
+    expect(await relayVerify("s", body, null)).toBe(false); // no header
+  });
+});
+
+describe("POST /v1/orb/relay (brokered self-host receiver)", () => {
+  const app = createApp();
+  const CSECRET = "orbsec_container_abcdef";
+  const containerEnv = (over: Record<string, string> = {}) => createTestEnv({ ORB_ENROLLMENT_SECRET: CSECRET, ...over });
+  const sign = async (body: string) => `sha256=${await relaySignature(CSECRET, body)}`;
+  const PR_BODY = JSON.stringify({ action: "opened", installation: { id: 5 }, repository: { full_name: "acme/app" } });
+
+  it("404 when this instance is not a brokered self-host (no ORB_ENROLLMENT_SECRET)", async () => {
+    expect((await app.request("/v1/orb/relay", { method: "POST", headers: { "x-github-event": "pull_request", "x-github-delivery": "d" }, body: PR_BODY }, createTestEnv())).status).toBe(404);
+  });
+
+  it("400 without the GitHub headers", async () => {
+    expect((await app.request("/v1/orb/relay", { method: "POST", body: PR_BODY }, containerEnv())).status).toBe(400);
+  });
+
+  it("401 on a missing or wrong-secret signature", async () => {
+    const h = { "x-github-event": "pull_request", "x-github-delivery": "d1" };
+    expect((await app.request("/v1/orb/relay", { method: "POST", headers: h, body: PR_BODY }, containerEnv())).status).toBe(401); // no signature
+    expect((await app.request("/v1/orb/relay", { method: "POST", headers: { ...h, "x-orb-signature-256": "sha256=deadbeef" }, body: PR_BODY }, containerEnv())).status).toBe(401);
+  });
+
+  it("413 when the body exceeds the configured max", async () => {
+    const res = await app.request("/v1/orb/relay", { method: "POST", headers: { "x-github-event": "pull_request", "x-github-delivery": "d1", "x-orb-signature-256": await sign("x".repeat(50)) }, body: "x".repeat(50) }, containerEnv({ GITHUB_WEBHOOK_MAX_BODY_BYTES: "5" }));
+    expect(res.status).toBe(413);
+  });
+
+  it("202 + ENQUEUES on a valid Orb signature (the relayed event becomes a normal webhook job)", async () => {
+    const res = await app.request("/v1/orb/relay", { method: "POST", headers: { "x-github-event": "pull_request", "x-github-delivery": "rel-1", "x-orb-signature-256": await sign(PR_BODY) }, body: PR_BODY }, containerEnv());
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ status: "queued", deliveryId: "rel-1", eventName: "pull_request" });
   });
 });

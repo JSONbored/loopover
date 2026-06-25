@@ -100,7 +100,7 @@ import { resolveRepoActionMode } from "../github/client";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
-import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath } from "../rules/advisory";
+import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath, reconcileGateEvaluationForGreenCi } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
 import { deliverNotification, detectIssueWatchEvents, evaluateNotificationEvent } from "../notifications/service";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
@@ -179,7 +179,7 @@ import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
 import { secretLeakFinding } from "../review/safety";
-import { buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
+import { aiCiRefutationActive, buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
@@ -788,13 +788,15 @@ async function maybeRunAgentMaintenance(
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
-    // CI-refutation (#ai-ci-refutation): thread the blocker CODES so the planner can suppress an AI-judgment-only
-    // failure (ai_consensus_defect / ai_review_split) on a green-CI PR — the deterministic validator overrules the
-    // model hallucination, so a clean+green PR MERGES instead of being false-closed. Gated under the SAME condition
-    // as the converged AI review that produces these defects (grounding feeds the CI truth to the reviewer; this
-    // ENFORCES it). Flag-OFF / non-convergence repo ⇒ codes omitted ⇒ the planner's refutation is a no-op
-    // (byte-identical verdict). The codes are public-safe finding identifiers (no rubric/scoring/reward terms).
-    ...(isGroundingEnabled(env) && isConvergenceRepoAllowed(env, repoFullName) ? { gateBlockerCodes: gate.blockers.map((blocker) => blocker.code) } : {}),
+    // CI-refutation (#ai-ci-refutation): thread the blocker CODES + the active gate so the planner suppresses an
+    // AI-judgment-only failure (ai_consensus_defect / ai_review_split) on a green-CI PR — the deterministic
+    // validator overrules the model hallucination, so a clean+green PR MERGES instead of being false-closed.
+    // `aiCiRefutationEnabled` is the SAME grounding+convergence gate the public-comment reconciliation uses, passed
+    // as a single boolean so the refutation condition is unit-tested in the planner and this site carries no branch.
+    // Enabled=false (non-convergence / grounding-off) ⇒ the refutation is a no-op ⇒ byte-identical verdict. The
+    // codes are public-safe finding identifiers (no rubric/scoring/reward terms).
+    gateBlockerCodes: gate.blockers.map((blocker) => blocker.code),
+    aiCiRefutationEnabled: aiCiRefutationActive(env, repoFullName),
     autonomy: settings.autonomy,
     autoMaintain: settings.autoMaintain,
     slopGateMinScore: settings.slopGateMinScore,
@@ -2711,7 +2713,6 @@ async function maybePublishPrPublicSurface(
     //   3. The `ai_consensus_defect` surfaces exactly ONCE — as the Code-review blocker — never also in the
     //      gate signal row (which renders only the conclusion-derived status text, not the defect string).
     if (unifiedCommentAllowed && gateEvaluation) {
-      const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation, duplicateWinnerEnabled });
       // FIX B: the unified comment's file count + visual-capture path filter need the real diff — reuse the
       // shared resolver (one resolve per review; inline-fetches when stored is still empty pre-detail-sync).
       const unifiedFiles = await getReviewFiles();
@@ -2742,6 +2743,14 @@ async function maybePublishPrPublicSurface(
         ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };
+      // CI-refutation for the PUBLIC comment (#ai-ci-refutation): when the gate FAILED solely on an AI-judgment
+      // blocker but the LIVE CI is GREEN, render the comment (headline + Gate panel row) as SUCCESS/advisory so it
+      // MATCHES the disposition (which merges such a PR) instead of a contradictory red "blocked/closed". Uses the
+      // SAME grounding+convergence gate as the disposition refutation (a single `aiCiRefutationActive` call so this
+      // site carries no branch), built AFTER the live CI is resolved and used for BOTH the panel rows and the
+      // comment body so the two never disagree. Gate OFF ⇒ commentGate === gateEvaluation (byte-identical comment).
+      const commentGate = reconcileGateEvaluationForGreenCi(gateEvaluation, ciState, aiCiRefutationActive(env, repoFullName));
+      const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: commentGate, duplicateWinnerEnabled });
       // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo
       // cutover gate both allow it (screenshotsAllowed) AND (2) the PR touches WEB-VISIBLE files (isVisualPath
       // — frontend pages / public OG images; backend .ts/.md/.json PRs never qualify). Fully wrapped in
@@ -2777,7 +2786,7 @@ async function maybePublishPrPublicSurface(
         }
       }
       deterministicBody = buildUnifiedCommentBody({
-        gate: gateEvaluation,
+        gate: commentGate,
         ...(aiReview !== undefined ? { aiReview } : {}),
         advisoryFindings: advisory.findings,
         panelRows: rows,

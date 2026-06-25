@@ -1,5 +1,5 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
-import type { GateCheckConclusion } from "../rules/advisory";
+import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
 import { changedPathsHittingGuardrail } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
@@ -13,18 +13,6 @@ const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
 // every action is independently gated by its own autonomy class, and the irreversible ones (merge / close)
 // demand strong positive signals.
 
-// AI-JUDGMENT blocker codes (#ai-ci-refutation): a gate failure driven by these is the dual-model AI reviewer's
-// OPINION, not a deterministic fact. The free Workers-AI pair hallucinates the same plausible-but-wrong defect
-// (e.g. inferring a JSON field is "required" from sibling data, or claiming "schema validation fails" / "the test
-// count is wrong" on a PR whose CI is GREEN). Grounding already feeds the finished CI status to the reviewer, but
-// the model can ignore it — so when the gate FAILED *solely* because of these codes AND the deterministic CI is
-// GREEN (the real validator passed), the AI claim is refuted by reality and must NOT auto-close the PR. The AI
-// concern stays visible in the review comment as an advisory; the disposition follows the deterministic signals
-// (a clean + green PR MERGES). This NEVER routes to manual review (only the guardrail path does), and it NEVER
-// overrides a deterministic blocker (secret_leak / duplicate / missing-issue / slop / quality / manifest): it
-// applies ONLY when EVERY blocker is one of these AND CI passed. `ai_review_inconclusive` is deliberately EXCLUDED
-// — that is a "could not review" HOLD, not a false defect.
-const AI_JUDGMENT_BLOCKER_CODES = new Set<string>(["ai_consensus_defect", "ai_review_split"]);
 
 // The bucket labels the layer applies to reflect the gate verdict. Namespaced so a maintainer can filter on
 // them and they never collide with project labels.
@@ -77,9 +65,12 @@ export type AgentActionPlanInput = {
   blockerTitles: string[];
   // The gate's blocking finding CODES (parallel to blockerTitles). Used by the CI-refutation rule
   // (#ai-ci-refutation): when the gate FAILED solely because of AI-judgment blockers and CI is green, the
-  // AI claim is refuted by the deterministic validator. Optional/absent (e.g. callers that don't thread it,
-  // or the refutation gated OFF at the boundary) ⇒ the refutation is a no-op and the verdict is unchanged.
+  // AI claim is refuted by the deterministic validator. Optional/absent ⇒ the refutation is a no-op.
   gateBlockerCodes?: string[] | undefined;
+  // Whether the AI CI-refutation is ACTIVE for this repo (the caller's grounding + convergence gate, passed as a
+  // single boolean so the refutation condition is fully unit-testable here and the processor carries no branch).
+  // Absent/false ⇒ the refutation never fires and the verdict is byte-identical to the raw gate.
+  aiCiRefutationEnabled?: boolean | undefined;
   autonomy: AutonomyPolicy | null | undefined;
   // Optional so the trigger can pass raw repo settings; both fall back to conservative defaults here.
   autoMaintain?: AutoMaintainPolicy | undefined;
@@ -263,9 +254,15 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // never overridden). Empty/absent codes (the rule gated OFF at the boundary, or a non-AI failure) ⇒ no-op, so the
   // verdict is byte-identical. The effective `conclusion` drives every gate-verdict decision below; the AI concern
   // still surfaces in the review comment (an advisory finding), it just no longer auto-closes a green PR.
+  // Resolve the blocker codes ONCE (so the nullish fallback is exercised for both a present and an absent list,
+  // and the checks below carry no further `??` branch). Absent ⇒ [] ⇒ no AI-judgment-only failure.
+  const gateBlockerCodes = input.gateBlockerCodes ?? [];
   const aiJudgmentOnlyFailure =
-    input.conclusion === "failure" && (input.gateBlockerCodes?.length ?? 0) > 0 && (input.gateBlockerCodes ?? []).every((code) => AI_JUDGMENT_BLOCKER_CODES.has(code));
-  const conclusion: GateCheckConclusion = aiJudgmentOnlyFailure && ciPassed ? "success" : input.conclusion;
+    input.aiCiRefutationEnabled === true && input.conclusion === "failure" && gateBlockerCodes.length > 0 && gateBlockerCodes.every((code) => AI_JUDGMENT_BLOCKER_CODES.has(code));
+  // The refutation only fires on a GREEN CI (the deterministic validator that overrules the AI). A red/unverified
+  // CI is the real signal and is never overridden, so the verdict stays as the raw gate `failure`.
+  const refuteAiFailureOnGreenCi = aiJudgmentOnlyFailure && ciPassed;
+  const conclusion: GateCheckConclusion = refuteAiFailureOnGreenCi ? "success" : input.conclusion;
 
   // Only SUCCESS earns the review-good auto-merge. A NEUTRAL gate flows (no longer silently returns []) but is
   // NOT auto-merged — it falls through to a HELD + labeled state for review. (Auto-merging a neutral / grace

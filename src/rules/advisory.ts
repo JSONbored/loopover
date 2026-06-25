@@ -66,6 +66,40 @@ export type GateCheckEvaluation = {
   warnings: AdvisoryFinding[];
 };
 
+// AI-JUDGMENT blocker codes (#ai-ci-refutation): a gate failure driven SOLELY by these is the dual-model AI
+// reviewer's OPINION, not a deterministic fact. Shared by the disposition refutation (agent-actions) and the
+// public-comment reconciliation so the merge/close ACTION and the rendered comment always agree.
+// `ai_review_inconclusive` is deliberately EXCLUDED — that is a "could not review" HOLD, not a false defect.
+export const AI_JUDGMENT_BLOCKER_CODES = new Set<string>(["ai_consensus_defect", "ai_review_split"]);
+
+/** True when the gate FAILED *solely* because of AI-judgment blockers (every blocker is an AI-judgment code).
+ *  An empty blocker list is NOT an AI-judgment-only failure (there is nothing to refute). PURE. */
+export function isAiJudgmentOnlyFailure(evaluation: GateCheckEvaluation): boolean {
+  return evaluation.conclusion === "failure" && evaluation.blockers.length > 0 && evaluation.blockers.every((blocker) => AI_JUDGMENT_BLOCKER_CODES.has(blocker.code));
+}
+
+/**
+ * Reconcile a gate evaluation with the deterministic CI for the PUBLIC review comment (#ai-ci-refutation).
+ * When the gate FAILED solely on an AI-judgment blocker (ai_consensus_defect / ai_review_split) but the real CI
+ * is GREEN, the AI claim is refuted by the validator — so the comment must render SUCCESS (advisory), matching
+ * the disposition (planAgentMaintenanceActions merges such a PR) instead of a contradictory red "blocked/closed"
+ * headline + Gate row. The AI concern stays VISIBLE without double-listing: the specific consensus defect still
+ * surfaces from the advisory findings as a raised concern under the green verdict, so we only clear the gate's
+ * hard blockers here. `enabled` is the caller's grounding+convergence gate (passed in so this stays a PURE,
+ * unit-testable function and the processor carries no branch); `enabled` false, `ciState !== "passed"`, or a
+ * non-AI-only failure ⇒ the evaluation is returned UNCHANGED.
+ */
+export function reconcileGateEvaluationForGreenCi(evaluation: GateCheckEvaluation, ciState: "passed" | "failed" | "unverified", enabled: boolean): GateCheckEvaluation {
+  if (!enabled || ciState !== "passed" || !isAiJudgmentOnlyFailure(evaluation)) return evaluation;
+  return {
+    ...evaluation,
+    conclusion: "success",
+    title: "Gittensory Gate passed",
+    summary: "The AI review raised a concern, but the deterministic checks (CI) are green — the concern is advisory, not blocking.",
+    blockers: [],
+  };
+}
+
 export function buildRepositoryAdvisory(repo: RepositoryRecord | null, fullName: string): Advisory {
   const findings: AdvisoryFinding[] = [];
   if (!repo) {

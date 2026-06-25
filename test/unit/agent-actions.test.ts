@@ -279,7 +279,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
   });
 
   describe("CI-refutation: an AI-judgment-only gate failure does NOT close a green-CI PR (#ai-ci-refutation)", () => {
-    const merging = { autonomy: { merge: "auto" as const, approve: "auto" as const, close: "auto" as const, label: "auto" as const }, ciState: "passed" as const, pr: { labels: [], mergeableState: "clean" as const, reviewDecision: "APPROVED" as const } };
+    const merging = { aiCiRefutationEnabled: true, autonomy: { merge: "auto" as const, approve: "auto" as const, close: "auto" as const, label: "auto" as const }, ciState: "passed" as const, pr: { labels: [], mergeableState: "clean" as const, reviewDecision: "APPROVED" as const } };
 
     it("a consensus-defect failure on a green, clean PR MERGES instead of closing (the validator overrules the model)", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "failure", blockerTitles: ["AI reviewers agree on a likely critical defect"], gateBlockerCodes: ["ai_consensus_defect"], ...merging }));
@@ -297,41 +297,46 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
 
     it("the refutation reports the EFFECTIVE verdict (verdict=success; CI green), not the contradictory raw failure", () => {
-      const plan = planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], autonomy: { label: "auto" }, ciState: "passed", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const plan = planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], aiCiRefutationEnabled: true, autonomy: { label: "auto" }, ciState: "passed", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const label = plan.find((a) => a.actionClass === "label");
       expect(label?.label).toBe(AGENT_LABEL_READY);
       expect(label?.reason).toBe("verdict=success; CI green");
     });
 
+    it("is GATED by aiCiRefutationEnabled — enabled=false (the converged AI review off) still CLOSES the same PR", () => {
+      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], aiCiRefutationEnabled: false, autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
+      expect(cls).toContain("close");
+    });
+
     it("does NOT refute when CI is RED — a real failing check is the ground truth and still CLOSES", () => {
-      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], autonomy: { close: "auto" }, ciState: "failed", pr: { labels: [] } })));
+      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], aiCiRefutationEnabled: true, autonomy: { close: "auto" }, ciState: "failed", pr: { labels: [] } })));
       expect(cls).toContain("close");
     });
 
     it("does NOT refute a MIXED failure — any deterministic blocker alongside the AI one still CLOSES", () => {
-      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect", "duplicate_open_pr"], autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
+      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect", "duplicate_open_pr"], aiCiRefutationEnabled: true, autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
       expect(cls).toContain("close");
     });
 
     it("does NOT refute a deterministic-only failure (e.g. slop/duplicate) — those close normally on green CI", () => {
-      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["slop_high"], autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
+      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["slop_high"], aiCiRefutationEnabled: true, autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
       expect(cls).toContain("close");
     });
 
     it("does NOT refute ai_review_inconclusive — a 'could not review' hold is not a false defect", () => {
       // inconclusive isn't a `failure` conclusion in practice (it HOLDS neutral), but even if a failure carried
       // the code, it must NOT be treated as a refutable false positive.
-      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_review_inconclusive"], autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
+      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_review_inconclusive"], aiCiRefutationEnabled: true, autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
       expect(cls).toContain("close");
     });
 
-    it("is a no-op when codes are omitted (refutation gated OFF at the boundary) — byte-identical close", () => {
-      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", blockerTitles: ["AI reviewers agree on a likely critical defect"], autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
+    it("is a no-op when codes are omitted (no AI blockers to refute) — byte-identical close", () => {
+      const cls = classes(planAgentMaintenanceActions(input({ conclusion: "failure", blockerTitles: ["AI reviewers agree on a likely critical defect"], aiCiRefutationEnabled: true, autonomy: { close: "auto" }, ciState: "passed", pr: { labels: [] } })));
       expect(cls).toContain("close");
     });
 
     it("a guardrail-touching AI-refuted PR is still HELD for the owner (refutation never overrides the guardrail hold)", () => {
-      const plan = planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, hardGuardrailGlobs: ["src/**"], changedPaths: ["src/index.ts"], ciState: "passed", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const plan = planAgentMaintenanceActions(input({ conclusion: "failure", gateBlockerCodes: ["ai_consensus_defect"], aiCiRefutationEnabled: true, autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, hardGuardrailGlobs: ["src/**"], changedPaths: ["src/index.ts"], ciState: "passed", pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const cls = classes(plan);
       expect(cls).not.toContain("merge");
       expect(cls).not.toContain("close");

@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi } from "./selfhost/ai";
+import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
 import {
   cookieValue,
   credentialsToEnv,
@@ -35,6 +35,8 @@ import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
+import { makeLocalManifestReader } from "./selfhost/private-config";
+import { setLocalManifestReader } from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -157,6 +159,10 @@ function buildSqliteBackend(consume: (m: JobMessage) => Promise<void>): Backend 
 
 async function main(): Promise<void> {
   loadFileSecrets();
+  // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
+  // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
+  // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
+  setLocalManifestReader(makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR));
   const startedAt = Date.now();
 
   // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event
@@ -176,6 +182,10 @@ async function main(): Promise<void> {
 
   const ai = createSelfHostAi(process.env);
   if (ai) console.log(JSON.stringify({ event: "selfhost_ai_provider", provider: process.env.AI_PROVIDER }));
+  // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
+  // below so the review call site uses it. Undefined for a single provider's default review or no AI.
+  const aiReviewPlan = resolveAiReviewerPlan(process.env);
+  if (aiReviewPlan) console.log(JSON.stringify({ event: "selfhost_ai_review_plan", reviewers: aiReviewPlan.reviewers.map((r) => r.model), combine: aiReviewPlan.combine }));
 
   // Redis fixed-window rate limiter + webhook dedup cache (else absent when REDIS_URL is unset).
   let rateLimiter: DurableObjectNamespace | undefined;
@@ -204,7 +214,9 @@ async function main(): Promise<void> {
     ...process.env,
     DB: backend.db,
     JOBS: backend.queue.binding,
+    WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
     ...(vectorizeOverride ? { VECTORIZE: vectorizeOverride } : backend.vectorize ? { VECTORIZE: backend.vectorize } : {}),
     ...(rateLimiter ? { RATE_LIMITER: rateLimiter } : {}),

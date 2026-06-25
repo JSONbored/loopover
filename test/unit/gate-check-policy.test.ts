@@ -145,6 +145,16 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     expect(advisoryResult.blockers).toEqual([]);
     expect(advisoryResult.warnings.map((warning) => warning.code)).toContain("pre_merge_check_failed");
   });
+
+  it("an unresolved-files enforced pre-merge check HOLDS the gate (neutral), never close or pass (#review-audit)", () => {
+    const held: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{ code: "pre_merge_check_unresolved", title: "Pre-merge check held — changed files not resolved: Migrations documented", severity: "warning", detail: "could not resolve files", action: "re-evaluates automatically" }],
+    };
+    const result = evaluateGateCheck(held, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("neutral"); // held: not a pass (would auto-merge past the unverified check) nor a failure (would auto-close on a transient miss)
+    expect(result.blockers).toEqual([]);
+  });
 });
 
 describe("policy pack (#692)", () => {

@@ -6,6 +6,11 @@ export const PRE_MERGE_CHECK_ADVISORY_CODE = "pre_merge_check_failed";
 /** Finding code for a FAILED pre-merge check the maintainer marked `enforce: true` — a hard gate blocker
  *  (isConfiguredGateBlocker treats this code as blocking, like secret_leak). */
 export const PRE_MERGE_CHECK_BLOCKING_CODE = "pre_merge_check_required";
+/** Finding code emitted when an ENFORCED `whenPaths`-gated check cannot be evaluated because the PR's changed-file
+ *  set could not be resolved. isEvaluationBlocker (advisory.ts) treats this as a NEUTRAL gate (HELD, re-evaluates
+ *  automatically) — never silently skipping a hard requirement (auto-merge bypass) and never hard-closing the
+ *  contributor on a transient resolution miss. (#review-audit) */
+export const PRE_MERGE_CHECK_UNRESOLVED_CODE = "pre_merge_check_unresolved";
 
 /**
  * Evaluate the maintainer's `.gittensory.yml review.pre_merge_checks` against a PR — DETERMINISTICALLY, with no AI
@@ -18,16 +23,33 @@ export const PRE_MERGE_CHECK_BLOCKING_CODE = "pre_merge_check_required";
  */
 export function evaluatePreMergeChecks(
   checks: PreMergeCheck[],
-  ctx: { title?: string | null | undefined; body?: string | null | undefined; labels?: string[] | null | undefined; changedPaths: string[] },
+  ctx: { title?: string | null | undefined; body?: string | null | undefined; labels?: string[] | null | undefined; changedPaths: string[]; filesResolved?: boolean | undefined },
 ): AdvisoryFinding[] {
   const title = (ctx.title ?? "").toLowerCase();
   const body = (ctx.body ?? "").toLowerCase();
   const labels = (ctx.labels ?? []).map((label) => label.toLowerCase());
+  const filesResolved = ctx.filesResolved ?? true; // absent ⇒ caller asserts a trustworthy changedPaths set
   const findings: AdvisoryFinding[] = [];
   for (const check of checks) {
     // when_paths gate: a check with whenPaths applies ONLY to PRs that touch a matching path; an unmatched check
-    // is N/A (no finding). Empty whenPaths ⇒ the check always applies.
-    if (check.whenPaths.length > 0 && !ctx.changedPaths.some((path) => check.whenPaths.some((glob) => matchesManifestPath(path, glob)))) continue;
+    // is N/A (no finding). Empty whenPaths ⇒ the check always applies (title/description/label only).
+    if (check.whenPaths.length > 0) {
+      if (!filesResolved) {
+        // The changed-file set could not be resolved, so we cannot evaluate this path gate. HOLD the gate for an
+        // ENFORCED check (re-evaluates when files resolve) instead of silently skipping a hard requirement (which
+        // would let a guarded PR auto-merge). An advisory check is just dropped (no noise on a transient miss).
+        if (check.enforce)
+          findings.push({
+            code: PRE_MERGE_CHECK_UNRESOLVED_CODE,
+            severity: "warning",
+            title: `Pre-merge check held — changed files not resolved: ${check.name}`,
+            detail: `Gittensory could not resolve this PR's changed files to evaluate the path-gated check "${check.name}"; the gate is held and re-evaluates automatically.`,
+            action: "No action needed — the gate re-evaluates once the PR's files are available.",
+          });
+        continue;
+      }
+      if (!ctx.changedPaths.some((path) => check.whenPaths.some((glob) => matchesManifestPath(path, glob)))) continue;
+    }
     const unmet: string[] = [];
     if (check.titleContains !== null && !title.includes(check.titleContains.toLowerCase())) unmet.push(`the title must contain "${check.titleContains}"`);
     if (check.descriptionContains !== null && !body.includes(check.descriptionContains.toLowerCase())) unmet.push(`the description must contain "${check.descriptionContains}"`);

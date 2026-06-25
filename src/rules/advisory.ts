@@ -705,7 +705,10 @@ function conclusionForSeverity(severity: AdvisorySeverity, findings: AdvisoryFin
 }
 
 function isEvaluationBlocker(code: string): boolean {
-  return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached";
+  // pre_merge_check_unresolved: an enforced path-gated pre-merge check whose changed-file set could not be
+  // resolved — gittensory cannot evaluate it yet, so the gate is NEUTRAL (held) and re-evaluates on the next
+  // sync, rather than auto-merging past the unverified requirement or hard-closing on a transient miss. (#review-audit)
+  return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved";
 }
 
 function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean {

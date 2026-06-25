@@ -625,6 +625,10 @@ function parseManifestGlobList(value: JsonValue | undefined, fieldLabel: string,
       warnings.push(`Manifest "${fieldLabel}[${index}]" must be a non-empty string; ignoring it.`);
       continue;
     }
+    if (glob.length > MAX_ITEM_LENGTH) {
+      warnings.push(`Manifest "${fieldLabel}[${index}]" exceeds ${MAX_ITEM_LENGTH} chars; ignoring it.`);
+      continue;
+    }
     out.push(glob);
   }
   return out;
@@ -658,6 +662,10 @@ function parseReviewPathInstructions(value: JsonValue | undefined, warnings: str
     const path = typeof e.path === "string" ? e.path.trim() : "";
     if (!path) {
       warnings.push(`Manifest "review.path_instructions[${index}].path" must be a non-empty string; ignoring the entry.`);
+      continue;
+    }
+    if (path.length > MAX_ITEM_LENGTH) {
+      warnings.push(`Manifest "review.path_instructions[${index}].path" exceeds ${MAX_ITEM_LENGTH} chars; ignoring the entry.`);
       continue;
     }
     if (e.instructions === undefined || e.instructions === null) {
@@ -860,18 +868,46 @@ function normalizePathForMatch(path: string): string {
 }
 
 /**
+ * LINEAR-TIME wildcard matcher for a `*`-glob pattern over an already-normalized path. `*` (and a collapsed
+ * run of `*`) matches any run of characters INCLUDING `/` (gittensory globs cross slashes). Implemented as a
+ * prefix + suffix + ordered-substring (indexOf) scan rather than a `.*`-per-star regex: the old regex
+ * (`^.*a.*a...$`) backtracks catastrophically on a near-miss path and could hang the gate for an entire repo
+ * (a manifest glob with many non-adjacent `*`). This algorithm is O(path × parts) with NO backtracking.
+ */
+function linearGlobMatcher(pattern: string): (path: string) => boolean {
+  // The caller only compiles this for a pattern that contains a wildcard, so split always yields >= 2 parts.
+  const parts = pattern.split(/\*+/); // literal segments between (collapsed) wildcard runs
+  const first = parts[0]!;
+  const last = parts[parts.length - 1]!;
+  const middles = parts.slice(1, -1).filter((part) => part.length > 0);
+  return (path) => {
+    if (!path.startsWith(first) || !path.endsWith(last)) return false;
+    let idx = first.length;
+    for (const part of middles) {
+      const found = path.indexOf(part, idx);
+      if (found === -1) return false;
+      idx = found + part.length;
+    }
+    return path.length - last.length >= idx; // the suffix must not overlap the consumed prefix/middles
+  };
+}
+
+/**
  * Compile a manifest path pattern into a predicate over an ALREADY-normalized path. Supports exact paths,
- * directory prefixes (`src/` or `src`), and `*` wildcards (`**` collapses to `*`). Compiling once (the
- * wildcard regex in particular) lets a caller test many paths against one pattern without recompiling per
- * path — see {@link matchedPatterns}. An empty/blank pattern never matches.
+ * directory prefixes (`src/` or `src`), and `*` wildcards (`*` and a double-star both match any run of chars
+ * across `/`). A double-star-then-separator prefix means "zero or more path segments", so the mandatory slash
+ * is absorbed and a double-star glob also matches a ROOT-level (zero-depth) file, not only nested ones.
+ * Compiling once lets a caller test many paths against one pattern without recompiling per path — see
+ * {@link matchedPatterns}. An empty/blank pattern never matches.
  */
 function compileManifestPathMatcher(pattern: string): (normalizedPath: string) => boolean {
   const normalizedPattern = normalizePathForMatch(pattern);
   if (!normalizedPattern) return () => false;
   if (normalizedPattern.includes("*")) {
-    const escaped = normalizedPattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*+/g, ".*");
-    const regex = new RegExp(`^${escaped}$`);
-    return (normalizedPath) => regex.test(normalizedPath);
+    // A double-star-then-slash run collapses the mandatory separator into the wildcard so the glob matches
+    // zero-depth/root too (e.g. a leading double-star glob matches a root-level file). Then run the linear matcher.
+    const globbed = normalizedPattern.replace(/\*\*\//g, "*");
+    return linearGlobMatcher(globbed);
   }
   const dirPattern = normalizedPattern.endsWith("/") ? normalizedPattern : `${normalizedPattern}/`;
   return (normalizedPath) => normalizedPath === normalizedPattern || normalizedPath.startsWith(dirPattern);

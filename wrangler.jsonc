@@ -99,6 +99,10 @@
     // identical to today. Config-application (reading a promoted override into the live gate) is a deferred
     // follow-up — see src/review/selftune-wire.ts.
     "GITTENSORY_REVIEW_SELFTUNE": "false",
+    // Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
+    // through to the existing mention path (byte-identical). ON → a MAINTAINER comment of `@gittensory plan` on
+    // an issue generates an implementation plan from the issue text via Workers AI and posts it as a comment.
+    "GITTENSORY_REVIEW_PLANNER": "false",
     // Convergence (port): public OAuth draft-submission flow ported from reviewbot. Default OFF — every
     // /v1/drafts endpoint 404s and no draft behavior runs. Turning it on also needs the
     // DRAFT_TOKEN_ENCRYPTION_SECRET worker secret + GITHUB_OAUTH_CLIENT_SECRET to be set.

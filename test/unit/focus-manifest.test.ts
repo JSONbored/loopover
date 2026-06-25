@@ -185,6 +185,33 @@ describe("matchesManifestPath", () => {
     expect(matchesManifestPath("", "src/")).toBe(false);
     expect(matchesManifestPath("src/x.ts", "")).toBe(false);
   });
+
+  it("**/ matches at the repo ROOT too (zero-depth), not only nested files (#review-audit)", () => {
+    expect(matchesManifestPath("app.test.ts", "**/*.test.ts")).toBe(true); // root-level (was a bug: required a slash)
+    expect(matchesManifestPath("dir/app.test.ts", "**/*.test.ts")).toBe(true); // nested still matches
+    expect(matchesManifestPath("foo", "**/foo")).toBe(true);
+    expect(matchesManifestPath("a/b/foo", "**/foo")).toBe(true);
+    expect(matchesManifestPath("a/b/c.ts", "**/*.ts")).toBe(true);
+  });
+
+  it("multi-wildcard matching is correct (ordered substrings, suffix cannot overlap)", () => {
+    expect(matchesManifestPath("xayybzzc", "*a*b*c")).toBe(true);
+    expect(matchesManifestPath("aXbXc", "a*b*c")).toBe(true);
+    expect(matchesManifestPath("ab", "a*b")).toBe(true); // * matches empty
+    expect(matchesManifestPath("ba", "a*b")).toBe(false); // wrong order
+    expect(matchesManifestPath("ac", "a*b*c")).toBe(false); // 'b' missing between a and c
+    expect(matchesManifestPath("ab", "a*b*c")).toBe(false); // missing trailing c
+  });
+
+  it("is LINEAR on a hostile multi-star glob — no catastrophic backtracking (ReDoS, #review-audit)", () => {
+    const evilGlob = "*a".repeat(20); // 20 non-adjacent stars; the old code compiled this to a backtracking regex
+    const nearMiss = "a".repeat(300) + "b"; // long run then a non-a tail the glob cannot satisfy
+    const start = performance.now();
+    const result = matchesManifestPath(nearMiss, evilGlob);
+    const elapsed = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsed).toBeLessThan(100); // the old per-star regex did not return within 30s on this input
+  });
 });
 
 // Regression tests for the three compileManifestPathMatcher branches: exact,
@@ -1072,6 +1099,7 @@ describe("parseFocusManifest review config", () => {
           "nope", // non-mapping → dropped
           { path: "y/**" }, // missing instructions → dropped
           { path: 42, instructions: "non-string path" }, // path not a string → dropped
+          { path: `${"a".repeat(400)}/x`, instructions: "over-long path" }, // > MAX_ITEM_LENGTH → dropped (#review-audit)
         ],
       },
     });
@@ -1084,6 +1112,7 @@ describe("parseFocusManifest review config", () => {
     expect(m.warnings.some((w) => /path_instructions\[4\]/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /path_instructions\[5\]\.instructions/.test(w))).toBe(true);
     expect(m.warnings.some((w) => /path_instructions\[6\]\.path/.test(w))).toBe(true); // non-string path
+    expect(m.warnings.some((w) => /path_instructions\[7\]\.path.*exceeds/.test(w))).toBe(true); // over-long path
     // Round-trips through the cache serializer.
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.pathInstructions).toEqual(m.review.pathInstructions);
   });
@@ -1152,6 +1181,13 @@ describe("review.exclude_paths (#review-exclude-paths)", () => {
     const many = parseFocusManifest({ review: { exclude_paths: Array.from({ length: 60 }, (_, i) => `dir${i}/**`) } });
     expect(many.review.excludePaths).toHaveLength(50);
     expect(many.warnings.some((w) => /exclude_paths.*capped/.test(w))).toBe(true);
+  });
+
+  it("drops an over-long glob (defense-in-depth length cap) (#review-audit)", () => {
+    const huge = `${"a".repeat(400)}/x.ts`; // > MAX_ITEM_LENGTH (300)
+    const m = parseFocusManifest({ review: { exclude_paths: [huge, "dist/**"] } });
+    expect(m.review.excludePaths).toEqual(["dist/**"]); // the over-long glob is dropped, the valid one kept
+    expect(m.warnings.some((w) => /exclude_paths\[0\].*exceeds/.test(w))).toBe(true);
   });
 
   it("excludeReviewPaths filters matching files; empty globs return the same array (byte-identical)", () => {

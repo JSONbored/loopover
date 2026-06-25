@@ -6,6 +6,7 @@ import {
   loadPublicRepoFocusManifest,
   loadRepoFocusManifest,
   loadRepoFocusManifests,
+  setLocalManifestReader,
   upsertRepoFocusManifest,
   REPO_FOCUS_MANIFEST_MAX_AGE_MS,
   REPO_FOCUS_MANIFEST_MAX_CONCURRENT_LOADS,
@@ -329,5 +330,54 @@ describe("focus-manifest loader", () => {
     });
     expect(manifest.present).toBe(false);
     expect(manifest.warnings.join(" ")).toMatch(/mapping/i);
+  });
+});
+
+describe("focus-manifest loader — container-private config (self-host)", () => {
+  afterEach(() => setLocalManifestReader(null));
+
+  it("prefers the registered local reader over the public fetcher and tags it api_record", async () => {
+    const env = createTestEnv();
+    let fetched = 0;
+    setLocalManifestReader(async (repo) => (repo === "owner/private" ? "wantedPaths:\n  - private/\n" : null));
+    const manifest = await loadRepoFocusManifest(env, "owner/private", {
+      fetcher: async () => {
+        fetched += 1;
+        return JSON.stringify({ wantedPaths: ["public/"] });
+      },
+    });
+    expect(manifest.source).toBe("api_record");
+    expect(manifest.wantedPaths).toEqual(["private/"]);
+    expect(fetched).toBe(0); // the public `.gittensory.yml` was never fetched
+  });
+
+  it("falls through to the public fetcher when the local reader has no file for the repo", async () => {
+    const env = createTestEnv();
+    let fetched = 0;
+    setLocalManifestReader(async () => null);
+    const manifest = await loadRepoFocusManifest(env, "owner/public", {
+      fetcher: async () => {
+        fetched += 1;
+        return JSON.stringify({ wantedPaths: ["src/"] });
+      },
+    });
+    expect(manifest.source).toBe("repo_file");
+    expect(manifest.wantedPaths).toEqual(["src/"]);
+    expect(fetched).toBe(1);
+  });
+
+  it("never consults the local reader on the publicOnly (contributor-preview) path", async () => {
+    const env = createTestEnv();
+    let localCalls = 0;
+    setLocalManifestReader(async () => {
+      localCalls += 1;
+      return "wantedPaths:\n  - private/\n";
+    });
+    const manifest = await loadPublicRepoFocusManifest(env, "owner/preview", {
+      fetcher: async () => JSON.stringify({ wantedPaths: ["src/"] }),
+    });
+    expect(localCalls).toBe(0); // private config must never leak into a contributor-facing preview
+    expect(manifest.source).toBe("repo_file");
+    expect(manifest.wantedPaths).toEqual(["src/"]);
   });
 });

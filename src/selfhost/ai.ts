@@ -206,15 +206,24 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
   };
 }
 
-/** Codex subscription (`codex exec`, auth from ~/.codex/auth.json). Gated/unverified — fail-safe. */
+/** Codex subscription (`codex exec`, auth from $CODEX_HOME/auth.json, default ~/.codex). codex needs a WRITABLE
+ *  home for its app-server state, so a brokered self-host points CODEX_HOME at a writable dir. Gated/unverified —
+ *  fail-safe. */
 export function createCodexAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
   return {
     async run(model, options) {
       const env = scrubBillableKeys(parentEnv);
       const prompt = toMessages(options).map((m) => m.content).join("\n\n");
       const spawn = spawnImpl ?? (await defaultSpawn());
-      const codexModel = resolveModel(configuredModel(parentEnv), model, "gpt-5");
-      const { stdout, code } = await spawn("codex", ["exec", "--json", "--sandbox", "read-only", "--ask-for-approval", "never", "--model", codexModel, "--", prompt], { env, timeoutMs: 120_000 });
+      // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).
+      // `--skip-git-repo-check` lets it run outside a git repo. Pass `--model` ONLY when one is explicitly
+      // configured: forcing a model (e.g. the old `gpt-5` default) fails on a ChatGPT-account login with "not
+      // supported", whose default model codex selects on its own.
+      const codexModel = resolveModel(configuredModel(parentEnv), model, "");
+      const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
+      if (codexModel) args.push("--model", codexModel);
+      args.push("--", prompt);
+      const { stdout, code } = await spawn("codex", args, { env, timeoutMs: 120_000 });
       if (code !== 0) throw new Error(`codex_exit_${code ?? "null"}`);
       const text = extractCliText(stdout);
       if (!text) throw new Error("codex_empty_output");

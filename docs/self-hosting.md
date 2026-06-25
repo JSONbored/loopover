@@ -121,6 +121,16 @@ free Cloudflare Workers-AI pair remains the cloud default (`consensus`) — thes
 image with `--build-arg INSTALL_AI_CLIS=true` (or `docker compose build --build-arg INSTALL_AI_CLIS=true`) to
 bake them in, then provide `CLAUDE_CODE_OAUTH_TOKEN` / codex auth at run time. No credentials are baked in.
 
+- **Claude Code:** set `CLAUDE_CODE_OAUTH_TOKEN` (a 1-year token from `claude setup-token`, run once in a real
+  terminal — it's browser-interactive and prints the token; it has no headless mode). The provider forces the
+  subscription token (it scrubs `ANTHROPIC_API_KEY`), so an API key won't be used here — use `AI_PROVIDER=anthropic`
+  for API-key billing.
+- **Codex:** codex reads `auth.json` from `$CODEX_HOME` (default `~/.codex`) and **must have a WRITABLE home** — it
+  refreshes the token in place, so a read-only mount fails with *"Read-only file system"*. Set `CODEX_HOME` to a
+  writable path and **copy** your `~/.codex/auth.json` there (don't bind-mount it read-only). With a ChatGPT-
+  subscription login, leave `AI_MODEL` unset for codex — pinning `gpt-5*` returns *"not supported … with a ChatGPT
+  account"*; codex picks the entitled default. (`ca-certificates` for codex's native TLS is baked in by `INSTALL_AI_CLIS`.)
+
 **Local RAG (retrieval-augmented review).** Self-host ships a SQLite-backed vector store, so RAG works without
 Cloudflare Vectorize. Enable it with `GITTENSORY_REVIEW_RAG=true` + the repo in `GITTENSORY_REVIEW_REPOS`, and
 point at an **embedding-capable** OpenAI-compatible provider (Ollama) with a **1024-dimensional** model via

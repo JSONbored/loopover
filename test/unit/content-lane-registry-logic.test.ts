@@ -280,6 +280,17 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(r.directFile).toBe("registry/subnets/allways.json");
   });
 
+  it("rejects an entry-submission with multiple flat provider companions", () => {
+    const r = classifyRegistryPrScope(spec, [
+      "registry/subnets/allways.json",
+      "registry/providers/allways.json",
+      "registry/providers/extra.json",
+    ]);
+    expect(r.scope).toBe("not-direct-submission");
+    expect(r.directFile).toBeNull();
+    expect(r.isProvider).toBe(false);
+  });
+
   it("recognizes a standalone flat provider-submission (no subnet file)", () => {
     const r = classifyRegistryPrScope(spec, ["registry/providers/cacheon.json"]);
     expect(r.scope).toBe("provider-submission");

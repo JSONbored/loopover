@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "hono";
-import { handleGitHubWebhook } from "../../src/github/webhook";
+import { handleGitHubWebhook, handleOrbRelay } from "../../src/github/webhook";
 import { getWebhookEvent, recordWebhookEvent } from "../../src/db/repositories";
+import { relaySignature } from "../../src/orb/relay";
 import { createTestEnv } from "../helpers/d1";
 
 describe("github webhook body reader edge cases", () => {
@@ -149,6 +150,90 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "queued" });
     expect(webhookSends).toBe(1); // routed to the dedicated webhook lane
     expect(jobsSends).toBe(0); // never the shared maintenance queue
+  });
+});
+
+describe("handleOrbRelay (brokered self-host relay receiver)", () => {
+  const makeRelayContext = (
+    env: Env,
+    body: string,
+    headers: Record<string, string | undefined>,
+    bodyStream?: ReadableStream<Uint8Array>,
+  ): Context<{ Bindings: Env }> => {
+    const request = new Request("https://example.com/v1/orb/relay", {
+      method: "POST",
+      body: bodyStream ?? body,
+    });
+    return {
+      req: {
+        raw: request,
+        header(name: string) {
+          return headers[name.toLowerCase()] ?? null;
+        },
+      },
+      env,
+      json(payload: unknown, status?: number) {
+        return Response.json(payload, status === undefined ? undefined : { status });
+      },
+    } as unknown as Context<{ Bindings: Env }>;
+  };
+
+  it("returns 400 when required GitHub headers are missing", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbenr_testsecret" });
+    // missing delivery
+    let ctx = makeRelayContext(env, "{}", { "x-github-event": "pull_request" });
+    expect((await handleOrbRelay(ctx)).status).toBe(400);
+    // missing event
+    ctx = makeRelayContext(env, "{}", { "x-github-delivery": "d1" });
+    expect((await handleOrbRelay(ctx)).status).toBe(400);
+  });
+
+  it("returns 404 when ORB_ENROLLMENT_SECRET is not set (not a brokered self-host)", async () => {
+    const env = createTestEnv(); // no ORB_ENROLLMENT_SECRET in the base test env
+    const ctx = makeRelayContext(env, "{}", {
+      "x-github-delivery": "d1",
+      "x-github-event": "pull_request",
+      "x-orb-signature-256": "sha256=badbad",
+    });
+    const resp = await handleOrbRelay(ctx);
+    expect(resp.status).toBe(404);
+    await expect(resp.json()).resolves.toMatchObject({ error: "relay_not_configured" });
+  });
+
+  it("returns 401 when the HMAC signature is wrong", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbenr_testsecret" });
+    const ctx = makeRelayContext(env, '{"action":"opened"}', {
+      "x-github-delivery": "d2",
+      "x-github-event": "pull_request",
+      "x-orb-signature-256": "sha256=badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadb",
+    });
+    const resp = await handleOrbRelay(ctx);
+    expect(resp.status).toBe(401);
+    await expect(resp.json()).resolves.toMatchObject({ error: "invalid_signature" });
+  });
+
+  it("returns 500 (enqueue_failed) and flips event to 'error' when WEBHOOKS.send throws", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbenr_testsecret" });
+    env.WEBHOOKS = { send: async () => { throw new Error("queue down"); } } as unknown as typeof env.WEBHOOKS;
+    const body = JSON.stringify({ action: "opened", repository: { full_name: "acme/widgets" }, installation: { id: 99 } });
+    const sig = `sha256=${await relaySignature("orbenr_testsecret", body)}`;
+    const ctx = makeRelayContext(env, body, { "x-github-delivery": "relay-fail-1", "x-github-event": "pull_request", "x-orb-signature-256": sig });
+    const resp = await handleOrbRelay(ctx);
+    expect(resp.status).toBe(500);
+    await expect(resp.json()).resolves.toMatchObject({ error: "enqueue_failed", deliveryId: "relay-fail-1" });
+  });
+
+  it("returns 202 queued when signature is valid and WEBHOOKS.send succeeds", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbenr_testsecret" });
+    let sent = 0;
+    env.WEBHOOKS = { send: async () => void (sent += 1) } as unknown as typeof env.WEBHOOKS;
+    const body = JSON.stringify({ action: "opened", repository: { full_name: "acme/widgets" }, installation: { id: 99 } });
+    const sig = `sha256=${await relaySignature("orbenr_testsecret", body)}`;
+    const ctx = makeRelayContext(env, body, { "x-github-delivery": "relay-ok-1", "x-github-event": "pull_request", "x-orb-signature-256": sig });
+    const resp = await handleOrbRelay(ctx);
+    expect(resp.status).toBe(202);
+    await expect(resp.json()).resolves.toMatchObject({ ok: true, status: "queued", deliveryId: "relay-ok-1" });
+    expect(sent).toBe(1); // routed to the WEBHOOKS queue
   });
 });
 

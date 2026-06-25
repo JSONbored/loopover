@@ -9,6 +9,8 @@ import {
   firstAddedLineFromPatch,
   formatCheckRunOutput,
   formatGateCheckOutput,
+  isAiJudgmentOnlyFailure,
+  reconcileGateEvaluationForGreenCi,
 } from "../../src/rules/advisory";
 import type { CollisionReport } from "../../src/signals/engine";
 import type { IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
@@ -1075,6 +1077,74 @@ describe("firstAddedLineFromPatch", () => {
       expect(gate.blockers.map((f) => f.code)).not.toContain("self_authored_linked_issue");
     });
   });
+
+describe("CI-refutation of the public comment gate (#ai-ci-refutation)", () => {
+  const finding = (code: string): import("../../src/types").AdvisoryFinding => ({ code, severity: "critical", title: `t:${code}`, detail: `d:${code}` });
+  const failure = (codes: string[]): import("../../src/rules/advisory").GateCheckEvaluation => ({
+    enabled: true,
+    conclusion: "failure",
+    title: "Gittensory Gate: blocked",
+    summary: "A hard blocker was found.",
+    blockers: codes.map(finding),
+    warnings: [],
+  });
+
+  it("isAiJudgmentOnlyFailure: true only when EVERY blocker is an AI-judgment code", () => {
+    expect(isAiJudgmentOnlyFailure(failure(["ai_consensus_defect"]))).toBe(true);
+    expect(isAiJudgmentOnlyFailure(failure(["ai_review_split"]))).toBe(true);
+    expect(isAiJudgmentOnlyFailure(failure(["ai_consensus_defect", "ai_review_split"]))).toBe(true);
+    expect(isAiJudgmentOnlyFailure(failure(["ai_consensus_defect", "duplicate_open_pr"]))).toBe(false);
+    expect(isAiJudgmentOnlyFailure(failure(["slop_high"]))).toBe(false);
+    expect(isAiJudgmentOnlyFailure(failure(["ai_review_inconclusive"]))).toBe(false);
+    // An empty blocker list is not a refutable AI-only failure.
+    expect(isAiJudgmentOnlyFailure({ ...failure([]), conclusion: "failure" })).toBe(false);
+    // A non-failure conclusion is never AI-only-failure.
+    expect(isAiJudgmentOnlyFailure({ ...failure(["ai_consensus_defect"]), conclusion: "success" })).toBe(false);
+  });
+
+  it("enabled + green CI + AI-judgment-only failure → SUCCESS with cleared blockers (matches the merge disposition)", () => {
+    const out = reconcileGateEvaluationForGreenCi(failure(["ai_consensus_defect"]), "passed", true);
+    expect(out.conclusion).toBe("success");
+    expect(out.blockers).toEqual([]);
+    expect(out.title).toBe("Gittensory Gate passed");
+    expect(out.summary).toContain("advisory, not blocking");
+  });
+
+  it("enabled + green CI + split-only failure → SUCCESS too", () => {
+    expect(reconcileGateEvaluationForGreenCi(failure(["ai_review_split"]), "passed", true).conclusion).toBe("success");
+  });
+
+  it("is GATED by `enabled` — enabled=false returns the failure UNCHANGED even on green CI", () => {
+    const fail = failure(["ai_consensus_defect"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "passed", false)).toBe(fail);
+  });
+
+  it("does NOT reconcile when CI is red — the real failing check stands", () => {
+    const fail = failure(["ai_consensus_defect"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "failed", true)).toBe(fail);
+  });
+
+  it("does NOT reconcile when CI is unverified", () => {
+    const fail = failure(["ai_consensus_defect"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "unverified", true)).toBe(fail);
+  });
+
+  it("does NOT reconcile a mixed failure (any deterministic blocker present) even on green CI", () => {
+    const fail = failure(["ai_consensus_defect", "duplicate_open_pr"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "passed", true)).toBe(fail);
+    expect(reconcileGateEvaluationForGreenCi(fail, "passed", true).conclusion).toBe("failure");
+  });
+
+  it("does NOT reconcile a deterministic-only failure on green CI (e.g. slop)", () => {
+    const fail = failure(["slop_high"]);
+    expect(reconcileGateEvaluationForGreenCi(fail, "passed", true)).toBe(fail);
+  });
+
+  it("does NOT reconcile a success gate (no-op pass-through)", () => {
+    const ok = { ...failure([]), conclusion: "success" as const, blockers: [] };
+    expect(reconcileGateEvaluationForGreenCi(ok, "passed", true)).toBe(ok);
+  });
+});
 
 function emptyCollisions(): CollisionReport {
   return {

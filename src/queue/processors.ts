@@ -1,7 +1,6 @@
 import {
   countOpenIssues,
   countOpenPullRequests,
-  countRecentSubmissionsByAuthor,
   getAgentCommandAnswer,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -101,7 +100,7 @@ import { resolveRepoActionMode } from "../github/client";
 import { ALL_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
 import { fetchPublicContributorProfile } from "../github/public";
 import { refreshRegistry } from "../registry/sync";
-import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath } from "../rules/advisory";
+import { buildIssueAdvisory, buildPullRequestAdvisory, evaluateGateCheck, isTestPath, reconcileGateEvaluationForGreenCi } from "../rules/advisory";
 import { detectNotificationEvents } from "../notifications/events";
 import { deliverNotification, detectIssueWatchEvents, evaluateNotificationEvent } from "../notifications/service";
 import { getOrCreateScoringModelSnapshot, refreshScoringModelSnapshot } from "../scoring/model";
@@ -174,19 +173,23 @@ import type { CheckFailureDetail, MergeReadiness } from "../review/unified-comme
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
-import { buildFocusManifestGuidance } from "../signals/focus-manifest";
+import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstructions, resolveReviewPreMergeChecks, resolveReviewPromptOverrides, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
 import { runGittensoryAiReview } from "../services/ai-review";
+import { evaluatePreMergeChecks } from "../review/pre-merge-checks";
 import { secretLeakFinding } from "../review/safety";
-import { buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
+import { buildIssuePlanComment, classifyPlanCommandRequest, generateIssuePlan, isPlanCommand, isPlannerEnabled } from "../review/planner";
+import { aiCiRefutationActive, buildReviewGroundingText, checkSummaryText as checkFailureSummaryText, isGroundingEnabled } from "../review/grounding-wire";
 import { buildReviewRagContext, isRagEnabled } from "../review/rag-wire";
+import { evaluateWithSurfaceLane } from "../review/content-lane-wire";
 import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
-import { loadHardGuardrailGlobs, loadSubmissionFloodLimit } from "../review/guardrail-config";
+import { loadHardGuardrailGlobs } from "../review/guardrail-config";
+import { isGuardrailHit } from "../signals/change-guardrail";
 import { closePullRequest, createIssueComment, getLastCloserLogin } from "../github/pr-actions";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
@@ -195,6 +198,7 @@ import { isCloseHoldOnly, isHoldOnly, recordPrOutcome, recordReversalSignals, ru
 import { recordNativeGateDecision } from "../review/parity-wire";
 import type { SubmissionOutcome } from "../review/submitter-reputation";
 import type { AdvisoryFinding, ContributorEvidenceRecord, ContributorRepoStatRecord, DetectedNotificationEvent, GitHubWebhookPayload, IssueRecord, JobMessage, JsonValue, PullRequestFilePathRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../types";
+import { retryFailedRelays } from "../orb/relay";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
@@ -389,6 +393,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     case "submit-draft":
       // Public OAuth draft-submission (GITTENSORY_REVIEW_DRAFT). No-ops internally when the flag is off.
       await processSubmitDraft(env, message.draftId);
+      return;
+    case "retry-orb-relay":
+      // Orb relay retry (#relay-retry): re-attempt events that failed to reach a brokered self-host container
+      // (container was temporarily down). Enqueued by the cron ONLY when ORB_BROKER_ENABLED is set; a stale
+      // in-flight job that arrives after the flag clears is still safe — retryFailedRelays fails open (no-op on
+      // an empty table). Never throws.
+      await retryFailedRelays(env);
       return;
   }
 }
@@ -770,20 +781,6 @@ async function maybeRunAgentMaintenance(
   const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
 
-  // Anti-farming (#anti-gaming-flood): a CONTRIBUTOR who has submitted more than the per-repo limit within the
-  // configured window is HELD for manual review (never auto-merged/approved) — this catches farming that merges
-  // fast, which an open-PR count alone would miss. Owner/automation are exempt; disabled (no hold) when the repo
-  // has no flood limit configured in KV, or on any read fault (fail-open, never false-hold).
-  let submissionFloodHit = false;
-  if (!authorIsOwner && !authorIsAutomationBot && authorLogin.length > 0) {
-    const floodLimit = await loadSubmissionFloodLimit(env, repoFullName).catch(() => null);
-    if (floodLimit) {
-      const sinceIso = new Date(Date.now() - floodLimit.windowHours * 3_600_000).toISOString();
-      const recent = await countRecentSubmissionsByAuthor(env, repoFullName, authorLogin, sinceIso).catch(() => 0);
-      submissionFloodHit = recent > floodLimit.maxPerWindow;
-    }
-  }
-
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
   // MORE closing references than we can safely verify (overflow) is itself a violation; otherwise evaluate the
   // linked issues' facts (fail-open per issue). The decision is extracted into resolveLinkedIssueHardRule (pure,
@@ -803,6 +800,15 @@ async function maybeRunAgentMaintenance(
   const planned = planAgentMaintenanceActions({
     conclusion: gate.conclusion,
     blockerTitles: gate.blockers.map((blocker) => blocker.title),
+    // CI-refutation (#ai-ci-refutation): thread the blocker CODES + the active gate so the planner suppresses an
+    // AI-judgment-only failure (ai_consensus_defect / ai_review_split) on a green-CI PR — the deterministic
+    // validator overrules the model hallucination, so a clean+green PR MERGES instead of being false-closed.
+    // `aiCiRefutationEnabled` is the SAME grounding+convergence gate the public-comment reconciliation uses, passed
+    // as a single boolean so the refutation condition is unit-tested in the planner and this site carries no branch.
+    // Enabled=false (non-convergence / grounding-off) ⇒ the refutation is a no-op ⇒ byte-identical verdict. The
+    // codes are public-safe finding identifiers (no rubric/scoring/reward terms).
+    gateBlockerCodes: gate.blockers.map((blocker) => blocker.code),
+    aiCiRefutationEnabled: aiCiRefutationActive(env, repoFullName),
     autonomy: settings.autonomy,
     autoMaintain: settings.autoMaintain,
     slopGateMinScore: settings.slopGateMinScore,
@@ -810,7 +816,6 @@ async function maybeRunAgentMaintenance(
     hardGuardrailGlobs,
     authorIsOwner,
     authorIsAutomationBot,
-    submissionFloodHit,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),
@@ -1612,6 +1617,19 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       return;
     }
 
+    if (eventName === "issue_comment" && (await maybeProcessPlanCommand(env, deliveryId, payload))) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "processed",
+        status: "processed",
+      });
+      return;
+    }
+
     if (eventName === "issue_comment" && (await maybeProcessGittensoryMentionCommand(env, deliveryId, payload))) {
       await recordWebhookEvent(env, {
         deliveryId,
@@ -1654,6 +1672,17 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       // was by the bot / repo owner / admin, re-close it and skip the re-review. Self-closes (the contributor
       // closed their own PR) stay reopenable; the bot's own nightly-re-review reopens are exempt.
       if (payload.action === "reopened" && installationId && (await maybeRecloseDisallowedReopen(env, deliveryId, installationId, repoFullName, pr, payload).catch(() => false))) {
+        // Stamp the delivery processed like every other owning path — the early return otherwise leaves the
+        // webhook_events row stuck at "queued"/its body hash, mis-reporting the delivery as un-acked (#review-audit).
+        await recordWebhookEvent(env, {
+          deliveryId,
+          eventName,
+          action: payload.action,
+          installationId: payload.installation?.id,
+          repositoryFullName: payload.repository?.full_name,
+          payloadHash: "processed",
+          status: "processed",
+        });
         return;
       }
       // Resolve settings first so the self-authored live-fetch fallback only fires when its gate is in block mode.
@@ -2027,6 +2056,18 @@ export async function runAiReviewForAdvisory(
     // review + grounding + RAG use these instead of re-reading the stored rows — so a review that fired before
     // detail-sync still sees the REAL diff (FIX B). Omitted (e.g. unit tests) → fall back to the stored read.
     files?: Awaited<ReturnType<typeof listPullRequestFiles>> | undefined;
+    // `.gittensory.yml` review.profile (#review-profile), resolved by the caller from the (already-cached)
+    // manifest. Threaded in (not loaded here) so the AI review path makes no extra manifest fetch — absent ⇒
+    // null ⇒ balanced ⇒ the reviewer prompt is byte-identical.
+    reviewProfile?: ReviewProfile | null | undefined;
+    // `.gittensory.yml` review.path_instructions (#review-path-instructions), resolved by the caller from the
+    // cached manifest. The CONFIG (not a fetch) is threaded in; the per-PR glob match against `files` happens
+    // here (pure), so the AI path makes no extra manifest fetch. Absent/empty ⇒ byte-identical reviewer prompt.
+    reviewPathInstructions?: ReviewPathInstruction[] | undefined;
+    // `.gittensory.yml` review.exclude_paths (#review-exclude-paths), resolved by the caller from the cached
+    // manifest. Globs whose files are dropped from the AI review (diff + grounding + RAG) — generated/lockfiles
+    // the maintainer doesn't want reviewed. Empty ⇒ every file is reviewed (byte-identical). The gate is unaffected.
+    reviewExcludePaths?: string[] | undefined;
   },
 ): Promise<{ notes: string; reviewerCount: number } | undefined> {
   const packAllowsAnyAuthorBlockingReview = args.settings.gatePack === "oss-anti-slop" && args.settings.aiReviewMode === "block";
@@ -2056,7 +2097,9 @@ export async function runAiReviewForAdvisory(
         : null;
     // FIX B: prefer the caller's pre-resolved files (real diff even on a pre-sync first review); fall back to
     // the stored read when the caller didn't pass them (e.g. unit tests calling this function directly).
-    const files = args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pr.number));
+    // review.exclude_paths (#review-exclude-paths): drop maintainer-excluded files (generated/lockfiles) so the
+    // AI review (diff + grounding + RAG) ignores them; empty excludePaths ⇒ the same array (byte-identical).
+    const files = excludeReviewPaths(args.files ?? (await listPullRequestFiles(env, args.repoFullName, args.pr.number)), args.reviewExcludePaths ?? []);
     // Grounding (convergence, flag-gated by GITTENSORY_REVIEW_GROUNDING). Build the FINISHED CI status + the full
     // content of the changed files so the reviewer verifies its claims against reality instead of guessing.
     // Flag-OFF (default) → we take no new branch at all: NO check/repo load, NO file fetch, and `grounding`
@@ -2092,6 +2135,11 @@ export async function runAiReviewForAdvisory(
       providerKey,
       grounding,
       ragContext,
+      profile: args.reviewProfile ?? null,
+      pathGuidance: resolveReviewPathInstructions(
+        args.reviewPathInstructions ?? [],
+        files.map((file) => file.path),
+      ),
     });
     if (result.status !== "ok") return undefined;
     if (result.consensusDefect) {
@@ -2511,6 +2559,28 @@ async function maybePublishPrPublicSurface(
         });
       }
     }
+    // Pre-merge checks (#review-pre-merge-checks, opt-in via .gittensory.yml review.pre_merge_checks). DETERMINISTIC
+    // content assertions (title/description must contain a phrase, a label must be present), optionally path-gated.
+    // Each FAILED check appends an advisory `pre_merge_check_failed` finding — or a blocking `pre_merge_check_required`
+    // one when the maintainer set enforce: true — BEFORE the gate evaluates. No AI judgment, so this can never cause
+    // an AI false-close. The manifest is cached (settings resolution loaded it), so this is a cheap hit;
+    // resolveReviewPreMergeChecks fail-safes to [] on a load error. Empty (default) ⇒ no finding (byte-identical).
+    const preMergeChecks = resolveReviewPreMergeChecks(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
+    if (preMergeChecks.length > 0) {
+      const checkFiles = await getReviewFiles(); // memoized — reuses the gate/slop diff when already resolved
+      // An empty resolved file set means the changed paths could not be resolved (a PR always touches >=1 file),
+      // so a path-gated check cannot be evaluated — pass filesResolved=false so an ENFORCED whenPaths check HOLDS
+      // the gate (re-evaluates later) instead of silently skipping a hard requirement into an auto-merge (#review-audit).
+      advisory.findings.push(
+        ...evaluatePreMergeChecks(preMergeChecks, {
+          title: pr.title,
+          body: pr.body,
+          labels: pr.labels,
+          changedPaths: checkFiles.map((file) => file.path),
+          filesResolved: checkFiles.length > 0,
+        }),
+      );
+    }
 
     // AI maintainer review (opt-in via aiReviewMode). Mutates `advisory` with a consensus defect (if any)
     // BEFORE the gate evaluates, and returns advisory notes for the panel. Inside the try so any AI
@@ -2520,6 +2590,12 @@ async function maybePublishPrPublicSurface(
     // to keep gate-only and advisory-sweep repos free of an extra file resolve.
     const aiReviewWillRun = !webhook.skipAiReview && settings.aiReviewMode !== "off" && Boolean(advisory.headSha);
     if (aiReviewWillRun) {
+      // `.gittensory.yml` review.profile + review.path_instructions + review.exclude_paths (#review-profile /
+      // #review-path-instructions / #review-exclude-paths): resolve from the manifest (cached from settings
+      // resolution, so a cheap cache hit — no extra fetch) and thread them into the AI review. Profile shapes
+      // nitpickiness; path-instructions add per-path guidance; exclude-paths drop files from review. Absent ⇒
+      // byte-identical prompt. Fail-safe to defaults on any read error (resolveReviewPromptOverrides).
+      const { profile: reviewProfile, pathInstructions: reviewPathInstructions, excludePaths: reviewExcludePaths } = resolveReviewPromptOverrides(await loadRepoFocusManifest(env, repoFullName).catch(() => null));
       aiReview = await runAiReviewForAdvisory(env, {
         settings,
         advisory,
@@ -2528,6 +2604,9 @@ async function maybePublishPrPublicSurface(
         author,
         confirmedContributor,
         files: await getReviewFiles(),
+        reviewProfile,
+        reviewPathInstructions,
+        reviewExcludePaths,
       });
     }
 
@@ -2548,6 +2627,17 @@ async function maybePublishPrPublicSurface(
 
     const gatePolicy = gateCheckPolicy(settings, readiness.total, confirmedContributor, slopRisk, authorHistory);
     gateEvaluation = gateEnabled ? evaluateGateCheck(advisory, gatePolicy) : undefined;
+    // Deterministic content/registry surface lane (#1255) — flag-gated + per-repo allowlist, byte-identical when
+    // off (evaluateWithSurfaceLane returns the generic evaluation unchanged and resolves no files). A metagraphed
+    // registry-submission PR's surface verdict OVERRIDES the generic gate; the helper preserves a generic HARD
+    // blocker (e.g. a committed secret) and an unreadable head defers. AI-free → independent of the AI reviewer.
+    gateEvaluation = await evaluateWithSurfaceLane(env, repoFullName, gateEnabled, gateEvaluation, {
+      installationId,
+      pr,
+      repo,
+      advisory,
+      getChangedFiles: getReviewFiles,
+    });
     // #554 gate false-positive telemetry: when the gate BLOCKS, record the block (one latest row per PR) so a
     // maintainer can later compute a per-gate-type false-positive rate (blocked-then-merged / blocked).
     // MEASUREMENT only — never adjusts the gate. Best-effort: a write failure must NOT abort finalization
@@ -2720,7 +2810,6 @@ async function maybePublishPrPublicSurface(
     //   3. The `ai_consensus_defect` surfaces exactly ONCE — as the Code-review blocker — never also in the
     //      gate signal row (which renders only the conclusion-derived status text, not the defect string).
     if (unifiedCommentAllowed && gateEvaluation) {
-      const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: gateEvaluation, duplicateWinnerEnabled });
       // FIX B: the unified comment's file count + visual-capture path filter need the real diff — reuse the
       // shared resolver (one resolve per review; inline-fetches when stored is still empty pre-detail-sync).
       const unifiedFiles = await getReviewFiles();
@@ -2751,6 +2840,22 @@ async function maybePublishPrPublicSurface(
         ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
       };
+      // CI-refutation for the PUBLIC comment (#ai-ci-refutation): when the gate FAILED solely on an AI-judgment
+      // blocker but the LIVE CI is GREEN, render the comment (headline + Gate panel row) as SUCCESS/advisory so it
+      // MATCHES the disposition (which merges such a PR) instead of a contradictory red "blocked/closed". Uses the
+      // SAME grounding+convergence gate as the disposition refutation (a single `aiCiRefutationActive` call so this
+      // site carries no branch), built AFTER the live CI is resolved and used for BOTH the panel rows and the
+      // comment body so the two never disagree. Gate OFF ⇒ commentGate === gateEvaluation (byte-identical comment).
+      const commentGate = reconcileGateEvaluationForGreenCi(gateEvaluation, ciState, aiCiRefutationActive(env, repoFullName));
+      // Guarded-hold (#guarded-hold-comment): a clean+green PR whose diff touches a hard-guardrail path is HELD
+      // for owner review by the disposition (planAgentMaintenanceActions), never auto-merged — so the comment
+      // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
+      // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
+      const heldForReview = isGuardrailHit(
+        unifiedFiles.map((file) => file.path),
+        await loadHardGuardrailGlobs(env, repoFullName),
+      );
+      const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: commentGate, duplicateWinnerEnabled });
       // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo
       // cutover gate both allow it (screenshotsAllowed) AND (2) the PR touches WEB-VISIBLE files (isVisualPath
       // — frontend pages / public OG images; backend .ts/.md/.json PRs never qualify). Fully wrapped in
@@ -2786,7 +2891,7 @@ async function maybePublishPrPublicSurface(
         }
       }
       deterministicBody = buildUnifiedCommentBody({
-        gate: gateEvaluation,
+        gate: commentGate,
         ...(aiReview !== undefined ? { aiReview } : {}),
         advisoryFindings: advisory.findings,
         panelRows: rows,
@@ -2795,6 +2900,7 @@ async function maybePublishPrPublicSurface(
         changedFiles: unifiedFiles.length,
         ...(aiReview?.reviewerCount !== undefined ? { reviewerCount: aiReview.reviewerCount } : {}),
         mergeReadiness,
+        heldForReview,
         extraCollapsibles: buildPublicSafeCollapsibles({
           repo,
           pr,
@@ -3077,6 +3183,61 @@ async function recordGateOverrideSkip(
   });
 }
 
+/**
+ * `@gittensory plan` (#issue-coding-plan, flag-gated by GITTENSORY_REVIEW_PLANNER). On a MAINTAINER's comment on
+ * an ISSUE (not a PR), generate a concise implementation plan from the issue text via Workers AI and post it as an
+ * issue comment so a contributor has a concrete starting point. Flag-OFF (default) returns false immediately
+ * (BEFORE any parse), so `@gittensory plan` falls through to the existing mention path → byte-identical. Returns
+ * true once it owns the event (so the caller records it processed and stops). Fail-safe: a model/post error is
+ * recorded as a skip and never throws into the webhook loop.
+ */
+async function maybeProcessPlanCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  if (!isPlannerEnabled(env)) return false; // flag-OFF → not handled here; the worker is byte-identical to today
+  if (!isPlanCommand(payload.comment?.body)) return false;
+  // All eligibility guards live in the PURE classifier (exhaustively unit-tested); here we carry one ok branch.
+  const req = classifyPlanCommandRequest(payload, getInstallationId(payload));
+  if (!req.ok) {
+    await recordPlanSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
+    return true;
+  }
+  const targetKey = `${req.repoFullName}#${req.issue.number}`;
+  // Issue-level authorization: planning spends Workers AI + posts publicly, so restrict it to maintainers
+  // (the REAL repo permission, not the comment's spoofable author_association).
+  const association = await resolveRealRepoPermissionAssociation(env, req.installationId, req.repoFullName, req.actor);
+  if (!isMaintainerAssociation(association)) {
+    await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "actor_not_maintainer");
+    return true;
+  }
+  const plan = await generateIssuePlan(env, { title: req.issue.title, body: req.issue.body });
+  if (!plan) {
+    await recordPlanSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "no_plan_generated");
+    return true;
+  }
+  await createIssueComment(env, req.installationId, req.repoFullName, req.issue.number, buildIssuePlanComment(plan, { actor: req.actor, repoFullName: req.repoFullName, issueNumber: req.issue.number }));
+  await recordAuditEvent(env, {
+    eventType: "github_app.issue_plan_generated",
+    actor: req.actor,
+    targetKey,
+    outcome: "completed",
+    detail: `Implementation plan posted for ${targetKey}.`,
+    metadata: { deliveryId, repoFullName: req.repoFullName },
+  });
+  await recordGithubProductUsage(env, "issue_plan_generated", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: {} });
+  return true;
+}
+
+async function recordPlanSkip(env: Env, deliveryId: string, repoFullName: string | null, targetKey: string | null, actor: string | null, reason: string): Promise<void> {
+  await recordAuditEvent(env, {
+    eventType: "github_app.issue_plan_skipped",
+    actor,
+    targetKey,
+    outcome: "completed",
+    detail: reason,
+    metadata: { deliveryId, repoFullName, reason },
+  });
+  await recordGithubProductUsage(env, "issue_plan_skipped", { actor, repoFullName, targetKey, outcome: "skipped", metadata: { reason } });
+}
+
 async function maybeProcessPrPanelRetrigger(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
   const comment = payload.comment;
   if (payload.action !== "edited" || !comment || !isCheckedPrPanelRetrigger(comment.body)) return false;
@@ -3324,6 +3485,12 @@ async function maybeRecloseDisallowedReopen(
   // NOT touch GitHub, and dry-run records the would-be re-close without acting — so a dry-run is truly inert and
   // the global kill-switch is a COMPLETE stop. This close path previously bypassed pause/freeze/dry-run entirely.
   const reopenSettings = await resolveRepositorySettings(env, repoFullName);
+  // Honor the autonomy floor like every other write path (sweepRepoRegate / the live-action handler / the
+  // draft-dodge sibling all gate on isAgentConfigured): on an OBSERVE-only / un-opted-in repo (autonomy {} =
+  // deny-by-default) the agent must take NO action, so do not re-close. resolveAgentActionMode is orthogonal to
+  // autonomy (it only reflects pause/freeze/dry-run) and returns "live" for an unconfigured repo, so without this
+  // the re-close would genuinely reach GitHub on a repo that never authorized any action (#review-audit).
+  if (!isAgentConfigured(reopenSettings.autonomy)) return false;
   const reopenMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: reopenSettings.agentPaused, agentDryRun: reopenSettings.agentDryRun });
   if (reopenMode !== "live") {
     await recordAuditEvent(env, {
@@ -3359,6 +3526,10 @@ async function maybeRecloseDisallowedReopen(
 }
 
 async function maybeProcessGittensoryMentionCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
+  // Only act on a NEWLY-created comment (mirrors maybeProcessGateOverrideCommand / maybeProcessPlanCommand). Without
+  // this an `edited` comment re-runs the agent + rewrites the card, and a `deleted` command still posts an answer
+  // card for a command that no longer exists (#review-audit).
+  if (payload.action !== "created") return false;
   const command = parseGittensoryMentionCommand(payload.comment?.body);
   if (!command) return false;
   // Action commands (e.g. gate-override) are handled by their own dispatch earlier in processGitHubWebhook;

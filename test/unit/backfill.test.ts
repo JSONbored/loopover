@@ -2935,6 +2935,121 @@ describe("GitHub backfill", () => {
       expect(aggregate.ciState).toBe("pending");
     });
 
+    it("fold-all: a GitHub-Actions workflow AWAITING APPROVAL (suite not completed) reads PENDING, not passed (#ci-foldall-checksuites / #1799)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        // A fork PR awaiting CI approval: the required workflow never ran → no check-RUNS for it; only the
+        // always-on third-party checks posted (both pass) — the false-green seam.
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "Contributor trust", status: "completed", conclusion: "success", app: { slug: "superagent" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        // …but the check-SUITES show the GitHub-Actions workflow as `requested` (queued, awaiting approval).
+        if (url.includes("/check-suites?"))
+          return Response.json({
+            check_suites: [
+              { status: "requested", app: { slug: "github-actions" } },
+              { status: "completed", app: { slug: "superagent" } },
+            ],
+          });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "forksha", "public-token", null);
+      // Without this hardening the always-on passes alone read "passed" → a false-green approve. Now: pending → held.
+      expect(aggregate.ciState).toBe("pending");
+    });
+
+    it("fold-all: all GitHub-Actions suites COMPLETED → still passed (no false-pending)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("passed");
+    });
+
+    it("fold-all: an UNREADABLE check-suites read with NO first-party check-run reads PENDING, not passed (#review-audit / #1799)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        // Fork PR awaiting approval: only an always-on third-party status; NO first-party GitHub-Actions check-run.
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "license/cla", status: "completed", conclusion: "success", app: { slug: "cla-bot" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [{ context: "license/cla", state: "success" }] });
+        if (url.includes("/check-suites?")) return new Response("forbidden", { status: 403 }); // same missing admin:read that forced fold-all
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/metagraphed", "forksha", "public-token", null);
+      // The suites backstop is unreadable AND no first-party run was seen → cannot confirm CI ran → fail closed.
+      expect(aggregate.ciState).toBe("pending");
+    });
+
+    it("fold-all: an UNREADABLE check-suites read still reads PASSED when a first-party check-run was seen (no over-pending)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        // A real (non-fork) PR: the GitHub-Actions workflow ran and passed (a first-party check-run is present).
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return new Response("forbidden", { status: 403 });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("passed"); // a first-party run was observed and passed; do not over-pend
+    });
+
+    it("fold-all: a non-completed THIRD-PARTY suite is ignored (only first-party GitHub-Actions suites gate)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        // A third-party app's suite is perpetually "queued" — must NOT pend the gate (only github-actions counts).
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }, { status: "queued", app: { slug: "some-other-app" } }] });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      expect(aggregate.ciState).toBe("passed");
+    });
+
+    it("ENFORCE-required mode does NOT consult check-suites (the absent-context guard already handles it)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let suitesFetched = false;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-suites?")) suitesFetched = true;
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "test", status: "completed", conclusion: "success" }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        return new Response("not found", { status: 404 });
+      });
+      // Required = {test} and it passed → passed; the check-suites call is never made in enforce-required mode.
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", new Set(["test"]));
+      expect(aggregate.ciState).toBe("passed");
+      expect(suitesFetched).toBe(false);
+    });
+
+    it("fold-all: tolerates malformed check-suites (missing app / missing status) without throwing", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "ci", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?"))
+          return Response.json({
+            check_suites: [
+              { status: "completed" }, // no app → app?.slug ?? "" = "" → not github-actions → ignored
+              { app: { slug: "github-actions" } }, // no status → status ?? "" = "" → not "completed" → pending
+            ],
+          });
+        return new Response("not found", { status: 404 });
+      });
+      const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);
+      // The status-less github-actions suite is treated as not-completed (safe direction) → pending.
+      expect(aggregate.ciState).toBe("pending");
+    });
+
     it("an observed required failure stays FAILED even when a later check-runs page fetch fails", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -2971,8 +3086,9 @@ describe("GitHub backfill", () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
         const url = input.toString();
-        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success" }] });
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [{ name: "build", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
         if (url.includes("/status?")) return Response.json({}); // no `statuses` key → exercises `?? []`
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
         return new Response("not found", { status: 404 });
       });
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", "abc123", "public-token", null);

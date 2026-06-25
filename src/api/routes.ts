@@ -123,6 +123,7 @@ import {
 } from "../github/commands";
 import { handleGitHubWebhook } from "../github/webhook";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
+import { handleOrbWebhook } from "../orb/webhook";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
@@ -2864,6 +2865,11 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
+  // Gittensory Orb central GitHub App (#1255) — inbound webhook for the ONE shared Orb App maintainers install.
+  // Verifies the Orb App's OWN webhook secret, dedups, and records install + PR/review events (the homepage
+  // fleet-metrics data spine). Separate App + secret from the review-app /v1/github/webhook above.
+  app.post("/v1/orb/webhook", handleOrbWebhook);
+
   // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware
   // outcome batches from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
   // dedup is enforced via UNIQUE(instance_id, repo_hash, pr_hash) in orb_signals. Rate-limited (strict, #1254).
@@ -4866,6 +4872,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
+  if (path === "/v1/orb/webhook") return false;
   if (path === "/v1/orb/ingest") return false;
   if (path.startsWith("/v1/internal/")) return false;
   return path.startsWith("/v1/");

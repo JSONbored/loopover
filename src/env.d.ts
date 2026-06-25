@@ -38,6 +38,9 @@ declare global {
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
+    /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's
+     *  GITHUB_WEBHOOK_SECRET. Verifies inbound POST /v1/orb/webhook deliveries. Inject as a wrangler secret. */
+    ORB_GITHUB_WEBHOOK_SECRET?: string;
     GITHUB_APP_PRIVATE_KEY: string;
     GITHUB_APP_ID: string;
     GITHUB_APP_SLUG: string;

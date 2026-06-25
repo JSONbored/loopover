@@ -33,8 +33,10 @@ describe("isPublicSafeText (#542 shared public/private boundary)", () => {
     expect(isPublicSafeText("/Users/alice/project")).toBe(false);
     expect(isPublicSafeText("/home/bob/repo")).toBe(false);
     expect(isPublicSafeText("/tmp/scratch")).toBe(false);
+    expect(isPublicSafeText("/var/log/app.log")).toBe(false);
     expect(isPublicSafeText("C:\\Users\\carol\\repo")).toBe(false);
     expect(isPublicSafeText("C:/Users/carol/repo")).toBe(false);
+    expect(isPublicSafeText("C:\\Program Files\\Vendor\\app")).toBe(false);
   });
 
   it("is case-insensitive", () => {

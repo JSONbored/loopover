@@ -3,6 +3,7 @@ import { RateLimiter } from "./auth/rate-limit";
 import { delayUntil, shouldWaitForGitHubRateLimit } from "./github/rate-limit";
 import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
+import { isOrbBrokerEnabled } from "./orb/broker";
 import { isOpsEnabled } from "./review/ops-wire";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
@@ -60,6 +61,9 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // mergeable and only ACTS (merge/close/hold); it never re-runs the AI, so it is cheap enough for this cadence.
   // Previously this was gated by `isHourly`, so an approved PR could wait ~an hour for its merge pass.
   const jobs: JobMessage[] = [{ type: "agent-regate-sweep", requestedBy: "schedule" }];
+  // Orb relay retry: re-attempt failed forwardOrbEvent calls each sweep cycle. Only enqueued when the
+  // broker is enabled — brokered self-hosts register relay URLs; hosted-cloud instances have no relay failures.
+  if (isOrbBrokerEnabled(env)) jobs.push({ type: "retry-orb-relay", requestedBy: "schedule" });
   // The heavier sync/health jobs keep their ~30-minute cadence even though the cron now ticks every ~2 minutes.
   if (minute % 30 === 0) {
     jobs.push({ type: "backfill-registered-repos", requestedBy: "schedule", mode: isFullSyncWindow ? "full" : "light" });

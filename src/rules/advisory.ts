@@ -705,7 +705,10 @@ function conclusionForSeverity(severity: AdvisorySeverity, findings: AdvisoryFin
 }
 
 function isEvaluationBlocker(code: string): boolean {
-  return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached";
+  // pre_merge_check_unresolved: an enforced path-gated pre-merge check whose changed-file set could not be
+  // resolved — gittensory cannot evaluate it yet, so the gate is NEUTRAL (held) and re-evaluates on the next
+  // sync, rather than auto-merging past the unverified requirement or hard-closing on a transient miss. (#review-audit)
+  return code === "repo_not_registered" || code === "repo_not_seen" || code === "pr_not_cached" || code === "pre_merge_check_unresolved";
 }
 
 function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean {
@@ -724,6 +727,12 @@ function isConfiguredGateBlocker(code: string, policy: GateCheckPolicy): boolean
   // (GITTENSORY_REVIEW_SAFETY); when the flag is off the finding never exists, so this branch is unreachable and the
   // gate verdict is byte-identical to today.
   if (code === "secret_leak") return true;
+  // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC
+  // finding when it fails (a required title/description phrase or label is missing). It always blocks: the
+  // per-check `enforce` flag in `.gittensory.yml` IS the opt-in (mirroring secret_leak — the finding only exists
+  // when the maintainer configured an enforced check). The advisory variant (`pre_merge_check_failed`) is a plain
+  // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
+  if (code === "pre_merge_check_required") return true;
   // Focus-manifest policy (#555): the three enforceable manifest findings block ONLY when the maintainer
   // opts into manifestPolicy: block. Default off/advisory keeps them advisory-only.
   if (code === "manifest_blocked_path" || code === "manifest_linked_issue_required" || code === "manifest_missing_tests") {

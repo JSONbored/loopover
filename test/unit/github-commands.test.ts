@@ -152,6 +152,12 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("wallet hotkey payout reviewability private ranking")).not.toMatch(
       /wallet|hotkey|payout|reviewability|private ranking/i,
     );
+    // PLURAL banned terms must also be redacted — the old `\b(wallet|hotkey|coldkey|...)\b` left the trailing
+    // `s` so plurals leaked to public comments (#review-audit).
+    expect(sanitizePublicComment("the coldkeys, wallets, hotkeys, mnemonics, seed phrases, and payouts are exposed")).not.toMatch(
+      /coldkeys?|wallets?|hotkeys?|mnemonics?|seed phrases?|payouts?/i,
+    );
+    expect(sanitizePublicComment("raw trust scores and trust scores")).not.toMatch(/trust scores?/i);
     expect(sanitizePublicComment("public score estimate and scoreability should stay private")).not.toMatch(/public score estimate|scoreability/i);
     expect(sanitizePublicComment("public score estimate private scoreability context score preview")).not.toMatch(/public score estimate|scoreability|score preview/i);
     expect(sanitizePublicComment("projected score changes 12.3 -> 45.6")).not.toMatch(/projected score changes|12\.3|45\.6/i);

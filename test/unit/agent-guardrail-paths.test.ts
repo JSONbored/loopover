@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { changedPathsForGuardrail, hasVerifiedRequiredContexts } from "../../src/queue/processors";
+import { isGuardrailHit } from "../../src/signals/change-guardrail";
 import type { PullRequestFileRecord } from "../../src/types";
 
 function file(path: string, previousFilename?: string | null): PullRequestFileRecord {
@@ -23,6 +24,12 @@ describe("changedPathsForGuardrail", () => {
 
   it("deduplicates current and previous filenames", () => {
     expect(changedPathsForGuardrail([file("scripts/deploy.sh", "scripts/deploy.sh")])).toEqual(["scripts/deploy.sh"]);
+  });
+
+  it("keeps comment-side guardrail holds aligned for guarded file renames (#guarded-hold-comment)", () => {
+    const renamed = [file("docs/ci-copy.yml", ".github/workflows/ci.yml")];
+
+    expect(isGuardrailHit(changedPathsForGuardrail(renamed), [".github/workflows/**"])).toBe(true);
   });
 });
 

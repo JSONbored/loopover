@@ -2815,7 +2815,7 @@ async function maybePublishPrPublicSurface(
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
       // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
       const heldForReview = isGuardrailHit(
-        unifiedFiles.map((file) => file.path),
+        changedPathsForGuardrail(unifiedFiles),
         await loadHardGuardrailGlobs(env, repoFullName),
       );
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: commentGate, duplicateWinnerEnabled });

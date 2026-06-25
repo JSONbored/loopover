@@ -1,7 +1,7 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
-import { changedPathsHittingGuardrail } from "../signals/change-guardrail";
+import { isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 
 // High-slop threshold default when a repo hasn't set slopGateMinScore (mirrors the gate's `high` band).
@@ -273,9 +273,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // not yet / no longer populated), we cannot prove the PR doesn't touch a guarded path, so treat it as a hit —
   // never auto-merge, auto-approve, or auto-close a PR whose diff we don't know. Repos with no guardrails
   // configured stay permissive.
-  const guardrailHit =
-    input.hardGuardrailGlobs.length > 0 &&
-    (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
+  const guardrailHit = isGuardrailHit(input.changedPaths, input.hardGuardrailGlobs);
   // Manual review is the RARE exception (the operator's minimize-manual goal): the ONLY thing that holds a PR for
   // a human instead of merge/close is an auto-merge-ready PR that touches a hard-guardrail path. (An owner PR that
   // is not review-good is held separately, via the owner close-exemption below — never auto-closed.) Submission

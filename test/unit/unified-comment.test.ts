@@ -69,6 +69,15 @@ describe("deriveUnifiedStatus", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "merge", blockers: ["minor"] })).toBe("ready");
   });
 
+  it("a guarded-path hold downgrades a would-be-ready PR to held — never 'safe to merge' (#guarded-hold-comment)", () => {
+    // A clean+green PR that touches a hard-guardrail path is HELD for owner review, so the comment says held.
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { heldForReview: true })).toBe("held");
+    // It only downgrades an otherwise-ready status — a real close/blocked verdict still wins over the hold.
+    expect(deriveUnifiedStatus({ ...base, decision: "close" }, { heldForReview: true })).toBe("blocked");
+    // Without the hold flag, the same clean+green PR is ready.
+    expect(deriveUnifiedStatus({ ...base, decision: "merge", readiness: { ciState: "passed" } }, { heldForReview: false })).toBe("ready");
+  });
+
   it("honors an explicit host status override", () => {
     expect(deriveUnifiedStatus({ ...base, decision: "close" }, { statusOverride: "ready" })).toBe("ready");
   });

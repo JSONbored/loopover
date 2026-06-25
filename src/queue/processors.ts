@@ -186,6 +186,7 @@ import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
 import { loadHardGuardrailGlobs } from "../review/guardrail-config";
+import { isGuardrailHit } from "../signals/change-guardrail";
 import { closePullRequest, createIssueComment, getLastCloserLogin } from "../github/pr-actions";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
@@ -2750,6 +2751,14 @@ async function maybePublishPrPublicSurface(
       // site carries no branch), built AFTER the live CI is resolved and used for BOTH the panel rows and the
       // comment body so the two never disagree. Gate OFF ⇒ commentGate === gateEvaluation (byte-identical comment).
       const commentGate = reconcileGateEvaluationForGreenCi(gateEvaluation, ciState, aiCiRefutationActive(env, repoFullName));
+      // Guarded-hold (#guarded-hold-comment): a clean+green PR whose diff touches a hard-guardrail path is HELD
+      // for owner review by the disposition (planAgentMaintenanceActions), never auto-merged — so the comment
+      // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
+      // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
+      const heldForReview = isGuardrailHit(
+        unifiedFiles.map((file) => file.path),
+        await loadHardGuardrailGlobs(env, repoFullName),
+      );
       const { rows, readinessTotal } = buildPublicPrPanelSignalRows({ repo, pr, profile, detection, queueHealth, collisions, preflight, settings, gate: commentGate, duplicateWinnerEnabled });
       // Visual before/after capture (visual-capture port). Fires ONLY when (1) the global flag + per-repo
       // cutover gate both allow it (screenshotsAllowed) AND (2) the PR touches WEB-VISIBLE files (isVisualPath
@@ -2795,6 +2804,7 @@ async function maybePublishPrPublicSurface(
         changedFiles: unifiedFiles.length,
         ...(aiReview?.reviewerCount !== undefined ? { reviewerCount: aiReview.reviewerCount } : {}),
         mergeReadiness,
+        heldForReview,
         extraCollapsibles: buildPublicSafeCollapsibles({
           repo,
           pr,

@@ -203,6 +203,9 @@ export interface UnifiedCommentContext {
   footerMarkdown?: string;
   /** Force the status (e.g. the host knows it auto-merged). */
   statusOverride?: UnifiedCommentStatus;
+  /** The host's disposition holds this PR for owner review (its diff touches a hard-guardrail path), so an
+   *  otherwise-ready status renders as "held for review" instead of "safe to merge". (#guarded-hold-comment) */
+  heldForReview?: boolean;
 }
 
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
@@ -260,6 +263,12 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
     if (mergeState === "dirty") return "blocked";
     if (mergeState === "behind") return "held";
   }
+  // Guarded-hold gate — a clean + green PR whose diff touches a hard-guardrail path (CI config, the review
+  // engine, visuals) is HELD for owner review by the disposition, never auto-merged. The comment must then say
+  // "held for review", not "✅ safe to merge", so the signal matches the action (the same #4220 class: a green
+  // PR that won't actually merge). Applied LAST so it only ever downgrades an otherwise-ready status — a real
+  // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
+  if (status === "ready" && ctx.heldForReview) return "held";
   return status;
 }
 

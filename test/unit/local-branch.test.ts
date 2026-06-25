@@ -1122,6 +1122,28 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score|\/Users\/example/i);
   });
 
+  it("hides a /root/ changed-file path from the public PR packet (regression for #1375)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "/root/work/src/cache.ts", additions: 12, deletions: 2, status: "modified" }],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.prPacket.markdown).toContain("[local path hidden]");
+    expect(analysis.prPacket.markdown).not.toContain("/root/work");
+    expect(JSON.stringify(analysis.prPacket)).not.toContain("/root/work");
+  });
+
   it("removes Windows home paths from public PR packet title and validation lines", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

@@ -32,9 +32,16 @@ describe("isPublicSafeText (#542 shared public/private boundary)", () => {
   it("rejects local filesystem paths (posix and Windows)", () => {
     expect(isPublicSafeText("/Users/alice/project")).toBe(false);
     expect(isPublicSafeText("/home/bob/repo")).toBe(false);
+    expect(isPublicSafeText("/root/repo")).toBe(false);
     expect(isPublicSafeText("/tmp/scratch")).toBe(false);
     expect(isPublicSafeText("C:\\Users\\carol\\repo")).toBe(false);
     expect(isPublicSafeText("C:/Users/carol/repo")).toBe(false);
+  });
+
+  it("rejects /root/ home paths so a container/CI working tree cannot leak (regression for #1375)", () => {
+    // The root user's home was the one local-path family the canonical boundary omitted, even though
+    // miner-dashboard-recommendations.ts already treats /root/ as local. Repro from the issue:
+    expect(isPublicSafeText("/root/project/src/index.ts")).toBe(false);
   });
 
   it("is case-insensitive", () => {

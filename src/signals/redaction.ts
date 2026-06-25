@@ -19,7 +19,7 @@
 // intentionally NOT collapsed onto `PUBLIC_UNSAFE_TERMS`.
 export const PUBLIC_UNSAFE_TERMS = String.raw`reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability`;
 
-export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|/Users/|/home/|/tmp/|[A-Z]:[\\/]Users[\\/]`, "i");
+export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|/Users/|/home/|/root/|/tmp/|[A-Z]:[\\/]Users[\\/]`, "i");
 
 /** True iff `text` contains nothing that must stay private — i.e. it is safe to surface on a public GitHub surface. */
 export function isPublicSafeText(text: string): boolean {

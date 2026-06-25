@@ -30,7 +30,13 @@ COPY --from=build /app/migrations ./migrations
 # work in-image. Build with `--build-arg INSTALL_AI_CLIS=true`. No credentials are baked — operators mint
 # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`) / codex auth at run time and pass it via the env.
 ARG INSTALL_AI_CLIS=false
-RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0 --ignore-scripts; fi
+# codex's native (Rust) binary loads the SYSTEM CA trust store (rustls-native-certs); node:slim ships none, so the
+# `codex` provider fails every call with "no native root CA certificates found" without ca-certificates.
+RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*; fi
+# NB: NO --ignore-scripts here. claude-code's postinstall downloads its platform-native binary; skipping it makes
+# `claude` fail at runtime with "native binary not installed". These are trusted first-party CLIs, so their
+# install scripts are allowed to run.
+RUN if [ "$INSTALL_AI_CLIS" = "true" ]; then npm install -g @anthropic-ai/claude-code@2.1.187 @openai/codex@0.142.0; fi
 # Optional: enable visual review via an external Chrome sidecar (e.g. `browserless/chrome:latest`).
 # Build with `--build-arg INSTALL_VISUAL_REVIEW=true` then set BROWSER_WS_ENDPOINT=<ws-url> at runtime.
 ARG INSTALL_VISUAL_REVIEW=false
@@ -40,6 +46,9 @@ RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node
 EXPOSE 8787
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# Probe /ready (not /health): /health is a liveness stub that returns 200 even when the DB is down,
+# whereas /ready returns 503 until the DB answers and migrations are applied. start-period tolerates the
+# Postgres cold start (waitForPostgres blocks up to 30s before the HTTP server even binds).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "dist/server.mjs"]

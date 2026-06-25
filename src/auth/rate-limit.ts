@@ -96,6 +96,13 @@ export async function enforceRateLimit(c: Context<{ Bindings: Env }>, routeClass
 
 export function routeClassForPath(path: string): RateLimitClass {
   if (path === "/v1/github/webhook") return "strict";
+  // Orb central-App inbound webhook — same class as the review-app webhook above (GitHub delivers from a
+  // narrow IP range; the per-IP strict cap is proven for /v1/github/webhook and #1292 reserves headroom).
+  if (path === "/v1/orb/webhook") return "strict";
+  if (path === "/v1/orb/relay") return "strict";
+  if (path === "/v1/orb/oauth/callback") return "strict";
+  if (path === "/v1/orb/token") return "strict";
+  if (path === "/v1/orb/relay/register") return "strict";
   // Orb telemetry ingest: unauthenticated + write, accepting anonymized batches from untrusted
   // self-host instances. Strict (10/min per IP) caps abuse — legitimate instances export hourly.
   if (path === "/v1/orb/ingest") return "strict";

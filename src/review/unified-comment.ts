@@ -203,6 +203,9 @@ export interface UnifiedCommentContext {
   footerMarkdown?: string;
   /** Force the status (e.g. the host knows it auto-merged). */
   statusOverride?: UnifiedCommentStatus;
+  /** The host's disposition holds this PR for owner review (its diff touches a hard-guardrail path), so an
+   *  otherwise-ready status renders as "held for review" instead of "safe to merge". (#guarded-hold-comment) */
+  heldForReview?: boolean;
 }
 
 const STATUS_META: Record<UnifiedCommentStatus, { alert: string; square: string; icon: string }> = {
@@ -249,6 +252,23 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   if (status === "ready" && input.readiness && input.readiness.ciState !== "passed") {
     return input.readiness.ciState === "failed" ? "blocked" : "held";
   }
+  // Merge-state gate — "safe to merge" also requires the PR to be MERGEABLE. A `dirty` (base conflict) PR
+  // cannot merge as-is → BLOCKED; a `behind` PR needs a rebase first → HELD. This stops the green "safe to
+  // merge" / "Approved" headline from contradicting a `dirty`/`behind` merge-state chip (the #4220 report,
+  // where the headline said "safe to merge" while the chip read `dirty`). Other states — clean, a not-yet-
+  // computed `unknown`, or a `blocked` that the bot's own pending approval will clear — do not downgrade.
+  // (#ready-needs-mergeable)
+  if (status === "ready" && input.readiness?.mergeStateLabel) {
+    const mergeState = input.readiness.mergeStateLabel.toLowerCase();
+    if (mergeState === "dirty") return "blocked";
+    if (mergeState === "behind") return "held";
+  }
+  // Guarded-hold gate — a clean + green PR whose diff touches a hard-guardrail path (CI config, the review
+  // engine, visuals) is HELD for owner review by the disposition, never auto-merged. The comment must then say
+  // "held for review", not "✅ safe to merge", so the signal matches the action (the same #4220 class: a green
+  // PR that won't actually merge). Applied LAST so it only ever downgrades an otherwise-ready status — a real
+  // CI / merge-state / gate block above still wins. (#guarded-hold-comment)
+  if (status === "ready" && ctx.heldForReview) return "held";
   return status;
 }
 

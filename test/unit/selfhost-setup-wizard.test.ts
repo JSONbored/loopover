@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildManifest, credentialsToEnv, exchangeManifestCode, renderSetupPage } from "../../src/selfhost/setup-wizard";
+import {
+  buildManifest,
+  cookieValue,
+  credentialsToEnv,
+  exchangeManifestCode,
+  isValidSetupAuthCookie,
+  renderBrokeredSetupPage,
+  renderSetupPage,
+  renderTokenEntryPage,
+  setupAuthCookieValue,
+  timingSafeStrEqual,
+} from "../../src/selfhost/setup-wizard";
 
 describe("setup-wizard (#981 GitHub App Manifest)", () => {
   it("builds a manifest with the webhook + redirect URLs (including CSRF state), permissions, events", () => {
@@ -22,6 +33,28 @@ describe("setup-wizard (#981 GitHub App Manifest)", () => {
     expect(html).toContain('name="manifest"');
     expect(html).toContain("Gittensory Self-Host");
     expect(html).toContain("nonce-abc"); // state is baked into the manifest value
+  });
+
+  it("renders a brokered-mode page that does NOT create a GitHub App", () => {
+    const html = renderBrokeredSetupPage();
+    expect(html).toContain("brokered mode");
+    expect(html).toContain("ORB_ENROLLMENT_SECRET");
+    expect(html).not.toContain("github.com/settings/apps/new"); // no own-App creation form in brokered mode
+  });
+
+  it("signs the setup cookie so only token-authorized setup visits can finish the callback", () => {
+    const cookie = setupAuthCookieValue("operator-token", "nonce-abc");
+    expect(isValidSetupAuthCookie("operator-token", "nonce-abc", cookie)).toBe(true);
+    expect(isValidSetupAuthCookie("operator-token", "other-nonce", cookie)).toBe(false);
+    expect(isValidSetupAuthCookie("wrong-token", "nonce-abc", cookie)).toBe(false);
+    expect(isValidSetupAuthCookie("operator-token", "nonce-abc", "bad-cookie")).toBe(false);
+    expect(isValidSetupAuthCookie("operator-token", "nonce-abc", undefined)).toBe(false);
+  });
+
+  it("extracts setup cookies from a multi-cookie header", () => {
+    const cookie = setupAuthCookieValue("operator-token", "nonce-abc");
+    expect(cookieValue(`theme=dark; setup_auth=${cookie}; session=xyz`, "setup_auth")).toBe(cookie);
+    expect(cookieValue("theme=dark", "setup_auth")).toBeUndefined();
   });
 
   it("exchanges the code and serializes credentials to .env lines", async () => {
@@ -49,5 +82,21 @@ describe("setup-wizard (#981 GitHub App Manifest)", () => {
     expect(env).toContain("GITHUB_APP_ID=1");
     expect(env).not.toContain("GITHUB_OAUTH_CLIENT_ID");
     expect(env).not.toContain("GITHUB_OAUTH_CLIENT_SECRET");
+  });
+
+  it("timingSafeStrEqual compares constant-time: equal vs differing-value vs differing-length", () => {
+    expect(timingSafeStrEqual("s3cret-token", "s3cret-token")).toBe(true);
+    expect(timingSafeStrEqual("s3cret-token", "s3cret-toker")).toBe(false); // same length, different bytes
+    expect(timingSafeStrEqual("short", "longer-token")).toBe(false); // length mismatch must not throw
+    expect(timingSafeStrEqual("", "")).toBe(true);
+  });
+
+  it("renderTokenEntryPage renders a POST form (token in the body, not the URL) + an error variant", () => {
+    const page = renderTokenEntryPage();
+    expect(page).toContain(`<form action="/setup" method="post">`);
+    expect(page).toContain(`name="token"`);
+    expect(page).toContain(`type="password"`); // never echoed/visible
+    expect(page).not.toContain("Invalid setup token");
+    expect(renderTokenEntryPage(true)).toContain("Invalid setup token"); // shown after a wrong submission
   });
 });

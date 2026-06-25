@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "../../src/review/content-lane/content-repo-spec";
 import {
   checkSubmittedSourceEvidence,
   extractSubmittedSourceUrls,
@@ -9,6 +10,8 @@ import {
   type SourceEvidenceItem,
   type SourceEvidenceReport,
 } from "../../src/review/content-lane/source-evidence";
+
+const customSpec = (over: Partial<ContentRepoSpec>): ContentRepoSpec => ({ ...AWESOME_CLAUDE_CONTENT_SPEC, ...over });
 
 const mdx = (frontmatter: Record<string, string>): string => {
   const lines = Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`);
@@ -934,5 +937,114 @@ describe("decision string rendering — empty field/url + manual finalUrl + clos
     expect(decision?.summary).not.toContain("returned HTTP");
     // Empty field → `source` label fallback.
     expect(decision?.summary).toContain("`source`");
+  });
+});
+
+describe("per-repo ContentRepoSpec override (a self-hosted curated list re-parameterizes source evidence)", () => {
+  it("extractSubmittedSourceUrls reads scalar URLs from the custom source-field set", () => {
+    const src = mdx({ myLink: "https://example.com/a", githubUrl: "https://github.com/o/r" });
+    // Default: githubUrl is a source field, myLink is not.
+    expect(extractSubmittedSourceUrls(src).map((u) => `${u.field}:${u.url}`)).toEqual([
+      "githubUrl:https://github.com/o/r",
+    ]);
+    // Custom: only myLink is read; githubUrl is ignored.
+    const spec = customSpec({ sourceUrlFields: ["myLink"] });
+    expect(extractSubmittedSourceUrls(src, spec).map((u) => `${u.field}:${u.url}`)).toEqual([
+      "myLink:https://example.com/a",
+    ]);
+  });
+
+  it("extractSubmittedSourceUrls reads array URLs from the custom list-field set", () => {
+    const src = ["---", "mySources:", "  - https://list.example/1", "---", "", "body"].join("\n");
+    // Default: mySources is not a recognized list field → nothing read.
+    expect(extractSubmittedSourceUrls(src)).toEqual([]);
+    // Custom: mySources is a list field → its items are read.
+    const spec = customSpec({ sourceUrlListFields: new Set(["mySources"]) });
+    expect(extractSubmittedSourceUrls(src, spec).map((u) => `${u.field}:${u.url}`)).toEqual([
+      "mySources:https://list.example/1",
+    ]);
+  });
+
+  it("a custom distribution-field set drops a site-relative artifact for the custom field (extract filter)", () => {
+    // The default treats githubUrl as canonical, so a site-relative value is kept; the custom spec
+    // marks githubUrl as a distribution field, so the same site-relative value is dropped.
+    const src = mdx({ githubUrl: "/local/artifact" });
+    expect(extractSubmittedSourceUrls(src).map((u) => u.field)).toEqual(["githubUrl"]);
+    const spec = customSpec({ distributionSourceFields: new Set(["githubUrl"]) });
+    expect(extractSubmittedSourceUrls(src, spec)).toEqual([]);
+  });
+
+  it("a custom distribution-FIELD set flips the sourceRole of a checked URL", async () => {
+    const src = mdx({ githubUrl: "https://github.com/acme/x" });
+    // Default: githubUrl is canonical.
+    const base = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/x": 200 }));
+    expect(base.urls.find((u) => u.field === "githubUrl")?.role).toBe("canonical");
+    // Custom: githubUrl is a distribution field → role becomes distribution.
+    const spec = customSpec({ distributionSourceFields: new Set(["githubUrl"]) });
+    const over = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/x": 200 }), spec);
+    expect(over.urls.find((u) => u.field === "githubUrl")?.role).toBe("distribution");
+  });
+
+  it("a custom distribution-HOST set flips the sourceRole of a canonical-field URL", async () => {
+    const src = mdx({ githubUrl: "https://custom-registry.example/pkg" });
+    // Default: custom-registry.example is not a distribution host → canonical.
+    const base = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://custom-registry.example/pkg": 200 }));
+    expect(base.urls.find((u) => u.field === "githubUrl")?.role).toBe("canonical");
+    // Custom: custom-registry.example is a distribution host → distribution.
+    const spec = customSpec({ distributionSourceHosts: new Set(["custom-registry.example"]) });
+    const over = await checkSubmittedSourceEvidence(
+      src,
+      fakeFetch({ "https://custom-registry.example/pkg": 200 }),
+      spec,
+    );
+    expect(over.urls.find((u) => u.field === "githubUrl")?.role).toBe("distribution");
+  });
+
+  it("a custom primary-canonical-field set changes shouldHardCloseSourceEvidence", async () => {
+    // Two dead websiteUrl/docsUrl sources: by default neither is a PRIMARY canonical field, but both
+    // are canonical-ROLE, so they ARE authoritative → all-failed + >1 → hard-close is true under default.
+    const src = mdx({
+      websiteUrl: "https://site.example/dead1",
+      docsUrl: "https://docs.example/dead2",
+    });
+    const report = await checkSubmittedSourceEvidence(
+      src,
+      fakeFetch({ "https://site.example/dead1": 404, "https://docs.example/dead2": 404 }),
+    );
+    // Default close decision: both are canonical-role authoritative → hard-close.
+    expect(shouldHardCloseSourceEvidence(report)).toBe(true);
+    expect(sourceEvidenceCloseDecision(report)?.verdict).toBe("close");
+
+    // Custom spec makes websiteUrl/docsUrl a DISTRIBUTION field set so their role is distribution and
+    // primaryCanonicalSourceFields stays the awesome default (neither matches) → no authoritative items.
+    const spec = customSpec({ distributionSourceFields: new Set(["websiteUrl", "docsUrl"]) });
+    const overReport = await checkSubmittedSourceEvidence(
+      src,
+      fakeFetch({ "https://site.example/dead1": 404, "https://docs.example/dead2": 404 }),
+      spec,
+    );
+    expect(shouldHardCloseSourceEvidence(overReport, spec)).toBe(false);
+    // sourceEvidenceCloseDecision routes to MANUAL (still has blocking hard-failure evidence) under the spec.
+    expect(sourceEvidenceCloseDecision(overReport, spec)?.verdict).toBe("manual");
+  });
+
+  it("a custom primary-canonical-field set keeps a non-default field's retryable BLOCKING (downgrade rule)", async () => {
+    // websiteUrl is canonical but NOT a default primary field, so a flaky websiteUrl downgrades when a
+    // reachable primary (githubUrl) anchors. Promoting websiteUrl to primary keeps it blocking.
+    const src = mdx({
+      githubUrl: "https://github.com/acme/anchor",
+      websiteUrl: "https://flaky.example/site",
+    });
+    const status = { "https://github.com/acme/anchor": 200, "https://flaky.example/site": 503 };
+    const base = await checkSubmittedSourceEvidence(src, fakeFetch(status));
+    // Default: websiteUrl is non-primary retryable → downgraded to a non-blocking warning, report passes.
+    expect(base.urls.find((u) => u.field === "websiteUrl")?.blocking).toBe(false);
+    expect(base.status).toBe("passed");
+
+    const spec = customSpec({ primaryCanonicalSourceFields: new Set(["githubUrl", "websiteUrl"]) });
+    const over = await checkSubmittedSourceEvidence(src, fakeFetch(status), spec);
+    // Custom: websiteUrl is now primary → its retryable is NOT downgradable → stays blocking, report retryable.
+    expect(over.urls.find((u) => u.field === "websiteUrl")?.blocking).toBe(true);
+    expect(over.status).toBe("retryable");
   });
 });

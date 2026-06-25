@@ -16,6 +16,7 @@ function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
   const make = (sql: string, args: unknown[]) => ({
     bind: (...a: unknown[]) => make(sql, a),
     all: async () => ({ results: handler(sql, args) }),
+    first: async () => handler(sql, args)[0] ?? null,
   });
   return {
     DB: { prepare: (sql: string) => make(sql, []) },
@@ -114,6 +115,16 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       "JSONbored/gittensory",
     ]);
     expect(out.updatedAt).toBe(out.generatedAt);
+  });
+
+  it("folds external Orb installs into the global totals (cloud + Orb, de-duped)", async () => {
+    const withOrb = (sql: string): Row[] =>
+      sql.includes("orb_pr_outcomes") ? [{ merged: 50, closed: 30, total: 80 }] : ledger(sql);
+    const out = await getPublicStats(stubEnv(withOrb), NOW);
+    expect(out.totals.merged).toBe(1392 + 50); // cloud + external Orb
+    expect(out.totals.closed).toBe(724 + 30);
+    expect(out.totals.handled).toBe(2742 + 80);
+    expect(out.totals.reviewed).toBe(1442 + 754 + 626); // reviewedOf = merged + closed + commented + manual
   });
 
   it("publishes only projects from the reviewed-repo allowlist", async () => {

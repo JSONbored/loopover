@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { getWebhookEvent, recordWebhookEvent } from "../db/repositories";
 import type { GitHubWebhookPayload, JobMessage } from "../types";
 import { sha256Hex, verifyGitHubSignature } from "../utils/crypto";
+import { relayVerify } from "../orb/relay";
 
 const DEFAULT_MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -27,7 +28,13 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
   if (!verified) {
     return c.json({ error: "invalid_signature" }, 401);
   }
+  return enqueueVerifiedWebhook(c, deliveryId, eventName, rawBody);
+}
 
+/** Shared post-verification path: parse → dedup → record → enqueue to the WEBHOOKS lane → 202. Used by the GitHub
+ *  webhook receiver above AND the Orb relay receiver below (they verify the body differently — GitHub's HMAC vs the
+ *  Orb relay HMAC — then share everything after). */
+export async function enqueueVerifiedWebhook(c: Context<{ Bindings: Env }>, deliveryId: string, eventName: string, rawBody: string): Promise<Response> {
   let payload: GitHubWebhookPayload;
   try {
     payload = JSON.parse(rawBody) as GitHubWebhookPayload;
@@ -62,10 +69,13 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
     payload,
   };
   try {
-    await c.env.JOBS.send(message);
+    // Send to the dedicated WEBHOOKS lane (not the shared JOBS queue) so a maintenance burst on JOBS can never
+    // starve real GitHub events into the DLQ. (#audit-webhook-queue)
+    await c.env.WEBHOOKS.send(message);
   } catch {
     // Enqueue failed: flip the event to "error" so the dedup guard above lets GitHub redeliver,
-    // and return 500 so GitHub retries instead of treating the webhook as handled (#786).
+    // and return 500 so GitHub retries instead of treating the webhook as handled (#786). This also covers the
+    // deploy-ordering case where the WEBHOOKS queue is not yet provisioned — no event is lost.
     await recordWebhookEvent(c.env, {
       deliveryId,
       eventName,
@@ -79,6 +89,24 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
   }
 
   return c.json({ ok: true, deliveryId, eventName, status: "queued" }, 202);
+}
+
+/** The brokered self-host's relay RECEIVER. The central Orb forwards an event here, HMAC-signed (x-orb-signature-
+ *  256) with THIS container's enrollment secret. We verify with our own ORB_ENROLLMENT_SECRET, then enqueue the
+ *  event exactly like a GitHub webhook (the body IS a GitHub webhook payload; only the transport differs). */
+export async function handleOrbRelay(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const deliveryId = c.req.header("x-github-delivery") ?? null;
+  const eventName = c.req.header("x-github-event") ?? null;
+  if (!deliveryId || !eventName) return c.json({ error: "missing_github_headers" }, 400);
+  const secret = c.env.ORB_ENROLLMENT_SECRET;
+  if (!secret) return c.json({ error: "relay_not_configured" }, 404); // not a brokered self-host → no relay
+  const maxBodyBytes = parsePositiveInt(c.env.GITHUB_WEBHOOK_MAX_BODY_BYTES) ?? DEFAULT_MAX_WEBHOOK_BODY_BYTES;
+  const rawBody = await readBodyWithLimit(c.req.raw, maxBodyBytes);
+  if (rawBody === null) return c.json({ error: "payload_too_large", maxBytes: maxBodyBytes }, 413);
+  if (!(await relayVerify(secret, rawBody, c.req.header("x-orb-signature-256") ?? null))) {
+    return c.json({ error: "invalid_signature" }, 401);
+  }
+  return enqueueVerifiedWebhook(c, deliveryId, eventName, rawBody);
 }
 
 function parsePositiveInt(value: string | null | undefined): number | null {

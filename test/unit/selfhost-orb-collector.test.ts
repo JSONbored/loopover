@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
-import { bucketReasonCode, exportOrbBatch, orbEnabled } from "../../src/selfhost/orb-collector";
+import { bucketReasonCode, exportOrbBatch, getOrCreateAnonSecret } from "../../src/selfhost/orb-collector";
 import { resetMetrics, renderMetrics } from "../../src/selfhost/metrics";
 
 /** In-memory DB with the review_audit + orb_export_cursor tables the exporter reads. */
@@ -16,6 +16,10 @@ function makeDb(): D1Database {
     );
     CREATE TABLE orb_export_cursor (
       instance_hash TEXT PRIMARY KEY, last_exported_at TEXT NOT NULL DEFAULT '2000-01-01T00:00:00Z',
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    );
+    CREATE TABLE system_flags (
+      key TEXT PRIMARY KEY, value TEXT,
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
     );
   `);
@@ -44,32 +48,43 @@ describe("bucketReasonCode()", () => {
   });
 });
 
-describe("orbEnabled()", () => {
-  afterEach(() => { delete process.env.ORB_ENABLED; });
-  it("true only for truthy values", () => {
-    for (const v of ["true", "1", "Yes"]) { process.env.ORB_ENABLED = v; expect(orbEnabled()).toBe(true); }
-    for (const v of ["", "false", "no"]) { process.env.ORB_ENABLED = v; expect(orbEnabled()).toBe(false); }
-    delete process.env.ORB_ENABLED; expect(orbEnabled()).toBe(false);
+describe("getOrCreateAnonSecret()", () => {
+  it("generates a 256-bit (64 hex char) dedicated secret on first use and persists it", async () => {
+    const db = makeDb();
+    const secret = await getOrCreateAnonSecret(db);
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    const row = await db.prepare(`SELECT value FROM system_flags WHERE key = 'orb:anon_secret'`).first<{ value: string }>();
+    expect(row?.value).toBe(secret); // persisted, so it survives restarts
+  });
+
+  it("reuses the persisted secret on subsequent calls (stable → collector dedup holds)", async () => {
+    const db = makeDb();
+    const first = await getOrCreateAnonSecret(db);
+    const second = await getOrCreateAnonSecret(db);
+    expect(second).toBe(first);
+    expect(first).not.toBe(process.env.GITHUB_APP_PRIVATE_KEY); // never the App private key
   });
 });
 
-describe("exportOrbBatch() — reads review_audit, ships anonymized reversal-aware signal", () => {
+describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized reversal-aware signal", () => {
   beforeEach(() => {
     resetMetrics();
-    process.env.ORB_ENABLED = "true";
-    process.env.ORB_WEBHOOK_SECRET = "test-secret";
+    (process.env as NodeJS.Dict<string>).GITHUB_APP_PRIVATE_KEY = "test-private-key"; // gates export (App configured); not the anon key
     process.env.ORB_APP_ID = "555";
     process.env.ORB_ANONYMIZE = "true";
     delete process.env.ORB_AIR_GAP;
     delete process.env.ORB_COLLECTOR_URL;
   });
   afterEach(() => {
-    for (const k of ["ORB_ENABLED", "ORB_WEBHOOK_SECRET", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
+    for (const k of ["GITHUB_APP_PRIVATE_KEY", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
   });
 
-  it("returns 0 when disabled", async () => {
-    process.env.ORB_ENABLED = "false";
-    expect(await exportOrbBatch(makeDb(), 200, async () => new Response(null, { status: 200 }))).toBe(0);
+  it("returns 0 when the App private key is not configured (App not set up → nothing to export)", async () => {
+    delete (process.env as NodeJS.Dict<string>).GITHUB_APP_PRIVATE_KEY;
+    const db = makeDb();
+    await audit(db, "o/r", 1, "gate_decision", "merge", "2026-01-01T00:00:00Z");
+    await audit(db, "o/r", 1, "pr_outcome", "merged", "2026-01-01T01:00:00Z");
+    expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 200 }))).toBe(0);
   });
 
   it("returns 0 in air-gap mode", async () => {
@@ -164,9 +179,8 @@ describe("exportOrbBatch() — reads review_audit, ships anonymized reversal-awa
     expect(sig).toMatch(/^sha256=[a-f0-9]{64}$/);
   });
 
-  it("falls back to GITHUB_APP_ID for the instance id and applies secret/anonymize defaults when ORB_* are unset", async () => {
+  it("falls back to GITHUB_APP_ID for the instance id and applies the anonymize default when ORB_* are unset", async () => {
     delete process.env.ORB_APP_ID; // → falls through to GITHUB_APP_ID
-    delete process.env.ORB_WEBHOOK_SECRET; // → secret defaults to ""
     delete process.env.ORB_ANONYMIZE; // → defaults to "true"
     (process.env as NodeJS.Dict<string>).GITHUB_APP_ID = "999";
     const db = makeDb();

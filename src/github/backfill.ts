@@ -11,7 +11,6 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getRepoSyncSegment,
   getRepoSyncState,
-  listLatestGitHubRateLimitObservations,
   listOpenIssueNumbers,
   listOpenPullRequests,
   listInstallations,
@@ -39,6 +38,7 @@ import {
   persistRepoSnapshot,
   extractLinkedIssueNumbers,
 } from "../db/repositories";
+import { agentRequiresPrWrite } from "../settings/agent-execution";
 import type {
   ContributorRepoStatRecord,
   GitHubRateLimitObservationRecord,
@@ -60,6 +60,7 @@ import type {
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
 import { createInstallationToken, getAppInstallation, GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME } from "./app";
+import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
 
 type GitHubLabelPayload = {
   name: string;
@@ -294,7 +295,6 @@ const DEFAULT_LIMITS: BackfillLimits = {
 
 const FRESH_SYNC_MS = 6 * 60 * 60 * 1000;
 const ERROR_BACKOFF_MS = 60 * 60 * 1000;
-const LOW_REST_RATE_LIMIT_REMAINING = 75;
 const SEGMENT_PAGE_BUDGET: Record<BackfillMode, number> = { light: 2, full: 10, resume: 10 };
 const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40, resume: 40 };
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
@@ -690,6 +690,13 @@ export const REQUIRED_INSTALLATION_PERMISSIONS: Record<string, string> = {
 export const OPTIONAL_CHECK_RUN_PERMISSION: Record<string, string> = {
   checks: "write",
 };
+// Conditionally required: an installation whose autonomy ACTS on PR state (merge/close/approve/request_changes/
+// update_branch) needs `pull_requests: write`, not the baseline `read`. Without this, install-health reported
+// "healthy" for a repo configured to act that could only ever 403 at runtime. Mirrors the checks:write pattern.
+// (#audit-install-health)
+export const OPTIONAL_PR_WRITE_PERMISSION: Record<string, string> = {
+  pull_requests: "write",
+};
 
 export const REQUIRED_INSTALLATION_EVENTS = ["issues", "issue_comment", "pull_request", "repository"] as const;
 export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
@@ -723,6 +730,9 @@ export function enrichInstallationHealth(health: InstallationHealthRecord) {
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(missingPermissions.has("checks") ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    // Persisted health stores only the missing permission name. If pull_requests is already granted at read level,
+    // a missing pull_requests entry can only mean an acting autonomy needs write; otherwise preserve baseline read.
+    ...(missingPermissions.has("pull_requests") && permissionSatisfies(health.permissions.pull_requests, "read") ? OPTIONAL_PR_WRITE_PERMISSION : {}),
   };
   return {
     ...health,
@@ -763,12 +773,14 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
   const labelRepoCount = installedSettings.filter(usesLabelMode).length;
   const checkRunRepoCount = installedSettings.filter((settings) => settings.checkRunMode === "enabled").length;
   const gateCheckRepoCount = installedSettings.filter((settings) => settings.gateCheckMode === "enabled").length;
+  const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
   const missingPermissions = new Set(health.missingPermissions);
   const requiredEventSet = new Set<string>(REQUIRED_INSTALLATION_EVENTS);
   const missingEvents = new Set(health.missingEvents.filter((event) => requiredEventSet.has(event)));
   const requiredPermissions = {
     ...REQUIRED_INSTALLATION_PERMISSIONS,
     ...(checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+    ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}), // acting autonomy → pull_requests:write (#audit-install-health)
   };
   const optionalPermissions = checkRunRepoCount > 0 || gateCheckRepoCount > 0 ? {} : OPTIONAL_CHECK_RUN_PERMISSION;
   const modeImpacts: InstallationModeImpact[] = [
@@ -928,9 +940,12 @@ async function refreshInstallationHealthRecords(env: Env, installations: Install
     const registeredInstalled = installedRepos.filter((repo) => repo.isRegistered);
     const installedSettings = await Promise.all(installedRepos.map((repo) => getRepositorySettings(env, repo.fullName)));
     const requiresChecks = installedSettings.some((settings) => settings.checkRunMode === "enabled");
+    const requiresPrWrite = installedSettings.some((settings) => agentRequiresPrWrite(settings.autonomy));
     const requiredPermissions = {
       ...REQUIRED_INSTALLATION_PERMISSIONS,
       ...(requiresChecks ? OPTIONAL_CHECK_RUN_PERMISSION : {}),
+      // An acting autonomy upgrades the pull_requests requirement read -> write (spread last so it wins). (#audit-install-health)
+      ...(requiresPrWrite ? OPTIONAL_PR_WRITE_PERMISSION : {}),
     };
     const missingPermissions = Object.entries(requiredPermissions)
       .filter(([permission, expected]) => !permissionSatisfies(currentInstallation.permissions[permission], expected))
@@ -1480,14 +1495,6 @@ async function refreshRepoSyncStateFromSegments(env: Env, repo: RepositoryRecord
   });
 }
 
-async function shouldWaitForGitHubRateLimit(env: Env): Promise<string | undefined> {
-  const observations = await listLatestGitHubRateLimitObservations(env, 10);
-  const rest = observations.find((observation) => observation.resource === "rest" && observation.remaining !== null && observation.remaining !== undefined);
-  if (!rest?.resetAt || rest.remaining === null || rest.remaining === undefined || rest.remaining > LOW_REST_RATE_LIMIT_REMAINING) return undefined;
-  /* v8 ignore next -- Invalid reset timestamps are treated as not waiting; valid low-rate-limit waits are covered. */
-  return Date.parse(rest.resetAt) > Date.now() ? rest.resetAt : undefined;
-}
-
 function segmentJobResult(
   repoFullName: string,
   segmentName: BackfillSegmentName,
@@ -1505,12 +1512,6 @@ function segmentJobResult(
   };
 }
 
-function delayUntil(iso: string): number {
-  const ms = Date.parse(iso) - Date.now();
-  /* v8 ignore next -- Invalid reset timestamps use conservative delay; valid reset delays are covered through queueing. */
-  if (!Number.isFinite(ms)) return 60;
-  return Math.max(30, Math.min(900, Math.ceil(ms / 1000) + 15));
-}
 
 async function backfillRepository(env: Env, repo: RepositoryRecord, limits: BackfillLimits, mode: BackfillMode): Promise<RepoBackfillResult> {
   const startedAt = nowIso();
@@ -2000,6 +2001,10 @@ export async function fetchLiveCiAggregate(
   // where a transient fetch failure plus one green check could otherwise read as "passed".
   let checkRunsIncomplete = false;
   let statusIncomplete = false;
+  // Whether a FIRST-PARTY (GitHub Actions) check-run was observed at all. Used by the fold-all suites backstop:
+  // if the suites read is unreadable AND we never saw a first-party run, we cannot confirm the workflow ran, so
+  // we must fail CLOSED rather than certify "passed" off only always-on third-party checks (#review-audit, #1799).
+  let sawFirstPartyCheckRun = false;
   // Track which required context names actually appear in any API result. An absent required context
   // (never queued, in-progress, or complete) has no entry to push anyPending — without this guard it
   // would be silently ignored and ciState could become "passed" while it never ran.
@@ -2007,7 +2012,7 @@ export async function fetchLiveCiAggregate(
 
   // 1) Check-runs (GitHub Actions jobs, CodeQL, app checks).
   for (let page = 1; page <= PR_DETAIL_MAX_PAGES; page += 1) {
-    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown } }> }>(
+    const result = await githubJsonWithHeaders<{ check_runs?: Array<GitHubCheckRunPayload & { output?: { title?: unknown; summary?: unknown }; app?: { slug?: string | null } | null }> }>(
       env,
       repoFullName,
       `/commits/${headSha}/check-runs?per_page=100&page=${page}`,
@@ -2020,6 +2025,7 @@ export async function fetchLiveCiAggregate(
     }
     for (const run of result.data.check_runs ?? []) {
       seenContextNames?.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
+      if ((run.app?.slug ?? "").toLowerCase() === "github-actions") sawFirstPartyCheckRun = true;
       if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs (see above)
       total += 1;
       const conclusion = (run.conclusion ?? "").toLowerCase();
@@ -2079,6 +2085,35 @@ export async function fetchLiveCiAggregate(
   if (seenContextNames) {
     for (const ctx of requiredContexts!) {
       if (!seenContextNames.has(ctx)) anyPending = true;
+    }
+  }
+
+  // FOLD-ALL hardening (#ci-foldall-checksuites): when branch protection is UNREADABLE (no `administration:read`
+  // ⇒ requiredContexts null ⇒ fold-all), the check-run/status scan above can read "passed" for a fork PR whose
+  // required workflow is AWAITING APPROVAL — its check-RUNS don't exist yet (the workflow never ran), so only the
+  // always-on third-party checks are seen and nothing fails or pends. Read the check-SUITES too: a GitHub-Actions
+  // suite still `queued`/`requested`/`waiting`/`in_progress` (not `completed`) means the first-party CI has NOT
+  // run, so hold (pending) instead of certifying a never-run workflow as green. Enforce-required mode already
+  // catches this via the absent-context guard above, so this runs ONLY in fold-all (one extra call on the degraded
+  // path), and ONLY when we would otherwise certify "passed" (no failure, nothing else pending).
+  if (!enforceRequiredOnly && headSha && failingDetails.length === 0 && !anyPending && !checkRunsIncomplete && !statusIncomplete) {
+    const suitesResult = await githubJsonWithHeaders<{ check_suites?: Array<{ status?: string | null; app?: { slug?: string | null } | null }> }>(
+      env,
+      repoFullName,
+      `/commits/${headSha}/check-suites?per_page=100`,
+      token,
+    ).catch(() => undefined);
+    // Downgrade on an AFFIRMATIVE incomplete suite. AND: if the suites read itself is UNREADABLE (it 403s under the
+    // very same missing administration:read that forced fold-all, or rate-limits) we can no longer rely on it — so
+    // fail CLOSED (pending) when we ALSO never saw a first-party GitHub Actions check-run, i.e. we cannot confirm the
+    // required workflow ran at all (the #1799 false-green: a fork PR awaiting approval with only an always-on
+    // third-party status). A readable, all-completed suites result still certifies "passed" (no mass false-pending).
+    if (!suitesResult) {
+      // total === 0 means the commit has NO checks at all → genuinely unverified (no CI), not a missing first-party
+      // run, so leave it; only pend when checks DO exist but none of them is a confirmed first-party run.
+      if (!sawFirstPartyCheckRun && total > 0) anyPending = true;
+    } else if ((suitesResult.data.check_suites ?? []).some((suite) => (suite.app?.slug ?? "").toLowerCase() === "github-actions" && (suite.status ?? "").toLowerCase() !== "completed")) {
+      anyPending = true; // a first-party GitHub Actions workflow has not completed (e.g. a fork PR awaiting approval)
     }
   }
 

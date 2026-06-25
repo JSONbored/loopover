@@ -24,6 +24,7 @@ type OperatorDashboardResponse = {
   noiseReduction: Array<{ label: string; value: number; spark: number[] }>;
   weeklyReport: string[];
   recommendationQuality?: RecommendationQualityReport;
+  fleetMetrics?: FleetMetrics;
   weeklyValueReport?: {
     freshness: { status: string; latestRollupDay?: string | null };
     warnings: string[];
@@ -31,6 +32,28 @@ type OperatorDashboardResponse = {
   };
   upstreamDrift?: { status?: string } | null;
 };
+
+type FleetMetrics = {
+  windowDays: number;
+  instanceCount: number;
+  fleet: {
+    mergePrecision: number | null;
+    closePrecision: number | null;
+    fpRate: number | null;
+    reversalRate: number | null;
+    cycleP50Ms: number | null;
+    cycleP95Ms: number | null;
+  };
+  outliers: Array<{ instanceId: string; metric: string; value: number; fleetMedian: number }>;
+};
+
+const formatPct = (v: number | null): string => (v === null ? "—" : `${Math.round(v * 100)}%`);
+const formatMs = (v: number | null): string =>
+  v === null
+    ? "—"
+    : v >= 3_600_000
+      ? `${(v / 3_600_000).toFixed(1)}h`
+      : `${Math.round(v / 60_000)}m`;
 
 type RecommendationQualityReport = {
   windowDays: number;
@@ -144,6 +167,51 @@ function OperatorDashboard() {
               />
             ))}
           </section>
+
+          {data.fleetMetrics && data.fleetMetrics.instanceCount > 0 ? (
+            <section className="rounded-token border border-border bg-transparent p-5">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="size-4 text-mint" />
+                <h2 className="font-display text-token-lg font-semibold">Fleet health</h2>
+              </div>
+              <p className="mt-1 max-w-2xl text-token-xs text-muted-foreground">
+                Gate calibration aggregated (median) across {data.fleetMetrics.instanceCount}{" "}
+                self-hosted instance(s) over the last {data.fleetMetrics.windowDays} days.
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <Stat
+                  label="Merge precision"
+                  value={formatPct(data.fleetMetrics.fleet.mergePrecision)}
+                  hint="approve → merged"
+                />
+                <Stat
+                  label="Close precision"
+                  value={formatPct(data.fleetMetrics.fleet.closePrecision)}
+                  hint="block → closed"
+                />
+                <Stat
+                  label="False-positive rate"
+                  value={formatPct(data.fleetMetrics.fleet.fpRate)}
+                  hint="approve → reverted/closed"
+                />
+                <Stat
+                  label="Reversal rate"
+                  value={formatPct(data.fleetMetrics.fleet.reversalRate)}
+                  hint="humans overrode the gate"
+                />
+                <Stat
+                  label="Cycle time (p50)"
+                  value={formatMs(data.fleetMetrics.fleet.cycleP50Ms)}
+                  hint="decision → close"
+                />
+                <Stat
+                  label="Instance outliers"
+                  value={String(data.fleetMetrics.outliers.length)}
+                  hint="off the fleet median"
+                />
+              </div>
+            </section>
+          ) : null}
 
           {quality ? (
             <section className="rounded-token border border-border bg-transparent p-5">

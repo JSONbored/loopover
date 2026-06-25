@@ -1,0 +1,24 @@
+-- Sweep convergence: let the scheduled re-gate sweep advance through ALL open PRs.
+--
+-- BEFORE: selectRegateCandidates() sorts open PRs by staleness keyed on the PullRequestRecord's `updatedAt`,
+-- which toPullRequestRecordFromRow resolves as `payload.updated_at ?? row.updatedAt` — i.e. GitHub's value. A
+-- review normally freshens a PR because its comment/label WRITE bumps GitHub's updated_at (and fires a sync
+-- webhook). But when agent actions are SUPPRESSED (dry-run, or a paused/permission-blocked repo) that write
+-- never happens, so the 25 stalest PRs stay pinned at the head of the sort forever and the sweep re-selects the
+-- SAME 25 every tick, never covering the rest of the queue (observed: 5x recompute of "25 stale; 3 flagged").
+--
+-- AFTER: the sweep stamps an INTERNAL last_regated_at marker on every PR it re-gates (a plain D1 UPDATE, not a
+-- GitHub write — so it advances even when GitHub writes are suppressed). selectRegateCandidates keys the sort on
+-- last_regated_at instead of GitHub's updated_at, so a just-regated PR sorts freshest and the next sweep picks
+-- the next-stalest — full coverage of all open PRs in ceil(open/SWEEP_MAX_PRS) sweeps, convergent regardless of
+-- suppression. The GitHub-updatedAt freshness window is kept ONLY as the "don't race an in-flight webhook" guard.
+--
+-- last_regated_at is gittensory-computed (sweep-written), keyed to the PR (not the head SHA), and OMITTED from
+-- the upsertPullRequestFromGitHub SET clause so a later GitHub sync cannot clobber it. Mirrors approved_head_sha
+-- (0053) / merge_blocked_sha (0052). Nullable / no default → backward-compatible (existing rows = NULL = never
+-- swept = maximally stale = picked first).
+--
+-- pull_requests IS a Drizzle table (src/db/schema.ts), so this column is added to the Drizzle schema too; this
+-- raw migration is the production DDL applied by `wrangler d1 migrations apply` (drizzle-kit is not the runtime
+-- migrator here).
+ALTER TABLE pull_requests ADD COLUMN last_regated_at TEXT;

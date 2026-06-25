@@ -3,8 +3,10 @@
 // SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
 // src/agents/awesome-claude/review-logic.ts (itself a faithful port of the live submission-gate
 // classifyPullRequestFilesForContentReview). PURE — distinguishes ignore (no content entry) vs
-// scope_failure (CLOSE) vs deletion vs review. `slugify` is inlined (a one-liner) so the module
-// has zero imports.
+// scope_failure (CLOSE) vs deletion vs review. `slugify` is inlined (a one-liner). The accepted
+// categories, entry-file pattern, and maintenance-branch prefixes come from a ContentRepoSpec so a
+// self-hosted curated list can parameterize the lane (defaults preserve awesome-claude byte-for-byte).
+import { AWESOME_CLAUDE_CONTENT_SPEC, type ContentRepoSpec } from "./content-repo-spec";
 
 const MAX_SLUG_INPUT_CHARS = 4096;
 
@@ -19,23 +21,11 @@ function slugify(value: unknown): string {
     .slice(0, 120);
 }
 
-export const SUPPORTED_CONTENT_CATEGORIES = new Set([
-  "agents",
-  "collections",
-  "commands",
-  "guides",
-  "hooks",
-  "mcp",
-  "rules",
-  "skills",
-  "statuslines",
-  "tools",
-]);
+/** Back-compat re-export: the default lane's accepted categories (now sourced from the spec). */
+export const SUPPORTED_CONTENT_CATEGORIES = AWESOME_CLAUDE_CONTENT_SPEC.categories;
 
-const CONTENT_ENTRY = /^content\/([^/]+)\/([^/]+)\.mdx$/i;
-
-export function importContentPathParts(filePath: string): { category: string; slug: string } | null {
-  const match = CONTENT_ENTRY.exec(filePath);
+export function importContentPathParts(filePath: string, spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC): { category: string; slug: string } | null {
+  const match = spec.entryPathPattern.exec(filePath);
   if (!match) return null;
   return { category: (match[1] as string).toLowerCase(), slug: slugify(match[2]) };
 }
@@ -63,22 +53,22 @@ const SCOPE_MULTI =
 const SCOPE_STATUS =
   "Direct content submissions can only add a new content file or edit one existing content file. Deletes, renames, and generated-artifact updates are not accepted in this path.";
 
-// Branch prefixes the automated link-health routine uses for its bulk URL-canonicalization PRs —
-// these LEGITIMATELY edit many content files and should be ignored, never closed.
-const MAINTENANCE_BRANCH_PREFIXES = ["links/"];
-function isMaintenanceBranch(headRef?: string): boolean {
+// Branch prefixes (from the spec) the automated link-health routine uses for its bulk URL-canonicalization
+// PRs — these LEGITIMATELY edit many content files and should be ignored, never closed.
+function isMaintenanceBranch(headRef: string | undefined, spec: ContentRepoSpec): boolean {
   if (!headRef) return false;
   const ref = headRef.toLowerCase();
-  return MAINTENANCE_BRANCH_PREFIXES.some((p) => ref.startsWith(p));
+  return spec.maintenanceBranchPrefixes.some((p) => ref.startsWith(p));
 }
 
 /** Exact port of classifyPullRequestFilesForContentReview. */
 export function classifyContentFiles(
   files: ContentFile[],
   context: { headRepo?: string; baseRepo?: string; headRef?: string } = {},
+  spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC,
 ): ContentClassification {
   const entryFiles = files
-    .map((file) => ({ file, pathParts: importContentPathParts(String(file.filename || "")) }))
+    .map((file) => ({ file, pathParts: importContentPathParts(String(file.filename || ""), spec) }))
     .filter((item): item is { file: ContentFile; pathParts: { category: string; slug: string } } =>
       Boolean(item.pathParts),
     );
@@ -91,7 +81,7 @@ export function classifyContentFiles(
     const sameRepo =
       !!context.headRepo && !!context.baseRepo && context.headRepo.toLowerCase() === context.baseRepo.toLowerCase();
     // 1. A dedicated same-repo maintenance branch legitimately edits many content files → ignore.
-    if (sameRepo && isMaintenanceBranch(context.headRef)) {
+    if (sameRepo && isMaintenanceBranch(context.headRef, spec)) {
       return {
         kind: "ignore",
         reason: "Same-repository maintenance branch; the gate reviews only exact one-file content submissions.",
@@ -123,11 +113,11 @@ export function classifyContentFiles(
 
   const entry = entryFiles[0] as { file: ContentFile; pathParts: { category: string; slug: string } };
   const parts = entry.pathParts;
-  if (!SUPPORTED_CONTENT_CATEGORIES.has(parts.category)) {
+  if (!spec.categories.has(parts.category)) {
     return {
       kind: "close",
       category: parts.category,
-      reason: `Unsupported content category \`${parts.category}\`. Supported categories are ${[...SUPPORTED_CONTENT_CATEGORIES].sort().join(", ")}.`,
+      reason: `Unsupported content category \`${parts.category}\`. Supported categories are ${[...spec.categories].sort().join(", ")}.`,
     };
   }
 
@@ -145,6 +135,6 @@ export function classifyContentFiles(
 }
 
 /** Cheap pre-check used in the classify phase: does this PR touch a content entry file at all? */
-export function touchesContentEntry(filenames: string[]): boolean {
-  return filenames.some((f) => CONTENT_ENTRY.test(f));
+export function touchesContentEntry(filenames: string[], spec: ContentRepoSpec = AWESOME_CLAUDE_CONTENT_SPEC): boolean {
+  return filenames.some((f) => spec.entryPathPattern.test(f));
 }

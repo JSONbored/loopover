@@ -126,6 +126,35 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
   });
+
+  it("an enforced pre-merge check (pre_merge_check_required) hard-blocks; the advisory variant never does (#review-pre-merge-checks)", () => {
+    const enforced: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{ code: "pre_merge_check_required", title: "Pre-merge check not satisfied: Required label", severity: "critical", detail: "the 'approved' label must be applied", action: "apply it" }],
+    };
+    const enforcedResult = evaluateGateCheck(enforced, gateCheckPolicy(settings(), null, true));
+    expect(enforcedResult.conclusion).toBe("failure");
+    expect(enforcedResult.blockers.map((blocker) => blocker.code)).toContain("pre_merge_check_required");
+
+    const advisoryOnly: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{ code: "pre_merge_check_failed", title: "Pre-merge check not satisfied: Migration note", severity: "warning", detail: "the description must contain 'migration'", action: "add it" }],
+    };
+    const advisoryResult = evaluateGateCheck(advisoryOnly, gateCheckPolicy(settings(), null, true));
+    expect(advisoryResult.conclusion).toBe("success"); // advisory finding stays advisory — never blocks
+    expect(advisoryResult.blockers).toEqual([]);
+    expect(advisoryResult.warnings.map((warning) => warning.code)).toContain("pre_merge_check_failed");
+  });
+
+  it("an unresolved-files enforced pre-merge check HOLDS the gate (neutral), never close or pass (#review-audit)", () => {
+    const held: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{ code: "pre_merge_check_unresolved", title: "Pre-merge check held — changed files not resolved: Migrations documented", severity: "warning", detail: "could not resolve files", action: "re-evaluates automatically" }],
+    };
+    const result = evaluateGateCheck(held, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("neutral"); // held: not a pass (would auto-merge past the unverified check) nor a failure (would auto-close on a transient miss)
+    expect(result.blockers).toEqual([]);
+  });
 });
 
 describe("policy pack (#692)", () => {

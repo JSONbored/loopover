@@ -37,6 +37,24 @@ describe("registry normalization", () => {
     expect(snapshot.repositories[0]!.timeDecay ?? null).toBeNull();
   });
 
+  it("dedupes case-variant repo names so snapshot totals match the single row that persists", () => {
+    const snapshot = normalizeRegistryPayload(
+      {
+        "Owner/Repo": { emission_share: 0.02 },
+        "owner/repo": { emission_share: 0.03 },
+      },
+      { kind: "raw-github", url: "https://example.test/master_repositories.json" },
+      "2026-05-22T00:00:00.000Z",
+    );
+
+    // Persist collapses these to one canonical row; the snapshot must report one repo and the last-wins share,
+    // not two repos summing to 0.05.
+    expect(snapshot.repoCount).toBe(1);
+    expect(snapshot.totalEmissionShare).toBe(0.03);
+    expect(snapshot.repositories).toHaveLength(1);
+    expect(snapshot.repositories[0]).toMatchObject({ repo: "owner/repo", emissionShare: 0.03 });
+  });
+
   it("parses per-repo time-decay overrides from the registry scoring.time_decay block (#703)", () => {
     const snapshot = normalizeRegistryPayload(
       {

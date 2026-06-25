@@ -71,10 +71,6 @@ export type AgentActionPlanInput = {
   // neither auto-merge, auto-approve, nor auto-close such a PR; it falls through to a human.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
-  // Anti-farming (#anti-gaming-flood): true when this PR's author has exceeded the per-repo submission-flood
-  // limit (more than N PRs in the configured window). Forces the SAME manual hold as a guarded path — a flooding
-  // author's PR is never auto-merged/approved; a human reviews the batch. Does NOT force a close.
-  submissionFloodHit?: boolean | undefined;
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
@@ -252,11 +248,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const guardrailHit =
     input.hardGuardrailGlobs.length > 0 &&
     (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
-  // A per-author submission FLOOD forces the SAME manual hold as a guarded path: a flooding author's PR is never
-  // auto-merged/approved — a human reviews the batch (anti-farming). It does NOT force a close (a clean flooding
-  // PR is HELD, not killed; a red-CI / conflict flooding PR still closes via the normal path). (#anti-gaming-flood)
-  const submissionFloodHit = input.submissionFloodHit === true;
-  const heldForManualReview = guardrailHit || submissionFloodHit;
+  // Manual review is the RARE exception (the operator's minimize-manual goal): the ONLY thing that holds a PR for
+  // a human instead of merge/close is an auto-merge-ready PR that touches a hard-guardrail path. (An owner PR that
+  // is not review-good is held separately, via the owner close-exemption below — never auto-closed.) Submission
+  // volume is NOT a hold reason: a high-volume author's clean PR still merges and their bad PR still closes — the
+  // quality gate, not a submission count, is the defense (anti-farming-by-manual-hold removed).
+  const heldForManualReview = guardrailHit;
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
@@ -341,7 +338,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       : !reviewGood
         ? `verdict=${input.conclusion}${ciReason ? `; ${ciReason}` : ""}`
         : heldForManualReview
-          ? `verdict=${input.conclusion}; ${submissionFloodHit ? "submission flood → manual review (anti-farming)" : "guarded path → owner safety review"}`
+          ? `verdict=${input.conclusion}; guarded path → manual review`
           : `verdict=${input.conclusion}; CI green`;
     if (!hasLabel(input.pr.labels, label)) {
       actions.push({ actionClass: "label", requiresApproval: approval("label"), reason, label });

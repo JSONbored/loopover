@@ -121,6 +121,7 @@ export {
   type ScopeResult,
   type Verdict,
 } from "./registry-logic";
+export { runSurfaceReview, diffAppendedSurfaceEntry, type SurfaceReviewInput, type SurfaceReviewResult } from "./orchestrator";
 export {
   checkNetuidExists,
   fetchSubnetRecord,

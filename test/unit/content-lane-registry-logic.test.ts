@@ -397,7 +397,7 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
   });
 
   it("works for a minimal spec with no provider/artifact patterns (a bare registry)", () => {
-    const bare: RegistryLaneSpec = { entryFilePattern: /^data\/[a-z]+\.json$/ };
+    const bare: RegistryLaneSpec = { entryFilePattern: /^data\/[a-z]+\.json$/, collectionField: "entries" };
     expect(classifyRegistryPrScope(bare, ["data/x.json"]).scope).toBe("entry-submission");
     expect(classifyRegistryPrScope(bare, ["data/x.json", "data/y.json"]).scope).toBe("not-direct-submission");
     expect(classifyRegistryPrScope(bare, ["data/x.json", "other.json"]).scope).toBe("mixed-files");

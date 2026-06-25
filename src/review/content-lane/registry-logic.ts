@@ -824,6 +824,8 @@ export interface RegistryLaneSpec {
   providerFilePattern?: RegExp;
   /** Optional generated artifacts a valid PR must regenerate — allowed companions. */
   artifactPattern?: RegExp;
+  /** The array field on an entry file a contribution appends to (the surface model: "surfaces"). */
+  collectionField: string;
 }
 
 export type RegistryPrScope = "entry-submission" | "provider-submission" | "mixed-files" | "not-direct-submission";
@@ -876,4 +878,5 @@ export const METAGRAPHED_LANE_SPEC: RegistryLaneSpec = {
   entryFilePattern: SUBNET_ENTRY_PATTERN,
   providerFilePattern: FLAT_PROVIDER_PATTERN,
   artifactPattern: ARTIFACT_PATTERN,
+  collectionField: "surfaces",
 };

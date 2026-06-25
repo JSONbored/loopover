@@ -21,6 +21,13 @@ async function signals(
   }
 }
 
+/** Opt instances into fleet calibration — only registered instances count toward instanceCount/fleet. */
+async function register(env: Env, ...ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1) ON CONFLICT(instance_id) DO UPDATE SET registered=1`).bind(id).run();
+  }
+}
+
 describe("computeFleetAnalytics()", () => {
   it("empty store → zeroed report (and a custom/clamped window)", async () => {
     const env = createTestEnv();
@@ -46,6 +53,13 @@ describe("computeFleetAnalytics()", () => {
     const a = await computeFleetAnalytics(env);
     expect(a.instanceCount).toBe(0);
     expect(a.instances).toEqual([]);
+  });
+
+  it("tolerates a registered-instances query that omits results (registered ?? [])", async () => {
+    // matrix/cycle use .bind().all(); the registered-set query uses .all() directly and returns no `results`.
+    const env = { DB: { prepare: () => ({ bind: () => ({ all: () => Promise.resolve({ results: [] }) }), all: () => Promise.resolve({}) }) } } as unknown as Env;
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(0);
   });
 
   it("computes per-instance precision incl. reversals (reverted merge = false positive)", async () => {
@@ -88,6 +102,7 @@ describe("computeFleetAnalytics()", () => {
     await signals(env, "good2", 5, { verdict: "merge", outcome: "merged", ms: 2000 }); // precision 1.0
     await signals(env, "bad", 5, { verdict: "merge", outcome: "closed", ms: 9000 }); // precision 0.0 → outlier
     await signals(env, "tiny", 2, { verdict: "merge", outcome: "closed" }); // below MIN_DECIDED → excluded from fleet
+    await register(env, "good1", "good2", "bad", "tiny"); // all trusted; only MIN_DECIDED gates the fleet here
     const a = await computeFleetAnalytics(env);
     expect(a.instanceCount).toBe(3); // good1, good2, bad (tiny excluded)
     expect(a.fleet.mergePrecision).toBe(1); // median of [1,1,0]
@@ -101,7 +116,19 @@ describe("computeFleetAnalytics()", () => {
     const env = createTestEnv();
     await signals(env, "a", 5, { verdict: "merge", outcome: "merged" }); // 1.0
     await signals(env, "b", 5, { verdict: "merge", outcome: "closed" }); // 0.0
+    await register(env, "a", "b");
     const a = await computeFleetAnalytics(env);
     expect(a.fleet.mergePrecision).toBeCloseTo(0.5); // (1+0)/2
+  });
+
+  it("excludes unregistered instances from the fleet even with enough volume (registration is the trust gate)", async () => {
+    const env = createTestEnv();
+    await signals(env, "trusted", 5, { verdict: "merge", outcome: "merged" });
+    await signals(env, "stranger", 5, { verdict: "merge", outcome: "closed" }); // enough volume, but NOT registered
+    await register(env, "trusted");
+    const a = await computeFleetAnalytics(env);
+    expect(a.instanceCount).toBe(1); // only the registered instance counts
+    expect(a.fleet.mergePrecision).toBe(1); // the stranger's 0.0 does not drag the median
+    expect(a.instances.map((i) => i.instanceId)).toContain("stranger"); // still visible per-instance for the operator
   });
 });

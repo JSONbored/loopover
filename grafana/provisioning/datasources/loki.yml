@@ -1,0 +1,16 @@
+# Grafana datasource provisioning — adds Loki alongside the existing Prometheus.
+# Prometheus stays the default (isDefault here is omitted -> false), so dashboards
+# and Explore default to metrics; pick "Loki" explicitly for logs.
+apiVersion: 1
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    uid: loki
+    url: http://loki:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      # Cap returned lines so a broad query can't hang the browser on a small host.
+      maxLines: 1000
+      timeout: 60

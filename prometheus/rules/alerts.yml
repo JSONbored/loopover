@@ -1,0 +1,196 @@
+# Prometheus alerting rules for the gittensory self-host stack (#980 observability).
+#
+# Mounted into the prometheus container at /etc/prometheus/rules/alerts.yml and loaded
+# via the `rule_files: ["/etc/prometheus/rules/*.yml"]` glob in prometheus.yml.
+#
+# Every rule below is grounded ONLY in metrics the gittensory app actually exports at
+# GET /metrics, plus the synthetic `up` metric Prometheus emits per scrape target.
+#
+# Thresholds are sane defaults for a SMALL single-host self-host. Tune the numbers in
+# `expr` / `for` to your traffic — each is commented with what it means and how to adjust.
+#
+# Severity convention (consumed by Alertmanager routing/inhibition):
+#   severity: critical  → page / wake someone up; the service is down or losing data.
+#   severity: warning   → look soon; degraded but not (yet) an outage.
+#
+# Annotation convention:
+#   summary     → one-line headline (templated with the offending series' labels).
+#   description → what tripped + the live value, for the notification body.
+#   runbook     → a short, actionable first-response hint (no external URL needed).
+
+groups:
+  # ── Scrape target liveness ────────────────────────────────────────────────
+  - name: gittensory-availability
+    rules:
+      - alert: GittensoryTargetDown
+        # `up` is 0 when Prometheus cannot scrape /metrics (process down, crash-loop,
+        # network partition, or wrong port). Scoped to our job so node/other targets
+        # don't trip this. 2m absorbs a single missed scrape + a restart.
+        expr: up{job="gittensory"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "gittensory target {{ $labels.instance }} is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} (job {{ $labels.job }}) for over 2m. The app is unreachable or not serving /metrics."
+          runbook: "Check `docker compose ps` and `docker compose logs gittensory`. Look for a missing selfhost_listening log line or a crash-loop (restart count climbing)."
+
+  # ── Job queue / worker health ─────────────────────────────────────────────
+  - name: gittensory-jobs
+    rules:
+      - alert: GittensoryHighJobFailureRatio
+        # Fraction of processed jobs that failed over the last 10m. The `> 0` guard on
+        # the denominator avoids a 0/0 = NaN (which never fires but is noise in /rules).
+        # 0.10 = 10% of jobs failing. Raise if your workload has expected transient
+        # failures; lower if any failure is a real problem.
+        expr: |
+          (
+            sum(rate(gittensory_jobs_failed_total[10m]))
+            /
+            sum(rate(gittensory_jobs_processed_total[10m])) > 0
+          ) > 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory job failure ratio above 10%"
+          description: "{{ $value | humanizePercentage }} of jobs processed in the last 10m failed (sustained 15m). Expected: well under 10%."
+          runbook: "Tail logs for level=error job events (e.g. selfhost_cron_error). A spike usually means a bad upstream (GitHub API / AI provider / DB) or a poison payload — check what changed."
+
+      - alert: GittensoryDeadLetterJobsGrowing
+        # Jobs exhausted all retries and landed in the dead-letter queue. ANY new dead
+        # job in 15m is worth a look — these are lost work that won't self-heal.
+        # `increase(...) > 0` fires on the first dead job in the window.
+        expr: increase(gittensory_jobs_dead_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory dead-letter jobs increasing"
+          description: "{{ $value | printf \"%.0f\" }} job(s) moved to the dead-letter queue in the last 15m. These exhausted all retries and need manual attention."
+          runbook: "Inspect gittensory_queue_dead gauge and the dead-letter records. Decide whether to fix-and-requeue or discard. A steady climb points at a systematic failure, not a blip."
+
+      - alert: GittensoryDeadLetterBacklogHigh
+        # Standing size of the dead-letter queue. Distinct from the rate alert above:
+        # this catches a large backlog that built up before alerting was watching.
+        # 50 dead jobs is a generous default for a small host — tune down if you expect ~0.
+        expr: gittensory_queue_dead > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory dead-letter backlog above 50"
+          description: "The dead-letter queue holds {{ $value | printf \"%.0f\" }} jobs (sustained 10m). Work is accumulating with no automatic recovery."
+          runbook: "Drain or triage the dead-letter queue. If it only ever grows, fix the root cause before requeuing or you'll just re-fill it."
+
+  # ── Queue backlog (live processing pressure) ───────────────────────────────
+  - name: gittensory-queue
+    rules:
+      - alert: GittensoryQueueBacklogHigh
+        # Pending (not-yet-processed) jobs. A sustained high pending count means workers
+        # can't keep up with enqueue rate. 100 is a starting line for a single-node host;
+        # raise it if your normal steady-state pending depth is higher.
+        expr: gittensory_queue_pending > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory queue backlog above 100"
+          description: "{{ $value | printf \"%.0f\" }} jobs pending for over 10m — the worker is falling behind the enqueue rate."
+          runbook: "Compare rate(gittensory_jobs_enqueued_total) vs rate(gittensory_jobs_processed_total). If enqueue > processed persistently, the worker is the bottleneck (slow AI/DB, or it's stuck). Check worker logs."
+
+  # ── Qdrant vector backend ──────────────────────────────────────────────────
+  - name: gittensory-qdrant
+    rules:
+      - alert: GittensoryQdrantErrorRateHigh
+        # Qdrant errors (across upsert/query/delete) relative to total Qdrant traffic.
+        # `... or vector(0)` keeps the denominator non-empty so the ratio is defined even
+        # when query/upsert counters haven't been created yet. > 0.05 = 5% error rate.
+        expr: |
+          (
+            sum(rate(gittensory_qdrant_errors_total[10m]))
+            /
+            (
+              sum(rate(gittensory_qdrant_queries_total[10m]))
+              + sum(rate(gittensory_qdrant_upserts_total[10m]))
+              + sum(rate(gittensory_qdrant_errors_total[10m]))
+              > 0
+            )
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory Qdrant error rate above 5%"
+          description: "{{ $value | humanizePercentage }} of Qdrant operations errored over the last 10m (sustained 10m). RAG retrieval/indexing is degraded."
+          runbook: "Check the qdrant container (`docker compose --profile qdrant ps/logs`) and gittensory_qdrant_errors_total{op=...} to see whether upsert, query, or delete is failing. A reachable-but-erroring Qdrant often means a schema/collection or disk problem."
+
+  # ── Orb usage-event export pipeline ────────────────────────────────────────
+  - name: gittensory-orb
+    rules:
+      - alert: GittensoryOrbExportErrorRateHigh
+        # Failed Orb event exports vs total export attempts (errors + successes).
+        # The `> 0` denominator guard avoids 0/0. Export failures mean billed usage
+        # events aren't reaching Orb — a revenue/billing-integrity issue, so it warns
+        # even at a modest 5% rate.
+        expr: |
+          (
+            sum(rate(gittensory_orb_export_errors_total[15m]))
+            /
+            (
+              sum(rate(gittensory_orb_events_exported_total[15m]))
+              + sum(rate(gittensory_orb_export_errors_total[15m]))
+              > 0
+            )
+          ) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory Orb export error rate above 5%"
+          description: "{{ $value | humanizePercentage }} of Orb usage-event exports failed over the last 15m (sustained 15m). Billable events may not be reaching Orb."
+          runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. Recorded-but-unexported events (gittensory_orb_events_recorded_total vs _exported_total diverging) confirm a stuck exporter."
+
+  # ── HTTP serving health (uses the PLANNED status label + duration histogram) ─
+  # NOTE: gittensory_http_requests_total is gaining a status="2xx|3xx|4xx|5xx" label,
+  # and gittensory_http_request_duration_seconds (a histogram) is being added. Both
+  # rules below tolerate the metric/label being absent on older data: the ratio uses a
+  # `> 0` denominator guard, and an absent series simply yields no result (rule stays
+  # inactive) rather than erroring. They start firing the moment the new metrics exist.
+  - name: gittensory-http
+    rules:
+      - alert: GittensoryHighHttp5xxRatio
+        # Share of responses that are 5xx. status="5xx" selects only server errors;
+        # the denominator sums all statuses. If the status label is missing entirely
+        # (old build), the numerator selector matches nothing → no firing. 0.05 = 5%.
+        expr: |
+          (
+            sum(rate(gittensory_http_requests_total{status="5xx"}[5m]))
+            /
+            sum(rate(gittensory_http_requests_total[5m])) > 0
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "gittensory HTTP 5xx ratio above 5%"
+          description: "{{ $value | humanizePercentage }} of HTTP responses were 5xx over the last 5m (sustained 10m). The API is throwing server errors."
+          runbook: "Tail logs for level=error around the request path. Correlate with deploys, DB availability, and AI-provider outages. If 5xx coincides with a target restart, it may be a crash-loop — see GittensoryTargetDown."
+
+      - alert: GittensoryRequestLatencySLOBreach
+        # p95 request latency from the duration histogram. histogram_quantile over the
+        # per-le bucket rate gives the 95th percentile end-to-end. 1s p95 is a reasonable
+        # SLO for a review API; raise for heavier AI-bound endpoints. `by (le)` is
+        # required for histogram_quantile to work across bucket series.
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(gittensory_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "gittensory p95 request latency above 1s"
+          description: "p95 HTTP request latency is {{ $value | printf \"%.2f\" }}s over the last 5m (sustained 10m), breaching the 1s SLO."
+          runbook: "Check whether slowness is queue/DB/AI-bound: correlate with gittensory_queue_pending and Qdrant/AI latency. A rising p95 with flat error rate usually means a saturated dependency, not a bug."

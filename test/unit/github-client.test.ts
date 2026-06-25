@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeInstallationOctokit, resolveRepoActionMode, timeoutFetch } from "../../src/github/client";
+import { forcedSelfhostMode, makeInstallationOctokit, resolveRepoActionMode, timeoutFetch } from "../../src/github/client";
 import { setGlobalAgentFrozen } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
@@ -73,6 +73,35 @@ describe("makeInstallationOctokit", () => {
     const label = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/labels", { owner: "o", repo: "r", issue_number: 1, labels: ["x"] });
     expect((label.data as unknown as { dryRunSuppressed: boolean; id?: number }).dryRunSuppressed).toBe(true);
     expect((label.data as unknown as { id?: number }).id).toBeUndefined(); // the default route carries no id
+  });
+});
+
+describe("forcedSelfhostMode (instance-wide self-host kill switch)", () => {
+  it("maps SELFHOST_DEPLOYMENT_MODE to a forced action mode (else null)", () => {
+    expect(forcedSelfhostMode({ SELFHOST_DEPLOYMENT_MODE: "dry-run" })).toBe("dry_run");
+    expect(forcedSelfhostMode({ SELFHOST_DEPLOYMENT_MODE: "dry_run" })).toBe("dry_run"); // underscore variant
+    expect(forcedSelfhostMode({ SELFHOST_DEPLOYMENT_MODE: "DISABLED" })).toBe("paused"); // case-insensitive
+    expect(forcedSelfhostMode({ SELFHOST_DEPLOYMENT_MODE: "live" })).toBeNull();
+    expect(forcedSelfhostMode({})).toBeNull();
+  });
+
+  it("forces suppression for the WHOLE instance even when the caller passes mode=live", async () => {
+    const calls: RecordedCall[] = [];
+    stubFetchRecording(calls);
+    const env = { ...createTestEnv(), SELFHOST_DEPLOYMENT_MODE: "dry-run" };
+    const octokit = makeInstallationOctokit(env, "tok", "live"); // a LIVE caller…
+    const r = await octokit.request("POST /repos/{owner}/{repo}/check-runs", { owner: "o", repo: "r", name: "Gate", head_sha: "abc" });
+    expect(calls.some((c) => c.method === "POST")).toBe(false); // …but the instance switch suppresses it anyway
+    expect((r.data as unknown as { id: number }).id).toBe(-1);
+  });
+
+  it("'disabled' forces suppression audited as denied (vs dry-run's completed-shadow)", async () => {
+    stubFetchRecording([]);
+    const env = { ...createTestEnv(), SELFHOST_DEPLOYMENT_MODE: "disabled" };
+    const octokit = makeInstallationOctokit(env, "tok", "live");
+    await octokit.request("POST /repos/{owner}/{repo}/check-runs", { owner: "o", repo: "r", name: "Gate", head_sha: "abc" });
+    const audit = await env.DB.prepare("SELECT outcome FROM audit_events WHERE event_type = ?").bind("github.write.suppressed").first<{ outcome: string }>();
+    expect(audit?.outcome).toBe("denied");
   });
 });
 

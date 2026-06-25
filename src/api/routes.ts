@@ -121,8 +121,12 @@ import {
   sanitizePublicComment,
   type GittensoryMentionCommandName,
 } from "../github/commands";
-import { handleGitHubWebhook } from "../github/webhook";
-import { handleOrbIngest } from "../orb/ingest";
+import { handleGitHubWebhook, handleOrbRelay } from "../github/webhook";
+import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
+import { handleOrbWebhook } from "../orb/webhook";
+import { handleOrbOAuthCallback } from "../orb/oauth";
+import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/broker";
+import { registerOrbRelay } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
@@ -2864,11 +2868,57 @@ export function createApp() {
 
   app.post("/v1/github/webhook", handleGitHubWebhook);
 
+  // Brokered self-host relay RECEIVER (#1255) — the central Orb forwards this container's repos' events here,
+  // HMAC-signed with the container's enrollment secret. Verified against ORB_ENROLLMENT_SECRET, then enqueued
+  // like a GitHub webhook. Auth IS the relay signature (token-exempt); 404 when not a brokered self-host.
+  app.post("/v1/orb/relay", handleOrbRelay);
+
+  // Gittensory Orb central GitHub App (#1255) — inbound webhook for the ONE shared Orb App maintainers install.
+  // Verifies the Orb App's OWN webhook secret, dedups, and records install + PR/review events (the homepage
+  // fleet-metrics data spine). Separate App + secret from the review-app /v1/github/webhook above.
+  app.post("/v1/orb/webhook", handleOrbWebhook);
+  // Post-install / OAuth landing — the App's Callback URL. Token-exempt; GitHub drives the redirect after a
+  // maintainer installs or updates the Orb App. Lands on a real page instead of a 401.
+  app.get("/v1/orb/oauth/callback", handleOrbOAuthCallback);
+  // Token-broker exchange: a self-hosted container presents its enrollment secret (Bearer) → a short-lived
+  // GitHub installation token for the BOUND install. Token-exempt (the enrollment secret IS the auth); flag-gated
+  // (404 until ORB_BROKER_ENABLED); the installation_id is read server-side from the enrollment, never the request.
+  app.post("/v1/orb/token", async (c) => {
+    if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const auth = c.req.header("authorization") ?? "";
+    const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
+    const result = await brokerOrbToken(c.env, secret);
+    if ("error" in result) return c.json(result, result.error === "invalid_enrollment" ? 401 : 403);
+    return c.json(result);
+  });
+
+  // Orb event relay (#1255) — a brokered self-host registers its public relay URL so the Orb can forward its
+  // repos' events to it. Auth: the container's own enrollment secret (Bearer). Flag-gated (404 until enabled).
+  app.post("/v1/orb/relay/register", async (c) => {
+    if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const auth = c.req.header("authorization") ?? "";
+    const secret = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!secret) return c.json({ error: "missing_enrollment_secret" }, 401);
+    const body = (await c.req.json().catch(() => null)) as { relayUrl?: unknown } | null;
+    const relayUrl = typeof body?.relayUrl === "string" ? body.relayUrl.trim() : "";
+    if (!relayUrl) return c.json({ error: "missing_relay_url" }, 400);
+    const result = await registerOrbRelay(c.env, secret, relayUrl);
+    if ("error" in result) {
+      const status = result.error === "invalid_enrollment" ? 401 : result.error === "installation_not_eligible" ? 403 : result.error === "encryption_unavailable" ? 500 : 400;
+      return c.json(result, status);
+    }
+    return c.json(result);
+  });
+
   // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware
   // outcome batches from self-hosted instances. No auth required: all data is HMAC-anonymized by the sender;
   // dedup is enforced via UNIQUE(instance_id, repo_hash, pr_hash) in orb_signals. Rate-limited (strict, #1254).
   app.post("/v1/orb/ingest", async (c) => {
-    const body = await c.req.text().catch(() => null);
+    // Open ingress (no shared secret — the fleet topology has no per-instance key the collector could
+    // verify), bounded by a hard body ceiling so it can't be used to make us buffer unbounded input.
+    const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
+    if (body === null) return c.json({ error: "payload_too_large" }, 413);
     if (!body) return c.json({ error: "invalid_request" }, 400);
     const result = await handleOrbIngest(body, c.env.DB);
     if ("error" in result) return c.json(result, 400);
@@ -2881,6 +2931,83 @@ export function createApp() {
   app.get("/v1/internal/fleet/analytics", async (c) => {
     const days = parsePositiveInt(c.req.query("days")) ?? 90;
     return c.json(await computeFleetAnalytics(c.env, { windowDays: days }));
+  });
+
+  // Orb instance registry — the fleet trust gate. Every self-host instance that ingests is recorded here,
+  // but only REGISTERED ones count toward fleet calibration (computeFleetAnalytics). Bearer-gated by the
+  // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). List shows pending + registered instances with their
+  // stored-signal counts so an operator knows what they're opting in before they register it.
+  app.get("/v1/internal/orb/instances", async (c) => {
+    const rows = await c.env.DB
+      .prepare(
+        `SELECT i.instance_id AS instanceId, i.registered AS registered, i.first_seen_at AS firstSeenAt,
+                i.last_seen_at AS lastSeenAt, i.registered_at AS registeredAt,
+                (SELECT COUNT(*) FROM orb_signals s WHERE s.instance_id = i.instance_id) AS signalCount
+         FROM orb_instances i ORDER BY i.last_seen_at DESC`,
+      )
+      .all<{ instanceId: string; registered: number; firstSeenAt: string; lastSeenAt: string; registeredAt: string | null; signalCount: number }>();
+    return c.json({ instances: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
+  });
+
+  // Opt an instance into (or out of) fleet calibration. Body: { instanceId, registered? } (registered
+  // defaults true). Upserts so an operator can register an instance that has ingested but isn't recorded yet.
+  app.post("/v1/internal/orb/instances/register", async (c) => {
+    const payload = (await c.req.json().catch(() => null)) as { instanceId?: unknown; registered?: unknown } | null;
+    const instanceId = typeof payload?.instanceId === "string" ? payload.instanceId : "";
+    if (!instanceId) return c.json({ error: "instanceId required" }, 400);
+    const registered = payload?.registered === false ? 0 : 1;
+    await c.env.DB
+      .prepare(
+        `INSERT INTO orb_instances (instance_id, registered, registered_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(instance_id) DO UPDATE SET registered = excluded.registered,
+           registered_at = CASE WHEN excluded.registered = 1 THEN CURRENT_TIMESTAMP ELSE NULL END`,
+      )
+      .bind(instanceId, registered)
+      .run();
+    return c.json({ instanceId, registered: registered === 1 });
+  });
+
+  // Central Orb GitHub App installation registry — the onboarding gate. Every installation the Orb App webhook
+  // records lands at registered=0; only REGISTERED ones count toward the global public counter (getOrbGlobalStats)
+  // and are eligible for token brokering. Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). The
+  // list shows pending + registered installs so an operator knows what they're opting in.
+  app.get("/v1/internal/orb/installations", async (c) => {
+    const rows = await c.env.DB
+      .prepare(
+        `SELECT installation_id AS installationId, account_login AS accountLogin, account_type AS accountType,
+                repository_selection AS repositorySelection, registered, suspended_at AS suspendedAt,
+                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt
+         FROM orb_github_installations ORDER BY last_event_at DESC`,
+      )
+      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string }>();
+    return c.json({ installations: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
+  });
+
+  // Opt an installation into (or out of) the registry. Body: { installationId, registered? } (registered defaults
+  // true). 404 when the installation isn't recorded yet — an install MUST arrive via the webhook first (unlike the
+  // fleet instances there's no account context to upsert a never-seen installation from).
+  app.post("/v1/internal/orb/installations/register", async (c) => {
+    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; registered?: unknown } | null;
+    const installationId = Number(payload?.installationId);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
+    const existing = await c.env.DB.prepare("SELECT installation_id FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first();
+    if (!existing) return c.json({ error: "installation_not_found" }, 404);
+    const registered = payload?.registered === false ? 0 : 1;
+    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ? WHERE installation_id = ?").bind(registered, installationId).run();
+    return c.json({ installationId, registered: registered === 1 });
+  });
+
+  // Operator-only: issue a one-time token-broker enrollment secret for a REGISTERED install, to hand to that
+  // maintainer's self-hosted container. The secret is returned ONCE (stored only hashed). Bearer-gated by the
+  // /v1/internal/* middleware (INTERNAL_JOB_TOKEN); flag-gated (404 until ORB_BROKER_ENABLED).
+  app.post("/v1/internal/orb/enrollments", async (c) => {
+    if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown } | null;
+    const installationId = Number(payload?.installationId);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
+    const result = await issueOrbEnrollment(c.env, installationId);
+    if ("error" in result) return c.json(result, result.error === "installation_not_found" ? 404 : 409);
+    return c.json(result); // { enrollId, secret } — secret shown exactly once
   });
 
   // Convergence (ops / observability, flag GITTENSORY_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block
@@ -4829,6 +4956,11 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;
   if (path.startsWith("/v1/auth/")) return false;
   if (path === "/v1/github/webhook") return false;
+  if (path === "/v1/orb/webhook") return false;
+  if (path === "/v1/orb/relay") return false;
+  if (path === "/v1/orb/oauth/callback") return false;
+  if (path === "/v1/orb/token") return false;
+  if (path === "/v1/orb/relay/register") return false;
   if (path === "/v1/orb/ingest") return false;
   if (path.startsWith("/v1/internal/")) return false;
   return path.startsWith("/v1/");

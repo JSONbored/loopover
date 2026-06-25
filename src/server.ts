@@ -12,18 +12,31 @@ import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
 import worker from "./index";
 import { processJob } from "./queue/processors";
-import { createSelfHostAi } from "./selfhost/ai";
-import { credentialsToEnv, exchangeManifestCode, renderSetupPage } from "./selfhost/setup-wizard";
-import { orbEnabled, exportOrbBatch } from "./selfhost/orb-collector";
+import { createSelfHostAi, resolveAiReviewerPlan } from "./selfhost/ai";
+import {
+  cookieValue,
+  credentialsToEnv,
+  exchangeManifestCode,
+  isValidSetupAuthCookie,
+  renderBrokeredSetupPage,
+  renderSetupPage,
+  renderTokenEntryPage,
+  setupAuthCookieValue,
+  timingSafeStrEqual,
+} from "./selfhost/setup-wizard";
+import { isOrbBrokerMode, registerOrbRelayTarget } from "./orb/broker-client";
+import { exportOrbBatch } from "./selfhost/orb-collector";
 import { createD1Adapter, nodeSqliteDriver } from "./selfhost/d1-adapter";
 import { readiness } from "./selfhost/health";
-import { gauge, incr, renderMetrics } from "./selfhost/metrics";
+import { gauge, incr, observe, renderMetrics } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
 import { createPgAdapter } from "./selfhost/pg-adapter";
 import { createPgQueue } from "./selfhost/pg-queue";
 import { createPgVectorize, initPgVectorize } from "./selfhost/pg-vectorize";
 import { createSqliteQueue } from "./selfhost/sqlite-queue";
 import { createSqliteVectorize } from "./selfhost/vectorize";
+import { makeLocalManifestReader } from "./selfhost/private-config";
+import { setLocalManifestReader } from "./signals/focus-manifest-loader";
 import type { JobMessage } from "./types";
 
 /** Resolve `<NAME>_FILE` env vars (Docker secrets / multi-line keys) into `<NAME>` at startup. */
@@ -66,6 +79,30 @@ async function waitForPostgres(url: string, maxWaitMs = 30_000): Promise<void> {
       if (elapsed >= maxWaitMs) throw new Error(`Postgres not ready after ${maxWaitMs}ms (${attempt} attempts)`);
       const delay = Math.min(2000, 200 * attempt);
       console.log(JSON.stringify({ event: "selfhost_pg_wait", attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+/** Retry an async readiness operation with backoff until it succeeds (up to maxWaitMs). Prevents a
+ *  crash-restart loop when gittensory starts before a dependency (e.g. Qdrant) is accepting connections —
+ *  Qdrant's init is a single fetch with no retry, so a slow-starting --profile qdrant container would
+ *  otherwise take the whole process down. */
+async function retryUntilReady(name: string, op: () => Promise<void>, maxWaitMs = 30_000): Promise<void> {
+  const start = Date.now();
+  let attempt = 0;
+  while (true) {
+    try {
+      await op();
+      return;
+    } catch (error) {
+      attempt++;
+      const elapsed = Date.now() - start;
+      if (elapsed >= maxWaitMs) {
+        throw new Error(`${name} not ready after ${maxWaitMs}ms (${attempt} attempts): ${error instanceof Error ? error.message : "unknown error"}`);
+      }
+      const delay = Math.min(2000, 200 * attempt);
+      console.log(JSON.stringify({ event: "selfhost_dependency_wait", dependency: name, attempt, elapsed_ms: elapsed, retry_in_ms: delay }));
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -122,6 +159,10 @@ function buildSqliteBackend(consume: (m: JobMessage) => Promise<void>): Backend 
 
 async function main(): Promise<void> {
   loadFileSecrets();
+  // Container-private per-repo config (self-host): register the GITTENSORY_REPO_CONFIG_DIR reader so the focus-
+  // manifest loader prefers a mounted `{owner}__{repo}.yml` over the public `.gittensory.yml` (review policy stays
+  // private). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
+  setLocalManifestReader(makeLocalManifestReader(process.env.GITTENSORY_REPO_CONFIG_DIR));
   const startedAt = Date.now();
 
   // The queue consumer captures `env`, assigned below (the first job only runs once an HTTP/cron event
@@ -141,6 +182,10 @@ async function main(): Promise<void> {
 
   const ai = createSelfHostAi(process.env);
   if (ai) console.log(JSON.stringify({ event: "selfhost_ai_provider", provider: process.env.AI_PROVIDER }));
+  // Dual-review plan (#dual-ai-combiner): resolve which provider(s) review + how to combine, attached to env
+  // below so the review call site uses it. Undefined for a single provider's default review or no AI.
+  const aiReviewPlan = resolveAiReviewerPlan(process.env);
+  if (aiReviewPlan) console.log(JSON.stringify({ event: "selfhost_ai_review_plan", reviewers: aiReviewPlan.reviewers.map((r) => r.model), combine: aiReviewPlan.combine }));
 
   // Redis fixed-window rate limiter + webhook dedup cache (else absent when REDIS_URL is unset).
   let rateLimiter: DurableObjectNamespace | undefined;
@@ -159,7 +204,8 @@ async function main(): Promise<void> {
   let vectorizeOverride: Vectorize | undefined;
   if (process.env.QDRANT_URL) {
     const { createQdrantVectorize, initQdrantCollection } = await import("./selfhost/qdrant-vectorize");
-    await initQdrantCollection(process.env.QDRANT_URL);
+    // Retry until Qdrant accepts the collection PUT — the container may still be booting when we start.
+    await retryUntilReady("qdrant", () => initQdrantCollection(process.env.QDRANT_URL as string));
     vectorizeOverride = createQdrantVectorize(process.env.QDRANT_URL);
     console.log(JSON.stringify({ event: "selfhost_vectorize", backend: "qdrant" }));
   }
@@ -168,7 +214,9 @@ async function main(): Promise<void> {
     ...process.env,
     DB: backend.db,
     JOBS: backend.queue.binding,
+    WEBHOOKS: backend.queue.binding, // the brokered relay receiver enqueues via WEBHOOKS; both lanes share the in-process queue
     AI: ai,
+    ...(aiReviewPlan ? { AI_REVIEW_PLAN: aiReviewPlan } : {}),
     // Qdrant takes priority; falls back to the backend's built-in vectorize (pgvector or sqlite-vec)
     ...(vectorizeOverride ? { VECTORIZE: vectorizeOverride } : backend.vectorize ? { VECTORIZE: backend.vectorize } : {}),
     ...(rateLimiter ? { RATE_LIMITER: rateLimiter } : {}),
@@ -185,11 +233,14 @@ async function main(): Promise<void> {
   for (const c of [
     "gittensory_jobs_enqueued_total", "gittensory_jobs_processed_total",
     "gittensory_jobs_failed_total", "gittensory_jobs_dead_total",
-    "gittensory_http_requests_total", "gittensory_webhook_dedup_total",
+    "gittensory_webhook_dedup_total",
     "gittensory_qdrant_queries_total", "gittensory_qdrant_upserts_total",
     "gittensory_orb_events_exported_total", "gittensory_orb_export_errors_total",
   ])
     incr(c, undefined, 0);
+  // Seed gittensory_http_requests_total per status class so the breakdown panel has every series from the
+  // first scrape (keeping the metric consistently labeled — never mix labeled and unlabeled samples).
+  for (const status of ["2xx", "3xx", "4xx", "5xx"]) incr("gittensory_http_requests_total", { status }, 0);
 
   const ctx = {
     waitUntil: (p: Promise<unknown>) => void Promise.resolve(p).catch(() => undefined),
@@ -207,8 +258,20 @@ async function main(): Promise<void> {
           return new Response(JSON.stringify(r), { status: r.ok ? 200 : 503, headers: { "content-type": "application/json" } });
         }
         if (path === "/metrics") return new Response(await renderMetrics(), { headers: { "content-type": "text/plain; version=0.0.4" } });
+        // Brokered mode (ORB_ENROLLMENT_SECRET set): the central Orb App provides credentials on demand, so
+        // there is no own GitHub App to create — short-circuit the setup wizard to a brokered-mode page rather
+        // than walking the operator through (and overriding with) an own-App setup they don't need.
+        if ((path === "/setup" || path === "/setup/callback") && isOrbBrokerMode({ ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET })) {
+          return new Response(renderBrokeredSetupPage(), {
+            headers: { "content-type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
+          });
+        }
         // First-run GitHub App setup wizard — only while no App is configured (can't rebind a live install).
         if ((path === "/setup" || path === "/setup/callback") && !process.env.GITHUB_APP_ID) {
+          const setupToken = process.env.SELFHOST_SETUP_TOKEN;
+          if (!setupToken) {
+            return new Response("SELFHOST_SETUP_TOKEN must be set before using the setup wizard", { status: 400 });
+          }
           // PUBLIC_API_ORIGIN is required: falling back to request.url.origin would let an attacker spoof
           // the Host header and redirect the App-creation callback to an attacker-controlled domain, where
           // they could exchange the one-time code for the App private key and webhook secret.
@@ -220,13 +283,34 @@ async function main(): Promise<void> {
             );
           }
           if (path === "/setup") {
+            // Token via header (programmatic) or the POST form body (browser) — NEVER the URL query string,
+            // which would leak the secret to access logs, proxies, and browser history.
+            let suppliedToken =
+              request.headers.get("x-setup-token") ??
+              request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+              "";
+            if (!suppliedToken && request.method === "POST") {
+              const form = await request.formData().catch(() => null);
+              const field = form?.get("token");
+              suppliedToken = typeof field === "string" ? field : "";
+            }
+            if (!timingSafeStrEqual(suppliedToken, setupToken)) {
+              // Not authenticated → show the token-entry form (token submitted via POST body, not the URL).
+              // First visit (no token) is 200; a wrong submission is 403.
+              return new Response(renderTokenEntryPage(suppliedToken.length > 0), {
+                status: suppliedToken.length > 0 ? 403 : 200,
+                headers: { "content-type": "text/html; charset=utf-8", "Referrer-Policy": "no-referrer" },
+              });
+            }
             // Generate a per-visit CSRF nonce, embed it in the manifest's redirect_url, and bind it to
-            // this browser session via an HttpOnly cookie so the callback can validate it.
+            // this browser session via an HttpOnly signed cookie so the callback can validate it came
+            // from an operator-authorized setup visit, not just any unauthenticated browser.
             const state = randomUUID();
             return new Response(renderSetupPage(origin, state), {
               headers: {
                 "content-type": "text/html; charset=utf-8",
-                "Set-Cookie": `setup_state=${state}; Path=/setup; HttpOnly; SameSite=Lax; Max-Age=3600`,
+                "Referrer-Policy": "no-referrer",
+                "Set-Cookie": `setup_auth=${setupAuthCookieValue(setupToken, state)}; Path=/setup; HttpOnly; SameSite=Lax; Max-Age=3600`,
               },
             });
           }
@@ -236,8 +320,8 @@ async function main(): Promise<void> {
           // Validate the CSRF state: must match the cookie set when /setup was served.
           const stateParam = params.get("state");
           const cookieHeader = request.headers.get("cookie") ?? "";
-          const cookieState = cookieHeader.split(";").map((c) => c.trim()).find((c) => c.startsWith("setup_state="))?.slice("setup_state=".length);
-          if (!stateParam || !cookieState || stateParam !== cookieState) {
+          const setupAuth = cookieValue(cookieHeader, "setup_auth");
+          if (!stateParam || !isValidSetupAuthCookie(setupToken, stateParam, setupAuth)) {
             return new Response("invalid state parameter", { status: 403 });
           }
           try {
@@ -250,7 +334,13 @@ async function main(): Promise<void> {
             return new Response(`setup failed: ${error instanceof Error ? error.message : "error"}`, { status: 500 });
           }
         }
-        incr("gittensory_http_requests_total");
+        // Instrument real app traffic — status-class counter + latency histogram. (Infra endpoints
+        // /health /ready /metrics and the setup wizard already returned above and are not counted.)
+        const startedReq = Date.now();
+        const record = (status: number): void => {
+          incr("gittensory_http_requests_total", { status: `${Math.floor(status / 100)}xx` });
+          observe("gittensory_http_request_duration_seconds", (Date.now() - startedReq) / 1000);
+        };
         // Webhook delivery dedup: return 204 immediately for already-processed delivery IDs.
         // We mark only AFTER a successful response — failed/rejected webhooks must be retryable.
         const isWebhook = webhookCache && path === "/v1/github/webhook" && request.method === "POST";
@@ -259,6 +349,7 @@ async function main(): Promise<void> {
           const seen = await webhookCache!.get(`delivery:${deliveryId}`);
           if (seen) {
             incr("gittensory_webhook_dedup_total");
+            record(204);
             return new Response(null, { status: 204 });
           }
         }
@@ -267,6 +358,7 @@ async function main(): Promise<void> {
           // Best-effort — never block the response on a cache write failure
           void webhookCache!.set(`delivery:${deliveryId}`, "1", 300).catch(() => undefined);
         }
+        record(response.status);
         return response;
       },
       port,
@@ -285,16 +377,24 @@ async function main(): Promise<void> {
     );
   }, intervalMs);
 
-  // Orb hourly export — batch-send pending outcome signals to the central collector.
-  // No-op when ORB_ENABLED is not set or ORB_AIR_GAP=true.
-  if (orbEnabled()) {
-    const runExport = () =>
-      exportOrbBatch(backend.db)
-        .then((n) => { if (n > 0) console.log(JSON.stringify({ event: "selfhost_orb_export", exported: n })); })
-        .catch(() => undefined);
-    void runExport(); // flush any pending events from a previous run at startup
-    setInterval(runExport, 3_600_000); // then hourly
-  }
+  // Orb fleet-telemetry export — ALWAYS ON (the fleet-calibration contract of self-hosting). Self-gates
+  // inside exportOrbBatch: a no-op until the GitHub App is configured, or when ORB_AIR_GAP=true.
+  const runOrbExport = () =>
+    exportOrbBatch(backend.db)
+      .then((n) => { if (n > 0) console.log(JSON.stringify({ event: "selfhost_orb_export", exported: n })); })
+      .catch((error) => console.error(JSON.stringify({ level: "error", event: "selfhost_orb_export_error", error: error instanceof Error ? error.message : "unknown error" })));
+  void runOrbExport(); // flush any pending events at startup
+  setInterval(runOrbExport, 3_600_000); // then hourly
+
+  // Brokered self-host: register our public relay URL with the central Orb so it forwards this install's events
+  // here (best-effort, fire-and-forget — a no-op unless ORB_ENROLLMENT_SECRET + PUBLIC_API_ORIGIN are set).
+  void registerOrbRelayTarget({
+    ORB_ENROLLMENT_SECRET: process.env.ORB_ENROLLMENT_SECRET,
+    ORB_BROKER_URL: process.env.ORB_BROKER_URL,
+    PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
+  })
+    .then((r) => { if (r !== "skipped") console.log(JSON.stringify({ event: "selfhost_orb_relay_register", result: r })); })
+    .catch(() => {});
 
   // Graceful shutdown: stop accepting HTTP, let the queue finish, close the backend.
   let shuttingDown = false;

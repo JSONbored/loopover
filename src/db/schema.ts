@@ -288,6 +288,11 @@ export const pullRequests = sqliteTable(
     // new commit makes the bot re-approve the new code. gittensory-computed (executor-written), omitted from
     // the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors merge_blocked_sha.)
     approvedHeadSha: text("approved_head_sha"),
+    // Sweep convergence: the timestamp the scheduled re-gate sweep last recomputed this PR. selectRegateCandidates
+    // orders the sweep by THIS marker (not GitHub's updated_at) so it advances through all open PRs even when the
+    // review WRITE that would bump updated_at is suppressed (dry-run / paused). gittensory-computed (sweep-written),
+    // omitted from the GitHub-sync SET clause so a later sync cannot clobber it. (Mirrors approved_head_sha.)
+    lastRegatedAt: text("last_regated_at"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

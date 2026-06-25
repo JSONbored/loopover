@@ -129,6 +129,23 @@ describe("GitHub check runs", () => {
     expect(mints).toBe(2);
   });
 
+  it("sources the installation token from the Orb broker when an enrollment secret is set (and caches it)", async () => {
+    let brokerCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/v1/orb/token")) {
+        brokerCalls += 1;
+        return Response.json({ token: "brokered-token", installationId: 999, expiresAt: new Date(Date.now() + 60 * 60_000).toISOString() });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    // No GITHUB_APP_PRIVATE_KEY needed — a brokered self-host holds no App key.
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_test" });
+    expect(await createInstallationToken(env, 888)).toBe("brokered-token");
+    expect(await createInstallationToken(env, 888)).toBe("brokered-token"); // cached → no second broker exchange
+    expect(brokerCalls).toBe(1);
+  });
+
   it("fetches repository collaborator permissions with installation credentials", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];
@@ -288,7 +305,7 @@ describe("GitHub check runs", () => {
 
   it("creates an in-progress Gate check without a conclusion", async () => {
     const privateKey = await generatePrivateKeyPem();
-    let capturedBody: { name?: string; status?: string; conclusion?: string; output?: { title?: string; text?: string } } = {};
+    let capturedBody: { name?: string; status?: string; conclusion?: string; details_url?: string; output?: { title?: string; text?: string } } = {};
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
@@ -311,6 +328,27 @@ describe("GitHub check runs", () => {
     expect(capturedBody).not.toHaveProperty("conclusion");
     // The Gate blocks every author the same on a configured blocker (confirmed status no longer gates the verdict).
     expect(capturedBody.output?.text).toContain("blocks every author");
+    // The "Details" link points at the repo's Gittensory maintainer panel, not GitHub's generic check page. (#audit-details-url)
+    expect(capturedBody.details_url).toBe("https://gittensory.aethereal.dev/app?view=maintainer&repo=JSONbored%2Fgittensory");
+  });
+
+  it("omits details_url when the site origin cannot form a URL (#audit-details-url null arm)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let capturedBody: { details_url?: string } = {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs")) {
+        capturedBody = JSON.parse(String(init?.body)) as typeof capturedBody;
+        return Response.json({ id: 90 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey, PUBLIC_SITE_ORIGIN: "not-a-valid-origin" });
+    await createOrUpdatePendingGateCheckRun(env, 123, "JSONbored/gittensory", gateAdvisory("pending-no-url"));
+    expect(capturedBody).not.toHaveProperty("details_url");
   });
 
   it("finalizes a known pending Gate check by id without listing check runs first", async () => {

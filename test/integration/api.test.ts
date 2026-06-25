@@ -368,7 +368,8 @@ describe("api routes", () => {
     const app = createApp();
     const queued: unknown[] = [];
     const env = createTestEnv({
-      JOBS: {
+      // Webhooks route to the dedicated WEBHOOKS lane (#audit-webhook-queue), not the shared JOBS queue.
+      WEBHOOKS: {
         async send(message: unknown) {
           queued.push(message);
         },

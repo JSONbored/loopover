@@ -218,6 +218,9 @@ export type UnifiedCommentBridgeArgs = {
    *  Public-safe: only URLs + route paths — no private terms. Default OFF (the processor passes this only
    *  when screenshotsAllowed + the PR touches web-visible files). */
   beforeAfter?: CaptureRoute[] | undefined;
+  /** The disposition holds this PR for owner review because its diff touches a hard-guardrail path — so an
+   *  otherwise-ready comment renders "held for review" instead of "safe to merge". (#guarded-hold-comment) */
+  heldForReview?: boolean | undefined;
 };
 
 /**
@@ -317,6 +320,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
     footerMarkdown: args.footerMarkdown,
     ...(args.reRunLabel !== undefined ? { reRunLabel: args.reRunLabel } : {}),
     ...(extraCollapsibles !== undefined ? { extraCollapsibles } : {}),
+    ...(args.heldForReview ? { heldForReview: true } : {}),
   });
 
   // Prepend the marker verbatim (matching the legacy body, which leads with the marker then a blank line)

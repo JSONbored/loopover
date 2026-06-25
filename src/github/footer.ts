@@ -10,6 +10,21 @@
 
 /** The Gittensory product site (marketing on-ramp / attribution target). */
 export const GITTENSORY_SITE_URL = "https://gittensory.aethereal.dev";
+
+/** The maintainer control panel for a repo on the Gittensory site (`/app?view=maintainer&repo=…`). Used as the
+ *  check-run `details_url` so the merge-box "Details" link lands on the repo's review panel instead of GitHub's
+ *  generic check page, and as the in-comment control-panel link. Returns null only if URL construction throws. */
+export function maintainerControlPanelUrl(env: { PUBLIC_SITE_ORIGIN?: string | undefined }, repoFullName: string): string | null {
+  const origin = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
+  try {
+    const url = new URL("/app", origin);
+    url.searchParams.set("view", "maintainer");
+    url.searchParams.set("repo", repoFullName);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 /** The Gittensor network — where GitHub contributors register to earn for their contributions. */
 export const GITTENSOR_HOME_URL = "https://gittensor.io";
 

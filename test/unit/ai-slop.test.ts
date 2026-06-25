@@ -169,6 +169,26 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     expect(result.estimatedNeurons).toBeGreaterThan(result.remainingBudget);
   });
 
+  it("uses the full 10M shared budget, not the old 1M ceiling — slop survives heavy review spend (#review-audit)", async () => {
+    const run = vi.fn(async () => ({ response: "not json" }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "2000000" });
+    // Prior shared spend of 1.5M neurons — OVER the old 1M ceiling, well under the 2M shared budget.
+    await recordAiUsageEvent(env, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 1_500_000 });
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    expect(result.status).not.toBe("quota_exceeded"); // the old clamp(2M, 0, 1M) = 1M budget → quota_exceeded at 1.5M used
+    expect(run).toHaveBeenCalled();
+  });
+
+  it("defaults the budget HIGH (10M) when AI_DAILY_NEURON_BUDGET is unset/invalid — no 10k starvation (#review-audit)", async () => {
+    const run = vi.fn(async () => ({ response: "not json" }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "" });
+    // 2M prior spend — OVER the old 10k default, under the 10M default the fix uses.
+    await recordAiUsageEvent(env, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 2_000_000 });
+    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    expect(result.status).not.toBe("quota_exceeded"); // the old `|| 10000` default → quota_exceeded at 2M used
+    expect(run).toHaveBeenCalled();
+  });
+
   it("records the pre-budgeted retry and fallback estimate when all Workers AI outputs are unusable", async () => {
     const run = vi.fn(async () => ({ response: "not json" }));
     const env = enabledEnv(run);

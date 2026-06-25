@@ -17,6 +17,11 @@
 //   minutesSaved = reviewed * MINUTES_SAVED_PER_PR        (estimated maintainer review time saved)
 //
 // PRIVACY: counts only — no PR content, authors, scores, or reward internals. Safe to serve publicly.
+//
+// GLOBAL: the homepage total folds in every EXTERNAL registered Orb installation's outcomes (getOrbGlobalStats),
+// so the counter is worldwide, not just gittensory's own repos. JSONbored is counted here via the cloud ledger,
+// so it's excluded from the Orb side to avoid double-counting.
+import { getOrbGlobalStats } from "../orb/outcomes";
 
 /** Estimate of maintainer review/triage time saved per reviewed PR. Dial this to taste — it is the single knob
  *  behind the "time saved" stat (at current volume: 20 min ≈ 38 days saved; 15 min ≈ 28 days). */
@@ -267,6 +272,15 @@ export async function getPublicStats(
     })
     .filter((r) => r.reviewed > 0)
     .sort((a, b) => b.reviewed - a.reviewed);
+
+  // Global counter: fold in every EXTERNAL registered Orb install's outcomes so the homepage shows the worldwide
+  // total, not just gittensory's own repos. JSONbored is already counted above via cloud review_audit, so exclude
+  // that account to avoid double-counting; reversals/weekly stay cloud-only (the Orb captures merged/closed). The
+  // total grows automatically as external maintainers install + are registered.
+  const orb = await getOrbGlobalStats(env, { excludeAccount: "jsonbored" });
+  totals.merged += orb.merged;
+  totals.closed += orb.closed;
+  totals.handled += orb.total;
 
   const reviewed = reviewedOf(totals);
   const w = weeklyRows[0] ?? { reviewed: 0, merged: 0 };

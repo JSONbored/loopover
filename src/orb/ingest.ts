@@ -9,6 +9,42 @@ const VALID_REVERSALS = new Set(["none", "reopened", "reverted"]);
 const MIN_CYCLE_MS = 1_000; // <1s is implausible
 const MAX_CYCLE_MS = 31_536_000_000; // >1y is implausible
 
+// 1 MiB comfortably holds a full MAX_BATCH (500) of small anonymized events (~hashes + numbers) with
+// headroom, while bounding how much a hostile sender can make the collector buffer. Mirrors the
+// body limit das-github-mirror puts in front of its open webhook ingress.
+export const MAX_ORB_INGEST_BODY_BYTES = 1_048_576;
+
+function parseContentLength(header: string | null | undefined): number | null {
+  if (typeof header !== "string") return null;
+  const n = Number(header);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/** Read the request body with a hard byte ceiling so a hostile sender can't make us buffer unbounded
+ *  input. Returns null when the body exceeds MAX_ORB_INGEST_BODY_BYTES (the caller answers 413). */
+export async function readOrbIngestBody(request: Request, contentLengthHeader: string | null | undefined): Promise<string | null> {
+  const declared = parseContentLength(contentLengthHeader);
+  if (declared !== null && declared > MAX_ORB_INGEST_BODY_BYTES) return null;
+
+  const stream = request.body;
+  if (!stream) return "";
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_ORB_INGEST_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
+}
+
 interface OrbIngestEvent {
   repo_hash: string;
   pr_hash: string;
@@ -53,6 +89,19 @@ export async function handleOrbIngest(body: string, db: D1Database): Promise<Orb
   const { instance_id, events } = payload as OrbIngestPayload;
   if (!instance_id || events.length === 0) {
     return { error: "invalid_payload" };
+  }
+
+  // Record the instance on first contact (registered=0 by default) and bump last_seen. The registration
+  // gate lives in computeFleetAnalytics: signals are stored for everyone, but only registered instances
+  // count toward the fleet median — so open ingest can't be used to skew calibration (the das-github-mirror
+  // model: every source is seen, trusted only once an operator opts it in).
+  try {
+    await db
+      .prepare(`INSERT INTO orb_instances (instance_id) VALUES (?) ON CONFLICT(instance_id) DO UPDATE SET last_seen_at = CURRENT_TIMESTAMP`)
+      .bind(instance_id)
+      .run();
+  } catch {
+    // best-effort: never fail ingest because the instance bookkeeping hiccupped
   }
 
   const batch = events.slice(0, MAX_BATCH);

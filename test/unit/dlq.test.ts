@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { processDlqBatch } from "../../src/queue/dlq";
+import { recordGitHubRateLimitObservation, recordWebhookEvent } from "../../src/db/repositories";
+import type { JobMessage } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 function makeBatch(messages: Array<{ id: string; body: unknown }>, queue = "gittensory-jobs-dlq") {
@@ -93,5 +95,76 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
     await expect(processDlqBatch(batch as unknown as MessageBatch<never>, brokenEnv)).resolves.toBeUndefined();
     expect(batch.acked).toEqual(["msg-7"]);
+  });
+
+  describe("webhook self-heal re-drive (#1276)", () => {
+    function captureWebhooks(env: ReturnType<typeof createTestEnv>) {
+      const sent: JobMessage[] = [];
+      env.WEBHOOKS = { send: async (m: JobMessage) => void sent.push(m) } as unknown as typeof env.WEBHOOKS;
+      return sent;
+    }
+
+    it("INVARIANT: re-drives a recoverable github-webhook ONCE onto the webhook lane (event not yet processed)", async () => {
+      const env = createTestEnv();
+      const sent = captureWebhooks(env);
+      // No webhook_events row for fresh-1 → status is undefined (≠ processed) → recoverable, re-drive.
+      const batch = makeBatch([{ id: "wh-1", body: { type: "github-webhook", deliveryId: "fresh-1", eventName: "pull_request", payload: { action: "opened" } } }], "gittensory-webhooks-dlq");
+
+      await processDlqBatch(batch as unknown as MessageBatch<never>, env);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ type: "github-webhook", deliveryId: "fresh-1", eventName: "pull_request", redriven: true });
+      expect(batch.acked).toEqual(["wh-1"]);
+    });
+
+    it("REGRESSION (idempotency): does NOT re-drive a webhook whose event row is already 'processed'", async () => {
+      const env = createTestEnv();
+      await recordWebhookEvent(env, { deliveryId: "done-1", eventName: "pull_request", payloadHash: "processed", status: "processed" });
+      const sent = captureWebhooks(env);
+      const batch = makeBatch([{ id: "wh-2", body: { type: "github-webhook", deliveryId: "done-1", eventName: "pull_request", payload: {} } }], "gittensory-webhooks-dlq");
+
+      await processDlqBatch(batch as unknown as MessageBatch<never>, env);
+
+      expect(sent).toEqual([]); // already processed → no duplicate side effects
+      expect(batch.acked).toEqual(["wh-2"]);
+    });
+
+    it("REGRESSION (no DLQ loop): does NOT re-drive a webhook that was already re-driven once", async () => {
+      const env = createTestEnv();
+      const sent = captureWebhooks(env);
+      const batch = makeBatch([{ id: "wh-3", body: { type: "github-webhook", deliveryId: "loop-1", eventName: "push", payload: {}, redriven: true } }], "gittensory-webhooks-dlq");
+
+      await processDlqBatch(batch as unknown as MessageBatch<never>, env);
+
+      expect(sent).toEqual([]); // bounded to a single re-drive
+      expect(batch.acked).toEqual(["wh-3"]);
+    });
+
+    it("REGRESSION (no re-drive of maintenance jobs): a backfill job is audited and dropped, never re-driven", async () => {
+      const env = createTestEnv();
+      const sent = captureWebhooks(env);
+      const batch = makeBatch([{ id: "mn-1", body: { type: "backfill-repo-segment" } }], "gittensory-jobs-dlq");
+
+      await processDlqBatch(batch as unknown as MessageBatch<never>, env);
+
+      expect(sent).toEqual([]); // cron self-heals maintenance jobs
+      expect(batch.acked).toEqual(["mn-1"]);
+    });
+
+    it("re-drives a rate-limited webhook AFTER the reset delay when the shared REST budget is exhausted (#audit-rate-headroom)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+      const env = createTestEnv();
+      await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+      const options: Array<{ delaySeconds?: number } | undefined> = [];
+      env.WEBHOOKS = { send: async (_m: JobMessage, opts?: { delaySeconds?: number }) => void options.push(opts) } as unknown as typeof env.WEBHOOKS;
+      const batch = makeBatch([{ id: "wh-rl", body: { type: "github-webhook", deliveryId: "rl-1", eventName: "pull_request", payload: {} } }], "gittensory-webhooks-dlq");
+
+      await processDlqBatch(batch as unknown as MessageBatch<never>, env);
+
+      expect(options).toHaveLength(1);
+      expect(options[0]?.delaySeconds).toBe(900); // re-driven after the reset, not immediately
+      vi.useRealTimers();
+    });
   });
 });

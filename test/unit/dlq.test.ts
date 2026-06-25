@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { processDlqBatch } from "../../src/queue/dlq";
-import { recordWebhookEvent } from "../../src/db/repositories";
+import { recordGitHubRateLimitObservation, recordWebhookEvent } from "../../src/db/repositories";
 import type { JobMessage } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -149,6 +149,22 @@ describe("DLQ consumer (processDlqBatch)", () => {
 
       expect(sent).toEqual([]); // cron self-heals maintenance jobs
       expect(batch.acked).toEqual(["mn-1"]);
+    });
+
+    it("re-drives a rate-limited webhook AFTER the reset delay when the shared REST budget is exhausted (#audit-rate-headroom)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+      const env = createTestEnv();
+      await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+      const options: Array<{ delaySeconds?: number } | undefined> = [];
+      env.WEBHOOKS = { send: async (_m: JobMessage, opts?: { delaySeconds?: number }) => void options.push(opts) } as unknown as typeof env.WEBHOOKS;
+      const batch = makeBatch([{ id: "wh-rl", body: { type: "github-webhook", deliveryId: "rl-1", eventName: "pull_request", payload: {} } }], "gittensory-webhooks-dlq");
+
+      await processDlqBatch(batch as unknown as MessageBatch<never>, env);
+
+      expect(options).toHaveLength(1);
+      expect(options[0]?.delaySeconds).toBe(900); // re-driven after the reset, not immediately
+      vi.useRealTimers();
     });
   });
 });

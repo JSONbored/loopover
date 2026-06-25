@@ -116,6 +116,7 @@ import { commandAuthorizationAllowedRoles, commandAuthorizationNeedsMinerDetecti
 import { autonomyRequiresApproval, isAgentConfigured, resolveAutonomy } from "../settings/autonomy";
 import { isGlobalAgentPause, resolveAgentActionMode } from "../settings/agent-execution";
 import { isRegateSweepDraining, selectRegateCandidates } from "../settings/agent-sweep";
+import { MAINTENANCE_RESERVED_HEADROOM, delayUntil, shouldWaitForGitHubRateLimit } from "../github/rate-limit";
 import { downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type PlannedAgentAction } from "../settings/agent-actions";
 import { executeAgentMaintenanceActions, pendingClosureLabelApplied } from "../services/agent-action-executor";
 import { processSubmitDraft } from "../services/draft";
@@ -572,6 +573,22 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
   const candidates = selectRegateCandidates({ pulls: openPullRequests, now: nowIso() });
   // No stale PRs this tick — stay quiet rather than writing an empty heartbeat to the audit feed.
   if (candidates.length === 0) return;
+  // Reserve installation rate-limit headroom for real webhook traffic (#audit-rate-headroom): with the shared REST
+  // budget at/below the maintenance floor, defer the WHOLE sweep until the reset rather than fanning out per-PR
+  // jobs that would each have to defer. Webhooks never pre-yield, so this hands the remaining budget to them.
+  const sweepRateResetAt = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
+  if (sweepRateResetAt) {
+    await env.JOBS.send({ type: "agent-regate-sweep", requestedBy: "schedule", repoFullName }, { delaySeconds: delayUntil(sweepRateResetAt) });
+    await recordAuditEvent(env, {
+      eventType: "agent.sweep.regate",
+      actor: "gittensory",
+      targetKey: repoFullName,
+      outcome: "queued",
+      detail: `re-gate sweep deferred: shared GitHub REST budget below the maintenance headroom floor; re-queued after ${sweepRateResetAt}`,
+      metadata: { repoFullName, mode, deferred: true, rateResetAt: sweepRateResetAt },
+    });
+    return;
+  }
   const requireLinkedIssue = settings.requireLinkedIssue || settings.linkedIssueGateMode !== "off";
   const verdicts: Record<string, string> = {};
   const flaggedPulls: number[] = [];
@@ -618,6 +635,15 @@ async function sweepRepoRegate(env: Env, repoFullName: string | undefined): Prom
 // sweep's skipAiReview policy. Both steps degrade quietly on failure (logged, never rethrown) so one bad PR never
 // blocks the others; a stamp failure just re-selects the PR next sweep.
 async function regatePullRequest(env: Env, repoFullName: string, prNumber: number, installationId: number, deliveryId: string): Promise<void> {
+  // Reserve installation rate-limit headroom for real webhooks (#audit-rate-headroom): all repos share ONE GitHub
+  // App installation = ONE REST bucket, so when the shared budget is at/below the maintenance floor, DEFER this
+  // re-review until the reset instead of burning budget a webhook's re-review needs. Re-enqueue with the reset
+  // delay so the PR is still eventually re-gated.
+  const rateResetAt = await shouldWaitForGitHubRateLimit(env, MAINTENANCE_RESERVED_HEADROOM);
+  if (rateResetAt) {
+    await env.JOBS.send({ type: "agent-regate-pr", deliveryId, repoFullName, prNumber, installationId }, { delaySeconds: delayUntil(rateResetAt) });
+    return;
+  }
   const settings = await resolveRepositorySettings(env, repoFullName);
   await reReviewStoredPullRequest(env, deliveryId, installationId, repoFullName, prNumber, undefined, { skipAiReview: settings.aiReviewMode !== "block" }).catch((error) => {
     console.error(JSON.stringify({ level: "warn", event: "sweep_rereview_failed", deliveryId, repository: repoFullName, pullNumber: prNumber, error: errorMessage(error) }));

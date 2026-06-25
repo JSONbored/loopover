@@ -11,7 +11,6 @@ import {
   getLatestRepoGithubTotalsSnapshot,
   getRepoSyncSegment,
   getRepoSyncState,
-  listLatestGitHubRateLimitObservations,
   listOpenIssueNumbers,
   listOpenPullRequests,
   listInstallations,
@@ -61,6 +60,7 @@ import type {
 } from "../types";
 import { errorMessage, nowIso, repoParts, strippedErrorMessage } from "../utils/json";
 import { createInstallationToken, getAppInstallation, GITTENSORY_CONTEXT_CHECK_NAME, GITTENSORY_GATE_CHECK_NAME } from "./app";
+import { delayUntil, shouldWaitForGitHubRateLimit } from "./rate-limit";
 
 type GitHubLabelPayload = {
   name: string;
@@ -295,7 +295,6 @@ const DEFAULT_LIMITS: BackfillLimits = {
 
 const FRESH_SYNC_MS = 6 * 60 * 60 * 1000;
 const ERROR_BACKOFF_MS = 60 * 60 * 1000;
-const LOW_REST_RATE_LIMIT_REMAINING = 75;
 const SEGMENT_PAGE_BUDGET: Record<BackfillMode, number> = { light: 2, full: 10, resume: 10 };
 const PR_DETAIL_BATCH_SIZE: Record<BackfillMode, number> = { light: 12, full: 40, resume: 40 };
 const CURRENT_OPEN_SCAN_MARKER = "gittensory-current-open-scan-v1";
@@ -1496,14 +1495,6 @@ async function refreshRepoSyncStateFromSegments(env: Env, repo: RepositoryRecord
   });
 }
 
-async function shouldWaitForGitHubRateLimit(env: Env): Promise<string | undefined> {
-  const observations = await listLatestGitHubRateLimitObservations(env, 10);
-  const rest = observations.find((observation) => observation.resource === "rest" && observation.remaining !== null && observation.remaining !== undefined);
-  if (!rest?.resetAt || rest.remaining === null || rest.remaining === undefined || rest.remaining > LOW_REST_RATE_LIMIT_REMAINING) return undefined;
-  /* v8 ignore next -- Invalid reset timestamps are treated as not waiting; valid low-rate-limit waits are covered. */
-  return Date.parse(rest.resetAt) > Date.now() ? rest.resetAt : undefined;
-}
-
 function segmentJobResult(
   repoFullName: string,
   segmentName: BackfillSegmentName,
@@ -1521,12 +1512,6 @@ function segmentJobResult(
   };
 }
 
-function delayUntil(iso: string): number {
-  const ms = Date.parse(iso) - Date.now();
-  /* v8 ignore next -- Invalid reset timestamps use conservative delay; valid reset delays are covered through queueing. */
-  if (!Number.isFinite(ms)) return 60;
-  return Math.max(30, Math.min(900, Math.ceil(ms / 1000) + 15));
-}
 
 async function backfillRepository(env: Env, repo: RepositoryRecord, limits: BackfillLimits, mode: BackfillMode): Promise<RepoBackfillResult> {
   const startedAt = nowIso();

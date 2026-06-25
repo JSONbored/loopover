@@ -1,5 +1,6 @@
 import { createApp } from "./api/routes";
 import { RateLimiter } from "./auth/rate-limit";
+import { delayUntil, shouldWaitForGitHubRateLimit } from "./github/rate-limit";
 import { processDlqBatch } from "./queue/dlq";
 import { processJob } from "./queue/processors";
 import { isOpsEnabled } from "./review/ops-wire";
@@ -34,7 +35,12 @@ export default {
             error: error instanceof Error ? error.message : "unknown error",
           }),
         );
-        message.retry();
+        // If the shared GitHub REST budget is exhausted, this failure is most likely a rate-limit — retry AFTER the
+        // reset so a real webhook OUTLASTS a transient rate-limit window instead of burning its retries immediately
+        // and being dead-lettered (the surviving event-loss path). (#audit-rate-headroom)
+        const resetAt = await shouldWaitForGitHubRateLimit(env).catch(() => undefined);
+        if (resetAt) message.retry({ delaySeconds: delayUntil(resetAt) });
+        else message.retry();
       }
     }
   },

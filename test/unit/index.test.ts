@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../../src/index";
+import { recordGitHubRateLimitObservation } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 describe("worker entrypoint", () => {
@@ -82,6 +83,31 @@ describe("worker entrypoint", () => {
     await worker.queue(batch, env);
     expect(acked).toEqual(["ok"]);
     expect(retried).toEqual(["bad"]);
+  });
+
+  it("retries a failed job AFTER the rate-limit reset when the shared REST budget is exhausted (#audit-rate-headroom)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
+    const env = createTestEnv();
+    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    const retries: Array<{ delaySeconds?: number } | undefined> = [];
+    const batch = {
+      messages: [
+        {
+          id: "bad",
+          body: { type: "refresh-registry", requestedBy: "test" },
+          ack: () => undefined,
+          retry: (options?: { delaySeconds?: number }) => retries.push(options),
+        },
+      ],
+    } as unknown as MessageBatch<import("../../src/types").JobMessage>;
+
+    await worker.queue(batch, env);
+
+    expect(retries).toHaveLength(1);
+    expect(retries[0]?.delaySeconds).toBe(900); // re-queued after the reset, not retried immediately
+    vi.useRealTimers();
   });
 
   it("runs scheduled jobs through waitUntil", async () => {

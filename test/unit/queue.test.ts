@@ -899,6 +899,40 @@ describe("queue processors", () => {
     errors.mockRestore();
   });
 
+  it("REGRESSION: the sweep DEFERS (re-queues, no fan-out) when the shared REST budget is below the maintenance floor (#audit-rate-headroom)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    await upsertInstallation(env, { action: "created", installation: { id: 9200, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9200);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "PR7", state: "open", user: { login: "c" }, head: { sha: "a7" }, labels: [], body: "" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // Low REST budget (10 ≤ 150 maintenance floor) with a future reset → maintenance must yield.
+    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 10, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
+
+    await processJob(env, { type: "agent-regate-sweep", requestedBy: "test", repoFullName: "owner/agent-repo" });
+
+    expect(sent.filter((m) => m.type === "agent-regate-pr")).toEqual([]); // no fan-out while deferred
+    expect(sent.some((m) => m.type === "agent-regate-sweep" && m.repoFullName === "owner/agent-repo")).toBe(true); // re-queued
+    const audit = await env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ?").bind("agent.sweep.regate").first<{ outcome: string; metadata_json: string }>();
+    expect(audit?.outcome).toBe("queued");
+    expect(JSON.parse(audit?.metadata_json ?? "{}")).toMatchObject({ deferred: true });
+  });
+
+  it("REGRESSION: a per-PR re-gate job DEFERS (re-queues, no re-review/stamp) when the REST budget is below the maintenance floor (#audit-rate-headroom)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    await repositoriesModule.recordGitHubRateLimitObservation(env, { repoFullName: "owner/agent-repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 10, resetAt: "2026-05-28T02:30:00.000Z", observedAt: "2026-05-28T02:00:00.000Z" });
+    const stamp = vi.spyOn(repositoriesModule, "markPullRequestRegated");
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "regate-sweep:owner/agent-repo#7", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9200 });
+
+    expect(sent.filter((m) => m.type === "agent-regate-pr")).toHaveLength(1); // re-queued for after the reset
+    expect(stamp).not.toHaveBeenCalled(); // deferred before any re-review or stamp
+    stamp.mockRestore();
+  });
+
   it("routes repo-scoped backfill jobs into resumable segment and detail processors", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({

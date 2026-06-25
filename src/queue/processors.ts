@@ -1,6 +1,7 @@
 import {
   countOpenIssues,
   countOpenPullRequests,
+  countRecentSubmissionsByAuthor,
   getAgentCommandAnswer,
   getInstallation,
   getLatestRepoGithubTotalsSnapshot,
@@ -185,7 +186,7 @@ import { indexRepo, reindexChangedPaths } from "../review/rag-index";
 import { isReputationEnabled, recordReputationOutcome, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { deploymentStatusToPreview, type DeploymentStatusPayload } from "../review/visual/preview-url";
-import { loadHardGuardrailGlobs } from "../review/guardrail-config";
+import { loadHardGuardrailGlobs, loadSubmissionFloodLimit } from "../review/guardrail-config";
 import { closePullRequest, createIssueComment, getLastCloserLogin } from "../github/pr-actions";
 import { loadLinkedIssueHardRules, resolveLinkedIssueHardRule } from "../review/linked-issue-hard-rules";
 import { isOpsEnabled, runOpsAlerts } from "../review/ops-wire";
@@ -747,9 +748,10 @@ async function maybeRunAgentMaintenance(
   // planner uses this to NEVER approve/merge a PR whose CI isn't green, to CLOSE a red-CI non-owner PR (citing
   // the failing checks) / HOLD the owner's, and to DEFER entirely while CI is still pending.
   const ciToken = await createInstallationToken(env, installationId).catch(() => undefined);
-  const [changedFiles, hardGuardrailGlobs, requiredContexts, liveMergeState, liveReviewDecision] = await Promise.all([
+  const [changedFiles, hardGuardrailGlobs, submissionFloodLimit, requiredContexts, liveMergeState, liveReviewDecision] = await Promise.all([
     resolvePullRequestFilesForReview(env, { installationId, repoFullName, pullNumber: pr.number }),
     loadHardGuardrailGlobs(env, repoFullName),
+    loadSubmissionFloodLimit(env, repoFullName),
     // RC2: branch-protection REQUIRED status contexts, so only a required red check gates the PR (a red
     // codecov/* is surfaced but never blocks merge/approve or forces request_changes). null ⇒ fold all red.
     fetchRequiredStatusContexts(env, repoFullName, pr.baseRef ?? args.repo?.defaultBranch, ciToken ?? env.GITHUB_PUBLIC_TOKEN),
@@ -768,6 +770,13 @@ async function maybeRunAgentMaintenance(
   const authorLogin = pr.authorLogin ?? "";
   const authorIsOwner = authorLogin.length > 0 && authorLogin.toLowerCase() === repoOwner.toLowerCase();
   const authorIsAutomationBot = isProtectedAutomationAuthor(pr.authorLogin);
+  const submissionFloodHit =
+    submissionFloodLimit != null &&
+    authorLogin.length > 0 &&
+    !authorIsOwner &&
+    !authorIsAutomationBot &&
+    (await countRecentSubmissionsByAuthor(env, repoFullName, authorLogin, new Date(Date.now() - submissionFloodLimit.submissionWindowHours * 60 * 60 * 1000).toISOString())) >
+      submissionFloodLimit.maxSubmissionsPerAuthorWindow;
 
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules): when the repo enabled any rule, a body that links
   // MORE closing references than we can safely verify (overflow) is itself a violation; otherwise evaluate the
@@ -795,6 +804,7 @@ async function maybeRunAgentMaintenance(
     hardGuardrailGlobs,
     authorIsOwner,
     authorIsAutomationBot,
+    submissionFloodHit,
     ciState: ciAggregate.ciState,
     failingCheckNames: ciAggregate.failingDetails.map((detail) => detail.name),
     ciRequiredContextsVerified: hasVerifiedRequiredContexts(requiredContexts),

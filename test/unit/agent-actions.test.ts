@@ -256,17 +256,26 @@ describe("planAgentMaintenanceActions (#778)", () => {
     });
   });
 
-  describe("submission volume is NOT a manual-hold reason — only guardrail paths hold (#minimize-manual)", () => {
-    it("a high-volume author's clean+green+approved PR MERGES (the quality gate, not a submission count, is the defense)", () => {
-      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+  describe("submission flood guard", () => {
+    it("holds a flooding contributor's clean+green+approved PR for manual review", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, submissionFloodHit: true, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
       const cls = classes(plan);
-      expect(cls).toContain("merge"); // clean → merge, regardless of how many PRs the author has open
+      expect(cls).not.toContain("merge");
+      expect(cls).not.toContain("approve");
       expect(cls).not.toContain("close");
-      expect(plan.find((a) => a.actionClass === "label")?.label).not.toBe(AGENT_LABEL_NEEDS_REVIEW); // never held for review
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
     });
-    it("a high-volume author's red-CI PR still CLOSES (the normal close path)", () => {
-      const plan = classes(planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto" }, ciState: "failed", pr: { labels: [] } })));
-      expect(plan).toContain("close");
+    it("does not hold a clean+green+approved PR when the flood cap is not hit", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, submissionFloodHit: false, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
+      const cls = classes(plan);
+      expect(cls).toContain("merge");
+      expect(cls).not.toContain("close");
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_READY);
+    });
+    it("a flooding author's red-CI PR is held rather than closed until a human reviews the flood", () => {
+      const plan = planAgentMaintenanceActions(input({ conclusion: "neutral", autonomy: { close: "auto", label: "auto" }, submissionFloodHit: true, ciState: "failed", pr: { labels: [] } }));
+      expect(classes(plan)).not.toContain("close");
+      expect(plan.find((a) => a.actionClass === "label")?.label).toBe(AGENT_LABEL_CHANGES);
     });
     it("ONLY a guardrail-touching review-good PR is held for manual review (needs-human, never merged/closed)", () => {
       const plan = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", approve: "auto", close: "auto", label: "auto" }, hardGuardrailGlobs: ["src/**"], changedPaths: ["src/index.ts"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));

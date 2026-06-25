@@ -71,6 +71,10 @@ export type AgentActionPlanInput = {
   // neither auto-merge, auto-approve, nor auto-close such a PR; it falls through to a human.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
+  // Anti-farming guard: true when a non-owner, non-automation contributor exceeded the operator-configured
+  // per-repo submission volume cap. Like a guardrail path, this suppresses autonomous approve/merge/close and
+  // holds the PR for a human.
+  submissionFloodHit?: boolean | undefined;
   // True when the PR author is the repo owner (e.g. JSONbored). Standing rule: owner PRs are NEVER
   // auto-closed. They may still auto-merge when clean + passing.
   authorIsOwner: boolean;
@@ -248,12 +252,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   const guardrailHit =
     input.hardGuardrailGlobs.length > 0 &&
     (input.changedPaths.length === 0 || changedPathsHittingGuardrail(input.changedPaths, input.hardGuardrailGlobs).length > 0);
-  // Manual review is the RARE exception (the operator's minimize-manual goal): the ONLY thing that holds a PR for
-  // a human instead of merge/close is an auto-merge-ready PR that touches a hard-guardrail path. (An owner PR that
-  // is not review-good is held separately, via the owner close-exemption below — never auto-closed.) Submission
-  // volume is NOT a hold reason: a high-volume author's clean PR still merges and their bad PR still closes — the
-  // quality gate, not a submission count, is the defense (anti-farming-by-manual-hold removed).
-  const heldForManualReview = guardrailHit;
+  // Manual review is the RARE exception (the operator's minimize-manual goal): a PR is held only when an
+  // auto-merge-ready PR touches a hard-guardrail path, or when an operator-configured submission-flood cap says
+  // a non-owner/non-automation contributor is flooding the repo. Owner PRs that are not review-good are held
+  // separately, via the owner close-exemption below — never auto-closed.
+  const submissionFloodHit = input.submissionFloodHit === true;
+  const heldForManualReview = guardrailHit || submissionFloodHit;
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
   // with high accuracy; manual review is the RARE exception. A PR is "review-good" when the gate passes AND CI is
   // green — that's the only thing that earns an auto-merge or an approve. Everything else, for a CONTRIBUTOR, is a
@@ -287,7 +291,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // have folded in optional / third-party checks and must keep the hard-guardrail manual hold.
   // (Rebase-if-behind already ran above, so a red CI here is on the latest base — not a stale-base artifact.) (#ci-fail-closes-guarded)
   const redVerifiedRequiredCi = ciFailed && input.ciRequiredContextsVerified === true;
-  const willClose = isContributor && acting("close") && (redVerifiedRequiredCi || (!guardrailHit && (ciFailed || input.conclusion === "failure" || isConflict)));
+  const willClose = isContributor && acting("close") && !submissionFloodHit && (redVerifiedRequiredCi || (!guardrailHit && (ciFailed || input.conclusion === "failure" || isConflict)));
   // Linked-issue HARD-RULE close (#linked-issue-hard-rules). A DETERMINISTIC verdict about the LINKED ISSUE
   // (owner-assigned / missing point-label / maintainer-only) — NOT an AI verdict, so there is no hallucination
   // to guard against: this close fires REGARDLESS of `guardrailHit`. It still only ever closes a CONTRIBUTOR

@@ -71,6 +71,29 @@ function asNonEmptyStringArray(value: unknown): string[] | null {
   return out.length > 0 ? out : null;
 }
 
+export type SubmissionFloodLimit = {
+  maxSubmissionsPerAuthorWindow: number;
+  submissionWindowHours: number;
+};
+
+function positiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+export async function loadSubmissionFloodLimit(env: Env, repoFullName: string): Promise<SubmissionFloodLimit | null> {
+  const slug = repoFullName.includes("/") ? repoFullName.slice(repoFullName.indexOf("/") + 1) : repoFullName;
+  if (!env.REVIEW_CONFIG) return null;
+  try {
+    const config = (await env.REVIEW_CONFIG.get(slug, "json")) as { maxSubmissionsPerAuthorWindow?: JsonValue; submissionWindowHours?: JsonValue } | null;
+    const maxSubmissionsPerAuthorWindow = positiveInteger(config?.maxSubmissionsPerAuthorWindow);
+    const submissionWindowHours = positiveInteger(config?.submissionWindowHours);
+    if (maxSubmissionsPerAuthorWindow == null || submissionWindowHours == null) return null;
+    return { maxSubmissionsPerAuthorWindow, submissionWindowHours };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Resolve a repo's hard-guardrail path globs from the shared REVIEW_CONFIG KV (key = repo slug). Never throws
  * (the auto-maintain trigger is best-effort). A legitimately-absent binding/key/field falls back to the narrow

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { matchesAny } from "../../src/signals/change-guardrail";
-import { CONFIG_AS_CODE_GUARDRAIL_GLOBS, DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ENGINE_DECISION_GUARDRAIL_GLOBS, FAIL_CLOSED_GUARDRAIL_GLOBS, loadHardGuardrailGlobs } from "../../src/review/guardrail-config";
+import { CONFIG_AS_CODE_GUARDRAIL_GLOBS, DEFAULT_CRUCIAL_GUARDRAIL_GLOBS, ENGINE_DECISION_GUARDRAIL_GLOBS, FAIL_CLOSED_GUARDRAIL_GLOBS, loadHardGuardrailGlobs, loadSubmissionFloodLimit } from "../../src/review/guardrail-config";
 
 function envWith(get: (key: string, type: string) => Promise<unknown>): Env {
   return { REVIEW_CONFIG: { get } } as unknown as Env;
@@ -75,5 +75,31 @@ describe("loadHardGuardrailGlobs", () => {
     const get = vi.fn().mockResolvedValue({ hardGuardrailGlobs: ["a/**"] });
     await loadHardGuardrailGlobs(envWith(get), "soloname");
     expect(get).toHaveBeenCalledWith("soloname", "json");
+  });
+});
+
+describe("loadSubmissionFloodLimit", () => {
+  it("returns null when REVIEW_CONFIG is unbound", async () => {
+    expect(await loadSubmissionFloodLimit({} as Env, "JSONbored/gittensory")).toBeNull();
+  });
+
+  it("reads positive integer flood limits from KV keyed by repo slug", async () => {
+    const get = vi.fn().mockResolvedValue({ maxSubmissionsPerAuthorWindow: 10, submissionWindowHours: 24 });
+    await expect(loadSubmissionFloodLimit(envWith(get), "JSONbored/gittensory")).resolves.toEqual({ maxSubmissionsPerAuthorWindow: 10, submissionWindowHours: 24 });
+    expect(get).toHaveBeenCalledWith("gittensory", "json");
+  });
+
+  it("returns null when either flood limit is absent, invalid, or the KV read throws", async () => {
+    await expect(loadSubmissionFloodLimit(envWith(async () => ({ maxSubmissionsPerAuthorWindow: 10 })), "o/r")).resolves.toBeNull();
+    await expect(loadSubmissionFloodLimit(envWith(async () => ({ maxSubmissionsPerAuthorWindow: 0, submissionWindowHours: 24 })), "o/r")).resolves.toBeNull();
+    await expect(loadSubmissionFloodLimit(envWith(async () => ({ maxSubmissionsPerAuthorWindow: 10, submissionWindowHours: 1.5 })), "o/r")).resolves.toBeNull();
+    await expect(
+      loadSubmissionFloodLimit(
+        envWith(async () => {
+          throw new Error("kv down");
+        }),
+        "o/r",
+      ),
+    ).resolves.toBeNull();
   });
 });

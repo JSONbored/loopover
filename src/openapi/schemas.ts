@@ -613,6 +613,16 @@ export const RepositorySettingsSchema = z
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
       commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
     }),
+    contributorBlacklist: z
+      .array(
+        z.object({
+          login: z.string(),
+          reason: z.string().optional(),
+          evidence: z.array(z.string()).optional(),
+          addedAt: z.string().optional(),
+        }),
+      )
+      .optional(),
     autonomy: z
       .record(z.enum(["review", "request_changes", "approve", "merge", "close", "label"]), z.enum(["observe", "suggest", "propose", "auto_with_approval", "auto"]))
       .optional(),

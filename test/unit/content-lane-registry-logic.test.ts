@@ -300,9 +300,10 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
     expect(classifyRegistryPrScope(spec, ["registry/subnets/actual.json", "registry/candidates/community/foo.json"]).scope).toBe("mixed-files");
   });
 
-  it("is not-direct for no submission, and >1 entry file", () => {
+  it("is not-direct for no submission, but mixed for too many direct registry files", () => {
     expect(classifyRegistryPrScope(spec, ["README.md"]).scope).toBe("not-direct-submission");
-    expect(classifyRegistryPrScope(spec, ["registry/subnets/a.json", "registry/subnets/b.json"]).scope).toBe("not-direct-submission");
+    expect(classifyRegistryPrScope(spec, ["registry/subnets/a.json", "registry/subnets/b.json"]).scope).toBe("mixed-files");
+    expect(classifyRegistryPrScope(spec, ["registry/providers/a.json", "registry/providers/b.json"]).scope).toBe("mixed-files");
     expect(isRegistrySubmissionScope("not-direct-submission")).toBe(false);
   });
 
@@ -314,7 +315,7 @@ describe("classifyRegistryPrScope (generic surface model, metagraphed spec)", ()
   it("works for a minimal spec with no provider/artifact patterns (a bare registry)", () => {
     const bare: RegistryLaneSpec = { entryFilePattern: /^data\/[a-z]+\.json$/, collectionField: "entries" };
     expect(classifyRegistryPrScope(bare, ["data/x.json"]).scope).toBe("entry-submission");
-    expect(classifyRegistryPrScope(bare, ["data/x.json", "data/y.json"]).scope).toBe("not-direct-submission");
+    expect(classifyRegistryPrScope(bare, ["data/x.json", "data/y.json"]).scope).toBe("mixed-files");
     expect(classifyRegistryPrScope(bare, ["data/x.json", "other.json"]).scope).toBe("mixed-files");
   });
 });

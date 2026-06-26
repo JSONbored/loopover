@@ -205,6 +205,7 @@ export type GitHubWebhookPayload = {
   action?: string;
   installation?: {
     id: number;
+    app_id?: number;
     account?: {
       login?: string;
       id?: number;
@@ -553,6 +554,11 @@ export type RepositorySettings = {
    *  (default false); optional so existing settings fixtures/callers need not be touched. */
   badgeEnabled?: boolean | undefined;
   commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
+  /** Per-repo contributor blacklist (#1425, anti-abuse): banned GitHub logins whose PRs/issues the engine
+   *  deterministically closes ahead of merit review. Layered the same as other settings (`.gittensory.yml` >
+   *  DB) and unioned with the shared/global list at the point of use. Always populated by the DB layer
+   *  (default `[]`); optional so existing settings fixtures/callers need not be touched. */
+  contributorBlacklist?: ContributorBlacklistEntry[] | undefined;
   /** Agent-layer autonomy dial (#773): per-action-class level. Always populated by the DB layer (default
    *  `{}` = deny-by-default = "observe" for every class); optional so existing settings fixtures/callers
    *  need not be touched. The single source the action layer (#778) reads via `resolveAutonomy`. */
@@ -575,6 +581,19 @@ export type CommandAuthorizationRole = "maintainer" | "collaborator" | "pr_autho
 export type RepositoryCommandAuthorizationPolicy = {
   default: CommandAuthorizationRole[];
   commands: Record<string, CommandAuthorizationRole[]>;
+};
+
+/** A blocked contributor (#1425, anti-abuse): a GitHub `login` plus optional PUBLIC metadata. The converged
+ *  engine short-circuits a blacklisted author's PR/issue to a deterministic close ahead of any merit/CI/AI
+ *  analysis. `login` is public data — entries NEVER carry wallets/hotkeys/trust-scores/private values. */
+export type ContributorBlacklistEntry = {
+  login: string;
+  /** Why the account is blocked, e.g. `plagiarism` / `farming`. Free-text, public-safe. */
+  reason?: string | undefined;
+  /** Public PR/issue URLs (or other public refs) evidencing the block. */
+  evidence?: string[] | undefined;
+  /** ISO-8601 date the entry was added. */
+  addedAt?: string | undefined;
 };
 
 /** Agent-layer graduated autonomy (#773), least → most autonomous. `observe` is the deny-by-default floor:
@@ -1069,6 +1088,9 @@ export type InstallationRecord = {
   id: number;
   accountLogin: string;
   accountId: number;
+  /** The GitHub App this installation belongs to (#selfhost-app-id); null until an `installation` event or the
+   *  App-installation API refresh populates it. */
+  appId?: number | null | undefined;
   targetType: string;
   repositorySelection?: string | null | undefined;
   permissions: Record<string, string>;

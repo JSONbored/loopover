@@ -7506,3 +7506,70 @@ function reopenedPayload(sender: string): any {
     },
   };
 }
+
+describe("installation app_id capture + dual-app webhook filter (#selfhost-app-id)", () => {
+  it("captures app_id from an installation payload, returns it, and preserves it when a later payload omits it", async () => {
+    const env = createTestEnv();
+    const stored = await upsertInstallation(env, {
+      action: "created",
+      installation: { id: 4242, app_id: 555, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] },
+    });
+    expect(stored).toBe(555);
+    expect((await getInstallation(env, 4242))?.appId).toBe(555);
+    // A subsequent payload WITHOUT app_id (e.g. a pull_request event) must not clear the stored value.
+    const preserved = await upsertInstallation(env, { action: "synchronize", installation: { id: 4242, account: { login: "owner", id: 1, type: "Organization" } } });
+    expect(preserved).toBe(555);
+    expect((await getInstallation(env, 4242))?.appId).toBe(555);
+  });
+
+  it("acks a webhook whose installation belongs to a DIFFERENT app without processing it", async () => {
+    const env = createTestEnv(); // own GITHUB_APP_ID defaults to "3824093"
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 7777);
+    // The installation is recorded as belonging to a FOREIGN app (99999 ≠ 3824093).
+    await upsertInstallation(env, { action: "created", installation: { id: 7777, app_id: 99999, account: { login: "JSONbored", id: 1, type: "User" }, repository_selection: "selected", permissions: {}, events: [] } });
+    vi.stubGlobal("fetch", async () => Response.json({}));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "foreign-app-pr",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 7777 }, // a PR event carries no app_id; the stored 99999 is used
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 88, title: "Foreign", state: "open", user: { login: "contributor" }, head: { sha: "f88" }, labels: [], body: "x" },
+      },
+    });
+
+    // The delivery was acked as foreign, and the PR was never upserted (the handler returned before the PR block).
+    const evt = await env.DB.prepare("select payload_hash from webhook_events where delivery_id = ?").bind("foreign-app-pr").first<{ payload_hash: string }>();
+    expect(evt?.payload_hash).toBe("foreign_app");
+    const pr = await env.DB.prepare("select count(*) as n from pull_requests where repo_full_name = ? and number = ?").bind("JSONbored/gittensory", 88).first<{ n: number }>();
+    expect(pr?.n).toBe(0);
+  });
+
+  it("processes a webhook whose installation app_id matches this backend (no false filtering)", async () => {
+    const env = createTestEnv(); // own GITHUB_APP_ID "3824093"
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 3824093001);
+    await upsertInstallation(env, { action: "created", installation: { id: 3824093001, app_id: 3824093, account: { login: "JSONbored", id: 1, type: "User" }, repository_selection: "selected", permissions: {}, events: [] } });
+    vi.stubGlobal("fetch", async () => Response.json({}));
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "own-app-pr",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 3824093001 },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 89, title: "Own", state: "open", user: { login: "contributor" }, head: { sha: "o89" }, labels: [], body: "x" },
+      },
+    });
+
+    // The matching-app webhook was processed normally — the PR row exists and it was NOT acked as foreign.
+    const pr = await env.DB.prepare("select count(*) as n from pull_requests where repo_full_name = ? and number = ?").bind("JSONbored/gittensory", 89).first<{ n: number }>();
+    expect(pr?.n).toBe(1);
+    const evt = await env.DB.prepare("select payload_hash from webhook_events where delivery_id = ?").bind("own-app-pr").first<{ payload_hash: string }>();
+    expect(evt?.payload_hash).not.toBe("foreign_app");
+  });
+});

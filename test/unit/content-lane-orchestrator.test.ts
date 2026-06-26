@@ -48,6 +48,20 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     expect((await review([SUBNET, "src/index.ts"], {}))?.verdict).toBe("close");
   });
 
+  it("closes a multi-entry registry submission instead of deferring to the generic gate", async () => {
+    const calls: string[] = [];
+    const result = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, "registry/subnets/bar.json"],
+      loadFile: (path, ref) => {
+        calls.push(`${ref}:${path}`);
+        return Promise.resolve(null);
+      },
+    });
+
+    expect(result?.verdict).toBe("close");
+    expect(calls).toEqual([]);
+  });
+
   it("merges a valid provider submission and CLOSES an invalid one (never manual)", async () => {
     const okProvider = { [`head:${PROVIDER}`]: JSON.stringify({ provider: { id: "acme", name: "Acme", website_url: "https://acme.example" } }) };
     expect((await review([PROVIDER], okProvider))?.verdict).toBe("merge");

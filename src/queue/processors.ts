@@ -83,7 +83,7 @@ import {
   refreshPullRequestDetails,
 } from "../github/backfill";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot, fetchOfficialGittensorMiner, type GittensorContributorSnapshot, type OfficialGittensorMinerDetection } from "../gittensor/api";
-import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission } from "../github/app";
+import { createInstallationToken, createOrUpdateCheckRun, createOrUpdateErroredGateCheckRun, createOrUpdateGateCheckRun, createOrUpdateOverriddenGateCheckRun, createOrUpdatePendingGateCheckRun, createOrUpdateSkippedGateCheckRun, getInstallationId, getRepositoryCollaboratorPermission, isForeignAppInstallation } from "../github/app";
 import { AGENT_COMMAND_COMMENT_MARKER, createOrUpdateAgentCommandComment, createOrUpdatePrIntelligenceComment, PR_PANEL_COMMENT_MARKER } from "../github/comments";
 import { gittensoryFooter, gittensorRepoEarnUrl, maintainerControlPanelUrl } from "../github/footer";
 import {
@@ -174,7 +174,7 @@ import { renderReviewingPlaceholder, shouldPostReviewingPlaceholder, type CheckF
 import { buildIssueSlopAssessment, buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
 import { decidePublicSurface } from "../signals/settings-preview";
-import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstructions, resolveReviewPreMergeChecks, resolveReviewPromptOverrides, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
+import { buildFocusManifestGuidance, excludeReviewPaths, resolveReviewPathInstructions, resolveReviewPreMergeChecks, resolveReviewPromptOverrides, type FocusManifestFinding, type ReviewPathInstruction, type ReviewProfile } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import type { LocalBranchAnalysisInput } from "../signals/local-branch";
@@ -223,6 +223,31 @@ export async function runRetentionPrune(env: Env, requestedBy: string, dryRun: b
     detail: dryRun ? `dry-run: ${totalDeleted} row(s) eligible` : `pruned ${totalDeleted} row(s)`,
     metadata: { dryRun, totalDeleted, perTable: Object.fromEntries(results.map((r) => [r.table, r.deleted])) },
   });
+}
+
+const PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES: Partial<Record<FocusManifestFinding["code"], Pick<AdvisoryFinding, "detail" | "action">>> = {
+  manifest_blocked_path: {
+    detail: "Changed paths match maintainer-blocked areas.",
+    action: "Move this work out of the maintainer-blocked area or confirm with the maintainer before opening a PR.",
+  },
+  manifest_missing_tests: {
+    detail: "Maintainer test expectations are not satisfied by this PR.",
+    action: "Add or update tests, or attach passing validation output that satisfies the maintainer's test expectations.",
+  },
+};
+
+export function publicSafeManifestPolicyFinding(finding: FocusManifestFinding): AdvisoryFinding {
+  return {
+    code: finding.code,
+    severity: finding.severity,
+    title: finding.title,
+    detail: finding.detail,
+    /* v8 ignore next -- the three manifest policy findings always carry an action; the no-action arm is unreachable. */
+    ...(finding.action !== undefined ? { action: finding.action } : {}),
+    // Override the leaky detail/action with a static, public-safe version for the codes whose raw text would echo
+    // private blocked-path globs / test expectations; codes absent from the table keep their already-generic text.
+    ...PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES[finding.code],
+  };
 }
 
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
@@ -1531,7 +1556,24 @@ async function processGitHubWebhook(env: Env, deliveryId: string, eventName: str
       return;
     }
 
-    await upsertInstallation(env, payload);
+    const installationAppId = await upsertInstallation(env, payload);
+    // Dual-app safety (#selfhost-app-id): if this delivery's installation belongs to a DIFFERENT gittensory App
+    // (cloud + self-host installed on the same account), ack it without processing so neither backend acts on the
+    // other's installation. FAIL-OPEN — an unknown/own-matching app_id always processes, so the LIVE single-app
+    // path is byte-identical. Signature verification (per-App secret) is the primary isolation; this is the
+    // belt-and-suspenders for a shared-endpoint/secret misconfig.
+    if (isForeignAppInstallation(env.GITHUB_APP_ID, installationAppId)) {
+      await recordWebhookEvent(env, {
+        deliveryId,
+        eventName,
+        action: payload.action,
+        installationId: payload.installation?.id,
+        repositoryFullName: payload.repository?.full_name,
+        payloadHash: "foreign_app",
+        status: "processed",
+      });
+      return;
+    }
     const installationActor =
       payload.installation?.account?.login ??
       (payload.installation?.id ? (await getInstallation(env, payload.installation.id))?.accountLogin : undefined);
@@ -2599,13 +2641,7 @@ async function maybePublishPrPublicSurface(
       const policyCodes = new Set(["manifest_blocked_path", "manifest_linked_issue_required", "manifest_missing_tests"]);
       for (const finding of guidance.findings) {
         if (!policyCodes.has(finding.code)) continue;
-        advisory.findings.push({
-          code: finding.code,
-          severity: finding.severity,
-          title: finding.title,
-          detail: finding.detail,
-          ...(finding.action !== undefined ? { action: finding.action } : {}),
-        });
+        advisory.findings.push(publicSafeManifestPolicyFinding(finding));
       }
     }
     // Pre-merge checks (#review-pre-merge-checks, opt-in via .gittensory.yml review.pre_merge_checks). DETERMINISTIC

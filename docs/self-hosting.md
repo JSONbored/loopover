@@ -117,7 +117,8 @@ the **Orb-brokered** path:
 (You set **no** `GITHUB_APP_*` secrets — the Orb holds the App key and mints tokens for you on demand.)
 
 Runtime knobs: `PORT` (default 8787), `DATABASE_PATH` (default `/data/gittensory.sqlite`), `CRON_INTERVAL_MS`
-(default 120000 ≈ the hosted every-2-minutes cron).
+(default 120000 ≈ the hosted every-2-minutes cron), `QUEUE_CONCURRENCY` (default 4 — how many I/O-bound review
+jobs process at once; raise it to drain bigger PR bursts faster, set `1` for strict serial processing).
 
 **Secrets via files.** Any `FOO_FILE=/run/secrets/foo` is read into `FOO` at startup (Docker/Compose
 secrets, multi-line keys) — an explicit `FOO` always wins.

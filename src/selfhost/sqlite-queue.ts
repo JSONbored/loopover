@@ -40,7 +40,9 @@ export interface SqliteQueueOptions {
   maxRetries?: number;
   pollIntervalMs?: number;
   backoffMs?: (attempt: number) => number;
-  /** Max concurrent `processOne()` loops. Defaults to QUEUE_CONCURRENCY env var or 1. */
+  /** Max concurrent `processOne()` loops. Defaults to QUEUE_CONCURRENCY env var or 4 — review jobs are I/O-bound
+   *  (GitHub + AI awaits dominate), so overlapping a handful drains a PR burst far faster while SQLite's WAL +
+   *  busy_timeout absorb the short serialized write windows. Set QUEUE_CONCURRENCY=1 to force strict serial. */
   concurrency?: number;
 }
 
@@ -48,7 +50,7 @@ export function createSqliteQueue(driver: SqliteDriver, consume: (message: JobMe
   const maxRetries = opts.maxRetries ?? 5;
   const pollIntervalMs = opts.pollIntervalMs ?? 1000;
   const backoff = opts.backoffMs ?? ((attempt: number) => Math.min(60_000, 1000 * 2 ** attempt));
-  const concurrency = opts.concurrency ?? Math.max(1, Number(process.env.QUEUE_CONCURRENCY ?? "1"));
+  const concurrency = opts.concurrency ?? Math.max(1, Number(process.env.QUEUE_CONCURRENCY ?? "4"));
 
   driver.exec(DDL);
   // Recover jobs a crashed previous run left mid-flight → make them claimable again.

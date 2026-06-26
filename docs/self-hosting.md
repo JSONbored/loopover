@@ -34,13 +34,12 @@ events to your container and mint short-lived GitHub tokens for it on demand.
 
 ### Step 2 — Get your enrollment secret (self-service)
 
-When the install is authorized, GitHub returns you to a Gittensory page that — once we've verified you're an
-**admin of the installed account** — shows your **`ORB_ENROLLMENT_SECRET` once**. Copy it (it isn't shown
-again). This is a per-install secret; treat it like a password.
+When the install is authorized, GitHub returns you to a Gittensory page that — once we've verified server-side
+that you're an **admin of the installed account** — shows your **`ORB_ENROLLMENT_SECRET` once**. Copy it (it
+isn't shown again). This is a per-install secret; treat it like a password.
 
-> First-time installs are reviewed by the operator before the secret is issued (a one-time approval; you'll see
-> "not enabled yet" until it's done, then re-open the install to get your secret). The secret is **self-issued —
-> the operator never sees or hands you a credential.**
+> The secret is **self-issued — zero-touch.** There's no operator step and no credential hand-off: a verified
+> admin enrolls their own install on the spot. (Lose it? Re-open the install from GitHub to issue a new one.)
 
 ### Step 3 — Configure `.env` and run
 

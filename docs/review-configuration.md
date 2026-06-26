@@ -163,6 +163,12 @@ public data, so entries carry only public-safe metadata (a `reason`, `evidence` 
 date) — never wallets, hotkeys, trust scores, or private values. `blacklistLabel` (default `slop`) is
 the label the engine applies to a blacklisted author's PR.
 
+A PR from a **blacklisted login** is labeled (`blacklistLabel`) and **closed deterministically** —
+ahead of any merit/CI/AI analysis, with a sanitized close comment and **no AI call**. The close
+short-circuits and **wins over the normal gate disposition**; it honors the autonomy dial and
+`agentPaused` / `agentDryRun` exactly like any other agent action, and the owner and automation bots
+are never auto-closed.
+
 ### Example `.gittensory.yml`
 
 ```yaml

@@ -88,6 +88,11 @@ describe("findBlacklistEntry / isAuthorBlacklisted", () => {
     expect(isAuthorBlacklisted("stranger", list)).toBe(false);
     expect(isAuthorBlacklisted(null, list)).toBe(false);
   });
+
+  it("tolerates an absent list (treated as empty) so callers can pass the optional setting directly", () => {
+    expect(findBlacklistEntry("anyone", undefined)).toBeNull();
+    expect(isAuthorBlacklisted("anyone", undefined)).toBe(false);
+  });
 });
 
 describe("mergeContributorBlacklists (global ∪ per-repo)", () => {

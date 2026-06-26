@@ -21,7 +21,7 @@ import { buildRepoRewardRisk, type RepoRewardRisk, type RewardRiskAction } from 
 import { buildLocalWorkspaceIntelligence, type LocalWorkspaceIntelligence } from "./local-workspace-intelligence";
 import { buildFocusManifestGuidance, parseFocusManifest, type FocusManifestGuidance } from "./focus-manifest";
 import { sanitizeLocalScorerWarnings } from "./local-scorer-diagnostics";
-import { isPublicSafeText } from "./redaction";
+import { isPublicSafeText, PUBLIC_LOCAL_PATH_PREFIX_PATTERN } from "./redaction";
 import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
@@ -1228,7 +1228,7 @@ function firstCommitTitle(messages: string[] | undefined): string | undefined {
 
 function safeRepoPath(path: string): string {
   /* v8 ignore next -- Empty path fallback protects malformed local-git adapters; path redaction is covered by local branch tests. */
-  return /^(\/Users\/|\/home\/|\/root\/|\/tmp\/|[A-Z]:\/Users\/)/i.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
+  return PUBLIC_LOCAL_PATH_PREFIX_PATTERN.test(String(path).replace(/\\/g, "/")) ? "[local path hidden]" : String(path || "(unknown path)").replace(/\\/g, "/");
 }
 
 export function isTestFile(file: string): boolean {

@@ -12,6 +12,7 @@ import {
 } from "../db/repositories";
 import { getLatestRegistrySnapshot } from "../registry/sync";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
+import { redactPublicLocalPaths } from "../signals/redaction";
 import type {
   InstallationHealthRecord,
   InstallationRecord,
@@ -408,8 +409,7 @@ function normalizeReportDays(value: number | null | undefined): number {
 }
 
 function sanitizeReportText(value: string): string {
-  const redacted = value
-    .replace(/(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g, "<redacted-path>")
+  const redacted = redactPublicLocalPaths(value, "<redacted-path>")
     .replace(/\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer <redacted-token>");
   if (

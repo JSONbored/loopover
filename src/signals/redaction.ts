@@ -22,7 +22,38 @@
 // intentionally NOT collapsed onto `PUBLIC_UNSAFE_TERMS`.
 export const PUBLIC_UNSAFE_TERMS = String.raw`(?:reward|score|wallet|hotkey|coldkey|mnemonic|payout|ranking)\w*|farming|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability`;
 
-export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|/Users/|/home/|/root/|/tmp/|[A-Z]:[\\/]Users[\\/]`, "i");
+/** Posix local path roots that must not appear on public surfaces. */
+export const PUBLIC_LOCAL_PATH_ROOTS = String.raw`/Users/|/home/|/root/|/tmp/|/var/`;
+
+/** Windows user-profile paths that must not appear on public surfaces. */
+export const PUBLIC_LOCAL_PATH_WINDOWS = String.raw`[A-Z]:[\\/]Users[\\/]`;
+
+/** Inline alternation for composing boundary patterns (non-global). */
+export const PUBLIC_LOCAL_PATH_INLINE = `${PUBLIC_LOCAL_PATH_ROOTS}|${PUBLIC_LOCAL_PATH_WINDOWS}`;
+
+/** Prefix test for absolute changed-file paths (anchored at start). */
+export const PUBLIC_LOCAL_PATH_PREFIX_PATTERN = new RegExp(
+  String.raw`^(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/|[A-Z]:\/Users\/)`,
+  "i",
+);
+
+/** Global scrubber for known local path roots in free-form text. */
+export const PUBLIC_LOCAL_PATH_SCRUB_PATTERN = new RegExp(
+  String.raw`(?:\/Users|\/home|\/root|\/tmp|\/var)\/[^\s"',;:)]*|[A-Za-z]:\\Users\\[^\s"',;)]*`,
+  "g",
+);
+
+export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|${PUBLIC_LOCAL_PATH_INLINE}`, "i");
+
+/** True when `text` contains a known local filesystem path root. */
+export function containsPublicLocalPath(text: string): boolean {
+  return new RegExp(PUBLIC_LOCAL_PATH_INLINE, "i").test(text);
+}
+
+/** Replace known local filesystem path roots with `replacement`. */
+export function redactPublicLocalPaths(text: string, replacement = "<redacted-path>"): string {
+  return text.replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, replacement);
+}
 
 /** True iff `text` contains nothing that must stay private — i.e. it is safe to surface on a public GitHub surface. */
 export function isPublicSafeText(text: string): boolean {

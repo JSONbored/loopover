@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isPublicSafeText, PUBLIC_UNSAFE_PATTERN } from "../../src/signals/redaction";
+import {
+  containsPublicLocalPath,
+  isPublicSafeText,
+  PUBLIC_LOCAL_PATH_PREFIX_PATTERN,
+  PUBLIC_UNSAFE_PATTERN,
+  redactPublicLocalPaths,
+} from "../../src/signals/redaction";
 
 describe("isPublicSafeText (#542 shared public/private boundary)", () => {
   it("accepts text with no private signals", () => {
@@ -41,6 +47,7 @@ describe("isPublicSafeText (#542 shared public/private boundary)", () => {
     expect(isPublicSafeText("/root/project/src")).toBe(false);
     expect(isPublicSafeText("clone failed at /root/work/repo")).toBe(false);
     expect(isPublicSafeText("/tmp/scratch")).toBe(false);
+    expect(isPublicSafeText("/var/log/app/build.log")).toBe(false);
     expect(isPublicSafeText("C:\\Users\\carol\\repo")).toBe(false);
     expect(isPublicSafeText("C:/Users/carol/repo")).toBe(false);
   });
@@ -57,5 +64,21 @@ describe("isPublicSafeText (#542 shared public/private boundary)", () => {
     expect(PUBLIC_UNSAFE_PATTERN.test("wallet")).toBe(true);
     expect(isPublicSafeText("clean line")).toBe(true);
     expect(isPublicSafeText("clean line")).toBe(true);
+  });
+});
+
+describe("shared public local-path helpers", () => {
+  it("detects and redacts known local path roots", () => {
+    expect(containsPublicLocalPath("/root/work/repo")).toBe(true);
+    expect(containsPublicLocalPath("/var/folders/ci/cache")).toBe(true);
+    expect(containsPublicLocalPath("owner/repo")).toBe(false);
+    expect(redactPublicLocalPaths("clone /root/work/repo here")).toBe("clone <redacted-path> here");
+    expect(redactPublicLocalPaths("cache at /var/tmp/build")).toBe("cache at <redacted-path>");
+  });
+
+  it("matches absolute changed-file prefixes for safeRepoPath", () => {
+    expect(PUBLIC_LOCAL_PATH_PREFIX_PATTERN.test("/root/work/src/app.ts")).toBe(true);
+    expect(PUBLIC_LOCAL_PATH_PREFIX_PATTERN.test("/var/lib/cache.ts")).toBe(true);
+    expect(PUBLIC_LOCAL_PATH_PREFIX_PATTERN.test("src/app.ts")).toBe(false);
   });
 });

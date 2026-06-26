@@ -1,4 +1,5 @@
 import type { ContributorOpportunity, PublicReadinessScore } from "./engine";
+import { redactPublicLocalPaths } from "./redaction";
 
 // ─── Contributor-context payloads for the browser extension (#556) ───────────────────────────────
 // The contributor (miner) side of the extension overlay. Every payload here is PUBLIC-SAFE and self-
@@ -25,7 +26,10 @@ const FORBIDDEN_EXTENSION_TERMS =
   /\b(?:rewards?|payouts?|farming|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|score[-\s]?(?:estimate|preview|prediction)s?|estimated[-\s]?scores?|scoreability|private[-\s]?reviewability|reviewability[-\s]?internals?|private[-\s]?rankings?)\b/gi;
 
 export function redactExtensionText(text: string): string {
-  return text.replace(FORBIDDEN_EXTENSION_TERMS, "[redacted]").replace(/\s+/g, " ").trim();
+  return redactPublicLocalPaths(text, "[redacted]")
+    .replace(FORBIDDEN_EXTENSION_TERMS, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // ── issue-fit: "is this issue a good one for me to pick up?" ──────────────────────────────────────

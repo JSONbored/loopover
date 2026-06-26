@@ -161,6 +161,7 @@ import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPO
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { decryptSecret, encryptSecret, sha256Hex } from "../utils/crypto";
+import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
 import { jsonString, nowIso, parseJson, repoParts } from "../utils/json";
 
 const MAX_STORED_BODY_CHARS = 4000;
@@ -5191,7 +5192,6 @@ const PRODUCT_USAGE_SENSITIVE_KEY =
   /authorization|cookie|token|secret|password|private[_-]?key|source|body|diff|patch|prompt|raw[_-]?trust|trust[_-]?score|wallet|hotkey|coldkey|seed|mnemonic|local[_-]?path|repo[_-]?root|cwd|scoreability|reviewability|farming/i;
 const PRODUCT_USAGE_SENSITIVE_VALUE =
   /\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|scoreability|reviewability|farming|reward estimate|payout)\b/i;
-const PRODUCT_USAGE_LOCAL_PATH = /(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g;
 const PRODUCT_USAGE_TOKEN_VALUE = /\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 const PRODUCT_USAGE_BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
 
@@ -5236,7 +5236,7 @@ function sanitizeProductUsageJson(value: unknown, depth: number, actorRedactor: 
 
 function sanitizeProductUsageString(value: string, maxLength: number): string {
   const redacted = value
-    .replace(PRODUCT_USAGE_LOCAL_PATH, "<redacted-path>")
+    .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
     .replace(PRODUCT_USAGE_TOKEN_VALUE, "<redacted-token>")
     .replace(PRODUCT_USAGE_BEARER_VALUE, "Bearer <redacted-token>");
   if (PRODUCT_USAGE_SENSITIVE_VALUE.test(redacted)) return "<redacted>";

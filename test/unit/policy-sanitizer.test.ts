@@ -132,6 +132,12 @@ describe("sanitizeRoleText path redaction", () => {
     expect(sanitizeRoleText("/tmp/deploy_key.pem")).toBe("<redacted-path>");
   });
 
+  it("redacts root and var home paths entirely", () => {
+    expect(sanitizeRoleText("/root/work/repo")).toBe("<redacted-path>");
+    expect(sanitizeRoleText("/var/tmp/build/cache")).toBe("<redacted-path>");
+    expect(sanitizeRoleText("clone /root/work/repo here")).toBe("clone <redacted-path> here");
+  });
+
   it("redacts Windows C:\\Users paths entirely", () => {
     expect(sanitizeRoleText("C:\\Users\\bob\\AppData\\token.txt")).toBe("<redacted-path>");
   });

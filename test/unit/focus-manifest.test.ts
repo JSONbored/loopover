@@ -690,6 +690,8 @@ describe("public-safe invariant", () => {
     expect(isFocusManifestPublicSafe("Keep PRs focused")).toBe(true);
     expect(isFocusManifestPublicSafe("estimate your reward")).toBe(false);
     expect(isFocusManifestPublicSafe("paste your hotkey")).toBe(false);
+    expect(isFocusManifestPublicSafe("build from /root/work/repo")).toBe(false);
+    expect(isFocusManifestPublicSafe("cache under /var/tmp/build")).toBe(false);
   });
 
   it("never emits public next steps that contain forbidden language for generated manifests", () => {

@@ -1,6 +1,7 @@
 import { isAuthorizedGitHubSessionLogin } from "../auth/security";
 import { getFreshOfficialMinerDetection, getRepository, listAllPullRequests, listInstallations, listRepositories } from "../db/repositories";
 import type { ControlPanelRoleCard, ControlPanelRoleName, ControlPanelRoleSummary, InstallationRecord, PullRequestRecord, RepositoryRecord } from "../types";
+import { redactPublicLocalPaths } from "../signals/redaction";
 import { nowIso } from "../utils/json";
 
 export type RoleSummaryInputs = {
@@ -289,8 +290,7 @@ function isMaintainerAssociation(value: string | null | undefined): boolean {
 }
 
 export function sanitizeRoleText(value: string): string {
-  const redacted = value
-    .replace(/(?:\/Users|\/home|\/tmp)\/[^\s"',;)]*|[A-Za-z]:\\Users\\[^\s"',;)]*/g, "<redacted-path>")
+  const redacted = redactPublicLocalPaths(value, "<redacted-path>")
     .replace(/\b(?:ghp_|github_pat_|gts_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer <redacted-token>");
   if (/\b(seed phrase|mnemonic|private key|raw trust|trust score|wallet|hotkey|coldkey|payout|reward estimate|farming|private reviewability|public score estimate)\b/i.test(redacted)) return "<redacted>";

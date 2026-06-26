@@ -59,6 +59,11 @@ describe("redactExtensionText", () => {
   it("leaves safe text untouched", () => {
     expect(redactExtensionText("Maintainer-created issue, good fit.")).toBe("Maintainer-created issue, good fit.");
   });
+
+  it("redacts local filesystem paths", () => {
+    expect(redactExtensionText("Evidence from /root/work/src/cache.ts")).toBe("Evidence from [redacted]");
+    expect(redactExtensionText("cache at /var/tmp/build")).toBe("cache at [redacted]");
+  });
 });
 
 describe("buildExtensionIssueFit", () => {

@@ -122,6 +122,72 @@ describe("local branch analysis", () => {
     expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "open_issue_threshold" })]));
   });
 
+  it("threads contributor-history validity gates from outcome history (#808)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+    expect(analysis.scorePreview.gates.mergedPullRequests).toBe(5);
+    expect(analysis.scorePreview.gates.validSolvedIssues).toBe(3);
+    expect(analysis.scorePreview.gates.issueCredibility).toBe(1);
+    expect(analysis.scorePreview.scoreEstimate.mergedHistoryMultiplier).toBe(1);
+    expect(analysis.scorePreview.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+  });
+
+  it("prefers repo-scoped outcome counts over global totals when both are present (#808)", () => {
+    const repoScopedHistory: ContributorOutcomeHistory = {
+      ...outcomeHistory,
+      totals: {
+        ...outcomeHistory.totals,
+        mergedPullRequests: 5,
+        validSolvedIssues: 3,
+        issueCredibility: 1,
+      },
+      repoOutcomes: [
+        {
+          ...outcomeHistory.repoOutcomes[0]!,
+          mergedPullRequests: 1,
+          validSolvedIssues: 0,
+          issueCredibility: 0.4,
+        },
+      ],
+    };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 42, deletions: 4, status: "modified" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh fails", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory: repoScopedHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+    expect(analysis.scorePreview.gates.mergedPullRequests).toBe(1);
+    expect(analysis.scorePreview.gates.validSolvedIssues).toBe(0);
+    expect(analysis.scorePreview.gates.issueCredibility).toBe(0.4);
+    expect(analysis.scorePreview.scoreEstimate.mergedHistoryMultiplier).toBe(0);
+    expect(analysis.scorePreview.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(0);
+    expect(analysis.accountStateBlockers.join(" ")).toMatch(/Merged PR count|Issue-discovery history/i);
+  });
+
   it("bounds local scorer warnings before adding local findings", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {
@@ -1545,6 +1611,88 @@ describe("local MCP git metadata collection", () => {
     expect(JSON.stringify(renameMetadata)).not.toMatch(/export const old/);
   });
 
+  it("counts additions and deletions for cross-directory renames that share no prefix or suffix", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { collectLocalBranchMetadata } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+    git(tempDir, "checkout", "-b", "cross-dir-rename");
+    mkdirSync(join(tempDir, "src/alpha"), { recursive: true });
+    // A large body keeps rename similarity high so git reports a rename, not add + delete.
+    const body = Array.from({ length: 20 }, (_, line) => `line ${line}`).join("\n");
+    writeFileSync(join(tempDir, "src/alpha/foo.js"), `${body}\n`);
+    // A binary blob exercises numstat's "-\t-" path (additions/deletions 0, binary true).
+    writeFileSync(join(tempDir, "logo.bin"), Buffer.from([0, 1, 2, 0, 255, 254]));
+    git(tempDir, "add", "-A");
+    git(tempDir, "commit", "-m", "add foo");
+    // With no shared prefix or suffix git renders this rename as a bare "src/alpha/foo.js =>
+    // docs/beta/bar.js" in --numstat, which the previous brace-only parser never matched -> the
+    // renamed file fell back to +0/-0 and undercounted changedLineCount.
+    mkdirSync(join(tempDir, "docs/beta"), { recursive: true });
+    git(tempDir, "mv", "src/alpha/foo.js", "docs/beta/bar.js");
+    writeFileSync(join(tempDir, "docs/beta/bar.js"), `${body}\nadded one\nadded two\n`);
+    writeFileSync(join(tempDir, "logo.bin"), Buffer.from([3, 0, 4, 0, 5, 0, 6]));
+    git(tempDir, "add", "-A");
+    git(tempDir, "commit", "-m", "rename foo across directories");
+
+    const renameMetadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(renameMetadata.changedFiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "docs/beta/bar.js", previousPath: "src/alpha/foo.js", status: "renamed", additions: 2, deletions: 0 }),
+        expect.objectContaining({ path: "logo.bin", status: "modified", additions: 0, deletions: 0, binary: true }),
+      ]),
+    );
+  });
+
+  it("returns no lines when the git command fails", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { gitLines } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    expect(gitLines(join(tmpdir(), "gittensory-no-such-repo-d8f3"), ["rev-parse", "HEAD"])).toEqual([]);
+  });
+
+  it("counts stats and keeps verbatim paths for non-ASCII filenames at the default core.quotePath", async () => {
+    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
+    const { collectLocalBranchMetadata } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    // Deliberately leave core.quotePath at its default (on): git's human --name-status then quotes
+    // accented paths, which would diverge from the verbatim --numstat -z key and zero out the stats.
+    git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(tempDir, "über.txt"), "a\nb\nc\n");
+    const renameBody = Array.from({ length: 20 }, (_, line) => `line ${line}`).join("\n");
+    mkdirSync(join(tempDir, "café"));
+    writeFileSync(join(tempDir, "café/old.txt"), `${renameBody}\n`);
+    git(tempDir, "add", "-A");
+    git(tempDir, "commit", "-m", "seed non-ascii files");
+    git(tempDir, "checkout", "-b", "non-ascii");
+    writeFileSync(join(tempDir, "über.txt"), "a\nb\nc\nd\ne\n");
+    writeFileSync(join(tempDir, "naïve.txt"), "x\ny\nz\n");
+    mkdirSync(join(tempDir, "docs"));
+    git(tempDir, "mv", "café/old.txt", "docs/résumé.txt");
+    writeFileSync(join(tempDir, "docs/résumé.txt"), `${renameBody}\nextra\n`);
+    git(tempDir, "add", "-A");
+    git(tempDir, "commit", "-m", "edit non-ascii files");
+
+    const metadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(metadata.changedFiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "über.txt", status: "modified", additions: 2, deletions: 0 }),
+        expect.objectContaining({ path: "naïve.txt", status: "added", additions: 3, deletions: 0 }),
+        expect.objectContaining({ path: "docs/résumé.txt", previousPath: "café/old.txt", status: "renamed", additions: 1, deletions: 0 }),
+      ]),
+    );
+  });
+
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {
     // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, parseGitRemote } = await import("../../packages/gittensory-mcp/lib/local-branch.js");
@@ -1913,8 +2061,8 @@ const profile: ContributorProfile = {
   github: { login: "oktofeesh1", topLanguages: ["TypeScript"], source: "github" },
   source: "gittensor_api",
   registeredRepoActivity: {
-    pullRequests: 2,
-    mergedPullRequests: 1,
+    pullRequests: 6,
+    mergedPullRequests: 5,
     issues: 0,
     reposTouched: [repo.fullName],
     dominantLabels: ["bug"],
@@ -1932,16 +2080,16 @@ const outcomeHistory: ContributorOutcomeHistory = {
   generatedAt: "2026-05-25T00:00:00.000Z",
   source: "gittensor_api",
   totals: {
-    pullRequests: 2,
-    mergedPullRequests: 1,
+    pullRequests: 6,
+    mergedPullRequests: 5,
     openPullRequests: 0,
     closedPullRequests: 1,
     closedPullRequestRate: 0.5,
     issues: 0,
     openIssues: 0,
     closedIssues: 0,
-    solvedIssues: 0,
-    validSolvedIssues: 0,
+    solvedIssues: 3,
+    validSolvedIssues: 3,
     credibility: 0.92,
     issueCredibility: 1,
   },
@@ -1951,16 +2099,16 @@ const outcomeHistory: ContributorOutcomeHistory = {
       role: "outside_contributor",
       lane: "direct_pr",
       maintainerLane: false,
-      pullRequests: 2,
-      mergedPullRequests: 1,
+      pullRequests: 6,
+      mergedPullRequests: 5,
       openPullRequests: 0,
       closedPullRequests: 1,
       closedPullRequestRate: 0.5,
       issues: 0,
       openIssues: 0,
       closedIssues: 0,
-      solvedIssues: 0,
-      validSolvedIssues: 0,
+      solvedIssues: 3,
+      validSolvedIssues: 3,
       credibility: 0.92,
       issueCredibility: 1,
       isEligible: true,
@@ -2007,8 +2155,8 @@ const scoringProfile: ContributorScoringProfile = {
   generatedAt: "2026-05-25T00:00:00.000Z",
   scoringModelSnapshotId: "scoring-test",
   evidence: {
-    registeredRepoPullRequests: 2,
-    mergedPullRequests: 1,
+    registeredRepoPullRequests: 6,
+    mergedPullRequests: 5,
     openPullRequests: 0,
     stalePullRequests: 0,
     unlinkedPullRequests: 0,

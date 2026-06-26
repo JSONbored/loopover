@@ -376,8 +376,12 @@ MAX_FILE_SIZE_BYTES = 1_000_000
 RECYCLE_UID = 0
 ISSUES_TREASURY_UID = 111
 MAX_ISSUE_ID = 999_999
+EMISSION_SHARE_TOLERANCE = 1e-9
 `);
     expect(operationalOnly).toEqual([]);
+    // EMISSION_SHARE_TOLERANCE is an emission-share-sum epsilon, not a scoring dimension; the parser does
+    // read its `1e-9` exponent literal (#992), so it must be excluded explicitly or it drifts forever (#809).
+    expect(operationalOnly).not.toContain("EMISSION_SHARE_TOLERANCE");
 
     const withScoringGap = findUnmodeledUpstreamConstants(`
 SECONDS_PER_DAY = 86400
@@ -801,6 +805,44 @@ NOVELTY_BONUS_SCALAR = 3
       bonusOnly.scoreEstimate.estimatedMergedScore * (0.5 / 1.2),
       5,
     );
+  });
+
+  it("matches configured label keys as fnmatch globs, mirroring the upstream validator", () => {
+    const baseInput: ScorePreviewInput = {
+      repoFullName: repo.fullName,
+      sourceTokenScore: 60,
+      totalTokenScore: 90,
+      sourceLines: 50,
+      openPrCount: 0,
+      credibility: 1,
+      linkedIssueMode: "none",
+    };
+    const labelMultiplierFor = (labelMultipliers: Record<string, number>, labels: string[], defaultLabelMultiplier = 1): number =>
+      buildScorePreview({
+        repo: { ...repo, registryConfig: { ...repo.registryConfig!, defaultLabelMultiplier, labelMultipliers } },
+        snapshot,
+        input: { ...baseInput, labels },
+      }).scoreEstimate.labelMultiplier;
+
+    // `*` spans any run of characters (including `/` and `:` — labels are flat strings, not paths).
+    expect(labelMultiplierFor({ "kind/*": 1.5 }, ["kind/bug"])).toBe(1.5);
+    expect(labelMultiplierFor({ "type:*": 1.1 }, ["type:bug-fix"])).toBe(1.1);
+    // `?` matches exactly one character: it matches `priority:1` but not the two-digit `priority:10`.
+    expect(labelMultiplierFor({ "priority:?": 2 }, ["priority:1"])).toBe(2);
+    expect(labelMultiplierFor({ "priority:?": 2 }, ["priority:10"])).toBe(1);
+    // `[seq]` / `[!seq]` character classes.
+    expect(labelMultiplierFor({ "[bf]ug": 1.4 }, ["bug"])).toBe(1.4);
+    expect(labelMultiplierFor({ "[!x]ug": 1.3 }, ["bug"])).toBe(1.3);
+    // A `[` with no closing bracket is a literal, not a class.
+    expect(labelMultiplierFor({ "a[b": 0.7 }, ["a[b"])).toBe(0.7);
+    // Regex metacharacters in a literal key stay literal: `.` matches only a dot, not any char.
+    expect(labelMultiplierFor({ "v1.0": 1.1 }, ["v1.0"])).toBe(1.1);
+    expect(labelMultiplierFor({ "v1.0": 1.1 }, ["v1x0"])).toBe(1);
+    // When several patterns match, the highest multiplier wins (mirrors upstream `max(...)`).
+    expect(labelMultiplierFor({ "kind/*": 1.1, "*/bug": 1.6 }, ["kind/bug"])).toBe(1.6);
+    // Literal keys are unchanged — exact match, parity-preserving for every existing config.
+    expect(labelMultiplierFor({ bug: 1.2 }, ["bug"])).toBe(1.2);
+    expect(labelMultiplierFor({ bug: 1.2 }, ["feature"])).toBe(1);
   });
 
   it("gates linked-issue assumptions with branch eligibility evidence", () => {
@@ -1398,6 +1440,205 @@ NOVELTY_BONUS_SCALAR = 3
       expect(issueDelta?.projected).toContain("multiplier 1");
     });
 
+    it("merged-PR history floor blocks scoring when mergedPullRequests is below MIN_VALID_MERGED_PRS (#808)", () => {
+      const baseInput = {
+        repoFullName: repo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 0,
+        credibility: 1,
+      };
+
+      const atFloor = buildScorePreview({ repo, snapshot, input: { ...baseInput, mergedPullRequests: 3 } });
+      expect(atFloor.gates.mergedPrFloor).toBe(3);
+      expect(atFloor.gates.mergedPullRequests).toBe(3);
+      expect(atFloor.scoreEstimate.mergedHistoryMultiplier).toBe(1);
+      expect(atFloor.effectiveEstimatedScore).toBeGreaterThan(0);
+
+      const belowFloor = buildScorePreview({ repo, snapshot, input: { ...baseInput, mergedPullRequests: 2 } });
+      expect(belowFloor.scoreEstimate.mergedHistoryMultiplier).toBe(0);
+      expect(belowFloor.effectiveEstimatedScore).toBe(0);
+      expect(belowFloor.blockedBy.some((b) => b.code === "merged_pr_history_floor")).toBe(true);
+      expect(belowFloor.recommendation.actions.some((action) => /merged PR history/i.test(action))).toBe(true);
+    });
+
+    it("merged-PR history floor does not block when mergedPullRequests is unknown (not supplied and no evidence)", () => {
+      const preview = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 },
+      });
+      expect(preview.gates.mergedPullRequests).toBeUndefined();
+      expect(preview.scoreEstimate.mergedHistoryMultiplier).toBe(1);
+      expect(preview.blockedBy.some((b) => b.code === "merged_pr_history_floor")).toBe(false);
+    });
+
+    it("infers mergedPullRequests from contributor evidence when input omits it (#808)", () => {
+      const eligible = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 },
+        contributorEvidence: {
+          login: "dev",
+          generatedAt: "2026-05-23T00:00:00.000Z",
+          payload: { mergedPullRequests: 4, stalePullRequests: 0, unlinkedPullRequests: 0 },
+        },
+      });
+      expect(eligible.gates.mergedPullRequests).toBe(4);
+      expect(eligible.scoreEstimate.mergedHistoryMultiplier).toBe(1);
+
+      const ineligible = buildScorePreview({
+        repo,
+        snapshot,
+        input: { repoFullName: repo.fullName, sourceTokenScore: 60, totalTokenScore: 90, sourceLines: 50, openPrCount: 0, credibility: 1 },
+        contributorEvidence: {
+          login: "newbie",
+          generatedAt: "2026-05-23T00:00:00.000Z",
+          payload: { mergedPullRequests: 1, stalePullRequests: 0, unlinkedPullRequests: 0 },
+        },
+      });
+      expect(ineligible.scoreEstimate.mergedHistoryMultiplier).toBe(0);
+      expect(ineligible.blockedBy.some((b) => b.code === "merged_pr_history_floor")).toBe(true);
+    });
+
+    it("issue-discovery validity floor blocks when valid solved issues or issue credibility are below upstream floors (#808)", () => {
+      const issueDiscoveryRepo: RepositoryRecord = {
+        ...repo,
+        registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+      };
+      const baseInput = {
+        repoFullName: issueDiscoveryRepo.fullName,
+        sourceTokenScore: 60,
+        totalTokenScore: 90,
+        sourceLines: 50,
+        openPrCount: 0,
+        credibility: 1,
+        mergedPullRequests: 5,
+        linkedIssueMode: "standard" as const,
+      };
+
+      const eligible = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 3, issueCredibility: 0.85 },
+      });
+      expect(eligible.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+      expect(eligible.effectiveEstimatedScore).toBeGreaterThan(0);
+
+      const lowValidSolved = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 2, issueCredibility: 0.9 },
+      });
+      expect(lowValidSolved.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(0);
+      expect(lowValidSolved.blockedBy.some((b) => b.code === "issue_discovery_validity_floor")).toBe(true);
+
+      const lowIssueCredibility = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: { ...baseInput, validSolvedIssues: 4, issueCredibility: 0.7 },
+      });
+      expect(lowIssueCredibility.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(0);
+      expect(lowIssueCredibility.blockedBy.some((b) => b.code === "issue_discovery_validity_floor")).toBe(true);
+      expect(
+        lowIssueCredibility.recommendation.actions.some((action) => /valid solved-issue history and issue credibility/i.test(action)),
+      ).toBe(true);
+    });
+
+    it("issue-discovery validity floor is skipped when issue-discovery is not relevant or history is unknown", () => {
+      const issueDiscoveryRepo: RepositoryRecord = {
+        ...repo,
+        registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.25 },
+      };
+      const noHistory = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: {
+          repoFullName: issueDiscoveryRepo.fullName,
+          sourceTokenScore: 60,
+          totalTokenScore: 90,
+          sourceLines: 50,
+          openPrCount: 0,
+          credibility: 1,
+          mergedPullRequests: 5,
+          linkedIssueMode: "standard",
+        },
+      });
+      expect(noHistory.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+
+      const directPrOnly = buildScorePreview({
+        repo,
+        snapshot,
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 60,
+          totalTokenScore: 90,
+          sourceLines: 50,
+          openPrCount: 0,
+          credibility: 1,
+          mergedPullRequests: 5,
+          validSolvedIssues: 0,
+          issueCredibility: 0.1,
+          linkedIssueMode: "none",
+        },
+      });
+      expect(directPrOnly.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+    });
+
+    it("bestReasonableCase clears contributor-history gates and surfaces gate deltas (#808)", () => {
+      const issueDiscoveryRepo: RepositoryRecord = {
+        ...repo,
+        registryConfig: { ...repo.registryConfig!, issueDiscoveryShare: 0.2 },
+      };
+      const preview = buildScorePreview({
+        repo: issueDiscoveryRepo,
+        snapshot,
+        input: {
+          repoFullName: issueDiscoveryRepo.fullName,
+          sourceTokenScore: 60,
+          totalTokenScore: 90,
+          sourceLines: 50,
+          openPrCount: 0,
+          credibility: 1,
+          mergedPullRequests: 1,
+          validSolvedIssues: 1,
+          issueCredibility: 0.5,
+          linkedIssueMode: "standard",
+        },
+      });
+      const bestReasonable = preview.scenarioPreviews.find((scenario) => scenario.name === "bestReasonableCase");
+      expect(bestReasonable?.scoreEstimate.mergedHistoryMultiplier).toBe(1);
+      expect(bestReasonable?.scoreEstimate.issueDiscoveryHistoryMultiplier).toBe(1);
+      expect(bestReasonable?.effectiveEstimatedScore).toBeGreaterThan(0);
+      expect(preview.gateDeltas).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ gate: "merged_pr_history_floor" }),
+          expect.objectContaining({ gate: "issue_discovery_validity_floor" }),
+        ]),
+      );
+    });
+
+    it("afterPendingMerges projects mergedPullRequests upward when pending merges are supplied (#808)", () => {
+      const preview = buildScorePreview({
+        repo,
+        snapshot,
+        input: {
+          repoFullName: repo.fullName,
+          sourceTokenScore: 60,
+          totalTokenScore: 90,
+          sourceLines: 50,
+          openPrCount: 0,
+          credibility: 1,
+          mergedPullRequests: 2,
+          pendingMergedPrCount: 1,
+        },
+      });
+      const afterPending = preview.scenarioPreviews.find((scenario) => scenario.name === "afterPendingMerges");
+      expect(afterPending?.gates.mergedPullRequests).toBe(3);
+      expect(afterPending?.scoreEstimate.mergedHistoryMultiplier).toBe(1);
+    });
+
     it("all nine issue-discovery constants are modeled and do not surface as upstream drift warnings (#808)", () => {
       const upstreamSource = [
         "TEST_FILE_CONTRIBUTION_WEIGHT = 0.05",
@@ -1508,6 +1749,23 @@ NOVELTY_BONUS_SCALAR = 3
       expect(calculateTimeDecay(18, c, { gracePeriodHours: 24 })).toBe(1);
       // A shorter midpoint decays faster: 50% point moves from 10d to 5d (120h).
       expect(calculateTimeDecay(120, c, { sigmoidMidpointDays: 5 })).toBeCloseTo(0.5, 5);
+    });
+
+    it("truncates a fractional grace_period_hours override toward zero, mirroring upstream int() (#1320)", () => {
+      const c = DEFAULT_SCORING_CONSTANTS;
+      // Upstream resolve_time_decay does `grace_period_hours=int(pick(...))` — and only that field. A
+      // fractional override (legal under upstream's 0..168 range check) resolves to its truncated integer,
+      // while the float curve params are untouched.
+      expect(resolveTimeDecay(c, { gracePeriodHours: 13.9 }).gracePeriodHours).toBe(13);
+      expect(resolveTimeDecay(c, { gracePeriodHours: 13.9, sigmoidSteepness: 0.4 })).toEqual({
+        gracePeriodHours: 13,
+        sigmoidMidpointDays: 10,
+        sigmoidSteepness: 0.4,
+        minMultiplier: 0.05,
+      });
+      // The boundary case the bug hid: a PR aged between trunc(grace) and grace is already decaying
+      // upstream (13.5 >= 13), so the preview must decay it too rather than reporting it as fresh.
+      expect(calculateTimeDecay(13.5, c, { gracePeriodHours: 13.9 })).toBeLessThan(1);
     });
 
     it("applies each live repo's resolved curve in the preview (per-repo, not global)", () => {

@@ -71,6 +71,7 @@ import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
 import { computeFleetAnalytics } from "../orb/analytics";
+import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -599,6 +600,17 @@ const repoContextOutputSchema = {
   dataQuality: z.unknown().optional(),
 };
 
+const maintainerNoiseOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  score: z.number().optional(),
+  level: z.string().optional(),
+  noiseSources: z.array(z.string()).optional(),
+  maintainerActions: z.array(z.string()).optional(),
+  queueHealth: z.unknown().optional(),
+  summary: z.string().optional(),
+};
+
 const freshnessResponseOutputSchema = {
   status: z.string().optional(),
   repoFullName: z.string().optional(),
@@ -1038,6 +1050,16 @@ export class GittensoryMcp {
         outputSchema: repoContextOutputSchema,
       },
       async (input) => this.toolResult(await this.getRepoContext(input)),
+    );
+
+    server.registerTool(
+      "gittensory_get_maintainer_noise",
+      {
+        description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
+        inputSchema: ownerRepoShape,
+        outputSchema: maintainerNoiseOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getMaintainerNoise(input)),
     );
 
     server.registerTool(
@@ -1794,6 +1816,16 @@ export class GittensoryMcp {
         configQuality: buildConfigQuality(repo, issues, pullRequests, fullName),
         dataQuality: await this.loadRepoDataQuality(fullName),
       },
+    };
+  }
+
+  private async getMaintainerNoise(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const report = await loadMaintainerNoiseReport(this.env, fullName);
+    return {
+      summary: maintainerNoiseSummary(report),
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

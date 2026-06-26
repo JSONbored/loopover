@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import { bucketReasonCode, exportOrbBatch, getOrCreateAnonSecret } from "../../src/selfhost/orb-collector";
@@ -77,7 +78,7 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     delete process.env.ORB_COLLECTOR_TOKEN;
   });
   afterEach(() => {
-    for (const k of ["GITHUB_APP_PRIVATE_KEY", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "ORB_COLLECTOR_TOKEN", "GITHUB_APP_ID"]) delete (process.env as NodeJS.Dict<string>)[k];
+    for (const k of ["GITHUB_APP_PRIVATE_KEY", "ORB_APP_ID", "ORB_ANONYMIZE", "ORB_AIR_GAP", "ORB_COLLECTOR_URL", "ORB_COLLECTOR_TOKEN", "GITHUB_APP_ID", "ORB_ENROLLMENT_SECRET"]) delete (process.env as NodeJS.Dict<string>)[k];
   });
 
   it("returns 0 when the App private key is not configured (App not set up → nothing to export)", async () => {
@@ -88,9 +89,26 @@ describe("exportOrbBatch() — always-on; reads review_audit, ships anonymized r
     expect(await exportOrbBatch(db, 200, async () => new Response(null, { status: 200 }))).toBe(0);
   });
 
-  it("returns 0 in air-gap mode", async () => {
+  it("returns 0 in air-gap mode (self-managed instance)", async () => {
     process.env.ORB_AIR_GAP = "true";
     expect(await exportOrbBatch(makeDb(), 200, async () => new Response(null, { status: 200 }))).toBe(0);
+  });
+
+  it("brokered mode exports despite air-gap AND without a local App key — telemetry is the fleet contract", async () => {
+    // A brokered self-host (ORB_ENROLLMENT_SECRET set) relies on the Orb for tokens + webhook relay, so it holds
+    // no local App key and air-gap must NOT suppress the export. With no Orb/App id, instanceId derives from the
+    // enrollment secret (stable + unique per install, not the "unknown" collision).
+    delete (process.env as NodeJS.Dict<string>).GITHUB_APP_PRIVATE_KEY;
+    delete (process.env as NodeJS.Dict<string>).ORB_APP_ID;
+    process.env.ORB_AIR_GAP = "true";
+    process.env.ORB_ENROLLMENT_SECRET = "orbsec_test_enrollment";
+    const db = makeDb();
+    await audit(db, "owner/repo", 9, "gate_decision", "merge", "2026-03-01T00:00:00Z");
+    await audit(db, "owner/repo", 9, "pr_outcome", "merged", "2026-03-01T01:00:00Z");
+    let captured: { instance_id: string } | undefined;
+    const n = await exportOrbBatch(db, 200, async (_u, init) => { captured = JSON.parse(init!.body as string); return new Response(null, { status: 200 }); });
+    expect(n).toBe(1); // exported despite air-gap + no local App key
+    expect(captured!.instance_id).toBe(createHash("sha256").update("orbsec_test_enrollment").digest("hex").slice(0, 16));
   });
 
   it("returns 0 when nothing is resolved", async () => {

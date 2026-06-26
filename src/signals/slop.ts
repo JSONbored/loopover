@@ -291,11 +291,12 @@ export function buildTrivialWhitespaceChurnFinding(input: SlopAssessmentInput): 
   const changedFiles = input.changedFiles ?? [];
   const lineTotals = summarizeChangedLines(changedFiles);
   if (lineTotals.changedLineCount < MIN_CHURN_LINES) return null;
-  if (lineTotals.sourceLineCount === 0) {
+  const substantiveLineCount = lineTotals.sourceLineCount + lineTotals.testLineCount;
+  if (substantiveLineCount === 0) {
     return buildTrivialChurnFinding(lineTotals.changedLineCount, lineTotals.nonCodeLineCount);
   }
-  const sourceShare = lineTotals.sourceLineCount / lineTotals.changedLineCount;
-  if (sourceShare > MAX_SOURCE_LINE_SHARE) return null;
+  const substantiveShare = substantiveLineCount / lineTotals.changedLineCount;
+  if (substantiveShare > MAX_SOURCE_LINE_SHARE) return null;
   return buildTrivialChurnFinding(lineTotals.changedLineCount, lineTotals.nonCodeLineCount);
 }
 

@@ -988,11 +988,13 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     expect(ignored.autoMaintain).toEqual({ requireApprovals: 2, mergeMethod: "merge" });
   });
 
-  it("parses + resolves contributorBlacklist from the settings: block, overlaying the DB list (#1425)", () => {
-    const manifest = parseFocusManifest({ settings: { contributorBlacklist: ["plagiarist1", { login: "farmer2", reason: "farming" }, { login: "-bad" }] } });
+  it("parses + resolves contributorBlacklist + blacklistLabel from the settings: block, overlaying the DB (#1425)", () => {
+    const manifest = parseFocusManifest({ settings: { contributorBlacklist: ["plagiarist1", { login: "farmer2", reason: "farming" }, { login: "-bad" }], blacklistLabel: "abuse" } });
     expect(manifest.settings.contributorBlacklist).toEqual([{ login: "plagiarist1" }, { login: "farmer2", reason: "farming" }]); // invalid login dropped
+    expect(manifest.settings.blacklistLabel).toBe("abuse");
     const eff = resolveEffectiveSettings({ contributorBlacklist: [{ login: "db-only" }] } as unknown as RepositorySettings, manifest);
     expect(eff.contributorBlacklist?.map((e) => e.login)).toEqual(["plagiarist1", "farmer2"]); // yml overlays DB
+    expect(eff.blacklistLabel).toBe("abuse"); // configurable label, not hardcoded
     // An empty/all-invalid block never blanks the DB-configured list (only set when a valid entry survives).
     const noOverride = resolveEffectiveSettings({ contributorBlacklist: [{ login: "keep-me" }] } as unknown as RepositorySettings, parseFocusManifest({ settings: { contributorBlacklist: [{ login: "" }] } }));
     expect(noOverride.contributorBlacklist?.map((e) => e.login)).toEqual(["keep-me"]);

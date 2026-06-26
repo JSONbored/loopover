@@ -227,6 +227,31 @@ describe("buildSlopAssessment", () => {
     ).toEqual({ slopRisk: 0, band: "clean", findings: [] });
   });
 
+  it("does not raise trivial-churn for a test-only diff above the churn threshold (regression: test lines are substantive)", () => {
+    expect(
+      buildSlopAssessment({
+        changedFiles: [
+          { path: "test/unit/sync.test.ts", additions: 30, deletions: 15 },
+          { path: "test/integration/api.test.ts", additions: 10, deletions: 5 },
+        ],
+        description: "Add regression tests for the sync module.",
+      }),
+    ).toEqual({ slopRisk: 0, band: "clean", findings: [] });
+  });
+
+  it("does not raise trivial-churn when test lines dominate a mixed diff", () => {
+    expect(
+      buildSlopAssessment({
+        changedFiles: [
+          { path: "src/parser.ts", additions: 3, deletions: 1 },
+          { path: "test/unit/parser.test.ts", additions: 25, deletions: 15 },
+          { path: "README.md", additions: 5, deletions: 3 },
+        ],
+        description: "Fix parser edge case and add comprehensive test coverage.",
+      }),
+    ).toEqual({ slopRisk: 0, band: "clean", findings: [] });
+  });
+
   it("does not raise trivial-churn when substantive source edits dominate", () => {
     expect(
       buildSlopAssessment({
@@ -379,6 +404,39 @@ describe("buildTrivialWhitespaceChurnFinding", () => {
       publicText: expect.any(String),
     });
     expect(JSON.stringify(finding)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("does not fire for a test-only diff above the churn threshold (regression: test lines are substantive)", () => {
+    expect(
+      buildTrivialWhitespaceChurnFinding({
+        changedFiles: [
+          { path: "test/unit/sync.test.ts", additions: 30, deletions: 15 },
+          { path: "test/integration/api.test.ts", additions: 10, deletions: 5 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("does not fire when test lines push the substantive share above the threshold", () => {
+    expect(
+      buildTrivialWhitespaceChurnFinding({
+        changedFiles: [
+          { path: "README.md", additions: 20, deletions: 15 },
+          { path: "test/unit/widget.test.ts", additions: 20, deletions: 10 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("still fires for non-code-only high-churn diffs with zero source and zero test lines", () => {
+    expect(
+      buildTrivialWhitespaceChurnFinding({
+        changedFiles: [
+          { path: "README.md", additions: 25, deletions: 20 },
+          { path: "docs/guide.md", additions: 20, deletions: 15 },
+        ],
+      }),
+    ).toMatchObject({ code: "trivial_whitespace_churn" });
   });
 });
 

@@ -60,6 +60,28 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     expect(r?.verdict).toBe("merge");
   });
 
+  it("routes companion provider or artifact changes to manual review without trusting the entry verdict", async () => {
+    const calls: string[] = [];
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [SUBNET, PROVIDER],
+      loadFile: (path, ref) => {
+        calls.push(`${ref}:${path}`);
+        return Promise.resolve(ref === "head" ? doc([existing, newEntry]) : doc([existing]));
+      },
+    });
+
+    expect(r).toEqual({
+      verdict: "manual",
+      summary: "Registry submission includes companion file changes — routing to review.",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("ignores blank changed-file entries while enforcing the direct-file-only invariant", async () => {
+    const r = await review(["", SUBNET], { [`head:${SUBNET}`]: doc([existing, newEntry]), [`base:${SUBNET}`]: doc([existing]) });
+    expect(r?.verdict).toBe("merge");
+  });
+
   it("closes a clean single append whose entry has a clear violation", async () => {
     const bad = { ...newEntry, public_safe: false };
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, bad]), [`base:${SUBNET}`]: doc([existing]) });

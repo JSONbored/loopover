@@ -716,6 +716,77 @@ describe("queue processors", () => {
     expect(mergeAudit?.n).toBe(0);
   });
 
+  it("posts the 🟪 reviewing placeholder before the AI review runs, then overwrites it with the verdict (#reviewing-placeholder)", async () => {
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }),
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      aiReviewMode: "advisory",
+    });
+    const commentBodies: string[] = [];
+    let firstCommentWasPlaceholder = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/7")) return Response.json({ number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a7/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a7/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/7/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/7/comments") && method === "POST") {
+        const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
+        if (commentBodies.length === 0) firstCommentWasPlaceholder = body.includes("is reviewing");
+        commentBodies.push(body);
+        return Response.json({ id: 1 }, { status: 201 });
+      }
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "reviewing-placeholder",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 7, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    // The transient purple placeholder was posted FIRST (before the final verdict comment), proving the
+    // pre-review placeholder glue in maybePublishPrPublicSurface runs when a comment + AI review are due.
+    expect(commentBodies.length).toBeGreaterThanOrEqual(2);
+    expect(firstCommentWasPlaceholder).toBe(true);
+    expect(commentBodies[0]).toContain("🟪");
+    // A later comment carries the real verdict, not the placeholder prose.
+    expect(commentBodies.some((body) => !body.includes("is reviewing"))).toBe(true);
+  });
+
   it("agent re-gate sweep re-reviews each stale open PR (installation id) and swallows a failing re-review", async () => {
     const env = createTestEnv({});
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
@@ -1493,6 +1564,47 @@ describe("queue processors", () => {
     expect(postedBody).toContain("Add retry-on-5xx");
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.issue_plan_generated").first<{ n: number }>();
     expect(audit?.n).toBe(1);
+    const usage = await env.DB.prepare("select feature, actor, status, estimated_neurons, metadata_json from ai_usage_events where feature = ?").bind("issue_plan").first<{ feature: string; actor: string; status: string; estimated_neurons: number; metadata_json: string }>();
+    expect(usage?.status).toBe("ok");
+    expect(usage?.actor).toBe("maintainer1");
+    expect(usage?.estimated_neurons).toBeGreaterThan(0);
+    expect(JSON.parse(usage?.metadata_json ?? "{}")).toMatchObject({ repoFullName: "JSONbored/gittensory", issueNumber: 77 });
+  });
+
+  it("planner: enforces the shared AI budget before calling Workers AI", async () => {
+    const run = vi.fn(async () => ({ response: "should not run" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI_DAILY_NEURON_BUDGET: "0", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    expect(run).not.toHaveBeenCalled();
+    const usage = await env.DB.prepare("select status from ai_usage_events where feature = ?").bind("issue_plan").first<{ status: string }>();
+    expect(usage?.status).toBe("quota_exceeded");
+    const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
+    expect(skip?.detail).toBe("no_plan_generated");
+  });
+
+  it("planner: enforces a per-actor per-repo cooldown before spending AI", async () => {
+    const run = vi.fn(async () => ({ response: "## Summary\nPlan." }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
+    await setupPlannerRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/issues/77/comments")) return Response.json({ id: init?.body ? 5 : 6 }, { status: 201 });
+      return new Response("not found", { status: 404 });
+    });
+    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@gittensory plan again", "maintainer1"));
+    expect(run).toHaveBeenCalledTimes(1);
+    const cooldown = await env.DB.prepare("select detail from audit_events where event_type = ? and detail = ?").bind("github_app.issue_plan_skipped", "cooldown_active").first<{ detail: string }>();
+    expect(cooldown?.detail).toBe("cooldown_active");
   });
 
   it("planner: flag OFF is byte-identical — @gittensory plan posts no plan and the AI is never called", async () => {
@@ -3579,6 +3691,9 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       // PR files — the unified branch (re)fetches them to count changed files for the readiness chip.
       if (url.includes("/pulls/3/files")) return Response.json([{ filename: "src/cache.ts", additions: 5, deletions: 1, status: "modified" }]);
+      // #review-audit: the LIVE merge-state the comment now reads — the base just advanced with a conflict, so the
+      // live state is `dirty` even though the stored mergeableState (unset on this payload) would not say so.
+      if (/\/pulls\/3(?:\?|$)/.test(url)) return Response.json({ number: 3, mergeable_state: "dirty" });
       // Gate check-run — must succeed so `gateEvaluation` is produced and the flag-ON branch runs.
       // The pending check is POSTed (in_progress), then PATCHed to its completed conclusion.
       if (url.includes("/check-runs") && method === "GET") return Response.json({ total_count: 0, check_runs: [] });
@@ -3634,6 +3749,9 @@ describe("queue processors", () => {
     expect(postedBody).toContain("**Code review**");
     // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
     expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
+    // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must
+    // NOT headline "safe to merge" while the disposition would auto-close the base-conflicting PR.
+    expect(postedBody).not.toMatch(/safe to merge/i);
   });
 
   // FIX B + FIX D3 at the processor call site: a unified comment for a PR whose CI has a FAILED check, with the
@@ -6206,6 +6324,139 @@ describe("queue processors", () => {
     expect(settingsAfter?.gate_check_mode).toBe("enabled");
     const overrideAdvisory = await env.DB.prepare("select id from advisories where target_key = ?").bind("JSONbored/gittensory#90").first<{ id: string }>();
     expect(overrideAdvisory ?? null).toBeNull();
+  });
+
+  it("overrides the LIVE head, not the stale cached SHA, when a commit landed after the command (#16)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    // The stored row still carries the OLD head; a new commit ("live-sha") landed between the comment and now.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 90,
+      title: "Override me",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: { sha: "stale-sha" },
+      labels: [],
+      body: "Validation: npm test",
+    });
+    const seen = { staleCheckGets: 0, liveCheckGets: 0 };
+    const patchBodies: Array<{ conclusion?: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      // The LIVE head re-fetch — the row says stale-sha but GitHub's head is now live-sha.
+      if (url.includes("/pulls/90") && method === "GET") return Response.json({ number: 90, state: "open", head: { sha: "live-sha" } });
+      if (url.includes("/commits/stale-sha/check-runs") && method === "GET") {
+        seen.staleCheckGets += 1;
+        return Response.json({ total_count: 0, check_runs: [] });
+      }
+      if (url.includes("/commits/live-sha/check-runs") && method === "GET") {
+        seen.liveCheckGets += 1;
+        return Response.json({ total_count: 1, check_runs: [{ id: 556, name: "Gittensory Gate" }] });
+      }
+      if (url.includes("/check-runs/556") && method === "PATCH") {
+        patchBodies.push(JSON.parse(String(init?.body ?? "{}")) as { conclusion?: string });
+        return Response.json({ id: 556 });
+      }
+      if (url.includes("/issues/90/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/90/comments") && method === "POST") return Response.json({ id: 9101 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-live-head",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Override me", state: "open", user: { login: "contributor" }, pull_request: {} },
+        comment: { id: 803, body: "@gittensory gate-override flaky", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    // The neutral PATCH targeted the LIVE head's Gate run (id 556), and the stale SHA was never touched.
+    expect(seen.liveCheckGets).toBe(1);
+    expect(seen.staleCheckGets).toBe(0);
+    expect(patchBodies[0]?.conclusion).toBe("neutral");
+    const audit = await env.DB.prepare("select metadata_json from audit_events where event_type = ?")
+      .bind("github_app.gate_overridden")
+      .first<{ metadata_json: string }>();
+    const metadata = JSON.parse(audit?.metadata_json ?? "{}") as { headSha?: string; cachedHeadSha?: string };
+    expect(metadata.headSha).toBe("live-sha");
+    expect(metadata.cachedHeadSha).toBe("stale-sha");
+  });
+
+  it("records null head SHAs in the override audit when the PR head is unresolved (#16 fail-safe)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "off",
+    });
+    // A cached row with no head SHA (never detail-synced); the live fetch also yields no head.
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 90,
+      title: "Override me",
+      state: "open",
+      user: { login: "contributor" },
+      author_association: "CONTRIBUTOR",
+      head: {},
+      labels: [],
+      body: "Validation: npm test",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/collaborators/maintainer/permission")) return Response.json({ permission: "admin" });
+      if (url.includes("/pulls/90") && method === "GET") return Response.json({ number: 90, state: "open", head: {} });
+      if (url.includes("/issues/90/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/90/comments") && method === "POST") return Response.json({ id: 9102 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-override-null-head",
+      eventName: "issue_comment",
+      payload: {
+        action: "created",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        issue: { number: 90, title: "Override me", state: "open", user: { login: "contributor" }, pull_request: {} },
+        // No reason after the command — exercises the "No reason provided." fallback too.
+        comment: { id: 804, body: "@gittensory gate-override", author_association: "NONE", user: { login: "maintainer", type: "User" } },
+        sender: { login: "maintainer", type: "User" },
+      },
+    });
+
+    const audit = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ?")
+      .bind("github_app.gate_overridden")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(audit?.detail).toBe("No reason provided.");
+    const metadata = JSON.parse(audit?.metadata_json ?? "{}") as { headSha?: string | null; cachedHeadSha?: string | null };
+    expect(metadata.headSha).toBeNull();
+    expect(metadata.cachedHeadSha).toBeNull();
   });
 
   it("ignores gate-override commands on edited comments", async () => {

@@ -37,11 +37,13 @@ declare global {
     AI_GATEWAY_ID?: string;
     /** Self-host AI provider selection + dual-review config (#dual-ai-combiner). `AI_PROVIDER` is a comma list of
      *  providers (claude-code, codex, anthropic, ollama, …); `AI_COMBINE` picks single|consensus|synthesis (default
-     *  synthesis for two); `AI_ON_MERGE` is the synthesis rule either|both. `AI_REVIEW_PLAN` is the resolved plan
+     *  synthesis for two); `AI_ON_MERGE` is the synthesis rule either|both. `AI_EFFORT` is the Claude Code
+     *  intelligence dial (low|medium|high|xhigh|max, default high). `AI_REVIEW_PLAN` is the resolved plan
      *  (computed from these at boot in server.ts and read at the review call site); undefined on cloud. */
     AI_PROVIDER?: string;
     AI_COMBINE?: string;
     AI_ON_MERGE?: string;
+    AI_EFFORT?: string;
     AI_REVIEW_PLAN?: { reviewers: Array<{ model: string }>; combine: import("./services/ai-review").CombineStrategy; onMerge?: import("./services/ai-review").OnMerge | undefined };
     ADMIN_GITHUB_LOGINS?: string;
     GITHUB_WEBHOOK_SECRET: string;
@@ -82,6 +84,11 @@ declare global {
     /** Self-host instance-wide write switch: "dry-run" | "disabled" forces EVERY installation write to be
      *  suppressed regardless of per-repo mode (the cloud→self-host parallel-run kill switch). Unset = live. */
     SELFHOST_DEPLOYMENT_MODE?: string;
+    /** Self-host container-private per-repo config dir. When set, the focus-manifest loader reads
+     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.gittensory.yml`, so review policy (gate,
+     *  autonomy, labels, model/effort) is set privately and contributors can't read or game it. Unset ⇒ public
+     *  fetch (cloud, or a self-host without the dir, is byte-identical to before). */
+    GITTENSORY_REPO_CONFIG_DIR?: string;
     GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
     GITTENSORY_DRIFT_ISSUE_REPO?: string;
     GITTENSORY_DRIFT_ISSUE_TOKEN?: string;

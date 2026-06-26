@@ -2141,6 +2141,24 @@ export async function fetchLivePullRequestMergeState(env: Env, repoFullName: str
   return result?.data.mergeable_state ?? undefined;
 }
 
+/** The PR's LIVE state ("open" / "closed") via REST `GET /pulls/{n}`. The stored open-PR cache lags GitHub, so a
+ *  sibling closed/merged on GitHub can still read `open` locally; the duplicate-winner election (#dup-winner /
+ *  audit #15) confirms a lower sibling's live state before treating this PR as a cluster loser. Best-effort:
+ *  returns undefined on any error so the caller fails open to the stored state. */
+export async function fetchLivePullRequestState(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ state?: string | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+  return result?.data.state ?? undefined;
+}
+
+/** The PR's LIVE head commit SHA via REST `GET /pulls/{n}`. The stored `pr.headSha` lags GitHub when a commit
+ *  lands between a webhook and its processing; the gate-override command (#16 / audit) re-fetches the live head
+ *  so the neutral check-run targets the commit a maintainer is actually looking at, not a phantom old SHA.
+ *  Best-effort: returns undefined on any error so the caller fails open to the stored head. */
+export async function fetchLivePullRequestHeadSha(env: Env, repoFullName: string, prNumber: number, token: string | undefined): Promise<string | undefined> {
+  const result = await githubJsonWithHeaders<{ head?: { sha?: string | null } | null }>(env, repoFullName, `/pulls/${prNumber}`, token).catch(() => undefined);
+  return result?.data.head?.sha ?? undefined;
+}
+
 /** Resolve the OPEN PRs associated with a commit SHA via the REST `GET /repos/{owner}/{repo}/commits/{sha}/pulls`
  *  endpoint. This is the only PR↔commit resolution that works for FORK (cross-repo) PRs, whose CI-completion
  *  webhooks (`check_suite`/`check_run`) carry an EMPTY `pull_requests[]`. Returns the de-duplicated open PR numbers.

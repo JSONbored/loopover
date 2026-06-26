@@ -97,7 +97,7 @@ and only the AI **summary** degrades to "unavailable". To enable AI, set `AI_PRO
 | --- | --- | --- |
 | `ollama` / `openai-compatible` / `openai` | any OpenAI-compatible `/chat/completions` endpoint (Ollama, OpenAI, Groq, Together, OpenRouter, vLLM, Gemini's OpenAI-compat endpoint, …) | `AI_BASE_URL`, `AI_API_KEY` (or `OPENAI_API_KEY`), `AI_MODEL` |
 | `anthropic` | **native Anthropic Messages API** (BYOK — bills your API key) | `ANTHROPIC_API_KEY`, `AI_MODEL` (e.g. `claude-sonnet-4-6`) |
-| `claude-code` | your **Claude** subscription via the `claude` CLI (read-only, headless) | `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), `AI_MODEL` (e.g. `sonnet`) |
+| `claude-code` | your **Claude** subscription via the `claude` CLI (read-only, headless) | `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), `AI_MODEL` (default `claude-sonnet-4-6`), `AI_EFFORT` (default `high`) |
 | `codex` | your **Codex** subscription via the `codex` CLI | local `codex` auth, `AI_MODEL` (e.g. `gpt-5`) |
 
 **Fallback chain.** `AI_PROVIDER` accepts a comma-separated list and tries each in order until one succeeds —
@@ -120,6 +120,19 @@ free Cloudflare Workers-AI pair remains the cloud default (`consensus`) — thes
 **Subscription CLIs in the image.** The `claude-code` / `codex` providers need their CLI present. Build the
 image with `--build-arg INSTALL_AI_CLIS=true` (or `docker compose build --build-arg INSTALL_AI_CLIS=true`) to
 bake them in, then provide `CLAUDE_CODE_OAUTH_TOKEN` / codex auth at run time. No credentials are baked in.
+
+- **Claude Code:** set `CLAUDE_CODE_OAUTH_TOKEN` (a 1-year token from `claude setup-token`, run once in a real
+  terminal — it's browser-interactive and prints the token; it has no headless mode). The provider forces the
+  subscription token (it scrubs `ANTHROPIC_API_KEY`), so an API key won't be used here — use `AI_PROVIDER=anthropic`
+  for API-key billing. The model defaults to `claude-sonnet-4-6` and the reasoning **effort** to `high` (a
+  substantive review, not a fast shallow one); override with `AI_MODEL` (any `claude`-CLI model id or alias —
+  `sonnet`, `opus`, `claude-opus-4-8`, …) and `AI_EFFORT` (`low`|`medium`|`high`|`xhigh`|`max`; the CLI clamps a
+  level above the model's own ceiling).
+- **Codex:** codex reads `auth.json` from `$CODEX_HOME` (default `~/.codex`) and **must have a WRITABLE home** — it
+  refreshes the token in place, so a read-only mount fails with *"Read-only file system"*. Set `CODEX_HOME` to a
+  writable path and **copy** your `~/.codex/auth.json` there (don't bind-mount it read-only). With a ChatGPT-
+  subscription login, leave `AI_MODEL` unset for codex — pinning `gpt-5*` returns *"not supported … with a ChatGPT
+  account"*; codex picks the entitled default. (`ca-certificates` for codex's native TLS is baked in by `INSTALL_AI_CLIS`.)
 
 **Local RAG (retrieval-augmented review).** Self-host ships a SQLite-backed vector store, so RAG works without
 Cloudflare Vectorize. Enable it with `GITTENSORY_REVIEW_RAG=true` + the repo in `GITTENSORY_REVIEW_REPOS`, and
@@ -161,6 +174,15 @@ parity audit) are the `GITTENSORY_REVIEW_*` flags — every flag defaults **off*
 turned on. Per-repo settings (autonomy, required approvals, protected paths) live in `.gittensory.yml` /
 repository settings. The authoritative reference for all of these is
 [`docs/review-configuration.md`](./review-configuration.md).
+
+**Container-private per-repo config (keep policy off the public repo).** `.gittensory.yml` lives in the repo, so
+contributors can read it — and whoever can see the gate thresholds, autonomy, or label policy can game them. To
+keep review policy private, set **`GITTENSORY_REPO_CONFIG_DIR`** to a mounted directory and drop one file per repo
+named `{owner}__{repo}.yml` (lowercased, `/` → double underscore) — e.g. `jsonbored__metagraphed.yml`. When a file
+exists for a repo the engine reads it **instead of** fetching the public `.gittensory.yml`, so the policy never
+appears in contributor-facing previews. It uses the same schema (`gate:` / `settings:` / `review:` — autonomy,
+labels, model/effort), is read fresh each review (edits apply immediately), and `.yaml` / `.json` are also
+accepted. Unset ⇒ the public file is fetched exactly as before.
 
 ---
 

@@ -1150,6 +1150,10 @@ export function hasVerifiedRequiredContexts(
   return requiredContexts != null && requiredContexts.size > 0;
 }
 
+export function agentMaintenanceHeadMatchesGate(reviewedHeadSha: string | null | undefined, currentHeadSha: string | null | undefined): boolean {
+  return reviewedHeadSha == null || currentHeadSha == null || currentHeadSha === reviewedHeadSha;
+}
+
 /**
  * #778 maintainer auto-maintain trigger. After the gate runs on a PR webhook, if the repo opted the agent in
  * (an acting autonomy level), reuse the CANONICAL verdict produced by the full gate evaluation, plan the
@@ -1185,6 +1189,10 @@ async function maybeRunAgentMaintenance(
   /* v8 ignore next -- defensive: the PR was upserted earlier in this same webhook, so it is always present. */
   if (!pr) return;
   if (pr.state !== "open") return;
+  // The gate verdict belongs to the webhook/re-review head that produced it. Under concurrent self-host queues, a
+  // newer synchronize can advance the stored row before this job acts; fail closed rather than pairing a stale
+  // passing gate with a newer, unreviewed head for CI, planning, or merge execution.
+  if (!agentMaintenanceHeadMatchesGate(args.pr.headSha, pr.headSha)) return;
   // Drafts are work-in-progress: never auto-approve / merge / close / label a draft. Symmetric with the re-gate
   // sweep, which drops drafts (agent-sweep.ts). A draft signals "not ready"; the agent acts once it is marked
   // ready_for_review (which re-triggers this path on the now-undrafted PR). The converted_to_draft draft-dodge

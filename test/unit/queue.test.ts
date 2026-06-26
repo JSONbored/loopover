@@ -39,7 +39,7 @@ import {
   upsertRepositoryFromGitHub,
   putCachedAiReview,
 } from "../../src/db/repositories";
-import { changedPathsForGuardrail, processJob } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, changedPathsForGuardrail, processJob } from "../../src/queue/processors";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -6941,6 +6941,18 @@ describe("changedPathsForGuardrail", () => {
       { path: "", previousFilename: "" }, // an empty path AND empty rename are both skipped (both guard branches false)
     ] as unknown as Parameters<typeof changedPathsForGuardrail>[0];
     expect(changedPathsForGuardrail(files)).toEqual(["src/a.ts", "src/b.ts", "src/old-b.ts"]);
+  });
+});
+
+describe("agentMaintenanceHeadMatchesGate", () => {
+  it("allows maintenance only when the stored PR head still matches the reviewed gate head", () => {
+    expect(agentMaintenanceHeadMatchesGate("reviewed", "reviewed")).toBe(true);
+    expect(agentMaintenanceHeadMatchesGate("reviewed", "new-unreviewed")).toBe(false);
+  });
+
+  it("keeps legacy no-SHA paths fail-open because no exact reviewed head can be pinned", () => {
+    expect(agentMaintenanceHeadMatchesGate(undefined, "current")).toBe(true);
+    expect(agentMaintenanceHeadMatchesGate("reviewed", null)).toBe(true);
   });
 });
 

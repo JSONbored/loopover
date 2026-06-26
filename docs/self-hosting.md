@@ -268,8 +268,6 @@ is **not** available on the Postgres backend yet — it degrades to no-context.
 These are Cloudflare-platform features; they degrade cleanly and the core reviewer is unaffected:
 
 - **Visual PR capture** (Browser Rendering binding) — off; reviews run text-only.
-- **The `/mcp` server** (Durable-Object-backed Agents SDK) — returns `501`. The deterministic API + review
-  path is unaffected; a native MCP-on-Node port is a follow-up.
 - **Distributed rate limiting** (RateLimiter Durable Object) — off by default; set `REDIS_URL` for a
   Redis-backed fixed-window limiter (see §7). Otherwise put a reverse proxy / WAF in front.
 - **Vectorize-backed RAG** and **R2 audit storage** — inert unless you wire equivalent backends.

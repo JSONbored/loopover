@@ -281,13 +281,17 @@ describe("retryFailedRelays", () => {
     expect(untouched?.n).toBe(5);
   });
 
-  it("PRUNES rows that have exhausted their attempt budget (attempts >= 5)", async () => {
+  it("PRUNES rows that have exhausted their attempt budget (attempts >= 5) and logs the drop (#5)", async () => {
     const e = brokeredEnv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     // Manually insert a row at the attempt ceiling.
     await db(e).prepare("INSERT INTO orb_relay_failures (delivery_id, event_name, installation_id, raw_body, attempts) VALUES (?, ?, ?, ?, ?)").bind("exhausted-1", "pull_request", 9300, "{}", 5).run();
     await retryFailedRelays(e);
     const row = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='exhausted-1'").first();
     expect(row ?? null).toBeNull(); // pruned on the DELETE pass before the SELECT
+    // The drop is no longer silent — an alertable structured log records the lost event count.
+    expect(warn.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped"))).toBe(true);
+    warn.mockRestore();
   });
 
   it("PRUNES expired rows (expires_at in the past) without attempting to forward", async () => {

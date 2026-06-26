@@ -227,7 +227,7 @@ describe("matchesManifestPath", () => {
     const start = performance.now();
     const result = matchesManifestPath("a/b/c/safe.ts", globstarRun);
     const elapsed = performance.now() - start;
-    expect(result).toBe(false);
+    expect(result).toBe(true);
     expect(elapsed).toBeLessThan(100);
   });
 });

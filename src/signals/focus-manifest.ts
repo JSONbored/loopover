@@ -933,8 +933,10 @@ function expandGlobstarSlash(pattern: string): string[] {
       const canKeepRootAlternatives = count * 2 <= MAX_GLOBSTAR_SLASH_ALTERNATIVES;
       for (let altIdx = count - 1; altIdx >= 0; altIdx -= 1) {
         const prefix = alternatives[altIdx]!;
-        alternatives[altIdx] = `${prefix}*/`;
-        if (canKeepRootAlternatives) alternatives.push(prefix);
+        if (canKeepRootAlternatives) {
+          alternatives[altIdx] = `${prefix}*/`;
+          alternatives.push(prefix);
+        }
       }
       idx += 3;
       continue;

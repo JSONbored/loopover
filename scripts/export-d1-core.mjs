@@ -20,6 +20,16 @@ export const REDACTED_COLUMNS = {
   repository_ai_keys: ["ciphertext"],
 };
 
+// A table name is only ever interpolated into SQL (`SELECT * FROM "<name>"`) after passing this allowlist, so a
+// hostile or malformed identifier (even though names come from the DB's own sqlite_master) can never break out of
+// the quoted identifier — defense-in-depth against SQL injection on the export path.
+const SAFE_TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** True when `name` is a plain SQL identifier safe to interpolate into a quoted-table SELECT. */
+export function isSafeTableName(name) {
+  return typeof name === "string" && SAFE_TABLE_NAME.test(name);
+}
+
 /** Drop the redacted columns for `table` from a single row (returns the row unchanged when nothing is redacted). */
 export function redactRow(table, row) {
   const drop = REDACTED_COLUMNS[table];

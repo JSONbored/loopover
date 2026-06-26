@@ -18,6 +18,7 @@ export type ExportManifest = {
   [meta: string]: unknown;
 };
 
+export function isSafeTableName(name: unknown): boolean;
 export function redactRow(table: string, row: D1Row): D1Row;
 export function checksumRows(rows: D1Row[]): string;
 export function filterRowsSince(rows: D1Row[], sinceColumn: string | undefined, sinceDate: string | undefined): D1Row[];

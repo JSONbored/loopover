@@ -11,7 +11,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildExportManifest, buildTableExport, EXCLUDED_TABLES } from "./export-d1-core.mjs";
+import { buildExportManifest, buildTableExport, EXCLUDED_TABLES, isSafeTableName } from "./export-d1-core.mjs";
 
 function parseArgs(argv) {
   const args = { db: undefined, output: "./export", remote: false, sinceDate: undefined, sinceColumn: "updated_at" };
@@ -44,7 +44,15 @@ function d1Query(db, remote, sql) {
 
 function listTables(db, remote) {
   const rows = d1Query(db, remote, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
-  return rows.map((row) => row.name).filter((name) => typeof name === "string" && !EXCLUDED_TABLES.has(name));
+  // Only export plain-identifier table names (sqlite_master is trusted, but the name is interpolated into the SELECT
+  // below, so validate it anyway). A non-conforming name is skipped loudly rather than risking an injected SELECT.
+  return rows.map((row) => row.name).filter((name) => {
+    if (!isSafeTableName(name) || EXCLUDED_TABLES.has(name)) {
+      if (typeof name === "string" && !isSafeTableName(name)) console.error(`skipping table with an unexpected name: ${JSON.stringify(name).slice(0, 80)}`);
+      return false;
+    }
+    return true;
+  });
 }
 
 function main() {
@@ -58,6 +66,7 @@ function main() {
 
   const tableExports = [];
   for (const table of listTables(args.db, args.remote)) {
+    if (!isSafeTableName(table)) continue; // provably-safe interpolation: the name is a validated plain identifier
     const rows = d1Query(args.db, args.remote, `SELECT * FROM "${table}"`);
     const exported = buildTableExport(table, rows, { sinceColumn: args.sinceColumn, sinceDate: args.sinceDate });
     if (exported === null) continue; // excluded

@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { buildExportManifest, buildTableExport, checksumRows, EXCLUDED_TABLES, filterRowsSince, redactRow, REDACTED_COLUMNS } from "../../scripts/export-d1-core.mjs";
+import { buildExportManifest, buildTableExport, checksumRows, EXCLUDED_TABLES, filterRowsSince, isSafeTableName, redactRow, REDACTED_COLUMNS } from "../../scripts/export-d1-core.mjs";
+
+describe("export-d1-core isSafeTableName (SQL-injection guard)", () => {
+  it("accepts plain SQL identifiers", () => {
+    expect(isSafeTableName("repositories")).toBe(true);
+    expect(isSafeTableName("auth_sessions")).toBe(true);
+    expect(isSafeTableName("_internal9")).toBe(true);
+  });
+
+  it("rejects anything that could break out of a quoted identifier", () => {
+    expect(isSafeTableName('repos"; DROP TABLE x;--')).toBe(false);
+    expect(isSafeTableName("has space")).toBe(false);
+    expect(isSafeTableName("9starts-with-digit")).toBe(false);
+    expect(isSafeTableName("")).toBe(false);
+    expect(isSafeTableName(undefined)).toBe(false);
+    expect(isSafeTableName(123)).toBe(false);
+  });
+});
 
 describe("export-d1-core redaction (#selfhost-migration)", () => {
   it("drops the sensitive column for a redacted table and never emits it", () => {

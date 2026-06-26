@@ -921,10 +921,20 @@ function labelPatternToRegExp(pattern: string): RegExp {
         // No closing bracket: fnmatch treats the `[` as a literal character.
         regex += "\\[";
       } else {
-        let body = pattern.slice(i, close).replace(/\\/g, "\\\\");
-        // `[!seq]` is fnmatch's negated class; RegExp spells negation as `[^seq]`.
-        if (body.startsWith("!")) body = `^${body.slice(1)}`;
-        regex += `[${body}]`;
+        const rawBody = pattern.slice(i, close);
+        if (rawBody === "" || rawBody === "!") {
+          // Empty classes and bare `[!]` stay literal in Python fnmatch instead of compiling as classes.
+          regex += `\\[${escapeRegExpLiteral(rawBody)}\\]`;
+        } else if (hasDescendingCharacterRange(rawBody)) {
+          // Python fnmatch treats invalid ranges like `[z-a]` as a never-match pattern; RegExp throws.
+          regex += "(?!)";
+        } else {
+          let body = rawBody.replace(/\\/g, "\\\\");
+          // `[!seq]` is fnmatch's negated class; RegExp spells negation as `[^seq]`.
+          if (body.startsWith("!")) body = `^${body.slice(1)}`;
+          else if (body.startsWith("^")) body = `\\${body}`;
+          regex += `[${body}]`;
+        }
         i = close + 1;
       }
     } else if (/[.+^${}()|\]\\]/.test(char)) {
@@ -934,6 +944,18 @@ function labelPatternToRegExp(pattern: string): RegExp {
     }
   }
   return new RegExp(`^${regex}$`, "i");
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasDescendingCharacterRange(body: string): boolean {
+  const start = body.startsWith("!") ? 1 : 0;
+  for (let i = start + 1; i < body.length - 1; i += 1) {
+    if (body.charAt(i) === "-" && body.charCodeAt(i - 1) > body.charCodeAt(i + 1)) return true;
+  }
+  return false;
 }
 
 function decideLinkedIssueMultiplier(

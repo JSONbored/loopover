@@ -121,6 +121,18 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     expect(row?.registered).toBe(1); // self-registered, no operator step
   });
 
+  it("an operator-disabled install cannot be self-reenabled through OAuth", async () => {
+    const e = brokeredEnv();
+    await seedInstall(e, { installation_id: 503, account_login: "acme", account_type: "Organization", registered: 0, self_enrollment_disabled: 1 });
+    stubGitHub();
+    const res = await app.request("/v1/orb/oauth/callback?code=abc&installation_id=503", {}, e);
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain("Installation disabled");
+    expect(await db(e).prepare("SELECT 1 AS x FROM orb_enrollments WHERE installation_id=503").first()).toBeUndefined();
+    const row = await db(e).prepare("SELECT registered FROM orb_github_installations WHERE installation_id=503").first<{ registered: number }>();
+    expect(row?.registered).toBe(0);
+  });
+
   it("a SUSPENDED or UNINSTALLED install is refused (403 not active), even for an admin", async () => {
     const e = brokeredEnv();
     await seedInstall(e, { installation_id: 507, account_login: "acme", account_type: "Organization", registered: 1, suspended_at: "2026-01-01T00:00:00Z" });

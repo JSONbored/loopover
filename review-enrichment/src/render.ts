@@ -98,6 +98,17 @@ export function renderBrief(
     }
   }
 
+  const eol = findings.eol ?? [];
+  if (eol.length) {
+    lines.push("### End-of-life runtimes (upgrade before merging)");
+    for (const item of eol) {
+      const label = item.status === "eol" ? "END-OF-LIFE" : "EOL soon";
+      lines.push(
+        `- \`${item.file}\` pins ${item.product} ${item.version} — **${label}** (EOL ${item.eol})`,
+      );
+    }
+  }
+
   if (!lines.length) return { promptSection: "", systemSuffix: "" };
 
   const header =

@@ -689,7 +689,7 @@ const predictGateShape = {
   linkedIssues: z.array(z.number().int().positive()).optional(),
   // The PR's changed file PATHS (metadata only — paths, never source content). Supplying them lets the predictor
   // also evaluate the focus-manifest path policy + path-gated pre-merge checks, matching the live gate (#11-13/#18).
-  changedPaths: z.array(z.string().min(1)).max(500).optional(),
+  changedPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(500).optional(),
 };
 
 // Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
@@ -1821,7 +1821,7 @@ export class GittensoryMcp {
 
   private async getMaintainerNoise(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
-    await this.requireRepoAccess(fullName);
+    await this.requireRepoApprovalQueueAccess(fullName);
     const report = await loadMaintainerNoiseReport(this.env, fullName);
     return {
       summary: maintainerNoiseSummary(report),

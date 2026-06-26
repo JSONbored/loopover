@@ -206,8 +206,14 @@ Self-host runs the identical engine, so the behavior is configured exactly as on
   acts on its decisions, gated by the same guardrails (protected-path manual-review globs, owner-PR
   no-auto-close, mergeability + green-CI before approve).
 
-Per-PR capabilities (safety scan, CI/full-file grounding, RAG, unified comment, content lane, self-tune,
-parity audit) are the `GITTENSORY_REVIEW_*` flags — every flag defaults **off** and is fully inert until
+- **Quiet inline comments (CodeRabbit-style).** Set `GITTENSORY_REVIEW_INLINE_COMMENTS=true` + the repo in
+  `GITTENSORY_REVIEW_REPOS` + `review.inline_comments: true` in the repo's config, and on top of the decision
+  summary the reviewer leaves **non-blocking** inline comments on changed lines (`event: COMMENT`) — useful even
+  in advisory mode, telling a contributor exactly what to fix for their next submission. Out-of-diff findings are
+  dropped (never a 422), and a failure never affects the gate.
+
+Per-PR capabilities (safety scan, CI/full-file grounding, RAG, unified comment, inline comments, content lane,
+self-tune, parity audit) are the `GITTENSORY_REVIEW_*` flags — every flag defaults **off** and is fully inert until
 turned on. Per-repo settings (autonomy, required approvals, protected paths) live in `.gittensory.yml` /
 repository settings. The authoritative reference for all of these is
 [`docs/review-configuration.md`](./review-configuration.md).

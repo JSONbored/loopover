@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { closePullRequest, createIssueComment, createPullRequestReview, getLastCloserLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
+import { closePullRequest, createIssueComment, createPullRequestReview, createPullRequestReviewComments, getLastCloserLogin, mergePullRequest, updatePullRequestBranch } from "../../src/github/pr-actions";
 import { createTestEnv } from "../helpers/d1";
 
 function envWithKey() {
@@ -29,6 +29,21 @@ describe("GitHub PR action primitives (#778)", () => {
     expect(result).toEqual({ id: 99 });
     expect(calls[0]).toMatchObject({ method: "POST", body: { event: "REQUEST_CHANGES", body: "please fix" } });
     expect(calls[0]?.url).toMatch(/\/repos\/owner\/repo\/pulls\/7\/reviews$/);
+  });
+
+  it("posts a quiet COMMENT review with inline comments anchored to the head SHA (#inline-comments)", async () => {
+    const calls: Array<{ method: string; url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "t" });
+      calls.push({ method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (url.endsWith("/pulls/7/reviews")) return Response.json({ id: 71 });
+      return new Response("unexpected", { status: 500 });
+    });
+    const comments = [{ path: "src/a.ts", line: 2, side: "RIGHT" as const, body: "**Nit:** guard this." }];
+    const result = await createPullRequestReviewComments(envWithKey(), 123, "owner/repo", 7, "headsha1", comments, "live");
+    expect(result).toEqual({ id: 71 });
+    expect(calls[0]).toMatchObject({ method: "POST", body: { event: "COMMENT", commit_id: "headsha1", comments } });
   });
 
   it("merges a PR with the method and head-sha guard", async () => {
